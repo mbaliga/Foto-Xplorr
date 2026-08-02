@@ -4,8 +4,10 @@ import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.Context;
 import android.database.Cursor;
+import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Build;
+import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 
 import java.util.ArrayList;
@@ -61,14 +63,28 @@ public final class MediaRepository {
                 long mediaId = cursor.getLong(id);
                 long timestamp = cursor.getLong(taken);
                 if (timestamp <= 0) timestamp = cursor.getLong(added) * 1000L;
-                result.add(new MediaItem(mediaId, ContentUris.withAppendedId(collection, mediaId),
+                MediaItem item = new MediaItem(mediaId, ContentUris.withAppendedId(collection, mediaId),
                         cursor.getString(name), cursor.getString(mime), cursor.getString(folder), timestamp,
-                        cursor.getLong(size), cursor.getInt(width), cursor.getInt(height)));
+                        cursor.getLong(size), cursor.getInt(width), cursor.getInt(height));
+                readLocation(item);
+                result.add(item);
             }
         } catch (SecurityException ignored) {
             return Collections.emptyList();
         }
         result.sort(Comparator.comparingLong((MediaItem item) -> item.takenAt).reversed());
         return result;
+    }
+
+    private void readLocation(MediaItem item) {
+        try (ParcelFileDescriptor descriptor = context.getContentResolver().openFileDescriptor(item.uri, "r")) {
+            if (descriptor == null) return;
+            ExifInterface exif = new ExifInterface(descriptor.getFileDescriptor());
+            float[] location = new float[2];
+            if (exif.getLatLong(location)) {
+                item.latitude = location[0];
+                item.longitude = location[1];
+            }
+        } catch (Exception ignored) { }
     }
 }
