@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -284,10 +283,12 @@ private fun PartialAccessBanner(onManage: () -> Unit) {
         color = MaterialTheme.colorScheme.primaryContainer,
     ) {
         Row(
-            Modifier.padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 6.dp),
+            Modifier.fillMaxWidth()
+                .padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Showing only selected photos", Modifier.weight(1f))
+            Text("Showing only selected photos")
             TextButton(onClick = onManage) { Text("Manage") }
         }
     }
