@@ -24,8 +24,10 @@ import com.fotoxplorr.app.gallery.GalleryScreen
 import com.fotoxplorr.app.gallery.GalleryUiState
 import com.fotoxplorr.app.media.AndroidMediaStoreScanner
 import com.fotoxplorr.app.media.InMemoryMediaRepository
+import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaIndexer
 import com.fotoxplorr.app.media.ScanEvent
+import com.fotoxplorr.app.viewer.ViewerScreen
 import kotlinx.coroutines.flow.collect
 
 class FotoXplorrActivity : ComponentActivity() {
@@ -57,6 +59,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
     var scanState by remember { mutableStateOf<ScanState>(ScanState.Idle) }
     var scanGeneration by remember { mutableStateOf(0) }
+    var selectedAsset by remember { mutableStateOf<MediaAsset?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
@@ -79,17 +82,26 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
         }
     }
 
-    GalleryScreen(
-        state = GalleryUiState(
-            assets = assets,
-            permissionGranted = permissionGranted,
-            scanState = scanState,
-        ),
-        onRequestPermission = {
-            permissionLauncher.launch(requiredMediaPermissions())
-        },
-        onRefresh = { scanGeneration += 1 },
-    )
+    val activeAsset = selectedAsset
+    if (activeAsset != null) {
+        ViewerScreen(
+            asset = activeAsset,
+            onClose = { selectedAsset = null },
+        )
+    } else {
+        GalleryScreen(
+            state = GalleryUiState(
+                assets = assets,
+                permissionGranted = permissionGranted,
+                scanState = scanState,
+            ),
+            onRequestPermission = {
+                permissionLauncher.launch(requiredMediaPermissions())
+            },
+            onRefresh = { scanGeneration += 1 },
+            onOpenAsset = { selectedAsset = it },
+        )
+    }
 }
 
 private fun FotoXplorrActivity.hasMediaPermission(): Boolean =
