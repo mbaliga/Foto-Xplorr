@@ -48,18 +48,26 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.organize.LibraryState
+import com.fotoxplorr.app.spatial.GeoMetadataRepository
+import com.fotoxplorr.app.spatial.LocalSpatialExperience
+import com.fotoxplorr.app.spatial.SpatialExperience
+import kotlinx.coroutines.launch
 
 data class GalleryUiState(
     val assets: List<MediaAsset>,
@@ -118,31 +126,48 @@ fun GalleryScreen(
     state: GalleryUiState,
     actions: GalleryActions,
 ) {
-    when {
-        !state.permissionGranted -> GalleryEmptyState(
-            title = "Your gallery stays on this device",
-            message = "Choose the photos and videos Foto Xplorr may index. Nothing is uploaded.",
-            actionLabel = "Choose media",
-            onAction = actions.onRequestPermission,
-        )
-        state.assets.isEmpty() && state.scanState is ScanState.Scanning -> GalleryEmptyState(
-            title = "Building your library",
-            message = "Scanning local photos and videos…",
-            progress = true,
-        )
-        state.assets.isEmpty() && state.scanState is ScanState.Error -> GalleryEmptyState(
-            title = "Could not scan media",
-            message = state.scanState.message,
-            actionLabel = "Try again",
-            onAction = actions.onRefresh,
-        )
-        state.assets.isEmpty() -> GalleryEmptyState(
-            title = "No media found",
-            message = "Foto Xplorr could not find any permitted photos or videos.",
-            actionLabel = "Scan again",
-            onAction = actions.onRefresh,
-        )
-        else -> GalleryBrowser(state, actions)
+    val context = LocalContext.current
+    val geoRepository = remember(context) { GeoMetadataRepository(context.applicationContext) }
+    val geoState by geoRepository.observe().collectAsStateWithLifecycle()
+    val spatialScope = rememberCoroutineScope()
+    val spatialAssets = remember(state.assets) { state.assets.filterNot { it.isTrashed } }
+
+    CompositionLocalProvider(
+        LocalSpatialExperience provides SpatialExperience(
+            assets = spatialAssets,
+            geoState = geoState,
+            onIndexLocations = {
+                spatialScope.launch { geoRepository.indexMissing(spatialAssets) }
+            },
+            onOpenAsset = actions.onOpenAsset,
+        ),
+    ) {
+        when {
+            !state.permissionGranted -> GalleryEmptyState(
+                title = "Your gallery stays on this device",
+                message = "Choose the photos and videos Foto Xplorr may index. Nothing is uploaded.",
+                actionLabel = "Choose media",
+                onAction = actions.onRequestPermission,
+            )
+            state.assets.isEmpty() && state.scanState is ScanState.Scanning -> GalleryEmptyState(
+                title = "Building your library",
+                message = "Scanning local photos and videos…",
+                progress = true,
+            )
+            state.assets.isEmpty() && state.scanState is ScanState.Error -> GalleryEmptyState(
+                title = "Could not scan media",
+                message = state.scanState.message,
+                actionLabel = "Try again",
+                onAction = actions.onRefresh,
+            )
+            state.assets.isEmpty() -> GalleryEmptyState(
+                title = "No media found",
+                message = "Foto Xplorr could not find any permitted photos or videos.",
+                actionLabel = "Scan again",
+                onAction = actions.onRefresh,
+            )
+            else -> GalleryBrowser(state, actions)
+        }
     }
 }
 
