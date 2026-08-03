@@ -105,7 +105,6 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
         privateFolderStore.lockAll()
         selectedAssetId = null
         viewerAssets = emptyList()
-        pendingTrashAssetId = null
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
