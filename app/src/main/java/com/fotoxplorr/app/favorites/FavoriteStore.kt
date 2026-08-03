@@ -16,9 +16,22 @@ class FavoriteStore(context: Context) {
         val updated = state.value.toMutableSet().apply {
             if (!add(id)) remove(id)
         }
-        state.value = updated
+        persist(updated)
+    }
+
+    fun setFavorite(ids: Set<MediaId>, favorite: Boolean) {
+        if (ids.isEmpty()) return
+        val updated = state.value.toMutableSet().apply {
+            if (favorite) addAll(ids) else removeAll(ids)
+        }
+        persist(updated)
+    }
+
+    private fun persist(ids: Set<MediaId>) {
+        val immutable = ids.toSet()
+        state.value = immutable
         preferences.edit()
-            .putStringSet(KEY_FAVORITES, FavoriteIdCodec.encode(updated))
+            .putStringSet(KEY_FAVORITES, FavoriteIdCodec.encode(immutable))
             .apply()
     }
 
