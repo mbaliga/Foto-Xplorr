@@ -43,6 +43,27 @@ android {
     }
 }
 
+// One or more dependencies below (candidates: mediapipe tasks-vision, coil3, or the
+// maplibre SDK) transitively pull org.jetbrains.kotlin:kotlin-stdlib:2.4.0, and Gradle's
+// default highest-version-wins resolution picks that over the 2.1.0 this build's Kotlin
+// compiler plugin (matched to hyle-design-system's pin, D-Q) can read -- the compiler
+// then fails with "Module was compiled with an incompatible version of Kotlin. The
+// binary version of its metadata is 2.4.0, expected version is 2.1.0." Force every
+// kotlin-stdlib variant back to the compiler's own version until this app deliberately
+// upgrades its whole Kotlin toolchain (this is the same failure mode and fix an earlier
+// pre-implementation review documented for this app's Fyl-Manager sibling, though that
+// repo has not actually hit it -- its dependency set doesn't happen to pull a newer stdlib).
+configurations.all {
+    resolutionStrategy {
+        force(
+            "org.jetbrains.kotlin:kotlin-stdlib:2.1.0",
+            "org.jetbrains.kotlin:kotlin-stdlib-common:2.1.0",
+            "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.1.0",
+            "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.1.0",
+        )
+    }
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.05.01")
     implementation(composeBom)
