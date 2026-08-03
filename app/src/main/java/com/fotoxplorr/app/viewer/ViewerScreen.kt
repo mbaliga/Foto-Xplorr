@@ -1,11 +1,5 @@
 package com.fotoxplorr.app.viewer
 
-import android.content.ContentResolver
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.os.Build
-import android.util.Size
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -21,24 +15,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.media.MediaAsset
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.fotoxplorr.app.media.MediaImage
 import java.text.DateFormat
 import java.util.Date
 import kotlin.math.roundToInt
@@ -61,11 +51,6 @@ fun ViewerScreen(
     onNext: () -> Unit,
     onClose: () -> Unit,
 ) {
-    val resolver = LocalContext.current.contentResolver
-    val bitmap by produceState<Bitmap?>(initialValue = null, asset.contentUri) {
-        value = loadViewerBitmap(resolver, asset)
-    }
-
     var controlsVisible by remember(asset.id) { mutableStateOf(false) }
     var metadataVisible by remember(asset.id) { mutableStateOf(false) }
     var scale by remember(asset.id) { mutableFloatStateOf(1f) }
@@ -120,29 +105,24 @@ fun ViewerScreen(
                             scale = 2.5f
                         }
                     },
-                    onLongPress = { onClose() },
+                    onLongPress = onClose,
                 )
             }
             .transformable(transformState),
         contentAlignment = Alignment.Center,
     ) {
-        if (bitmap == null) {
-            Text(asset.displayName, color = Color.White, modifier = Modifier.padding(24.dp))
-        } else {
-            Image(
-                bitmap = bitmap!!.asImageBitmap(),
-                contentDescription = asset.displayName,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offsetX + if (scale == 1f) dragDistance else 0f
-                        translationY = offsetY
-                    },
-                contentScale = ContentScale.Fit,
-            )
-        }
+        MediaImage(
+            asset = asset,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offsetX + if (scale == 1f) dragDistance else 0f
+                    translationY = offsetY
+                },
+            contentScale = ContentScale.Fit,
+        )
 
         if (controlsVisible) {
             ViewerControls(
@@ -240,17 +220,6 @@ private fun MetadataRow(label: String, value: String) {
         Text(value, color = Color.White, modifier = Modifier.weight(0.7f))
     }
 }
-
-private suspend fun loadViewerBitmap(resolver: ContentResolver, asset: MediaAsset): Bitmap? =
-    withContext(Dispatchers.IO) {
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                resolver.loadThumbnail(asset.contentUri, Size(2048, 2048), null)
-            } else {
-                resolver.openInputStream(asset.contentUri)?.use(BitmapFactory::decodeStream)
-            }
-        }.getOrNull()
-    }
 
 private fun formatDate(epochMillis: Long): String {
     if (epochMillis <= 0L) return "Unknown"
