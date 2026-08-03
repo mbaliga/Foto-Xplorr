@@ -76,20 +76,23 @@ fun GalleryScreen(
 ) {
     when {
         !state.permissionGranted -> PermissionScreen(onRequestPermission)
-        state.assets.isEmpty() && state.scanState is ScanState.Scanning -> LoadingScreen(state.scanState)
-        state.assets.isEmpty() && state.scanState is ScanState.Error -> ErrorScreen(state.scanState.message, onRefresh)
-        state.assets.isEmpty() && state.scanState is ScanState.Complete -> EmptyScreen(onRefresh)
+        state.assets.isEmpty() && state.scanState is ScanState.Scanning ->
+            LoadingScreen(state.scanState)
+        state.assets.isEmpty() && state.scanState is ScanState.Error ->
+            ErrorScreen(state.scanState.message, onRefresh)
+        state.assets.isEmpty() && state.scanState is ScanState.Complete ->
+            EmptyScreen(onRefresh)
         else -> GalleryBrowser(
-            state,
-            onRefresh,
-            onSetSort,
-            onSetGridColumns,
-            onSetBlurSensitive,
-            onProtectFolder,
-            onUnlockFolder,
-            onLockFolder,
-            onRemoveFolderProtection,
-            onOpenAsset,
+            state = state,
+            onRefresh = onRefresh,
+            onSetSort = onSetSort,
+            onSetGridColumns = onSetGridColumns,
+            onSetBlurSensitive = onSetBlurSensitive,
+            onProtectFolder = onProtectFolder,
+            onUnlockFolder = onUnlockFolder,
+            onLockFolder = onLockFolder,
+            onRemoveFolderProtection = onRemoveFolderProtection,
+            onOpenAsset = onOpenAsset,
         )
     }
 }
@@ -147,6 +150,8 @@ private fun GalleryBrowser(
         selectedAlbum = selectedAlbum,
         query = query,
         sort = state.preferences.sort,
+        lockedFolders = state.lockedFolders,
+        unlockedFolders = state.unlockedFolders,
     )
     val albums = buildAlbumSummaries(state.assets, query)
     val activeAlbum = selectedAlbum
@@ -154,63 +159,54 @@ private fun GalleryBrowser(
     val activeAlbumUnlocked = activeAlbum != null && activeAlbum in state.unlockedFolders
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column {
-                Text(activeAlbum ?: "Foto Xplorr", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    when {
-                        activeAlbum != null -> "${visible.size} photos"
-                        section == GallerySection.ALBUMS -> "${albums.size} albums"
-                        section == GallerySection.FAVORITES -> "${visible.size} favourites"
-                        else -> "${visible.size} photos"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Text(
-                text = if (activeAlbum != null) "Back" else "Refresh",
-                modifier = Modifier.clickable {
-                    if (activeAlbum != null) selectedAlbum = null else onRefresh()
-                },
-                style = MaterialTheme.typography.labelLarge,
-            )
-        }
+        Header(
+            title = activeAlbum ?: "Foto Xplorr",
+            subtitle = when {
+                activeAlbumProtected && !activeAlbumUnlocked -> "Private folder"
+                activeAlbum != null -> "${visible.size} photos"
+                section == GallerySection.ALBUMS -> "${albums.size} albums"
+                section == GallerySection.FAVORITES -> "${visible.size} favourites"
+                else -> "${visible.size} photos"
+            },
+            action = if (activeAlbum != null) "Back" else "Refresh",
+            onAction = {
+                if (activeAlbum != null) selectedAlbum = null else onRefresh()
+            },
+        )
 
         if (activeAlbum != null) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                when {
-                    !activeAlbumProtected -> Button(onClick = {
-                        passwordFolder = activeAlbum
-                        passwordAction = PasswordAction.PROTECT
-                    }) { Text("Make private") }
-                    activeAlbumUnlocked -> {
-                        Button(onClick = { onLockFolder(activeAlbum) }) { Text("Lock now") }
-                        Button(onClick = {
-                            passwordFolder = activeAlbum
-                            passwordAction = PasswordAction.REMOVE
-                        }) { Text("Remove lock") }
-                    }
-                }
-            }
+            FolderPrivacyActions(
+                protected = activeAlbumProtected,
+                unlocked = activeAlbumUnlocked,
+                onProtect = {
+                    passwordFolder = activeAlbum
+                    passwordAction = PasswordAction.PROTECT
+                },
+                onLock = {
+                    onLockFolder(activeAlbum)
+                    selectedAlbum = null
+                },
+                onRemove = {
+                    passwordFolder = activeAlbum
+                    passwordAction = PasswordAction.REMOVE
+                },
+            )
         }
 
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
             singleLine = true,
             label = { Text("Search photos and albums") },
         )
 
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             GallerySection.entries.forEach { candidate ->
@@ -226,39 +222,12 @@ private fun GalleryBrowser(
         }
 
         if (section != GallerySection.ALBUMS || activeAlbum != null) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                GallerySort.entries.forEach { sort ->
-                    FilterChip(
-                        selected = state.preferences.sort == sort,
-                        onClick = { onSetSort(sort) },
-                        label = { Text(sort.label()) },
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Blur sensitive")
-                Switch(
-                    checked = state.preferences.blurSensitive,
-                    onCheckedChange = onSetBlurSensitive,
-                )
-                Text("Grid ${state.preferences.gridColumns}")
-                Button(
-                    enabled = state.preferences.gridColumns > MIN_GRID_COLUMNS,
-                    onClick = { onSetGridColumns(state.preferences.gridColumns - 1) },
-                ) { Text("Larger") }
-                Button(
-                    enabled = state.preferences.gridColumns < MAX_GRID_COLUMNS,
-                    onClick = { onSetGridColumns(state.preferences.gridColumns + 1) },
-                ) { Text("Smaller") }
-            }
+            GalleryControls(
+                preferences = state.preferences,
+                onSetSort = onSetSort,
+                onSetGridColumns = onSetGridColumns,
+                onSetBlurSensitive = onSetBlurSensitive,
+            )
         }
 
         when {
@@ -269,6 +238,7 @@ private fun GalleryBrowser(
                     passwordAction = PasswordAction.UNLOCK
                 }) { Text("Unlock") }
             }
+
             section == GallerySection.ALBUMS && activeAlbum == null -> AlbumGrid(
                 albums = albums,
                 lockedFolders = state.lockedFolders,
@@ -276,7 +246,9 @@ private fun GalleryBrowser(
                 sensitiveIds = state.sensitiveIds,
                 blurSensitive = state.preferences.blurSensitive,
                 onOpenAlbum = { album ->
-                    if (album.name in state.lockedFolders && album.name !in state.unlockedFolders) {
+                    if (album.name in state.lockedFolders &&
+                        album.name !in state.unlockedFolders
+                    ) {
                         passwordFolder = album.name
                         passwordAction = PasswordAction.UNLOCK
                     } else {
@@ -284,6 +256,7 @@ private fun GalleryBrowser(
                     }
                 },
             )
+
             visible.isEmpty() -> CenteredColumn {
                 Text(
                     when {
@@ -293,6 +266,7 @@ private fun GalleryBrowser(
                     },
                 )
             }
+
             else -> AssetGrid(
                 assets = visible,
                 columns = state.preferences.gridColumns,
@@ -347,6 +321,102 @@ private fun GalleryBrowser(
 }
 
 @Composable
+private fun Header(
+    title: String,
+    subtitle: String,
+    action: String,
+    onAction: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column {
+            Text(title, style = MaterialTheme.typography.titleLarge)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall)
+        }
+        Text(
+            text = action,
+            modifier = Modifier.clickable(onClick = onAction),
+            style = MaterialTheme.typography.labelLarge,
+        )
+    }
+}
+
+@Composable
+private fun FolderPrivacyActions(
+    protected: Boolean,
+    unlocked: Boolean,
+    onProtect: () -> Unit,
+    onLock: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        when {
+            !protected -> Button(onClick = onProtect) { Text("Make private") }
+            unlocked -> {
+                Button(onClick = onLock) { Text("Lock now") }
+                Button(onClick = onRemove) { Text("Remove lock") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GalleryControls(
+    preferences: GalleryPreferencesState,
+    onSetSort: (GallerySort) -> Unit,
+    onSetGridColumns: (Int) -> Unit,
+    onSetBlurSensitive: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        GallerySort.entries.forEach { sort ->
+            FilterChip(
+                selected = preferences.sort == sort,
+                onClick = { onSetSort(sort) },
+                label = { Text(sort.label()) },
+            )
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Blur sensitive")
+        Switch(
+            checked = preferences.blurSensitive,
+            onCheckedChange = onSetBlurSensitive,
+        )
+        Text("Grid ${preferences.gridColumns}")
+        Button(
+            enabled = preferences.gridColumns > MIN_GRID_COLUMNS,
+            onClick = { onSetGridColumns(preferences.gridColumns - 1) },
+        ) { Text("Larger") }
+        Button(
+            enabled = preferences.gridColumns < MAX_GRID_COLUMNS,
+            onClick = { onSetGridColumns(preferences.gridColumns + 1) },
+        ) { Text("Smaller") }
+    }
+}
+
+@Composable
 private fun PasswordDialog(
     title: String,
     confirmLabel: String,
@@ -371,13 +441,18 @@ private fun PasswordDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                val chars = password.toCharArray()
-                password = ""
-                onConfirm(chars)
-            }) { Text(confirmLabel) }
+            TextButton(
+                enabled = password.isNotEmpty(),
+                onClick = {
+                    val chars = password.toCharArray()
+                    password = ""
+                    onConfirm(chars)
+                },
+            ) { Text(confirmLabel) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
     )
 }
 
@@ -397,24 +472,33 @@ private fun AlbumGrid(
         items(albums, key = { it.name }) { album ->
             val locked = album.name in lockedFolders && album.name !in unlockedFolders
             Column(
-                modifier = Modifier.clickable { onOpenAlbum(album) }.padding(6.dp),
+                modifier = Modifier
+                    .clickable { onOpenAlbum(album) }
+                    .padding(6.dp),
             ) {
                 if (locked) {
                     Box(
-                        modifier = Modifier.aspectRatio(1f)
+                        modifier = Modifier
+                            .aspectRatio(1f)
                             .fillMaxWidth()
                             .background(MaterialTheme.colorScheme.surfaceVariant),
                         contentAlignment = Alignment.Center,
-                    ) { Text("🔒 Private") }
+                    ) {
+                        Text("Private")
+                    }
                 } else {
                     Thumbnail(
                         asset = album.cover,
                         blur = blurSensitive && album.cover.id in sensitiveIds,
                     ) { onOpenAlbum(album) }
                 }
-                Text(album.name, modifier = Modifier.padding(top = 8.dp), maxLines = 1)
                 Text(
-                    if (locked) "Locked" else "${album.count} photos",
+                    text = album.name,
+                    modifier = Modifier.padding(top = 8.dp),
+                    maxLines = 1,
+                )
+                Text(
+                    text = if (locked) "Locked" else "${album.count} photos",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -430,7 +514,10 @@ private fun AssetGrid(
     blurSensitive: Boolean,
     onOpenAsset: (MediaAsset) -> Unit,
 ) {
-    LazyVerticalGrid(columns = GridCells.Fixed(columns), modifier = Modifier.fillMaxSize()) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(columns),
+        modifier = Modifier.fillMaxSize(),
+    ) {
         items(assets, key = { it.id.value }) { asset ->
             Thumbnail(
                 asset = asset,
@@ -441,14 +528,19 @@ private fun AssetGrid(
 }
 
 @Composable
-private fun Thumbnail(asset: MediaAsset, blur: Boolean = false, onClick: () -> Unit) {
+private fun Thumbnail(
+    asset: MediaAsset,
+    blur: Boolean = false,
+    onClick: () -> Unit,
+) {
     val resolver = LocalContext.current.contentResolver
     val bitmap by produceState<Bitmap?>(initialValue = null, asset.contentUri, asset.id) {
         value = loadThumbnail(resolver, asset)
     }
 
     Box(
-        modifier = Modifier.aspectRatio(1f)
+        modifier = Modifier
+            .aspectRatio(1f)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -459,13 +551,16 @@ private fun Thumbnail(asset: MediaAsset, blur: Boolean = false, onClick: () -> U
             Image(
                 bitmap = bitmap!!.asImageBitmap(),
                 contentDescription = asset.displayName,
-                modifier = Modifier.fillMaxSize().then(if (blur) Modifier.blur(24.dp) else Modifier),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(if (blur) Modifier.blur(24.dp) else Modifier),
                 contentScale = ContentScale.Crop,
             )
             if (blur) {
                 Text(
-                    "Sensitive",
-                    modifier = Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f))
+                    text = "Sensitive",
+                    modifier = Modifier
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f))
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                 )
             }
@@ -507,8 +602,12 @@ private suspend fun loadThumbnail(
 @Composable
 private fun CenteredColumn(content: @Composable () -> Unit) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
-    ) { content() }
+    ) {
+        content()
+    }
 }
