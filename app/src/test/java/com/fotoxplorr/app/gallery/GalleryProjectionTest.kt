@@ -1,6 +1,5 @@
 package com.fotoxplorr.app.gallery
 
-import android.net.Uri
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import org.junit.Assert.assertEquals
@@ -147,7 +146,7 @@ class GalleryProjectionTest {
         size: Long,
     ) = MediaAsset(
         id = MediaId(id),
-        contentUri = Uri.EMPTY,
+        contentUriString = "content://media/$id",
         displayName = name,
         mimeType = mimeType,
         bucketName = album,
