@@ -11,11 +11,22 @@ data class FolderIdentity(
 )
 
 fun folderIdentity(asset: MediaAsset): FolderIdentity = folderIdentity(
+    bucketId = asset.bucketId,
     bucketName = asset.bucketName,
     relativePath = asset.relativePath,
 )
 
 fun folderIdentity(
+    bucketName: String?,
+    relativePath: String?,
+): FolderIdentity = folderIdentity(
+    bucketId = null,
+    bucketName = bucketName,
+    relativePath = relativePath,
+)
+
+fun folderIdentity(
+    bucketId: Long?,
     bucketName: String?,
     relativePath: String?,
 ): FolderIdentity {
@@ -34,8 +45,9 @@ fun folderIdentity(
         ?: "Other"
 
     val key = when {
+        bucketId != null -> "bucket-id:$bucketId"
         normalizedPath.isNotEmpty() -> "path:${normalizedPath.lowercase()}"
-        bucketName?.isNotBlank() == true -> "bucket:${bucketName.trim().lowercase()}"
+        bucketName?.isNotBlank() == true -> "bucket-name:${bucketName.trim().lowercase()}"
         else -> "other"
     }
 
