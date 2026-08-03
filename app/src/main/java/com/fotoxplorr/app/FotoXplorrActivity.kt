@@ -26,6 +26,7 @@ import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.gallery.GalleryScreen
 import com.fotoxplorr.app.gallery.GalleryUiState
 import com.fotoxplorr.app.media.AndroidMediaStoreScanner
+import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaIndexer
 import com.fotoxplorr.app.media.ScanEvent
@@ -65,6 +66,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     var scanState by remember { mutableStateOf<ScanState>(ScanState.Idle) }
     var scanGeneration by remember { mutableStateOf(0) }
     var selectedAssetId by remember { mutableStateOf<MediaId?>(null) }
+    var viewerAssets by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
@@ -88,33 +90,40 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     }
 
     val selectedIndex = selectedAssetId?.let { id ->
-        assets.indexOfFirst { it.id == id }
+        viewerAssets.indexOfFirst { it.id == id }
     } ?: -1
-    val activeAsset = assets.getOrNull(selectedIndex)
+    val activeAsset = viewerAssets.getOrNull(selectedIndex)
 
     if (activeAsset != null) {
-        BackHandler { selectedAssetId = null }
+        BackHandler {
+            selectedAssetId = null
+            viewerAssets = emptyList()
+        }
         ViewerScreen(
             asset = activeAsset,
             position = selectedIndex + 1,
-            total = assets.size,
+            total = viewerAssets.size,
             isFavorite = activeAsset.id in favoriteIds,
             hasPrevious = selectedIndex > 0,
-            hasNext = selectedIndex < assets.lastIndex,
+            hasNext = selectedIndex < viewerAssets.lastIndex,
             onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
             onPrevious = {
-                assets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id }
+                viewerAssets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id }
             },
             onNext = {
-                assets.getOrNull(selectedIndex + 1)?.let { selectedAssetId = it.id }
+                viewerAssets.getOrNull(selectedIndex + 1)?.let { selectedAssetId = it.id }
             },
-            onClose = { selectedAssetId = null },
+            onClose = {
+                selectedAssetId = null
+                viewerAssets = emptyList()
+            },
         )
     } else {
         selectedAssetId = null
         GalleryScreen(
             state = GalleryUiState(
                 assets = assets,
+                favoriteIds = favoriteIds,
                 permissionGranted = permissionGranted,
                 scanState = scanState,
             ),
@@ -122,7 +131,10 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
                 permissionLauncher.launch(requiredMediaPermissions())
             },
             onRefresh = { scanGeneration += 1 },
-            onOpenAsset = { selectedAssetId = it.id },
+            onOpenAsset = { asset, collection ->
+                viewerAssets = collection
+                selectedAssetId = asset.id
+            },
         )
     }
 }
