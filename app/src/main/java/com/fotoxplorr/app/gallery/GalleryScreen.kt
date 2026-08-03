@@ -18,6 +18,7 @@ import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Edit
@@ -61,6 +62,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.ScanState
+import com.fotoxplorr.app.hyle.PullToBackupHost
+import com.fotoxplorr.app.hyle.ScanActivityAlertBanner
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.organize.LibraryState
@@ -93,6 +96,7 @@ data class GalleryActions(
     val onSetThemeMode: (ThemeMode) -> Unit,
     val onSetAccentPalette: (AccentPalette) -> Unit,
     val onSetSlideshowInterval: (Int) -> Unit,
+    val onSetDefaultDestination: (GalleryDestination) -> Unit,
     val onProtectFolder: suspend (String, CharArray) -> Result<Unit>,
     val onUnlockFolder: suspend (String, CharArray) -> Boolean,
     val onLockFolder: (String) -> Unit,
@@ -192,7 +196,8 @@ private fun GalleryBrowser(
     state: GalleryUiState,
     actions: GalleryActions,
 ) {
-    var destination by remember { mutableStateOf(GalleryDestination.TIMELINE) }
+    // "Default View" setting (Settings screen): which destination opens on launch.
+    var destination by remember { mutableStateOf(state.preferences.defaultDestination) }
     var route by remember { mutableStateOf<BrowserRoute>(BrowserRoute.Root) }
     var query by remember { mutableStateOf("") }
     var searchVisible by remember { mutableStateOf(false) }
@@ -201,7 +206,18 @@ private fun GalleryBrowser(
     var selectionMenuVisible by remember { mutableStateOf(false) }
     var settingsVisible by remember { mutableStateOf(false) }
     var createCollectionVisible by remember { mutableStateOf(false) }
+    var browsingDestinations by remember { mutableStateOf(false) }
     var renameCollection by remember { mutableStateOf<BrowserRoute.Collection?>(null) }
+
+    if (browsingDestinations) {
+        BackHandler { browsingDestinations = false }
+        DestinationBrowserScreen(
+            state = state,
+            actions = actions,
+            onClose = { browsingDestinations = false },
+        )
+        return
+    }
     var renameAsset by remember { mutableStateOf<MediaAsset?>(null) }
     var addToCollectionIds by remember { mutableStateOf<Set<MediaId>?>(null) }
     var addTagIds by remember { mutableStateOf<Set<MediaId>?>(null) }
@@ -538,6 +554,14 @@ private fun GalleryBrowser(
                                 )
                             }
                             DropdownMenuItem(
+                                text = { Text("Destinations (new navigation)") },
+                                leadingIcon = { Icon(Icons.Outlined.Dashboard, null) },
+                                onClick = {
+                                    topMenuVisible = false
+                                    browsingDestinations = true
+                                },
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Settings") },
                                 leadingIcon = { Icon(Icons.Outlined.Settings, null) },
                                 onClick = {
@@ -570,6 +594,9 @@ private fun GalleryBrowser(
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            if (!selection.isActive) {
+                ScanActivityAlertBanner(scanState = state.scanState)
+            }
             if (searchVisible) {
                 OutlinedTextField(
                     value = query,
@@ -592,17 +619,32 @@ private fun GalleryBrowser(
 
             when (val current = route) {
                 BrowserRoute.Root -> when (destination) {
-                    GalleryDestination.TIMELINE -> TimelineScreen(
-                        assets = timelineAssets,
-                        grouping = state.preferences.timelineGrouping,
-                        columns = state.preferences.gridColumns,
-                        favoriteIds = state.favoriteIds,
-                        sensitiveIds = state.sensitiveIds,
-                        blurSensitive = state.preferences.blurSensitive,
-                        selectedIds = selection.selectedIds,
-                        onOpen = { asset -> actions.onOpenAsset(asset, timelineAssets) },
-                        onToggleSelection = { id -> selection = selection.toggle(id) },
-                    )
+                    GalleryDestination.TIMELINE -> PullToBackupHost(
+                        onBackupTriggered = {
+                            // Foto Xplorr has no cloud-backup subsystem; the local metadata
+                            // export (Library screen's Export, above) is the one real backup
+                            // action that exists, so that's what this gesture fires. The
+                            // active/spinning phase is a fixed acknowledgment that the OS
+                            // document picker was launched, NOT a signal that a file has
+                            // actually been written yet -- that completion happens later,
+                            // asynchronously, once the user picks a destination, and there is
+                            // no synchronous hook back into this gesture for it.
+                            actions.onExportMetadata()
+                            kotlinx.coroutines.delay(900)
+                        },
+                    ) {
+                        TimelineScreen(
+                            assets = timelineAssets,
+                            grouping = state.preferences.timelineGrouping,
+                            columns = state.preferences.gridColumns,
+                            favoriteIds = state.favoriteIds,
+                            sensitiveIds = state.sensitiveIds,
+                            blurSensitive = state.preferences.blurSensitive,
+                            selectedIds = selection.selectedIds,
+                            onOpen = { asset -> actions.onOpenAsset(asset, timelineAssets) },
+                            onToggleSelection = { id -> selection = selection.toggle(id) },
+                        )
+                    }
                     GalleryDestination.ALBUMS -> AlbumsScreen(
                         assets = state.assets,
                         collections = state.library.collections,
@@ -795,7 +837,7 @@ private fun GalleryNavigationBar(
     }
 }
 
-private fun GalleryDestination.label(): String = when (this) {
+internal fun GalleryDestination.label(): String = when (this) {
     GalleryDestination.TIMELINE -> "Photos"
     GalleryDestination.ALBUMS -> "Albums"
     GalleryDestination.DISCOVER -> "Discover"

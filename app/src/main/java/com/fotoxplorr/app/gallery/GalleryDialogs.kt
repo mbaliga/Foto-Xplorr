@@ -282,6 +282,19 @@ fun GallerySettingsDialog(
                     }
                 }
                 item {
+                    SettingsSection("Default View") {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(GalleryDestination.entries, key = { it.name }) { candidate ->
+                                FilterChip(
+                                    selected = preferences.defaultDestination == candidate,
+                                    onClick = { actions.onSetDefaultDestination(candidate) },
+                                    label = { Text(candidate.label()) },
+                                )
+                            }
+                        }
+                    }
+                }
+                item {
                     SettingsSection("Slideshow interval") {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,

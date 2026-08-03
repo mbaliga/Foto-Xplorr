@@ -42,6 +42,8 @@ data class GalleryPreferencesState(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val accentPalette: AccentPalette = AccentPalette.VIOLET,
     val slideshowIntervalSeconds: Int = DEFAULT_SLIDESHOW_INTERVAL_SECONDS,
+    /** Settings screen's "Default View": which destination/grid opens when the app launches. */
+    val defaultDestination: GalleryDestination = GalleryDestination.TIMELINE,
 )
 
 class GalleryPreferences(context: Context) {
@@ -85,6 +87,10 @@ class GalleryPreferences(context: Context) {
         state.value.copy(accentPalette = palette),
     ) { putString(KEY_ACCENT_PALETTE, palette.name) }
 
+    fun setDefaultDestination(destination: GalleryDestination) = update(
+        state.value.copy(defaultDestination = destination),
+    ) { putString(KEY_DEFAULT_DESTINATION, destination.name) }
+
     fun setSlideshowInterval(seconds: Int) {
         val safeSeconds = seconds.coerceIn(MIN_SLIDESHOW_INTERVAL_SECONDS, MAX_SLIDESHOW_INTERVAL_SECONDS)
         update(state.value.copy(slideshowIntervalSeconds = safeSeconds)) {
@@ -114,6 +120,7 @@ class GalleryPreferences(context: Context) {
         slideshowIntervalSeconds = preferences
             .getInt(KEY_SLIDESHOW_INTERVAL, DEFAULT_SLIDESHOW_INTERVAL_SECONDS)
             .coerceIn(MIN_SLIDESHOW_INTERVAL_SECONDS, MAX_SLIDESHOW_INTERVAL_SECONDS),
+        defaultDestination = enumValue(KEY_DEFAULT_DESTINATION, GalleryDestination.TIMELINE),
     )
 
     private inline fun <reified T : Enum<T>> enumValue(key: String, fallback: T): T =
@@ -132,6 +139,7 @@ class GalleryPreferences(context: Context) {
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_ACCENT_PALETTE = "accent_palette"
         const val KEY_SLIDESHOW_INTERVAL = "slideshow_interval"
+        const val KEY_DEFAULT_DESTINATION = "default_destination"
     }
 }
 

@@ -516,6 +516,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onSetThemeMode = galleryPreferences::setThemeMode,
                 onSetAccentPalette = galleryPreferences::setAccentPalette,
                 onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
+                onSetDefaultDestination = galleryPreferences::setDefaultDestination,
                 onProtectFolder = privateFolderStore::protect,
                 onUnlockFolder = privateFolderStore::unlock,
                 onLockFolder = privateFolderStore::lock,
