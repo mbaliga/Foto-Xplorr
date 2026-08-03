@@ -3,15 +3,15 @@
     xmlns:tools="http://schemas.android.com/tools">
     <!--
       dev.aarso:hyle declares minSdk=31 (see hyle-design-system/hyle/build.gradle.kts);
-      this app's own minSdk stays 26 (unchanged -- lowering device support was out of
+      this app's own minSdk stays 26 (unchanged: lowering device support was out of
       scope for this change). tools:overrideLibrary is the standard AGP manifest-merger
       escape hatch for "I know a dependency asks for a higher minSdk than the app
       declares, keep the app's own minSdk/targetSdk". This has NOT been verified against
-      an actual API-26..30 device/emulator in this environment (no Android SDK
-      available) -- it only suppresses the manifest-merger error. If :hyle's Compose
+      an actual API 26 to 30 device/emulator in this environment (no Android SDK
+      available): it only suppresses the manifest-merger error. If :hyle's Compose
       Modifiers/AGSL shaders (still unreleased per its own README) end up calling any
       API gated above 26, that would need to be caught by lint/testing on a real device
-      or emulator running API < 31, which this change could not do.
+      or emulator running API below 31, which this change could not do.
     -->
     <uses-sdk tools:overrideLibrary="dev.aarso.hyle" />
 
