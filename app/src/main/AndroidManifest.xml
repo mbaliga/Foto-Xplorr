@@ -12,6 +12,16 @@
         android:label="Foto Xplorr"
         android:supportsRtl="true"
         android:theme="@style/Theme.FotoXplorr">
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <activity
             android:name=".FotoXplorrActivity"
             android:exported="true">
