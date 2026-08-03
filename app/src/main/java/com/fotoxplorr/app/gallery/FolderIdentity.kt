@@ -45,8 +45,8 @@ fun folderIdentity(
         ?: "Other"
 
     val key = when {
-        bucketId != null -> "bucket-id:$bucketId"
         normalizedPath.isNotEmpty() -> "path:${normalizedPath.lowercase()}"
+        bucketId != null -> "bucket-id:$bucketId"
         bucketName?.isNotBlank() == true -> "bucket-name:${bucketName.trim().lowercase()}"
         else -> "other"
     }
