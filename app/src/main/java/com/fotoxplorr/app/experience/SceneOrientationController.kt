@@ -5,16 +5,31 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.view.Surface
+import android.view.WindowManager
 import kotlin.math.PI
+
+enum class SceneOrientationMode {
+    RELATIVE,
+    ABSOLUTE_NORTH,
+}
 
 class SceneOrientationController(
     context: Context,
+    private val mode: SceneOrientationMode = SceneOrientationMode.RELATIVE,
     private val onOrientation: (yawDegrees: Float, pitchDegrees: Float) -> Unit,
+    private val onAccuracy: (Int) -> Unit = {},
 ) : SensorEventListener {
-    private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    private val rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
-        ?: sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+    private val appContext = context.applicationContext
+    private val sensorManager = appContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    private val rotationSensor = when (mode) {
+        SceneOrientationMode.RELATIVE -> sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+            ?: sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        SceneOrientationMode.ABSOLUTE_NORTH -> sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+    }
+    private val windowManager = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val rotationMatrix = FloatArray(9)
+    private val remappedMatrix = FloatArray(9)
     private val orientation = FloatArray(3)
 
     @Volatile private var enabled = true
@@ -23,6 +38,9 @@ class SceneOrientationController(
     private var baselinePitch: Float? = null
     private var filteredYaw = 0f
     private var filteredPitch = 0f
+
+    val hasSensor: Boolean
+        get() = rotationSensor != null
 
     fun setEnabled(enabled: Boolean) {
         this.enabled = enabled
@@ -49,26 +67,70 @@ class SceneOrientationController(
     fun calibrate() {
         baselineYaw = null
         baselinePitch = null
+        filteredYaw = 0f
+        filteredPitch = 0f
     }
 
     override fun onSensorChanged(event: SensorEvent) {
         if (!enabled || event.sensor.type != rotationSensor?.type) return
         SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-        SensorManager.getOrientation(rotationMatrix, orientation)
-        val yaw = radiansToDegrees(orientation[0])
-        val pitch = radiansToDegrees(orientation[1])
-        val baseYaw = baselineYaw ?: yaw.also { baselineYaw = it }
-        val basePitch = baselinePitch ?: pitch.also { baselinePitch = it }
-        val relativeYaw = shortestAngle(yaw - baseYaw)
-        val relativePitch = (pitch - basePitch).coerceIn(-70f, 70f)
-        filteredYaw += shortestAngle(relativeYaw - filteredYaw) * FILTER_ALPHA
-        filteredPitch += (relativePitch - filteredPitch) * FILTER_ALPHA
+        val matrix = remapForDisplay(rotationMatrix)
+        SensorManager.getOrientation(matrix, orientation)
+        val rawYaw = normalizeDegrees(radiansToDegrees(orientation[0]))
+        val rawPitch = radiansToDegrees(orientation[1]).coerceIn(-85f, 85f)
+
+        val targetYaw = when (mode) {
+            SceneOrientationMode.RELATIVE -> {
+                val base = baselineYaw ?: rawYaw.also { baselineYaw = it }
+                shortestAngle(rawYaw - base)
+            }
+            SceneOrientationMode.ABSOLUTE_NORTH -> rawYaw
+        }
+        val targetPitch = when (mode) {
+            SceneOrientationMode.RELATIVE -> {
+                val base = baselinePitch ?: rawPitch.also { baselinePitch = it }
+                (rawPitch - base).coerceIn(-70f, 70f)
+            }
+            SceneOrientationMode.ABSOLUTE_NORTH -> rawPitch
+        }
+
+        filteredYaw = when (mode) {
+            SceneOrientationMode.RELATIVE -> filteredYaw + shortestAngle(targetYaw - filteredYaw) * FILTER_ALPHA
+            SceneOrientationMode.ABSOLUTE_NORTH -> normalizeDegrees(
+                filteredYaw + shortestAngle(targetYaw - filteredYaw) * FILTER_ALPHA,
+            )
+        }
+        filteredPitch += (targetPitch - filteredPitch) * FILTER_ALPHA
         onOrientation(filteredYaw, filteredPitch)
     }
 
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+        if (sensor?.type == rotationSensor?.type) onAccuracy(accuracy)
+    }
 
-    private fun radiansToDegrees(value: Float): Float = (value * 180f / PI.toFloat())
+    @Suppress("DEPRECATION")
+    private fun remapForDisplay(source: FloatArray): FloatArray {
+        val rotation = windowManager.defaultDisplay.rotation
+        val (axisX, axisY) = when (rotation) {
+            Surface.ROTATION_90 -> SensorManager.AXIS_Y to SensorManager.AXIS_MINUS_X
+            Surface.ROTATION_180 -> SensorManager.AXIS_MINUS_X to SensorManager.AXIS_MINUS_Y
+            Surface.ROTATION_270 -> SensorManager.AXIS_MINUS_Y to SensorManager.AXIS_X
+            else -> SensorManager.AXIS_X to SensorManager.AXIS_Y
+        }
+        return if (SensorManager.remapCoordinateSystem(source, axisX, axisY, remappedMatrix)) {
+            remappedMatrix
+        } else {
+            source
+        }
+    }
+
+    private fun radiansToDegrees(value: Float): Float = value * 180f / PI.toFloat()
+
+    private fun normalizeDegrees(value: Float): Float {
+        var angle = value % 360f
+        if (angle < 0f) angle += 360f
+        return angle
+    }
 
     private fun shortestAngle(value: Float): Float {
         var angle = value % 360f
