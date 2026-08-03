@@ -21,6 +21,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.gallery.GalleryPreferences
@@ -81,6 +83,12 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     var viewerAssets by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
     var selectedAssetId by remember { mutableStateOf<MediaId?>(null) }
 
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        privateFolderStore.lockAll()
+        selectedAssetId = null
+        viewerAssets = emptyList()
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
@@ -108,7 +116,10 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     val activeAsset = viewerAssets.getOrNull(selectedIndex)
 
     if (activeAsset != null) {
-        BackHandler { selectedAssetId = null }
+        BackHandler {
+            selectedAssetId = null
+            viewerAssets = emptyList()
+        }
         ViewerScreen(
             asset = activeAsset,
             position = selectedIndex + 1,
@@ -125,7 +136,10 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             onNext = {
                 viewerAssets.getOrNull(selectedIndex + 1)?.let { selectedAssetId = it.id }
             },
-            onClose = { selectedAssetId = null },
+            onClose = {
+                selectedAssetId = null
+                viewerAssets = emptyList()
+            },
         )
     } else {
         selectedAssetId = null
