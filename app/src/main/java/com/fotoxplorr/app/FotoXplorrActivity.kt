@@ -47,12 +47,9 @@ class FotoXplorrActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    FotoXplorrApp()
-                }
+                Surface(modifier = Modifier.fillMaxSize()) { FotoXplorrApp() }
             }
         }
     }
@@ -67,19 +64,14 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     val galleryPreferences = remember { GalleryPreferences(applicationContext) }
     val changeObserver = remember { MediaStoreChangeObserver(contentResolver) }
     val indexer = remember {
-        MediaIndexer(
-            scanner = AndroidMediaStoreScanner(contentResolver),
-            repository = repository,
-        )
+        MediaIndexer(AndroidMediaStoreScanner(contentResolver), repository)
     }
 
     val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val sensitiveIds by sensitiveStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
-    val lockedFolders by privateFolderStore.observeLockedFolders()
-        .collectAsStateWithLifecycle(initialValue = emptySet())
-    val unlockedFolders by privateFolderStore.observeUnlockedFolders()
-        .collectAsStateWithLifecycle(initialValue = emptySet())
+    val lockedFolders by privateFolderStore.observeLockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
+    val unlockedFolders by privateFolderStore.observeUnlockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
     val preferences by galleryPreferences.observe().collectAsStateWithLifecycle()
 
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
@@ -87,18 +79,29 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     var scanGeneration by remember { mutableStateOf(0) }
     var viewerAssets by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
     var selectedAssetId by remember { mutableStateOf<MediaId?>(null) }
-    var pendingTrashAssetId by remember { mutableStateOf<MediaId?>(null) }
+    var pendingTrashIds by remember { mutableStateOf<Set<MediaId>>(emptySet()) }
 
     val trashLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult(),
     ) { result ->
-        val trashedId = pendingTrashAssetId
-        pendingTrashAssetId = null
-        if (result.resultCode == Activity.RESULT_OK && trashedId != null) {
-            viewerAssets = viewerAssets.filterNot { it.id == trashedId }
-            selectedAssetId = null
+        val trashedIds = pendingTrashIds
+        pendingTrashIds = emptySet()
+        if (result.resultCode == Activity.RESULT_OK && trashedIds.isNotEmpty()) {
+            viewerAssets = viewerAssets.filterNot { it.id in trashedIds }
+            if (selectedAssetId in trashedIds) selectedAssetId = null
             scanGeneration += 1
         }
+    }
+
+    fun requestTrash(items: List<MediaAsset>) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || items.isEmpty()) return
+        pendingTrashIds = items.mapTo(linkedSetOf()) { it.id }
+        val request = MediaStore.createTrashRequest(
+            contentResolver,
+            items.map { it.contentUri },
+            true,
+        )
+        trashLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
@@ -115,18 +118,14 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     }
 
     LaunchedEffect(permissionGranted) {
-        if (!permissionGranted) return@LaunchedEffect
-        changeObserver.changes().collect {
-            scanGeneration += 1
-        }
+        if (permissionGranted) changeObserver.changes().collect { scanGeneration += 1 }
     }
 
     LaunchedEffect(permissionGranted, scanGeneration) {
         if (!permissionGranted) return@LaunchedEffect
-
         indexer.refresh().collect { event ->
             scanState = when (event) {
-                is ScanEvent.Started -> ScanState.Scanning(scanned = 0, discovered = 0)
+                is ScanEvent.Started -> ScanState.Scanning(0, 0)
                 is ScanEvent.Progress -> ScanState.Scanning(event.scanned, event.discovered)
                 is ScanEvent.AssetFound -> scanState
                 is ScanEvent.Completed -> ScanState.Complete(event.total)
@@ -135,9 +134,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
         }
     }
 
-    val selectedIndex = selectedAssetId?.let { id ->
-        viewerAssets.indexOfFirst { it.id == id }
-    } ?: -1
+    val selectedIndex = selectedAssetId?.let { id -> viewerAssets.indexOfFirst { it.id == id } } ?: -1
     val activeAsset = viewerAssets.getOrNull(selectedIndex)
 
     LaunchedEffect(selectedAssetId, activeAsset) {
@@ -148,10 +145,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     }
 
     if (activeAsset != null) {
-        BackHandler {
-            selectedAssetId = null
-            viewerAssets = emptyList()
-        }
+        BackHandler { selectedAssetId = null; viewerAssets = emptyList() }
         ViewerScreen(
             asset = activeAsset,
             position = selectedIndex + 1,
@@ -163,29 +157,10 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             canMoveToTrash = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
             onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
             onToggleSensitive = { sensitiveStore.toggle(activeAsset.id) },
-            onMoveToTrash = {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    pendingTrashAssetId = activeAsset.id
-                    val request = MediaStore.createTrashRequest(
-                        contentResolver,
-                        listOf(activeAsset.contentUri),
-                        true,
-                    )
-                    trashLauncher.launch(
-                        IntentSenderRequest.Builder(request.intentSender).build(),
-                    )
-                }
-            },
-            onPrevious = {
-                viewerAssets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id }
-            },
-            onNext = {
-                viewerAssets.getOrNull(selectedIndex + 1)?.let { selectedAssetId = it.id }
-            },
-            onClose = {
-                selectedAssetId = null
-                viewerAssets = emptyList()
-            },
+            onMoveToTrash = { requestTrash(listOf(activeAsset)) },
+            onPrevious = { viewerAssets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id } },
+            onNext = { viewerAssets.getOrNull(selectedIndex + 1)?.let { selectedAssetId = it.id } },
+            onClose = { selectedAssetId = null; viewerAssets = emptyList() },
         )
     } else {
         GalleryScreen(
@@ -199,42 +174,32 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
                 scanState = scanState,
                 preferences = preferences,
             ),
-            onRequestPermission = {
-                permissionLauncher.launch(requiredMediaPermissions())
-            },
+            onRequestPermission = { permissionLauncher.launch(requiredMediaPermissions()) },
             onRefresh = { scanGeneration += 1 },
             onSetSort = galleryPreferences::setSort,
             onSetGridColumns = galleryPreferences::setGridColumns,
             onSetBlurSensitive = galleryPreferences::setBlurSensitive,
-            onProtectFolder = { folderName, password ->
-                privateFolderStore.protect(folderName, password)
-            },
+            onProtectFolder = privateFolderStore::protect,
             onUnlockFolder = privateFolderStore::unlock,
             onLockFolder = privateFolderStore::lock,
             onRemoveFolderProtection = privateFolderStore::removeProtection,
-            onOpenAsset = { asset, visible ->
-                viewerAssets = visible
-                selectedAssetId = asset.id
-            },
+            onSetFavorite = favoriteStore::setFavorite,
+            onSetSensitive = sensitiveStore::setSensitive,
+            onMoveToTrash = ::requestTrash,
+            onOpenAsset = { asset, visible -> viewerAssets = visible; selectedAssetId = asset.id },
         )
     }
 }
 
 private fun FotoXplorrActivity.hasMediaPermission(): Boolean =
-    requiredMediaPermissions().any { permission ->
-        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
-    }
+    requiredMediaPermissions().any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
 
 private fun requiredMediaPermissions(): Array<String> = when {
     Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
         Manifest.permission.READ_MEDIA_IMAGES,
         Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
     )
-
-    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
-        Manifest.permission.READ_MEDIA_IMAGES,
-    )
-
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
     else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
 }
 
