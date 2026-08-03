@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.content.ContentUris
 import android.database.Cursor
 import android.os.Build
+import android.os.Bundle
 import android.provider.MediaStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -21,13 +22,7 @@ class AndroidMediaStoreScanner(
         emit(ScanEvent.Started(SOURCE_NAME))
 
         try {
-            resolver.query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                projection(),
-                null,
-                null,
-                "${MediaStore.Images.ImageColumns.DATE_TAKEN} DESC, ${MediaStore.MediaColumns.DATE_MODIFIED} DESC",
-            )?.use { cursor ->
+            queryMedia()?.use { cursor ->
                 val columns = CursorColumns(cursor)
                 val discovered = cursor.count
                 var scanned = 0
@@ -50,6 +45,30 @@ class AndroidMediaStoreScanner(
             emit(ScanEvent.Failed(error))
         }
     }.flowOn(Dispatchers.IO)
+
+    private fun queryMedia(): Cursor? {
+        val sortOrder = "${MediaStore.Images.ImageColumns.DATE_TAKEN} DESC, ${MediaStore.MediaColumns.DATE_MODIFIED} DESC"
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val args = Bundle().apply {
+                putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, sortOrder)
+                putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE)
+            }
+            resolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                projection(),
+                args,
+                null,
+            )
+        } else {
+            resolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                projection(),
+                null,
+                null,
+                sortOrder,
+            )
+        }
+    }
 
     private fun projection(): Array<String> = buildList {
         add(MediaStore.MediaColumns._ID)
