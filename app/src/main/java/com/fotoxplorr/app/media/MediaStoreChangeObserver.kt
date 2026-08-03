@@ -21,13 +21,11 @@ class MediaStoreChangeObserver(
         }
 
         resolver.registerContentObserver(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL),
             true,
             observer,
         )
 
-        awaitClose {
-            resolver.unregisterContentObserver(observer)
-        }
+        awaitClose { resolver.unregisterContentObserver(observer) }
     }.conflate()
 }
