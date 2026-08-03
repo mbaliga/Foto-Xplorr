@@ -26,7 +26,17 @@ jobs:
         with:
           gradle-version: "9.5.0"
       - name: Test and build debug APK
-        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug 2>&1 | tee build.log
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foto-xplorr-build-log
+          path: build.log
+          if-no-files-found: error
       - name: Upload unit test report
         if: always()
         uses: actions/upload-artifact@v4
