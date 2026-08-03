@@ -25,7 +25,7 @@ class MediaIndexerTest {
             .collect {}
 
         assertEquals(listOf(listOf(assets[0], assets[1]), listOf(assets[2])), repository.upserts)
-        assertEquals(listOf(assets), repository.replacement)
+        assertEquals(assets, repository.replacement)
     }
 
     @Test(expected = IllegalArgumentException::class)
