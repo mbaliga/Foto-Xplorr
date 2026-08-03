@@ -2,6 +2,8 @@ package com.fotoxplorr.app
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -108,6 +110,16 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
         mediaOperationLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
     }
 
+    fun share(asset: MediaAsset) {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = asset.mimeType.ifBlank { "image/*" }
+            putExtra(Intent.EXTRA_STREAM, asset.contentUri)
+            clipData = ClipData.newUri(contentResolver, asset.displayName, asset.contentUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(intent, "Share ${asset.displayName}"))
+    }
+
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
         privateFolderStore.lockAll()
         selectedAssetId = null
@@ -161,6 +173,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             canMoveToTrash = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
             onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
             onToggleSensitive = { sensitiveStore.toggle(activeAsset.id) },
+            onShare = { share(activeAsset) },
             onMoveToTrash = { requestMediaOperation(listOf(activeAsset), PendingMediaOperation.TRASH) },
             onPrevious = { viewerAssets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id } },
             onNext = { viewerAssets.getOrNull(selectedIndex + 1)?.let { selectedAssetId = it.id } },
