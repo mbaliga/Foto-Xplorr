@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.favorites.FavoriteStore
+import com.fotoxplorr.app.gallery.GalleryPreferences
 import com.fotoxplorr.app.gallery.GalleryScreen
 import com.fotoxplorr.app.gallery.GalleryUiState
 import com.fotoxplorr.app.media.AndroidMediaStoreScanner
@@ -53,20 +54,23 @@ class FotoXplorrActivity : ComponentActivity() {
 private fun FotoXplorrActivity.FotoXplorrApp() {
     val repository = remember { SqliteMediaRepository(applicationContext) }
     val favoriteStore = remember { FavoriteStore(applicationContext) }
+    val galleryPreferences = remember { GalleryPreferences(applicationContext) }
     val indexer = remember {
         MediaIndexer(
             scanner = AndroidMediaStoreScanner(contentResolver),
             repository = repository,
         )
     }
+
     val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
+    val preferences by galleryPreferences.observe().collectAsStateWithLifecycle()
 
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
     var scanState by remember { mutableStateOf<ScanState>(ScanState.Idle) }
     var scanGeneration by remember { mutableStateOf(0) }
-    var selectedAssetId by remember { mutableStateOf<MediaId?>(null) }
     var viewerAssets by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
+    var selectedAssetId by remember { mutableStateOf<MediaId?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
@@ -95,10 +99,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     val activeAsset = viewerAssets.getOrNull(selectedIndex)
 
     if (activeAsset != null) {
-        BackHandler {
-            selectedAssetId = null
-            viewerAssets = emptyList()
-        }
+        BackHandler { selectedAssetId = null }
         ViewerScreen(
             asset = activeAsset,
             position = selectedIndex + 1,
@@ -113,10 +114,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             onNext = {
                 viewerAssets.getOrNull(selectedIndex + 1)?.let { selectedAssetId = it.id }
             },
-            onClose = {
-                selectedAssetId = null
-                viewerAssets = emptyList()
-            },
+            onClose = { selectedAssetId = null },
         )
     } else {
         selectedAssetId = null
@@ -126,13 +124,16 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
                 favoriteIds = favoriteIds,
                 permissionGranted = permissionGranted,
                 scanState = scanState,
+                preferences = preferences,
             ),
             onRequestPermission = {
                 permissionLauncher.launch(requiredMediaPermissions())
             },
             onRefresh = { scanGeneration += 1 },
-            onOpenAsset = { asset, collection ->
-                viewerAssets = collection
+            onSetSort = galleryPreferences::setSort,
+            onSetGridColumns = galleryPreferences::setGridColumns,
+            onOpenAsset = { asset, visible ->
+                viewerAssets = visible
                 selectedAssetId = asset.id
             },
         )
