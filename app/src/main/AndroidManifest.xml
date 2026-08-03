@@ -37,6 +37,7 @@
         android:required="false" />
 
     <application
+        android:name=".FotoXplorrApplication"
         android:allowBackup="false"
         android:label="Foto Xplorr"
         android:supportsRtl="true"

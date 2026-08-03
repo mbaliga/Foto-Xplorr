@@ -2,7 +2,9 @@
 
 package com.fotoxplorr.app.viewer
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -26,10 +29,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
@@ -60,13 +69,32 @@ fun ViewerScreen(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onClose: () -> Unit,
+    /** For the image-detail screen's related-photos grid; empty is a safe fallback. */
+    relatedAssets: List<MediaAsset> = emptyList(),
+    onOpenRelated: (MediaAsset) -> Unit = {},
 ) {
     var controlsVisible by remember(asset.id) { mutableStateOf(true) }
     var metadataVisible by remember(asset.id) { mutableStateOf(false) }
+    var detailsVisible by remember(asset.id) { mutableStateOf(false) }
     var scale by remember(asset.id) { mutableFloatStateOf(1f) }
     var offsetX by remember(asset.id) { mutableFloatStateOf(0f) }
     var offsetY by remember(asset.id) { mutableFloatStateOf(0f) }
     var dragDistance by remember(asset.id) { mutableFloatStateOf(0f) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+
+    if (detailsVisible) {
+        BackHandler { detailsVisible = false }
+        ImageDetailScreen(
+            asset = asset,
+            relatedAssets = relatedAssets.filter { it.id != asset.id }.take(30),
+            onOpenRelated = { related ->
+                detailsVisible = false
+                onOpenRelated(related)
+            },
+            onClose = { detailsVisible = false },
+        )
+        return
+    }
 
     LaunchedEffect(asset.id, slideshowActive, slideshowIntervalSeconds, metadataVisible) {
         if (slideshowActive && total > 1 && !metadataVisible) {
@@ -93,6 +121,7 @@ fun ViewerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .onSizeChanged { containerSize = it }
             .pointerInput(asset.id, scale) {
                 detectHorizontalDragGestures(
                     onDragStart = { dragDistance = 0f },
@@ -170,6 +199,7 @@ fun ViewerScreen(
                 onPrevious = onPrevious,
                 onNext = onNext,
                 onToggleMetadata = { metadataVisible = !metadataVisible },
+                onOpenDetails = { detailsVisible = true },
                 onClose = onClose,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
@@ -178,6 +208,83 @@ fun ViewerScreen(
         if (metadataVisible) {
             MetadataPanel(asset = asset, modifier = Modifier.align(Alignment.BottomCenter))
         }
+
+        // Zoomed-image minimap: only meaningful once the user has actually zoomed in.
+        if (!asset.isVideo && scale > 1.05f) {
+            ZoomMinimap(
+                asset = asset,
+                scale = scale,
+                offsetX = offsetX,
+                offsetY = offsetY,
+                containerSize = containerSize,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(16.dp),
+            )
+        }
+    }
+}
+
+/**
+ * A small semi-transparent rectangle showing where the current pinch-zoomed viewport sits
+ * within the full image. The math assumes [MediaImage] is laid out to fill the container
+ * (ContentScale.Fit, centred) and that the pinch-zoom graphicsLayer scales/translates about
+ * that same centre -- true for how this screen drives `scale`/`offsetX`/`offsetY` above, but
+ * this has only been checked against that code, not against a running app (no device/emulator
+ * available in this environment).
+ */
+@Composable
+private fun ZoomMinimap(
+    asset: MediaAsset,
+    scale: Float,
+    offsetX: Float,
+    offsetY: Float,
+    containerSize: IntSize,
+    modifier: Modifier = Modifier,
+) {
+    val containerW = containerSize.width.toFloat()
+    val containerH = containerSize.height.toFloat()
+    if (containerW <= 0f || containerH <= 0f) return
+
+    val imageAspect = if (asset.width > 0 && asset.height > 0) {
+        asset.width.toFloat() / asset.height.toFloat()
+    } else {
+        1f
+    }
+    val containerAspect = containerW / containerH
+    val fittedWidth = if (imageAspect > containerAspect) containerW else containerH * imageAspect
+    val fittedHeight = if (imageAspect > containerAspect) containerW / imageAspect else containerH
+    val centerX = containerW / 2f
+    val centerY = containerH / 2f
+
+    val leftFraction = (0.5f + (0f - centerX - offsetX) / scale / fittedWidth).coerceIn(0f, 1f)
+    val rightFraction = (0.5f + (containerW - centerX - offsetX) / scale / fittedWidth).coerceIn(0f, 1f)
+    val topFraction = (0.5f + (0f - centerY - offsetY) / scale / fittedHeight).coerceIn(0f, 1f)
+    val bottomFraction = (0.5f + (containerH - centerY - offsetY) / scale / fittedHeight).coerceIn(0f, 1f)
+
+    Box(
+        modifier = modifier
+            .size(width = 72.dp, height = (72.dp / imageAspect.coerceIn(0.4f, 2.5f)))
+            .background(Color.Black.copy(alpha = 0.45f))
+            .border(1.dp, Color.White.copy(alpha = 0.55f)),
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .drawBehind {
+                    val strokeWidthPx = 1.5.dp.toPx()
+                    val left = (leftFraction * size.width).coerceAtMost(size.width - strokeWidthPx)
+                    val top = (topFraction * size.height).coerceAtMost(size.height - strokeWidthPx)
+                    val right = (rightFraction * size.width).coerceAtLeast(left + strokeWidthPx)
+                    val bottom = (bottomFraction * size.height).coerceAtLeast(top + strokeWidthPx)
+                    drawRect(
+                        color = Color.White,
+                        topLeft = Offset(left, top),
+                        size = Size(right - left, bottom - top),
+                        style = Stroke(width = strokeWidthPx),
+                    )
+                },
+        )
     }
 }
 
@@ -203,6 +310,7 @@ private fun ViewerControls(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onToggleMetadata: () -> Unit,
+    onOpenDetails: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -233,6 +341,7 @@ private fun ViewerControls(
             ViewerAction(if (slideshowActive) "Pause slideshow" else "Slideshow", onToggleSlideshow)
             ViewerAction("Next", onNext, hasNext || slideshowActive)
             ViewerAction(if (metadataVisible) "Hide info" else "Info", onToggleMetadata)
+            ViewerAction("Details", onOpenDetails)
             ViewerAction("Share", onShare)
             ViewerAction("Edit", onEdit)
             ViewerAction("Open with", onOpenWith)

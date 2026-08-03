@@ -57,6 +57,7 @@ import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.ui.FotoXplorrTheme
 import com.fotoxplorr.app.viewer.ViewerScreen
+import dev.aarso.crashrecovery.CrashRecovery
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -67,6 +68,10 @@ import org.json.JSONObject
 class FotoXplorrActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // First thing, per dev.aarso:crash-recovery's documented contract: if a crash was
+        // captured last run, show the recovery screen instead of this activity's real
+        // content and finish this instance.
+        if (CrashRecovery.maybeShowRecovery(this, appLabel = "Foto Xplorr")) return
         enableEdgeToEdge()
         setContent {
             val galleryPreferences = remember { GalleryPreferences(applicationContext) }
@@ -489,6 +494,12 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 selectedAssetId = null
                 viewerAssets = emptyList()
                 slideshowActive = false
+            },
+            relatedAssets = viewerAssets,
+            onOpenRelated = { related ->
+                if (viewerAssets.any { it.id == related.id }) {
+                    selectedAssetId = related.id
+                }
             },
         )
     } else {
