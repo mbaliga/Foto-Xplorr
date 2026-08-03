@@ -6,7 +6,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,7 +14,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
@@ -99,7 +97,7 @@ fun GalleryPreviewScreen(
                         onOpenAsset(current, visible)
                         true
                     }
-                    Key.Escape, Key.Back -> {
+                    Key.Escape -> {
                         onClose()
                         true
                     }
@@ -135,7 +133,6 @@ fun GalleryPreviewScreen(
                 contentPadding = PaddingValues(horizontal = 54.dp, vertical = 20.dp),
                 pageSpacing = (-72).dp,
                 beyondViewportPageCount = 3,
-                flingBehavior = rememberSnapFlingBehavior(pagerState),
                 key = { page -> visible[page].id.value },
             ) { page ->
                 val pageOffset = (
