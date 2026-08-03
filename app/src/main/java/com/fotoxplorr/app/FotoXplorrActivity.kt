@@ -26,10 +26,10 @@ import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.gallery.GalleryScreen
 import com.fotoxplorr.app.gallery.GalleryUiState
 import com.fotoxplorr.app.media.AndroidMediaStoreScanner
-import com.fotoxplorr.app.media.InMemoryMediaRepository
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaIndexer
 import com.fotoxplorr.app.media.ScanEvent
+import com.fotoxplorr.app.media.SqliteMediaRepository
 import com.fotoxplorr.app.viewer.ViewerScreen
 import kotlinx.coroutines.flow.collect
 
@@ -50,7 +50,7 @@ class FotoXplorrActivity : ComponentActivity() {
 
 @Composable
 private fun FotoXplorrActivity.FotoXplorrApp() {
-    val repository = remember { InMemoryMediaRepository() }
+    val repository = remember { SqliteMediaRepository(applicationContext) }
     val favoriteStore = remember { FavoriteStore(applicationContext) }
     val indexer = remember {
         MediaIndexer(
