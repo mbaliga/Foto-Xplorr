@@ -18,6 +18,13 @@ class FolderIdentityTest {
     }
 
     @Test
+    fun `path key remains stable when bucket id becomes available`() {
+        val identity = folderIdentity(100L, "Camera", "DCIM/Camera/")
+
+        assertEquals(FolderKey("path:dcim/camera"), identity.key)
+    }
+
+    @Test
     fun `same display name in different paths gets different keys without bucket ids`() {
         val camera = folderIdentity("Camera", "DCIM/Camera/")
         val downloads = folderIdentity("Camera", "Pictures/Camera/")
