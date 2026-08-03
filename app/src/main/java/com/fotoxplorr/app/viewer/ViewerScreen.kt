@@ -1,7 +1,8 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.fotoxplorr.app.viewer
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
@@ -9,11 +10,13 @@ import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -206,13 +209,13 @@ private fun ViewerControls(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.76f))
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .background(Color.Black.copy(alpha = 0.78f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ViewerAction("Close", onClose)
@@ -220,32 +223,19 @@ private fun ViewerControls(
             Text("$position / $total", color = Color.White)
         }
 
-        Row(
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            maxItemsInEachRow = 3,
         ) {
             ViewerAction("Previous", onPrevious, hasPrevious)
             ViewerAction(if (slideshowActive) "Pause slideshow" else "Slideshow", onToggleSlideshow)
             ViewerAction("Next", onNext, hasNext || slideshowActive)
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
             ViewerAction(if (metadataVisible) "Hide info" else "Info", onToggleMetadata)
             ViewerAction("Share", onShare)
             ViewerAction("Edit", onEdit)
             ViewerAction("Open with", onOpenWith)
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
             ViewerAction(if (isSensitive) "Sensitive ✓" else "Sensitive", onToggleSensitive)
             ViewerAction(if (isFavorite) "★ Favourite" else "☆ Favourite", onToggleFavorite)
             ViewerAction(
@@ -263,11 +253,12 @@ private fun ViewerAction(
     onClick: () -> Unit,
     enabled: Boolean = true,
 ) {
-    Text(
-        text = label,
-        color = if (enabled) Color.White else Color.White.copy(alpha = 0.45f),
-        modifier = if (enabled) Modifier.clickable(onClick = onClick) else Modifier,
-    )
+    TextButton(enabled = enabled, onClick = onClick) {
+        Text(
+            text = label,
+            color = if (enabled) Color.White else Color.White.copy(alpha = 0.45f),
+        )
+    }
 }
 
 @Composable
