@@ -2,6 +2,7 @@ package com.fotoxplorr.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.RecoverableSecurityException
 import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -36,6 +37,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.favorites.FavoriteStore
+import com.fotoxplorr.app.fileops.CleanShareExporter
+import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.gallery.GalleryActions
 import com.fotoxplorr.app.gallery.GalleryPreferences
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
@@ -78,6 +81,7 @@ class FotoXplorrActivity : ComponentActivity() {
 }
 
 private enum class PendingMediaOperation { TRASH, RESTORE, DELETE }
+private enum class PendingTreeOperation { COPY, MOVE }
 
 @Composable
 private fun FotoXplorrActivity.FotoXplorrApp(
@@ -89,6 +93,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val sensitiveStore = remember { SensitiveStore(applicationContext) }
     val privateFolderStore = remember { PrivateFolderStore(applicationContext) }
     val libraryStore = remember { LibraryStore(applicationContext) }
+    val fileOperations = remember { MediaFileOperations(applicationContext) }
+    val cleanShareExporter = remember { CleanShareExporter(applicationContext) }
     val changeObserver = remember { MediaStoreChangeObserver(contentResolver) }
     val indexer = remember { MediaIndexer(AndroidMediaStoreScanner(contentResolver), repository) }
     val scope = rememberCoroutineScope()
@@ -108,6 +114,10 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     var slideshowActive by remember { mutableStateOf(false) }
     var pendingOperation by remember { mutableStateOf<PendingMediaOperation?>(null) }
     var pendingOperationIds by remember { mutableStateOf<Set<MediaId>>(emptySet()) }
+    var pendingTreeOperation by remember { mutableStateOf<PendingTreeOperation?>(null) }
+    var pendingTreeItems by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
+    var pendingRenameAsset by remember { mutableStateOf<MediaAsset?>(null) }
+    var pendingRenameName by remember { mutableStateOf<String?>(null) }
     var userMessage by remember { mutableStateOf<String?>(null) }
 
     val selectedIndex = selectedAssetId?.let { id -> viewerAssets.indexOfFirst { it.id == id } } ?: -1
@@ -148,6 +158,133 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 null -> null
             }
             scanGeneration += 1
+        } else if (affectedIds.isNotEmpty()) {
+            userMessage = "Android cancelled the media operation."
+        }
+    }
+
+    fun requestMediaOperation(items: List<MediaAsset>, operation: PendingMediaOperation) {
+        if (items.isEmpty()) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            userMessage = "System trash operations require Android 11 or newer. Foto Xplorr will not delete media directly."
+            return
+        }
+        runCatching {
+            pendingOperation = operation
+            pendingOperationIds = items.mapTo(linkedSetOf()) { it.id }
+            val uris = items.map { it.contentUri }
+            val request = when (operation) {
+                PendingMediaOperation.TRASH -> MediaStore.createTrashRequest(contentResolver, uris, true)
+                PendingMediaOperation.RESTORE -> MediaStore.createTrashRequest(contentResolver, uris, false)
+                PendingMediaOperation.DELETE -> MediaStore.createDeleteRequest(contentResolver, uris)
+            }
+            mediaOperationLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+        }.onFailure { error ->
+            pendingOperation = null
+            pendingOperationIds = emptySet()
+            userMessage = error.message ?: "Unable to open Android's media confirmation."
+        }
+    }
+
+    fun performPendingRename() {
+        val asset = pendingRenameAsset ?: return
+        val name = pendingRenameName ?: return
+        scope.launch {
+            val outcome = fileOperations.rename(asset, name)
+            pendingRenameAsset = null
+            pendingRenameName = null
+            userMessage = outcome.fold(
+                onSuccess = {
+                    scanGeneration += 1
+                    "Renamed to $it."
+                },
+                onFailure = { it.message ?: "Android did not allow this file to be renamed." },
+            )
+        }
+    }
+
+    val renamePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            performPendingRename()
+        } else {
+            pendingRenameAsset = null
+            pendingRenameName = null
+            userMessage = "Android cancelled the rename request."
+        }
+    }
+
+    fun requestRename(asset: MediaAsset, requestedName: String) {
+        pendingRenameAsset = asset
+        pendingRenameName = requestedName
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching {
+                MediaStore.createWriteRequest(contentResolver, listOf(asset.contentUri))
+            }.onSuccess { request ->
+                renamePermissionLauncher.launch(
+                    IntentSenderRequest.Builder(request.intentSender).build(),
+                )
+            }.onFailure { error ->
+                pendingRenameAsset = null
+                pendingRenameName = null
+                userMessage = error.message ?: "Could not request rename permission."
+            }
+        } else {
+            scope.launch {
+                val outcome = fileOperations.rename(asset, requestedName)
+                val error = outcome.exceptionOrNull()
+                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q && error is RecoverableSecurityException) {
+                    renamePermissionLauncher.launch(
+                        IntentSenderRequest.Builder(error.userAction.actionIntent.intentSender).build(),
+                    )
+                } else {
+                    pendingRenameAsset = null
+                    pendingRenameName = null
+                    userMessage = outcome.fold(
+                        onSuccess = {
+                            scanGeneration += 1
+                            "Renamed to $it."
+                        },
+                        onFailure = { it.message ?: "Android did not allow this file to be renamed." },
+                    )
+                }
+            }
+        }
+    }
+
+    val treeLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+    ) { treeUri ->
+        val operation = pendingTreeOperation
+        val items = pendingTreeItems
+        pendingTreeOperation = null
+        pendingTreeItems = emptyList()
+        if (treeUri == null || operation == null || items.isEmpty()) return@rememberLauncherForActivityResult
+
+        runCatching {
+            contentResolver.takePersistableUriPermission(
+                treeUri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+
+        scope.launch {
+            userMessage = "Copying ${items.size} item${if (items.size == 1) "" else "s"}…"
+            val outcome = fileOperations.copyToTree(treeUri, items)
+            outcome.fold(
+                onSuccess = {
+                    if (operation == PendingTreeOperation.MOVE) {
+                        userMessage = "Copy complete. Confirm moving the originals to Android's trash."
+                        requestMediaOperation(items, PendingMediaOperation.TRASH)
+                    } else {
+                        userMessage = "Copied ${items.size} item${if (items.size == 1) "" else "s"}."
+                    }
+                },
+                onFailure = { error ->
+                    userMessage = error.message ?: "The copy could not be completed. Originals were not changed."
+                },
+            )
         }
     }
 
@@ -211,50 +348,48 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
     }
 
-    fun requestMediaOperation(items: List<MediaAsset>, operation: PendingMediaOperation) {
-        if (items.isEmpty()) return
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            userMessage = "System trash operations require Android 11 or newer. Foto Xplorr will not delete media directly."
-            return
-        }
-        runCatching {
-            pendingOperation = operation
-            pendingOperationIds = items.mapTo(linkedSetOf()) { it.id }
-            val uris = items.map { it.contentUri }
-            val request = when (operation) {
-                PendingMediaOperation.TRASH -> MediaStore.createTrashRequest(contentResolver, uris, true)
-                PendingMediaOperation.RESTORE -> MediaStore.createTrashRequest(contentResolver, uris, false)
-                PendingMediaOperation.DELETE -> MediaStore.createDeleteRequest(contentResolver, uris)
+    fun shareUris(uris: List<Uri>, mimeType: String, title: String) {
+        if (uris.isEmpty()) return
+        val intent = if (uris.size == 1) {
+            Intent(Intent.ACTION_SEND).apply {
+                type = mimeType
+                putExtra(Intent.EXTRA_STREAM, uris.first())
             }
-            mediaOperationLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
-        }.onFailure { error ->
-            pendingOperation = null
-            pendingOperationIds = emptySet()
-            userMessage = error.message ?: "Unable to open Android's media confirmation."
+        } else {
+            Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = mimeType
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+            }
+        }.apply {
+            clipData = uris.toClipData(contentResolver, title)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
+        runCatching { startActivity(Intent.createChooser(intent, title)) }
+            .onFailure { userMessage = "No compatible sharing app was found." }
     }
 
     fun share(items: List<MediaAsset>) {
         if (items.isEmpty()) return
-        val intent = if (items.size == 1) {
-            Intent(Intent.ACTION_SEND).apply {
-                type = items.first().mimeType.ifBlank { "*/*" }
-                putExtra(Intent.EXTRA_STREAM, items.first().contentUri)
-            }
-        } else {
-            Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                type = commonShareType(items)
-                putParcelableArrayListExtra(
-                    Intent.EXTRA_STREAM,
-                    ArrayList(items.map { it.contentUri }),
-                )
-            }
-        }.apply {
-            clipData = items.toClipData(contentResolver)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        shareUris(
+            uris = items.map { it.contentUri },
+            mimeType = commonShareType(items),
+            title = "Share ${items.size} item${if (items.size == 1) "" else "s"}",
+        )
+    }
+
+    fun shareClean(items: List<MediaAsset>) {
+        scope.launch {
+            userMessage = "Preparing metadata-clean ${if (items.size == 1) "copy" else "copies"}…"
+            cleanShareExporter.createCopies(items).fold(
+                onSuccess = { uris ->
+                    userMessage = null
+                    shareUris(uris, "image/*", "Share without common EXIF metadata")
+                },
+                onFailure = { error ->
+                    userMessage = error.message ?: "Could not prepare metadata-clean copies."
+                },
+            )
         }
-        runCatching { startActivity(Intent.createChooser(intent, "Share ${items.size} item${if (items.size == 1) "" else "s"}")) }
-            .onFailure { userMessage = "No compatible sharing app was found." }
     }
 
     fun openExternally(asset: MediaAsset, action: String) {
@@ -262,8 +397,14 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             setDataAndType(asset.contentUri, asset.mimeType.ifBlank { "*/*" })
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        runCatching { startActivity(Intent.createChooser(intent, if (action == Intent.ACTION_EDIT) "Edit with" else "Open with")) }
-            .onFailure { userMessage = "No compatible app was found." }
+        runCatching {
+            startActivity(
+                Intent.createChooser(
+                    intent,
+                    if (action == Intent.ACTION_EDIT) "Edit with" else "Open with",
+                ),
+            )
+        }.onFailure { userMessage = "No compatible app was found." }
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
@@ -383,10 +524,22 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onSetSensitive = sensitiveStore::setSensitive,
                 onSetArchived = libraryStore::setArchived,
                 onShare = ::share,
+                onShareClean = ::shareClean,
+                onCopyToFolder = { items ->
+                    pendingTreeOperation = PendingTreeOperation.COPY
+                    pendingTreeItems = items
+                    treeLauncher.launch(null)
+                },
+                onMoveToFolder = { items ->
+                    pendingTreeOperation = PendingTreeOperation.MOVE
+                    pendingTreeItems = items
+                    treeLauncher.launch(null)
+                },
+                onRenameAsset = ::requestRename,
                 onMoveToTrash = { requestMediaOperation(it, PendingMediaOperation.TRASH) },
                 onRestore = { requestMediaOperation(it, PendingMediaOperation.RESTORE) },
                 onDeletePermanently = { requestMediaOperation(it, PendingMediaOperation.DELETE) },
-                onCreateCollection = { libraryStore.createCollection(it) },
+                onCreateCollection = { libraryStore.createCollection(it)?.id },
                 onRenameCollection = { id, name -> libraryStore.renameCollection(id, name) },
                 onDeleteCollection = libraryStore::deleteCollection,
                 onAddToCollection = libraryStore::addToCollection,
@@ -436,11 +589,11 @@ private fun commonShareType(items: List<MediaAsset>): String = when {
     else -> "*/*"
 }
 
-private fun List<MediaAsset>.toClipData(resolver: android.content.ContentResolver): ClipData {
-    val first = first()
-    return ClipData.newUri(resolver, first.displayName, first.contentUri).also { clip ->
-        drop(1).forEach { asset -> clip.addItem(ClipData.Item(asset.contentUri)) }
-    }
+private fun List<Uri>.toClipData(
+    resolver: android.content.ContentResolver,
+    label: String,
+): ClipData = ClipData.newUri(resolver, label, first()).also { clip ->
+    drop(1).forEach { uri -> clip.addItem(ClipData.Item(uri)) }
 }
 
 private fun JSONArray?.toMediaIds(): Set<MediaId> {
