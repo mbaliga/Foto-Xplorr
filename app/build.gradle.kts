@@ -11,8 +11,8 @@ android {
         applicationId = "com.fotoxplorr.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0-v2"
+        versionCode = 3
+        versionName = "0.3.0-ai-spatial"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -62,7 +62,18 @@ dependencies {
     implementation("io.coil-kt.coil3:coil-svg:3.5.0")
     implementation("io.coil-kt.coil3:coil-video:3.5.0")
 
+    // On-device image embeddings. The model is installed into app-private storage on demand.
+    implementation("com.google.mediapipe:tasks-vision:0.10.35")
+
+    // Native vector maps with clustering, pitch/bearing, hillshade and 3D building extrusions.
+    implementation("org.maplibre.gl:android-sdk:13.0.2")
+
+    // Provider-key connections. No logging interceptor is included so secrets cannot be logged.
+    implementation(platform("com.squareup.okhttp3:okhttp-bom:5.3.0"))
+    implementation("com.squareup.okhttp3:okhttp")
+
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver3:5.3.0")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
