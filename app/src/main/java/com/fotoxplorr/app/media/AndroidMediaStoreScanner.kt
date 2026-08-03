@@ -79,6 +79,7 @@ class AndroidMediaStoreScanner(
         add(MediaStore.MediaColumns.WIDTH)
         add(MediaStore.MediaColumns.HEIGHT)
         add(MediaStore.MediaColumns.SIZE)
+        add(MediaStore.Images.ImageColumns.BUCKET_ID)
         add(MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -99,6 +100,7 @@ class AndroidMediaStoreScanner(
         private val width = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.WIDTH)
         private val height = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.HEIGHT)
         private val size = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
+        private val bucketId = cursor.getColumnIndex(MediaStore.Images.ImageColumns.BUCKET_ID)
         private val bucketName = cursor.getColumnIndex(MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME)
         private val relativePath = cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
         private val favorite = cursor.getColumnIndex(MediaStore.MediaColumns.IS_FAVORITE)
@@ -115,6 +117,7 @@ class AndroidMediaStoreScanner(
                 displayName = cursor.getString(displayName).orEmpty(),
                 mimeType = cursor.getString(mimeType).orEmpty(),
                 bucketName = cursor.stringOrNull(bucketName),
+                bucketId = cursor.longOrNull(bucketId),
                 dateTakenMillis = cursor.longOrZero(dateTaken),
                 dateModifiedSeconds = cursor.longOrZero(dateModified),
                 width = cursor.intOrZero(width),
@@ -135,6 +138,9 @@ class AndroidMediaStoreScanner(
 
 private fun Cursor.stringOrNull(index: Int): String? =
     if (index >= 0 && !isNull(index)) getString(index) else null
+
+private fun Cursor.longOrNull(index: Int): Long? =
+    if (index >= 0 && !isNull(index)) getLong(index) else null
 
 private fun Cursor.longOrZero(index: Int): Long =
     if (index >= 0 && !isNull(index)) getLong(index) else 0L
