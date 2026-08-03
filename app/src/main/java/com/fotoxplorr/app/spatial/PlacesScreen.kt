@@ -13,7 +13,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CompassCalibration
 import androidx.compose.material.icons.outlined.Landscape
 import androidx.compose.material.icons.outlined.Map
+import androidx.compose.material.icons.outlined.ViewInAr
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -60,6 +60,7 @@ private enum class SpatialMode {
     MAP,
     COMPASS,
     ELEVATION,
+    DEPTH_TIMELINE,
 }
 
 @Composable
@@ -76,13 +77,16 @@ fun PlacesScreen(
     val points = locatedAssets.mapNotNull { asset ->
         geoState.metadataById[asset.id]?.let { metadata -> asset to metadata }
     }
+    val depthMode = mode == SpatialMode.DEPTH_TIMELINE
+    val displayedAssets = if (depthMode) assets else locatedAssets
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SpatialMode.entries.forEach { candidate ->
+            items(SpatialMode.entries, key = { it.name }) { candidate ->
                 FilterChip(
                     selected = candidate == mode,
                     onClick = { mode = candidate },
@@ -102,15 +106,21 @@ fun PlacesScreen(
         }
 
         when {
-            geoState.scannedCount == 0 && !geoState.isIndexing -> SpatialEmptyState(
+            assets.isEmpty() -> SpatialEmptyState(
+                title = "No media available",
+                message = "The permitted library does not contain media to explore.",
+                action = "Scan locations",
+                onAction = onIndexLocations,
+            )
+            !depthMode && geoState.scannedCount == 0 && !geoState.isIndexing -> SpatialEmptyState(
                 title = "Explore where photos were captured",
                 message = "Foto Xplorr reads embedded GPS metadata locally. It does not upload locations or require your current location.",
                 action = "Index locations",
                 onAction = onIndexLocations,
             )
-            points.isEmpty() && !geoState.isIndexing -> SpatialEmptyState(
+            !depthMode && points.isEmpty() && !geoState.isIndexing -> SpatialEmptyState(
                 title = "No embedded locations found",
-                message = "The permitted media does not expose GPS coordinates, or Android supplied redacted copies.",
+                message = "The permitted media does not expose GPS coordinates, or Android supplied redacted copies. The depth timeline remains available.",
                 action = "Scan again",
                 onAction = onIndexLocations,
             )
@@ -126,6 +136,7 @@ fun PlacesScreen(
                         SpatialMode.MAP -> CoordinateMap(points)
                         SpatialMode.COMPASS -> CompassPlot(points)
                         SpatialMode.ELEVATION -> ElevationPlot(points)
+                        SpatialMode.DEPTH_TIMELINE -> DepthTimelinePlot(assets)
                     }
                 }
                 Text(
@@ -133,6 +144,7 @@ fun PlacesScreen(
                         SpatialMode.MAP -> "Offline coordinate plot · no map tiles are downloaded"
                         SpatialMode.COMPASS -> "Photo bearings rotate with the device; capture direction is used when available"
                         SpatialMode.ELEVATION -> "Metadata-derived elevation plot · not a terrain dataset"
+                        SpatialMode.DEPTH_TIMELINE -> "Perspective timeline ordered by capture time · experimental 2.5D view"
                     },
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     style = MaterialTheme.typography.bodySmall,
@@ -142,13 +154,13 @@ fun PlacesScreen(
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(locatedAssets, key = { it.id.value }) { asset ->
+                    items(displayedAssets, key = { it.id.value }) { asset ->
                         Column(
                             modifier = Modifier
                                 .size(width = 88.dp, height = 104.dp)
                                 .combinedClickable(
-                                    onClick = { onOpenAsset(asset, locatedAssets) },
-                                    onLongClick = { onOpenAsset(asset, locatedAssets) },
+                                    onClick = { onOpenAsset(asset, displayedAssets) },
+                                    onLongClick = { onOpenAsset(asset, displayedAssets) },
                                 ),
                         ) {
                             MediaImage(
@@ -265,6 +277,55 @@ private fun ElevationPlot(points: List<Pair<MediaAsset, GeoMetadata>>) {
 }
 
 @Composable
+private fun DepthTimelinePlot(assets: List<MediaAsset>) {
+    val primary = MaterialTheme.colorScheme.primary
+    val secondary = MaterialTheme.colorScheme.tertiary
+    val foreground = MaterialTheme.colorScheme.onSurfaceVariant
+    val sorted = assets.sortedBy { it.dateTakenMillis }
+    val minTime = sorted.firstOrNull()?.dateTakenMillis ?: 0L
+    val maxTime = sorted.lastOrNull()?.dateTakenMillis ?: minTime + 1L
+
+    Canvas(modifier = Modifier.fillMaxSize().padding(20.dp)) {
+        val origin = Offset(size.width / 2f, size.height * 0.88f)
+        val top = Offset(size.width / 2f, size.height * 0.08f)
+        drawLine(foreground.copy(alpha = 0.42f), origin, top, strokeWidth = 4f)
+
+        for (layer in 0..6) {
+            val progress = layer / 6f
+            val y = origin.y + (top.y - origin.y) * progress
+            val width = size.width * (0.44f * (1f - progress * 0.68f))
+            drawLine(
+                foreground.copy(alpha = 0.18f),
+                Offset(origin.x - width, y),
+                Offset(origin.x + width, y),
+                strokeWidth = 2f,
+            )
+        }
+
+        val path = Path()
+        sorted.forEachIndexed { index, asset ->
+            val progress = normalize(
+                asset.dateTakenMillis.toDouble(),
+                minTime.toDouble(),
+                maxTime.toDouble(),
+            ).toFloat()
+            val depthScale = 1f - progress * 0.72f
+            val lane = ((index % 7) - 3) / 3f
+            val x = origin.x + lane * size.width * 0.32f * depthScale
+            val y = origin.y + (top.y - origin.y) * progress
+            val point = Offset(x, y)
+            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            drawCircle(
+                color = if (asset.isVideo) secondary else primary,
+                radius = 10f * depthScale.coerceAtLeast(0.35f),
+                center = point,
+            )
+        }
+        drawPath(path, primary.copy(alpha = 0.35f), style = Stroke(width = 2f))
+    }
+}
+
+@Composable
 private fun SpatialEmptyState(
     title: String,
     message: String,
@@ -312,12 +373,14 @@ private fun SpatialMode.label(): String = when (this) {
     SpatialMode.MAP -> "Map"
     SpatialMode.COMPASS -> "Compass"
     SpatialMode.ELEVATION -> "Elevation"
+    SpatialMode.DEPTH_TIMELINE -> "Depth timeline"
 }
 
 private fun SpatialMode.icon() = when (this) {
     SpatialMode.MAP -> Icons.Outlined.Map
     SpatialMode.COMPASS -> Icons.Outlined.CompassCalibration
     SpatialMode.ELEVATION -> Icons.Outlined.Landscape
+    SpatialMode.DEPTH_TIMELINE -> Icons.Outlined.ViewInAr
 }
 
 private fun centroid(points: List<GeoMetadata>): Pair<Double, Double> {
