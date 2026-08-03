@@ -22,13 +22,22 @@ internal fun visibleAssets(
     selectedAlbum: String?,
     query: String,
     sort: GallerySort,
+    lockedFolders: Set<String> = emptySet(),
+    unlockedFolders: Set<String> = emptySet(),
 ): List<MediaAsset> {
+    val privacyVisible = assets.filter { asset ->
+        val album = resolveAlbumName(asset.bucketName, asset.relativePath)
+        album !in lockedFolders || album in unlockedFolders
+    }
+
     val scoped = when {
-        section == GallerySection.FAVORITES -> assets.filter { it.id in favoriteIds }
+        section == GallerySection.FAVORITES -> privacyVisible.filter { it.id in favoriteIds }
         section == GallerySection.ALBUMS && selectedAlbum != null -> {
-            assets.filter { resolveAlbumName(it.bucketName, it.relativePath) == selectedAlbum }
+            privacyVisible.filter {
+                resolveAlbumName(it.bucketName, it.relativePath) == selectedAlbum
+            }
         }
-        else -> assets
+        else -> privacyVisible
     }
 
     val normalizedQuery = query.trim().lowercase()
