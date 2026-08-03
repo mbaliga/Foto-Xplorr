@@ -7,12 +7,14 @@ import android.os.Build
 import android.util.Size
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -37,14 +39,19 @@ import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.media.MediaAsset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.text.DateFormat
+import java.util.Date
+import kotlin.math.roundToInt
 
 @Composable
 fun ViewerScreen(
     asset: MediaAsset,
     position: Int,
     total: Int,
+    isFavorite: Boolean,
     hasPrevious: Boolean,
     hasNext: Boolean,
+    onToggleFavorite: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onClose: () -> Unit,
@@ -55,6 +62,7 @@ fun ViewerScreen(
     }
 
     var controlsVisible by remember(asset.id) { mutableStateOf(false) }
+    var metadataVisible by remember(asset.id) { mutableStateOf(false) }
     var scale by remember(asset.id) { mutableFloatStateOf(1f) }
     var offsetX by remember(asset.id) { mutableFloatStateOf(0f) }
     var offsetY by remember(asset.id) { mutableFloatStateOf(0f) }
@@ -136,37 +144,112 @@ fun ViewerScreen(
         }
 
         if (controlsVisible) {
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .background(Color.Black.copy(alpha = 0.62f))
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = asset.displayName,
-                    color = Color.White,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                )
-                Text(
-                    text = "$position / $total",
-                    color = Color.White,
-                    modifier = Modifier.padding(start = 16.dp),
-                )
-            }
-
-            Text(
-                text = "Long press to close",
-                color = Color.White,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .background(Color.Black.copy(alpha = 0.62f))
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ViewerControls(
+                asset = asset,
+                position = position,
+                total = total,
+                isFavorite = isFavorite,
+                metadataVisible = metadataVisible,
+                onToggleFavorite = onToggleFavorite,
+                onToggleMetadata = { metadataVisible = !metadataVisible },
+                onClose = onClose,
             )
         }
+
+        if (metadataVisible) {
+            MetadataPanel(
+                asset = asset,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ViewerControls(
+    asset: MediaAsset,
+    position: Int,
+    total: Int,
+    isFavorite: Boolean,
+    metadataVisible: Boolean,
+    onToggleFavorite: () -> Unit,
+    onToggleMetadata: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.68f))
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "Close",
+            color = Color.White,
+            modifier = Modifier.clickable(onClick = onClose),
+        )
+        Text(
+            text = asset.displayName,
+            color = Color.White,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+        )
+        Text(
+            text = if (metadataVisible) "Hide info" else "Info",
+            color = Color.White,
+            modifier = Modifier.clickable(onClick = onToggleMetadata),
+        )
+        Text(
+            text = if (isFavorite) "★" else "☆",
+            color = Color.White,
+            modifier = Modifier.clickable(onClick = onToggleFavorite),
+        )
+        Text(
+            text = "$position / $total",
+            color = Color.White,
+        )
+    }
+}
+
+@Composable
+private fun MetadataPanel(
+    asset: MediaAsset,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.82f))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        MetadataRow("Name", asset.displayName)
+        MetadataRow("Type", asset.mimeType.ifBlank { "Unknown" })
+        MetadataRow("Dimensions", "${asset.width} × ${asset.height}")
+        MetadataRow("Size", formatBytes(asset.sizeBytes))
+        asset.bucketName?.let { MetadataRow("Album", it) }
+        asset.relativePath?.let { MetadataRow("Path", it) }
+        MetadataRow("Taken", formatDate(asset.dateTakenMillis))
+    }
+}
+
+@Composable
+private fun MetadataRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = label,
+            color = Color.White.copy(alpha = 0.68f),
+            modifier = Modifier.weight(0.3f),
+        )
+        Text(
+            text = value,
+            color = Color.White,
+            modifier = Modifier.weight(0.7f),
+        )
     }
 }
 
@@ -181,6 +264,28 @@ private suspend fun loadViewerBitmap(
             resolver.openInputStream(asset.contentUri)?.use(BitmapFactory::decodeStream)
         }
     }.getOrNull()
+}
+
+private fun formatDate(epochMillis: Long): String {
+    if (epochMillis <= 0L) return "Unknown"
+    return DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+        .format(Date(epochMillis))
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes <= 0L) return "Unknown"
+    val units = listOf("B", "KB", "MB", "GB")
+    var value = bytes.toDouble()
+    var unitIndex = 0
+    while (value >= 1024.0 && unitIndex < units.lastIndex) {
+        value /= 1024.0
+        unitIndex += 1
+    }
+    return if (unitIndex == 0) {
+        "${value.roundToInt()} ${units[unitIndex]}"
+    } else {
+        "%.1f %s".format(value, units[unitIndex])
+    }
 }
 
 private const val SWIPE_THRESHOLD_PX = 180f
