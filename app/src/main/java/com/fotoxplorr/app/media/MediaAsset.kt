@@ -17,10 +17,22 @@ data class MediaAsset(
     val width: Int,
     val height: Int,
     val sizeBytes: Long,
+    val durationMillis: Long = 0L,
     val relativePath: String?,
     val isFavorite: Boolean,
     val isTrashed: Boolean,
 ) {
     val contentUri: Uri
         get() = Uri.parse(contentUriString)
+
+    val isVideo: Boolean
+        get() = mimeType.startsWith("video/", ignoreCase = true)
+
+    val isAnimated: Boolean
+        get() = mimeType.equals("image/gif", ignoreCase = true) ||
+            mimeType.equals("image/webp", ignoreCase = true) ||
+            mimeType.equals("image/avif", ignoreCase = true)
+
+    val aspectRatio: Float
+        get() = if (width > 0 && height > 0) width.toFloat() / height else 1f
 }

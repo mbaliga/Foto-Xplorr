@@ -3,6 +3,7 @@ package com.fotoxplorr.app.media
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.database.Cursor
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -47,31 +48,30 @@ class AndroidMediaStoreScanner(
     }.flowOn(Dispatchers.IO)
 
     private fun queryMedia(): Cursor? {
+        val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        val selection = "${MediaStore.Files.FileColumns.MEDIA_TYPE}=? OR ${MediaStore.Files.FileColumns.MEDIA_TYPE}=?"
+        val selectionArgs = arrayOf(
+            MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
+            MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
+        )
         val sortOrder = "${MediaStore.Images.ImageColumns.DATE_TAKEN} DESC, ${MediaStore.MediaColumns.DATE_MODIFIED} DESC"
+
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val args = Bundle().apply {
+            val queryArgs = Bundle().apply {
+                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
                 putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, sortOrder)
                 putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE)
             }
-            resolver.query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                projection(),
-                args,
-                null,
-            )
+            resolver.query(collection, projection(), queryArgs, null)
         } else {
-            resolver.query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                projection(),
-                null,
-                null,
-                sortOrder,
-            )
+            resolver.query(collection, projection(), selection, selectionArgs, sortOrder)
         }
     }
 
     private fun projection(): Array<String> = buildList {
         add(MediaStore.MediaColumns._ID)
+        add(MediaStore.Files.FileColumns.MEDIA_TYPE)
         add(MediaStore.MediaColumns.DISPLAY_NAME)
         add(MediaStore.MediaColumns.MIME_TYPE)
         add(MediaStore.Images.ImageColumns.DATE_TAKEN)
@@ -79,6 +79,7 @@ class AndroidMediaStoreScanner(
         add(MediaStore.MediaColumns.WIDTH)
         add(MediaStore.MediaColumns.HEIGHT)
         add(MediaStore.MediaColumns.SIZE)
+        add(MediaStore.Video.VideoColumns.DURATION)
         add(MediaStore.Images.ImageColumns.BUCKET_ID)
         add(MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME)
 
@@ -93,6 +94,7 @@ class AndroidMediaStoreScanner(
 
     private class CursorColumns(cursor: Cursor) {
         private val id = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+        private val mediaType = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE)
         private val displayName = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
         private val mimeType = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
         private val dateTaken = cursor.getColumnIndexOrThrow(MediaStore.Images.ImageColumns.DATE_TAKEN)
@@ -100,6 +102,7 @@ class AndroidMediaStoreScanner(
         private val width = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.WIDTH)
         private val height = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.HEIGHT)
         private val size = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
+        private val duration = cursor.getColumnIndex(MediaStore.Video.VideoColumns.DURATION)
         private val bucketId = cursor.getColumnIndex(MediaStore.Images.ImageColumns.BUCKET_ID)
         private val bucketName = cursor.getColumnIndex(MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME)
         private val relativePath = cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
@@ -108,30 +111,37 @@ class AndroidMediaStoreScanner(
 
         fun toAsset(cursor: Cursor): MediaAsset {
             val rawId = cursor.getLong(id)
+            val type = cursor.getInt(mediaType)
+            val modifiedSeconds = cursor.longOrZero(dateModified)
+            val takenMillis = cursor.longOrZero(dateTaken).takeIf { it > 0L }
+                ?: modifiedSeconds * 1_000L
             return MediaAsset(
                 id = MediaId(rawId),
-                contentUriString = ContentUris.withAppendedId(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    rawId,
-                ).toString(),
+                contentUriString = ContentUris.withAppendedId(baseUri(type), rawId).toString(),
                 displayName = cursor.getString(displayName).orEmpty(),
                 mimeType = cursor.getString(mimeType).orEmpty(),
                 bucketName = cursor.stringOrNull(bucketName),
                 bucketId = cursor.longOrNull(bucketId),
-                dateTakenMillis = cursor.longOrZero(dateTaken),
-                dateModifiedSeconds = cursor.longOrZero(dateModified),
+                dateTakenMillis = takenMillis,
+                dateModifiedSeconds = modifiedSeconds,
                 width = cursor.intOrZero(width),
                 height = cursor.intOrZero(height),
                 sizeBytes = cursor.longOrZero(size),
+                durationMillis = cursor.longOrZero(duration),
                 relativePath = cursor.stringOrNull(relativePath),
                 isFavorite = cursor.booleanOrFalse(favorite),
                 isTrashed = cursor.booleanOrFalse(trashed),
             )
         }
+
+        private fun baseUri(type: Int): Uri = when (type) {
+            MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            else -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        }
     }
 
     private companion object {
-        const val SOURCE_NAME = "MediaStore.Images"
+        const val SOURCE_NAME = "MediaStore.Files(images+videos)"
         const val PROGRESS_INTERVAL = 64
     }
 }

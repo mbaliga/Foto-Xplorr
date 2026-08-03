@@ -1,58 +1,73 @@
-@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@file:OptIn(
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+)
 
 package com.fotoxplorr.app.gallery
 
-import android.content.ContentResolver
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.Build
-import android.provider.MediaStore
-import android.util.Size
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Album
+import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Collections
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DriveFileMove
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.ImageSearch
+import androidx.compose.material.icons.outlined.Label
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
-import kotlinx.coroutines.Dispatchers
+import com.fotoxplorr.app.organize.LibraryState
+import com.fotoxplorr.app.spatial.GeoMetadataRepository
+import com.fotoxplorr.app.spatial.LocalSpatialExperience
+import com.fotoxplorr.app.spatial.SpatialExperience
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 data class GalleryUiState(
     val assets: List<MediaAsset>,
@@ -60,477 +75,785 @@ data class GalleryUiState(
     val sensitiveIds: Set<MediaId>,
     val lockedFolders: Set<String>,
     val unlockedFolders: Set<String>,
+    val library: LibraryState,
     val permissionGranted: Boolean,
     val scanState: ScanState,
     val preferences: GalleryPreferencesState,
 )
 
+data class GalleryActions(
+    val onRequestPermission: () -> Unit,
+    val onRefresh: () -> Unit,
+    val onSetSort: (GallerySort) -> Unit,
+    val onSetGridColumns: (Int) -> Unit,
+    val onSetBlurSensitive: (Boolean) -> Unit,
+    val onSetHideSensitive: (Boolean) -> Unit,
+    val onSetShowVideos: (Boolean) -> Unit,
+    val onSetTimelineGrouping: (TimelineGrouping) -> Unit,
+    val onSetThemeMode: (ThemeMode) -> Unit,
+    val onSetAccentPalette: (AccentPalette) -> Unit,
+    val onSetSlideshowInterval: (Int) -> Unit,
+    val onProtectFolder: suspend (String, CharArray) -> Result<Unit>,
+    val onUnlockFolder: suspend (String, CharArray) -> Boolean,
+    val onLockFolder: (String) -> Unit,
+    val onRemoveFolderProtection: suspend (String, CharArray) -> Boolean,
+    val onSetFavorite: (Set<MediaId>, Boolean) -> Unit,
+    val onSetSensitive: (Set<MediaId>, Boolean) -> Unit,
+    val onSetArchived: (Set<MediaId>, Boolean) -> Unit,
+    val onShare: (List<MediaAsset>) -> Unit,
+    val onShareClean: (List<MediaAsset>) -> Unit,
+    val onCopyToFolder: (List<MediaAsset>) -> Unit,
+    val onMoveToFolder: (List<MediaAsset>) -> Unit,
+    val onRenameAsset: (MediaAsset, String) -> Unit,
+    val onMoveToTrash: (List<MediaAsset>) -> Unit,
+    val onRestore: (List<MediaAsset>) -> Unit,
+    val onDeletePermanently: (List<MediaAsset>) -> Unit,
+    val onCreateCollection: (String) -> String?,
+    val onRenameCollection: (String, String) -> Unit,
+    val onDeleteCollection: (String) -> Unit,
+    val onAddToCollection: (String, Set<MediaId>) -> Unit,
+    val onRemoveFromCollection: (String, Set<MediaId>) -> Unit,
+    val onAddTag: (Set<MediaId>, String) -> Unit,
+    val onRemoveTag: (Set<MediaId>, String) -> Unit,
+    val onExportMetadata: () -> Unit,
+    val onImportMetadata: () -> Unit,
+    val onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
+    val onStartSlideshow: (List<MediaAsset>) -> Unit,
+)
+
 @Composable
 fun GalleryScreen(
     state: GalleryUiState,
-    onRequestPermission: () -> Unit,
-    onRefresh: () -> Unit,
-    onSetSort: (GallerySort) -> Unit,
-    onSetGridColumns: (Int) -> Unit,
-    onSetBlurSensitive: (Boolean) -> Unit,
-    onProtectFolder: suspend (String, CharArray) -> Result<Unit>,
-    onUnlockFolder: suspend (String, CharArray) -> Boolean,
-    onLockFolder: (String) -> Unit,
-    onRemoveFolderProtection: suspend (String, CharArray) -> Boolean,
-    onSetFavorite: (Set<MediaId>, Boolean) -> Unit,
-    onSetSensitive: (Set<MediaId>, Boolean) -> Unit,
-    onMoveToTrash: (List<MediaAsset>) -> Unit,
-    onRestore: (List<MediaAsset>) -> Unit,
-    onDeletePermanently: (List<MediaAsset>) -> Unit,
-    onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
+    actions: GalleryActions,
 ) {
-    when {
-        !state.permissionGranted -> CenteredColumn {
-            Text("Foto Xplorr needs access to your photos to build a local gallery.")
-            Button(onClick = onRequestPermission) { Text("Choose photos") }
+    val context = LocalContext.current
+    val geoRepository = remember(context) { GeoMetadataRepository(context.applicationContext) }
+    val geoState by geoRepository.observe().collectAsStateWithLifecycle()
+    val spatialScope = rememberCoroutineScope()
+    val spatialAssets = remember(state.assets) { state.assets.filterNot { it.isTrashed } }
+
+    CompositionLocalProvider(
+        LocalSpatialExperience provides SpatialExperience(
+            assets = spatialAssets,
+            geoState = geoState,
+            onIndexLocations = {
+                spatialScope.launch { geoRepository.indexMissing(spatialAssets) }
+            },
+            onOpenAsset = actions.onOpenAsset,
+        ),
+    ) {
+        when {
+            !state.permissionGranted -> GalleryEmptyState(
+                title = "Your gallery stays on this device",
+                message = "Choose the photos and videos Foto Xplorr may index. Nothing is uploaded.",
+                actionLabel = "Choose media",
+                onAction = actions.onRequestPermission,
+            )
+            state.assets.isEmpty() && state.scanState is ScanState.Scanning -> GalleryEmptyState(
+                title = "Building your library",
+                message = "Scanning local photos and videos…",
+                progress = true,
+            )
+            state.assets.isEmpty() && state.scanState is ScanState.Error -> GalleryEmptyState(
+                title = "Could not scan media",
+                message = state.scanState.message,
+                actionLabel = "Try again",
+                onAction = actions.onRefresh,
+            )
+            state.assets.isEmpty() -> GalleryEmptyState(
+                title = "No media found",
+                message = "Foto Xplorr could not find any permitted photos or videos.",
+                actionLabel = "Scan again",
+                onAction = actions.onRefresh,
+            )
+            else -> GalleryBrowser(state, actions)
         }
-        state.assets.isEmpty() && state.scanState is ScanState.Scanning -> CenteredColumn {
-            CircularProgressIndicator()
-            Text("Scanning")
-        }
-        state.assets.isEmpty() && state.scanState is ScanState.Error -> CenteredColumn {
-            Text(state.scanState.message)
-            Button(onClick = onRefresh) { Text("Retry") }
-        }
-        state.assets.isEmpty() -> CenteredColumn {
-            Text("No photos found")
-            Button(onClick = onRefresh) { Text("Scan again") }
-        }
-        else -> GalleryBrowser(
-            state = state,
-            onRefresh = onRefresh,
-            onSetSort = onSetSort,
-            onSetGridColumns = onSetGridColumns,
-            onSetBlurSensitive = onSetBlurSensitive,
-            onProtectFolder = onProtectFolder,
-            onUnlockFolder = onUnlockFolder,
-            onLockFolder = onLockFolder,
-            onRemoveFolderProtection = onRemoveFolderProtection,
-            onSetFavorite = onSetFavorite,
-            onSetSensitive = onSetSensitive,
-            onMoveToTrash = onMoveToTrash,
-            onRestore = onRestore,
-            onDeletePermanently = onDeletePermanently,
-            onOpenAsset = onOpenAsset,
-        )
     }
+}
+
+private sealed interface BrowserRoute {
+    data object Root : BrowserRoute
+    data class DeviceAlbum(val key: String, val name: String) : BrowserRoute
+    data class Collection(val id: String, val name: String) : BrowserRoute
+    data class Smart(val album: SmartAlbum) : BrowserRoute
+    data class Tag(val tag: String) : BrowserRoute
 }
 
 private enum class PasswordAction { PROTECT, UNLOCK, REMOVE }
 
+private data class PasswordRequest(
+    val action: PasswordAction,
+    val folderKey: String,
+    val folderName: String,
+)
+
 @Composable
 private fun GalleryBrowser(
     state: GalleryUiState,
-    onRefresh: () -> Unit,
-    onSetSort: (GallerySort) -> Unit,
-    onSetGridColumns: (Int) -> Unit,
-    onSetBlurSensitive: (Boolean) -> Unit,
-    onProtectFolder: suspend (String, CharArray) -> Result<Unit>,
-    onUnlockFolder: suspend (String, CharArray) -> Boolean,
-    onLockFolder: (String) -> Unit,
-    onRemoveFolderProtection: suspend (String, CharArray) -> Boolean,
-    onSetFavorite: (Set<MediaId>, Boolean) -> Unit,
-    onSetSensitive: (Set<MediaId>, Boolean) -> Unit,
-    onMoveToTrash: (List<MediaAsset>) -> Unit,
-    onRestore: (List<MediaAsset>) -> Unit,
-    onDeletePermanently: (List<MediaAsset>) -> Unit,
-    onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
+    actions: GalleryActions,
 ) {
-    var section by remember { mutableStateOf(GallerySection.PHOTOS) }
-    var selectedAlbumKey by remember { mutableStateOf<String?>(null) }
+    var destination by remember { mutableStateOf(GalleryDestination.TIMELINE) }
+    var route by remember { mutableStateOf<BrowserRoute>(BrowserRoute.Root) }
     var query by remember { mutableStateOf("") }
+    var searchVisible by remember { mutableStateOf(false) }
     var selection by remember { mutableStateOf(GallerySelection()) }
-    var passwordAction by remember { mutableStateOf<PasswordAction?>(null) }
-    var passwordFolderKey by remember { mutableStateOf<String?>(null) }
-    var passwordFolderName by remember { mutableStateOf<String?>(null) }
+    var topMenuVisible by remember { mutableStateOf(false) }
+    var selectionMenuVisible by remember { mutableStateOf(false) }
+    var settingsVisible by remember { mutableStateOf(false) }
+    var createCollectionVisible by remember { mutableStateOf(false) }
+    var renameCollection by remember { mutableStateOf<BrowserRoute.Collection?>(null) }
+    var renameAsset by remember { mutableStateOf<MediaAsset?>(null) }
+    var addToCollectionIds by remember { mutableStateOf<Set<MediaId>?>(null) }
+    var addTagIds by remember { mutableStateOf<Set<MediaId>?>(null) }
+    var passwordRequest by remember { mutableStateOf<PasswordRequest?>(null) }
 
-    val visible = visibleAssets(
+    val timelineAssets = everydayAssets(
         assets = state.assets,
-        favoriteIds = state.favoriteIds,
-        section = section,
-        selectedAlbum = selectedAlbumKey,
-        query = query,
-        sort = state.preferences.sort,
+        archivedIds = state.library.archivedIds,
+        sensitiveIds = state.sensitiveIds,
         lockedFolders = state.lockedFolders,
         unlockedFolders = state.unlockedFolders,
+        preferences = state.preferences,
+        query = query,
+        tagsByMediaId = state.library.tagsByMediaId,
     )
-    val visibleIds = visible.mapTo(linkedSetOf()) { it.id }
-    val selectedAssets = visible.filter { it.id in selection.selectedIds }
-    val albums = buildAlbumSummaries(state.assets, query)
-    val activeAlbum = albums.firstOrNull { it.key == selectedAlbumKey }
-    val protected = selectedAlbumKey != null && selectedAlbumKey in state.lockedFolders
-    val unlocked = selectedAlbumKey != null && selectedAlbumKey in state.unlockedFolders
-    val inTrash = section == GallerySection.TRASH
+    val currentAssets = when (val current = route) {
+        BrowserRoute.Root -> if (destination == GalleryDestination.TIMELINE) timelineAssets else emptyList()
+        is BrowserRoute.DeviceAlbum -> assetsForAlbum(
+            assets = state.assets,
+            albumKey = current.key,
+            archivedIds = state.library.archivedIds,
+            lockedFolders = state.lockedFolders,
+            unlockedFolders = state.unlockedFolders,
+            preferences = state.preferences,
+            query = query,
+            tagsByMediaId = state.library.tagsByMediaId,
+        )
+        is BrowserRoute.Collection -> sortAssets(
+            state.assets.filter { asset ->
+                asset.id in state.library.collections.firstOrNull { it.id == current.id }?.mediaIds.orEmpty() &&
+                    !asset.isTrashed &&
+                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id))
+            },
+            state.preferences.sort,
+        )
+        is BrowserRoute.Smart -> smartAlbumAssets(
+            smartAlbum = current.album,
+            assets = state.assets,
+            favoriteIds = state.favoriteIds,
+            sensitiveIds = state.sensitiveIds,
+            archivedIds = state.library.archivedIds,
+            tagsByMediaId = state.library.tagsByMediaId,
+            lockedFolders = state.lockedFolders,
+            unlockedFolders = state.unlockedFolders,
+            preferences = state.preferences,
+        ).filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id)) }
+        is BrowserRoute.Tag -> sortAssets(
+            state.assets.filter { asset ->
+                current.tag in state.library.tagsFor(asset.id) &&
+                    !asset.isTrashed &&
+                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id))
+            },
+            state.preferences.sort,
+        )
+    }
+    val selectedAssets = currentAssets.filter { it.id in selection.selectedIds }
+    val currentIds = currentAssets.mapTo(linkedSetOf()) { it.id }
+    val inTrash = (route as? BrowserRoute.Smart)?.album == SmartAlbum.TRASH
+    val inArchive = (route as? BrowserRoute.Smart)?.album == SmartAlbum.ARCHIVED
+    val collectionRoute = route as? BrowserRoute.Collection
+    val albumRoute = route as? BrowserRoute.DeviceAlbum
+    val tagRoute = route as? BrowserRoute.Tag
 
-    LaunchedEffect(visibleIds) { selection = selection.retainAvailable(visibleIds) }
+    LaunchedEffect(currentIds) {
+        selection = selection.retainAvailable(currentIds)
+    }
+    LaunchedEffect(destination, route) {
+        selection = selection.clear()
+        query = ""
+        searchVisible = false
+    }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        if (selection.isActive) {
-            SelectionBar(
-                count = selection.count,
-                allVisibleSelected = selection.count == visible.size,
-                inTrash = inTrash,
-                canUseSystemTrash = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
-                favoriteAction = bulkMarkAction(selection.selectedIds, state.favoriteIds),
-                sensitiveAction = bulkMarkAction(selection.selectedIds, state.sensitiveIds),
-                onClose = { selection = selection.clear() },
-                onSelectAll = { selection = selection.selectAll(visibleIds) },
-                onFavorite = {
-                    onSetFavorite(selection.selectedIds, bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK)
-                    selection = selection.clear()
-                },
-                onSensitive = {
-                    onSetSensitive(selection.selectedIds, bulkMarkAction(selection.selectedIds, state.sensitiveIds) == BulkMarkAction.MARK)
-                    selection = selection.clear()
-                },
-                onTrash = { onMoveToTrash(selectedAssets); selection = selection.clear() },
-                onRestore = { onRestore(selectedAssets); selection = selection.clear() },
-                onDelete = { onDeletePermanently(selectedAssets); selection = selection.clear() },
-            )
-        } else {
-            Header(
-                title = activeAlbum?.name ?: if (inTrash) "Recycle Bin" else "Foto Xplorr",
-                subtitle = when {
-                    protected && !unlocked -> "Private folder"
-                    activeAlbum != null -> "${visible.size} photos"
-                    inTrash -> "${visible.size} items · deletion is manual only"
-                    section == GallerySection.ALBUMS -> "${albums.size} albums"
-                    section == GallerySection.FAVORITES -> "${visible.size} favourites"
-                    else -> "${visible.size} photos"
-                },
-                action = if (activeAlbum != null) "Back" else "Refresh",
-                onAction = { if (activeAlbum != null) selectedAlbumKey = null else onRefresh() },
-            )
-        }
-
-        if (!selection.isActive && activeAlbum != null) {
-            FolderPrivacyActions(
-                protected = protected,
-                unlocked = unlocked,
-                onProtect = {
-                    passwordFolderKey = activeAlbum.key
-                    passwordFolderName = activeAlbum.name
-                    passwordAction = PasswordAction.PROTECT
-                },
-                onLock = { onLockFolder(activeAlbum.key); selectedAlbumKey = null },
-                onRemove = {
-                    passwordFolderKey = activeAlbum.key
-                    passwordFolderName = activeAlbum.name
-                    passwordAction = PasswordAction.REMOVE
-                },
-            )
-        }
-
-        if (!selection.isActive) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                singleLine = true,
-                label = { Text(if (inTrash) "Search recycle bin" else "Search photos and albums") },
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                GallerySection.entries.forEach { candidate ->
-                    FilterChip(
-                        selected = section == candidate,
-                        onClick = {
-                            section = candidate
-                            selectedAlbumKey = null
-                            selection = selection.clear()
-                        },
-                        label = { Text(candidate.label()) },
-                    )
-                }
-            }
-            if (section != GallerySection.ALBUMS || activeAlbum != null) {
-                GalleryControls(state.preferences, onSetSort, onSetGridColumns, onSetBlurSensitive)
-            }
-        }
-
+    BackHandler(enabled = selection.isActive || searchVisible || route != BrowserRoute.Root) {
         when {
-            protected && !unlocked -> CenteredColumn {
-                Text("This folder is private")
-                Button(onClick = {
-                    passwordFolderKey = activeAlbum?.key
-                    passwordFolderName = activeAlbum?.name
-                    passwordAction = PasswordAction.UNLOCK
-                }) { Text("Unlock") }
+            selection.isActive -> selection = selection.clear()
+            searchVisible -> {
+                searchVisible = false
+                query = ""
             }
-            section == GallerySection.ALBUMS && activeAlbum == null -> AlbumGrid(
-                albums = albums,
-                lockedFolders = state.lockedFolders,
-                unlockedFolders = state.unlockedFolders,
-                sensitiveIds = state.sensitiveIds,
-                blurSensitive = state.preferences.blurSensitive,
-                onOpenAlbum = { album ->
-                    if (album.key in state.lockedFolders && album.key !in state.unlockedFolders) {
-                        passwordFolderKey = album.key
-                        passwordFolderName = album.name
-                        passwordAction = PasswordAction.UNLOCK
-                    } else selectedAlbumKey = album.key
-                },
-            )
-            visible.isEmpty() -> CenteredColumn {
-                Text(
-                    when {
-                        query.isNotBlank() -> "No matches"
-                        inTrash -> "Recycle Bin is empty"
-                        else -> "No photos here"
-                    },
-                )
-            }
-            else -> AssetGrid(
-                assets = visible,
-                columns = state.preferences.gridColumns,
-                selectedIds = selection.selectedIds,
-                sensitiveIds = state.sensitiveIds,
-                blurSensitive = state.preferences.blurSensitive,
-                onClick = { asset ->
-                    if (selection.isActive || inTrash) selection = selection.toggle(asset.id)
-                    else onOpenAsset(asset, visible)
-                },
-                onLongClick = { asset -> selection = selection.toggle(asset.id) },
-            )
+            else -> route = BrowserRoute.Root
         }
     }
 
-    val action = passwordAction
-    val folderKey = passwordFolderKey
-    val folderName = passwordFolderName
-    if (action != null && folderKey != null && folderName != null) {
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            if (selection.isActive) {
+                CenterAlignedTopAppBar(
+                    title = { Text("${selection.count} selected") },
+                    navigationIcon = {
+                        IconButton(onClick = { selection = selection.clear() }) {
+                            Icon(Icons.Outlined.Close, contentDescription = "Clear selection")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { selection = selection.selectAll(currentIds) }) {
+                            Icon(Icons.Outlined.SelectAll, contentDescription = "Select all")
+                        }
+                        if (!inTrash) {
+                            IconButton(onClick = { actions.onShare(selectedAssets) }) {
+                                Icon(Icons.Outlined.Share, contentDescription = "Share")
+                            }
+                            IconButton(onClick = {
+                                val mark = bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK
+                                actions.onSetFavorite(selection.selectedIds, mark)
+                                selection = selection.clear()
+                            }) {
+                                Icon(Icons.Outlined.Favorite, contentDescription = "Toggle favourite")
+                            }
+                        }
+                        IconButton(onClick = { selectionMenuVisible = true }) {
+                            Icon(Icons.Outlined.MoreVert, contentDescription = "More actions")
+                        }
+                        DropdownMenu(
+                            expanded = selectionMenuVisible,
+                            onDismissRequest = { selectionMenuVisible = false },
+                        ) {
+                            if (inTrash) {
+                                DropdownMenuItem(
+                                    text = { Text("Restore") },
+                                    leadingIcon = { Icon(Icons.Outlined.Restore, null) },
+                                    enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                                    onClick = {
+                                        selectionMenuVisible = false
+                                        actions.onRestore(selectedAssets)
+                                        selection = selection.clear()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Delete permanently") },
+                                    leadingIcon = { Icon(Icons.Outlined.Delete, null) },
+                                    enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                                    onClick = {
+                                        selectionMenuVisible = false
+                                        actions.onDeletePermanently(selectedAssets)
+                                        selection = selection.clear()
+                                    },
+                                )
+                            } else {
+                                DropdownMenuItem(
+                                    text = { Text(if (inArchive) "Unarchive" else "Archive") },
+                                    leadingIcon = { Icon(Icons.Outlined.Archive, null) },
+                                    onClick = {
+                                        selectionMenuVisible = false
+                                        actions.onSetArchived(selection.selectedIds, !inArchive)
+                                        selection = selection.clear()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Mark sensitive") },
+                                    leadingIcon = { Icon(Icons.Outlined.VisibilityOff, null) },
+                                    onClick = {
+                                        selectionMenuVisible = false
+                                        val mark = bulkMarkAction(selection.selectedIds, state.sensitiveIds) == BulkMarkAction.MARK
+                                        actions.onSetSensitive(selection.selectedIds, mark)
+                                        selection = selection.clear()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Share without common EXIF metadata") },
+                                    leadingIcon = { Icon(Icons.Outlined.Share, null) },
+                                    enabled = selectedAssets.all { !it.isVideo && it.mimeType.startsWith("image/") },
+                                    onClick = {
+                                        selectionMenuVisible = false
+                                        actions.onShareClean(selectedAssets)
+                                        selection = selection.clear()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Copy to folder") },
+                                    leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
+                                    onClick = {
+                                        selectionMenuVisible = false
+                                        actions.onCopyToFolder(selectedAssets)
+                                        selection = selection.clear()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Move to folder safely") },
+                                    leadingIcon = { Icon(Icons.Outlined.DriveFileMove, null) },
+                                    enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                                    onClick = {
+                                        selectionMenuVisible = false
+                                        actions.onMoveToFolder(selectedAssets)
+                                        selection = selection.clear()
+                                    },
+                                )
+                                if (selectedAssets.size == 1) {
+                                    DropdownMenuItem(
+                                        text = { Text("Rename file") },
+                                        leadingIcon = { Icon(Icons.Outlined.Edit, null) },
+                                        onClick = {
+                                            selectionMenuVisible = false
+                                            renameAsset = selectedAssets.first()
+                                        },
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text("Add to collection") },
+                                    leadingIcon = { Icon(Icons.Outlined.Collections, null) },
+                                    onClick = {
+                                        selectionMenuVisible = false
+                                        addToCollectionIds = selection.selectedIds
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Add tag") },
+                                    leadingIcon = { Icon(Icons.Outlined.Label, null) },
+                                    onClick = {
+                                        selectionMenuVisible = false
+                                        addTagIds = selection.selectedIds
+                                    },
+                                )
+                                tagRoute?.let { tag ->
+                                    DropdownMenuItem(
+                                        text = { Text("Remove #${tag.tag}") },
+                                        leadingIcon = { Icon(Icons.Outlined.Close, null) },
+                                        onClick = {
+                                            selectionMenuVisible = false
+                                            actions.onRemoveTag(selection.selectedIds, tag.tag)
+                                            selection = selection.clear()
+                                        },
+                                    )
+                                }
+                                collectionRoute?.let { collection ->
+                                    DropdownMenuItem(
+                                        text = { Text("Remove from collection") },
+                                        leadingIcon = { Icon(Icons.Outlined.Close, null) },
+                                        onClick = {
+                                            selectionMenuVisible = false
+                                            actions.onRemoveFromCollection(collection.id, selection.selectedIds)
+                                            selection = selection.clear()
+                                        },
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text("Move to trash") },
+                                    leadingIcon = { Icon(Icons.Outlined.Delete, null) },
+                                    enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                                    onClick = {
+                                        selectionMenuVisible = false
+                                        actions.onMoveToTrash(selectedAssets)
+                                        selection = selection.clear()
+                                    },
+                                )
+                            }
+                        }
+                    },
+                )
+            } else {
+                CenterAlignedTopAppBar(
+                    title = {
+                        Column {
+                            Text(route.title(destination))
+                            Text(
+                                text = route.subtitle(currentAssets.size, state.assets.size),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        if (route != BrowserRoute.Root) {
+                            TextButton(onClick = { route = BrowserRoute.Root }) { Text("Back") }
+                        }
+                    },
+                    actions = {
+                        if (currentAssets.isNotEmpty()) {
+                            IconButton(onClick = { actions.onStartSlideshow(currentAssets) }) {
+                                Icon(Icons.Outlined.PlayArrow, contentDescription = "Start slideshow")
+                            }
+                        }
+                        IconButton(onClick = { searchVisible = !searchVisible }) {
+                            Icon(Icons.Outlined.Search, contentDescription = "Search")
+                        }
+                        IconButton(onClick = { topMenuVisible = true }) {
+                            Icon(Icons.Outlined.MoreVert, contentDescription = "More")
+                        }
+                        DropdownMenu(
+                            expanded = topMenuVisible,
+                            onDismissRequest = { topMenuVisible = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Refresh library") },
+                                onClick = {
+                                    topMenuVisible = false
+                                    actions.onRefresh()
+                                },
+                            )
+                            albumRoute?.let { album ->
+                                val protected = album.key in state.lockedFolders
+                                val unlocked = album.key in state.unlockedFolders
+                                when {
+                                    !protected -> DropdownMenuItem(
+                                        text = { Text("Make folder private") },
+                                        onClick = {
+                                            topMenuVisible = false
+                                            passwordRequest = PasswordRequest(PasswordAction.PROTECT, album.key, album.name)
+                                        },
+                                    )
+                                    unlocked -> {
+                                        DropdownMenuItem(
+                                            text = { Text("Lock now") },
+                                            onClick = {
+                                                topMenuVisible = false
+                                                actions.onLockFolder(album.key)
+                                                route = BrowserRoute.Root
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Remove protection") },
+                                            onClick = {
+                                                topMenuVisible = false
+                                                passwordRequest = PasswordRequest(PasswordAction.REMOVE, album.key, album.name)
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                            collectionRoute?.let { collection ->
+                                DropdownMenuItem(
+                                    text = { Text("Rename collection") },
+                                    onClick = {
+                                        topMenuVisible = false
+                                        renameCollection = collection
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Delete collection") },
+                                    onClick = {
+                                        topMenuVisible = false
+                                        actions.onDeleteCollection(collection.id)
+                                        route = BrowserRoute.Root
+                                    },
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text("Settings") },
+                                leadingIcon = { Icon(Icons.Outlined.Settings, null) },
+                                onClick = {
+                                    topMenuVisible = false
+                                    settingsVisible = true
+                                },
+                            )
+                        }
+                    },
+                )
+            }
+        },
+        bottomBar = {
+            if (!selection.isActive && route == BrowserRoute.Root) {
+                GalleryNavigationBar(destination) { destination = it }
+            }
+        },
+        floatingActionButton = {
+            if (!selection.isActive && route == BrowserRoute.Root &&
+                (destination == GalleryDestination.ALBUMS || destination == GalleryDestination.LIBRARY)
+            ) {
+                FloatingActionButton(onClick = { createCollectionVisible = true }) {
+                    Icon(Icons.Outlined.Add, contentDescription = "Create collection")
+                }
+            }
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            if (searchVisible) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Outlined.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    },
+                    placeholder = { Text("Search names, albums, types and tags") },
+                )
+            }
+
+            when (val current = route) {
+                BrowserRoute.Root -> when (destination) {
+                    GalleryDestination.TIMELINE -> TimelineScreen(
+                        assets = timelineAssets,
+                        grouping = state.preferences.timelineGrouping,
+                        columns = state.preferences.gridColumns,
+                        favoriteIds = state.favoriteIds,
+                        sensitiveIds = state.sensitiveIds,
+                        blurSensitive = state.preferences.blurSensitive,
+                        selectedIds = selection.selectedIds,
+                        onOpen = { asset -> actions.onOpenAsset(asset, timelineAssets) },
+                        onToggleSelection = { id -> selection = selection.toggle(id) },
+                    )
+                    GalleryDestination.ALBUMS -> AlbumsScreen(
+                        assets = state.assets,
+                        collections = state.library.collections,
+                        archivedIds = state.library.archivedIds,
+                        lockedFolders = state.lockedFolders,
+                        unlockedFolders = state.unlockedFolders,
+                        showVideos = state.preferences.showVideos,
+                        query = query,
+                        onOpenAlbum = { album ->
+                            if (album.key in state.lockedFolders && album.key !in state.unlockedFolders) {
+                                passwordRequest = PasswordRequest(PasswordAction.UNLOCK, album.key, album.name)
+                            } else {
+                                route = BrowserRoute.DeviceAlbum(album.key, album.name)
+                            }
+                        },
+                        onOpenCollection = { collection ->
+                            route = BrowserRoute.Collection(collection.id, collection.name)
+                        },
+                    )
+                    GalleryDestination.DISCOVER -> DiscoverScreen(
+                        summaries = smartAlbumSummaries(
+                            assets = state.assets,
+                            favoriteIds = state.favoriteIds,
+                            sensitiveIds = state.sensitiveIds,
+                            archivedIds = state.library.archivedIds,
+                            tagsByMediaId = state.library.tagsByMediaId,
+                            lockedFolders = state.lockedFolders,
+                            unlockedFolders = state.unlockedFolders,
+                            preferences = state.preferences,
+                        ),
+                        onOpen = { route = BrowserRoute.Smart(it.album) },
+                    )
+                    GalleryDestination.LIBRARY -> LibraryScreen(
+                        library = state.library,
+                        privateAlbumCount = state.lockedFolders.size,
+                        trashCount = state.assets.count { it.isTrashed },
+                        onOpenCollection = { route = BrowserRoute.Collection(it.id, it.name) },
+                        onOpenTag = { route = BrowserRoute.Tag(it) },
+                        onOpenArchive = { route = BrowserRoute.Smart(SmartAlbum.ARCHIVED) },
+                        onOpenTrash = { route = BrowserRoute.Smart(SmartAlbum.TRASH) },
+                        onOpenPrivateFolders = { destination = GalleryDestination.ALBUMS },
+                        onOpenSettings = { settingsVisible = true },
+                        onExportMetadata = actions.onExportMetadata,
+                        onImportMetadata = actions.onImportMetadata,
+                    )
+                }
+                else -> MediaGridScreen(
+                    assets = currentAssets,
+                    columns = state.preferences.gridColumns,
+                    favoriteIds = state.favoriteIds,
+                    sensitiveIds = state.sensitiveIds,
+                    blurSensitive = state.preferences.blurSensitive,
+                    selectedIds = selection.selectedIds,
+                    emptyMessage = if (query.isBlank()) "Nothing here yet" else "No matching media",
+                    onOpen = { asset -> actions.onOpenAsset(asset, currentAssets) },
+                    onToggleSelection = { id -> selection = selection.toggle(id) },
+                )
+            }
+        }
+    }
+
+    if (settingsVisible) {
+        GallerySettingsDialog(
+            preferences = state.preferences,
+            onDismiss = { settingsVisible = false },
+            actions = actions,
+        )
+    }
+    if (createCollectionVisible) {
+        TextEntryDialog(
+            title = "New collection",
+            label = "Collection name",
+            confirmLabel = "Create",
+            onDismiss = { createCollectionVisible = false },
+            onConfirm = {
+                actions.onCreateCollection(it)
+                createCollectionVisible = false
+            },
+        )
+    }
+    renameCollection?.let { collection ->
+        TextEntryDialog(
+            title = "Rename collection",
+            label = "Collection name",
+            initialValue = collection.name,
+            confirmLabel = "Rename",
+            onDismiss = { renameCollection = null },
+            onConfirm = {
+                actions.onRenameCollection(collection.id, it)
+                route = BrowserRoute.Collection(collection.id, it.trim())
+                renameCollection = null
+            },
+        )
+    }
+    renameAsset?.let { asset ->
+        TextEntryDialog(
+            title = "Rename file",
+            label = "File name",
+            initialValue = asset.displayName,
+            confirmLabel = "Rename",
+            onDismiss = { renameAsset = null },
+            onConfirm = {
+                actions.onRenameAsset(asset, it)
+                renameAsset = null
+                selection = selection.clear()
+            },
+        )
+    }
+    addToCollectionIds?.let { ids ->
+        CollectionPickerDialog(
+            collections = state.library.collections,
+            onDismiss = { addToCollectionIds = null },
+            onCreateCollection = { name ->
+                actions.onCreateCollection(name)?.let { collectionId ->
+                    actions.onAddToCollection(collectionId, ids)
+                }
+                addToCollectionIds = null
+                selection = selection.clear()
+            },
+            onChoose = { collectionId ->
+                actions.onAddToCollection(collectionId, ids)
+                addToCollectionIds = null
+                selection = selection.clear()
+            },
+        )
+    }
+    addTagIds?.let { ids ->
+        TextEntryDialog(
+            title = "Tag selected media",
+            label = "Tag",
+            confirmLabel = "Add tag",
+            suggestions = state.library.allTags,
+            onDismiss = { addTagIds = null },
+            onConfirm = {
+                actions.onAddTag(ids, it)
+                addTagIds = null
+                selection = selection.clear()
+            },
+        )
+    }
+    passwordRequest?.let { request ->
         PasswordDialog(
-            title = when (action) {
-                PasswordAction.PROTECT -> "Protect $folderName"
-                PasswordAction.UNLOCK -> "Unlock $folderName"
+            title = when (request.action) {
+                PasswordAction.PROTECT -> "Protect ${request.folderName}"
+                PasswordAction.UNLOCK -> "Unlock ${request.folderName}"
                 PasswordAction.REMOVE -> "Remove protection"
             },
-            confirmLabel = when (action) {
+            confirmLabel = when (request.action) {
                 PasswordAction.PROTECT -> "Protect"
                 PasswordAction.UNLOCK -> "Unlock"
                 PasswordAction.REMOVE -> "Remove"
             },
-            failureMessage = if (action == PasswordAction.PROTECT) {
+            failureMessage = if (request.action == PasswordAction.PROTECT) {
                 "Use at least 6 characters"
             } else {
                 "Incorrect password or temporarily locked"
             },
-            onDismiss = {
-                passwordAction = null
-                passwordFolderKey = null
-                passwordFolderName = null
-            },
+            onDismiss = { passwordRequest = null },
             onConfirm = { password ->
-                when (action) {
-                    PasswordAction.PROTECT -> onProtectFolder(folderKey, password).isSuccess
-                    PasswordAction.UNLOCK -> onUnlockFolder(folderKey, password)
-                    PasswordAction.REMOVE -> onRemoveFolderProtection(folderKey, password)
+                when (request.action) {
+                    PasswordAction.PROTECT -> actions.onProtectFolder(request.folderKey, password).isSuccess
+                    PasswordAction.UNLOCK -> actions.onUnlockFolder(request.folderKey, password)
+                    PasswordAction.REMOVE -> actions.onRemoveFolderProtection(request.folderKey, password)
                 }
             },
             onSuccess = {
-                if (action == PasswordAction.UNLOCK) selectedAlbumKey = folderKey
-                passwordAction = null
-                passwordFolderKey = null
-                passwordFolderName = null
+                if (request.action == PasswordAction.UNLOCK) {
+                    route = BrowserRoute.DeviceAlbum(request.folderKey, request.folderName)
+                }
+                passwordRequest = null
             },
         )
     }
 }
 
 @Composable
-private fun PasswordDialog(
+private fun GalleryNavigationBar(
+    selected: GalleryDestination,
+    onSelect: (GalleryDestination) -> Unit,
+) {
+    NavigationBar {
+        GalleryDestination.entries.forEach { destination ->
+            NavigationBarItem(
+                selected = destination == selected,
+                onClick = { onSelect(destination) },
+                icon = { Icon(destination.icon(), contentDescription = null) },
+                label = { Text(destination.label()) },
+            )
+        }
+    }
+}
+
+private fun GalleryDestination.label(): String = when (this) {
+    GalleryDestination.TIMELINE -> "Photos"
+    GalleryDestination.ALBUMS -> "Albums"
+    GalleryDestination.DISCOVER -> "Discover"
+    GalleryDestination.LIBRARY -> "Library"
+}
+
+private fun GalleryDestination.icon(): ImageVector = when (this) {
+    GalleryDestination.TIMELINE -> Icons.Outlined.Home
+    GalleryDestination.ALBUMS -> Icons.Outlined.Album
+    GalleryDestination.DISCOVER -> Icons.Outlined.ImageSearch
+    GalleryDestination.LIBRARY -> Icons.Outlined.Collections
+}
+
+private fun BrowserRoute.title(destination: GalleryDestination): String = when (this) {
+    BrowserRoute.Root -> destination.label()
+    is BrowserRoute.DeviceAlbum -> name
+    is BrowserRoute.Collection -> name
+    is BrowserRoute.Smart -> album.title()
+    is BrowserRoute.Tag -> "#$tag"
+}
+
+private fun BrowserRoute.subtitle(visibleCount: Int, totalCount: Int): String = when (this) {
+    BrowserRoute.Root -> if (visibleCount > 0) "$visibleCount shown · $totalCount indexed" else "$totalCount indexed"
+    else -> "$visibleCount items"
+}
+
+private fun MediaAsset.matchesGallerySearch(query: String, tags: Set<String>): Boolean {
+    val normalized = query.trim().lowercase()
+    if (normalized.isEmpty()) return true
+    return displayName.lowercase().contains(normalized) ||
+        mimeType.lowercase().contains(normalized) ||
+        folderIdentity(this).displayName.lowercase().contains(normalized) ||
+        tags.any { it.lowercase().contains(normalized) }
+}
+
+@Composable
+private fun GalleryEmptyState(
     title: String,
-    confirmLabel: String,
-    failureMessage: String,
-    onDismiss: () -> Unit,
-    onConfirm: suspend (CharArray) -> Boolean,
-    onSuccess: () -> Unit,
+    message: String,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
+    progress: Boolean = false,
 ) {
-    var password by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-
-    AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text(title) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it; error = null },
-                    enabled = !busy,
-                    label = { Text("Password") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                )
-                if (busy) CircularProgressIndicator()
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = password.isNotEmpty() && !busy,
-                onClick = {
-                    val chars = password.toCharArray()
-                    password = ""
-                    busy = true
-                    scope.launch {
-                        val success = runCatching { onConfirm(chars) }.getOrDefault(false)
-                        busy = false
-                        if (success) onSuccess() else error = failureMessage
-                    }
-                },
-            ) { Text(confirmLabel) }
-        },
-        dismissButton = {
-            TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") }
-        },
-    )
-}
-
-@Composable
-private fun SelectionBar(
-    count: Int,
-    allVisibleSelected: Boolean,
-    inTrash: Boolean,
-    canUseSystemTrash: Boolean,
-    favoriteAction: BulkMarkAction,
-    sensitiveAction: BulkMarkAction,
-    onClose: () -> Unit,
-    onSelectAll: () -> Unit,
-    onFavorite: () -> Unit,
-    onSensitive: () -> Unit,
-    onTrash: () -> Unit,
-    onRestore: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer).padding(12.dp),
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = androidx.compose.ui.Alignment.Center,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier.padding(32.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
+            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
         ) {
-            Text("$count selected", style = MaterialTheme.typography.titleMedium)
-            Text("Cancel", modifier = Modifier.combinedClickable(onClick = onClose, onLongClick = onClose))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (!allVisibleSelected) Button(onClick = onSelectAll) { Text("Select all") }
-            if (inTrash) {
-                Button(enabled = canUseSystemTrash, onClick = onRestore) { Text("Restore") }
-                Button(enabled = canUseSystemTrash, onClick = onDelete) { Text("Delete permanently") }
-            } else {
-                Button(onClick = onFavorite) { Text(if (favoriteAction == BulkMarkAction.MARK) "Favourite" else "Unfavourite") }
-                Button(onClick = onSensitive) { Text(if (sensitiveAction == BulkMarkAction.MARK) "Sensitive" else "Not sensitive") }
-                Button(enabled = canUseSystemTrash, onClick = onTrash) { Text("Trash") }
+            if (progress) CircularProgressIndicator()
+            Text(title, style = MaterialTheme.typography.headlineSmall)
+            Text(message, style = MaterialTheme.typography.bodyMedium)
+            if (actionLabel != null && onAction != null) {
+                TextButton(onClick = onAction) { Text(actionLabel) }
             }
         }
     }
-}
-
-@Composable
-private fun Header(title: String, subtitle: String, action: String, onAction: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column { Text(title, style = MaterialTheme.typography.titleLarge); Text(subtitle, style = MaterialTheme.typography.bodySmall) }
-        Text(action, modifier = Modifier.combinedClickable(onClick = onAction, onLongClick = onAction), style = MaterialTheme.typography.labelLarge)
-    }
-}
-
-@Composable
-private fun FolderPrivacyActions(protected: Boolean, unlocked: Boolean, onProtect: () -> Unit, onLock: () -> Unit, onRemove: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        when {
-            !protected -> Button(onClick = onProtect) { Text("Make private") }
-            unlocked -> { Button(onClick = onLock) { Text("Lock now") }; Button(onClick = onRemove) { Text("Remove lock") } }
-        }
-    }
-}
-
-@Composable
-private fun GalleryControls(preferences: GalleryPreferencesState, onSetSort: (GallerySort) -> Unit, onSetGridColumns: (Int) -> Unit, onSetBlurSensitive: (Boolean) -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        GallerySort.entries.forEach { sort -> FilterChip(selected = preferences.sort == sort, onClick = { onSetSort(sort) }, label = { Text(sort.label()) }) }
-    }
-    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("Blur sensitive")
-        Switch(checked = preferences.blurSensitive, onCheckedChange = onSetBlurSensitive)
-        Button(enabled = preferences.gridColumns > MIN_GRID_COLUMNS, onClick = { onSetGridColumns(preferences.gridColumns - 1) }) { Text("Larger") }
-        Button(enabled = preferences.gridColumns < MAX_GRID_COLUMNS, onClick = { onSetGridColumns(preferences.gridColumns + 1) }) { Text("Smaller") }
-    }
-}
-
-@Composable
-private fun AlbumGrid(albums: List<AlbumSummary>, lockedFolders: Set<String>, unlockedFolders: Set<String>, sensitiveIds: Set<MediaId>, blurSensitive: Boolean, onOpenAlbum: (AlbumSummary) -> Unit) {
-    LazyVerticalGrid(columns = GridCells.Adaptive(156.dp), modifier = Modifier.fillMaxSize()) {
-        items(albums, key = { it.key }) { album ->
-            val locked = album.key in lockedFolders && album.key !in unlockedFolders
-            Column(modifier = Modifier.combinedClickable(onClick = { onOpenAlbum(album) }, onLongClick = { onOpenAlbum(album) }).padding(6.dp)) {
-                if (locked) Box(modifier = Modifier.aspectRatio(1f).fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) { Text("Private") }
-                else Thumbnail(album.cover, blurSensitive && album.cover.id in sensitiveIds, false, { onOpenAlbum(album) }, { onOpenAlbum(album) })
-                Text(album.name, modifier = Modifier.padding(top = 8.dp), maxLines = 1)
-                Text(if (locked) "Locked" else "${album.count} photos", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-    }
-}
-
-@Composable
-private fun AssetGrid(assets: List<MediaAsset>, columns: Int, selectedIds: Set<MediaId>, sensitiveIds: Set<MediaId>, blurSensitive: Boolean, onClick: (MediaAsset) -> Unit, onLongClick: (MediaAsset) -> Unit) {
-    LazyVerticalGrid(columns = GridCells.Fixed(columns), modifier = Modifier.fillMaxSize()) {
-        items(assets, key = { it.id.value }) { asset ->
-            Thumbnail(asset, blurSensitive && asset.id in sensitiveIds, asset.id in selectedIds, { onClick(asset) }, { onLongClick(asset) })
-        }
-    }
-}
-
-@Composable
-private fun Thumbnail(asset: MediaAsset, blur: Boolean, selected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
-    val resolver = LocalContext.current.contentResolver
-    val bitmap by produceState<Bitmap?>(initialValue = null, asset.contentUri, asset.id) { value = loadThumbnail(resolver, asset) }
-    Box(modifier = Modifier.aspectRatio(1f).background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant).combinedClickable(onClick = onClick, onLongClick = onLongClick), contentAlignment = Alignment.Center) {
-        if (bitmap == null) Text(asset.displayName.take(1).uppercase())
-        else Image(bitmap = bitmap!!.asImageBitmap(), contentDescription = asset.displayName, modifier = Modifier.fillMaxSize().then(if (blur) Modifier.blur(24.dp) else Modifier), contentScale = ContentScale.Crop)
-        if (blur) Text("Sensitive", modifier = Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)).padding(6.dp))
-        if (selected) Text("✓", modifier = Modifier.align(Alignment.TopEnd).background(MaterialTheme.colorScheme.primary).padding(horizontal = 8.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.onPrimary)
-    }
-}
-
-private fun GallerySection.label() = when (this) {
-    GallerySection.PHOTOS -> "Photos"
-    GallerySection.FAVORITES -> "Favourites"
-    GallerySection.ALBUMS -> "Albums"
-    GallerySection.TRASH -> "Trash"
-}
-
-private fun GallerySort.label() = when (this) {
-    GallerySort.NEWEST -> "Newest"
-    GallerySort.OLDEST -> "Oldest"
-    GallerySort.NAME -> "Name"
-    GallerySort.SIZE -> "Size"
-}
-
-private suspend fun loadThumbnail(resolver: ContentResolver, asset: MediaAsset): Bitmap? = withContext(Dispatchers.IO) {
-    runCatching {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) resolver.loadThumbnail(asset.contentUri, Size(360, 360), null)
-        else MediaStore.Images.Thumbnails.getThumbnail(resolver, asset.id.value, MediaStore.Images.Thumbnails.MINI_KIND, null)
-            ?: resolver.openInputStream(asset.contentUri)?.use(BitmapFactory::decodeStream)
-    }.getOrNull()
-}
-
-@Composable
-private fun CenteredColumn(content: @Composable () -> Unit) {
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)) { content() }
 }

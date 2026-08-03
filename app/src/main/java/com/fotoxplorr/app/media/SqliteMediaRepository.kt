@@ -23,9 +23,7 @@ class SqliteMediaRepository(context: Context) : MediaRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
-        scope.launch {
-            state.value = helper.readAll()
-        }
+        scope.launch { state.value = helper.readAll() }
     }
 
     override fun observeAll(): Flow<List<MediaAsset>> = state.asStateFlow()
@@ -40,7 +38,6 @@ class SqliteMediaRepository(context: Context) : MediaRepository {
 
     override suspend fun upsert(items: List<MediaAsset>) = withContext(Dispatchers.IO) {
         if (items.isEmpty()) return@withContext
-
         mutex.withLock {
             helper.upsert(items)
             state.value = normalize(
@@ -53,7 +50,6 @@ class SqliteMediaRepository(context: Context) : MediaRepository {
 
     override suspend fun remove(ids: Set<MediaId>) = withContext(Dispatchers.IO) {
         if (ids.isEmpty()) return@withContext
-
         mutex.withLock {
             helper.remove(ids)
             state.value = state.value.filterNot { it.id in ids }
@@ -90,6 +86,7 @@ private class CatalogueOpenHelper(context: Context) : SQLiteOpenHelper(
                 $COL_WIDTH INTEGER NOT NULL,
                 $COL_HEIGHT INTEGER NOT NULL,
                 $COL_SIZE_BYTES INTEGER NOT NULL,
+                $COL_DURATION INTEGER NOT NULL DEFAULT 0,
                 $COL_RELATIVE_PATH TEXT,
                 $COL_FAVORITE INTEGER NOT NULL,
                 $COL_TRASHED INTEGER NOT NULL
@@ -104,6 +101,9 @@ private class CatalogueOpenHelper(context: Context) : SQLiteOpenHelper(
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE $TABLE_MEDIA ADD COLUMN $COL_BUCKET_ID INTEGER")
+        }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE $TABLE_MEDIA ADD COLUMN $COL_DURATION INTEGER NOT NULL DEFAULT 0")
         }
     }
 
@@ -156,7 +156,7 @@ private class CatalogueOpenHelper(context: Context) : SQLiteOpenHelper(
 
     private companion object {
         const val DATABASE_NAME = "foto_xplorr_catalogue.db"
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 3
         const val TABLE_MEDIA = "media"
         const val COL_ID = "id"
         const val COL_CONTENT_URI = "content_uri"
@@ -169,6 +169,7 @@ private class CatalogueOpenHelper(context: Context) : SQLiteOpenHelper(
         const val COL_WIDTH = "width"
         const val COL_HEIGHT = "height"
         const val COL_SIZE_BYTES = "size_bytes"
+        const val COL_DURATION = "duration_millis"
         const val COL_RELATIVE_PATH = "relative_path"
         const val COL_FAVORITE = "is_favorite"
         const val COL_TRASHED = "is_trashed"
@@ -186,6 +187,7 @@ private class CatalogueOpenHelper(context: Context) : SQLiteOpenHelper(
             COL_WIDTH,
             COL_HEIGHT,
             COL_SIZE_BYTES,
+            COL_DURATION,
             COL_RELATIVE_PATH,
             COL_FAVORITE,
             COL_TRASHED,
@@ -203,7 +205,7 @@ private fun SQLiteDatabase.inTransaction(block: (SQLiteDatabase) -> Unit) {
     }
 }
 
-private fun MediaAsset.toValues(): ContentValues = ContentValues(14).apply {
+private fun MediaAsset.toValues(): ContentValues = ContentValues(15).apply {
     put("id", id.value)
     put("content_uri", contentUriString)
     put("display_name", displayName)
@@ -215,6 +217,7 @@ private fun MediaAsset.toValues(): ContentValues = ContentValues(14).apply {
     put("width", width)
     put("height", height)
     put("size_bytes", sizeBytes)
+    put("duration_millis", durationMillis)
     put("relative_path", relativePath)
     put("is_favorite", if (isFavorite) 1 else 0)
     put("is_trashed", if (isTrashed) 1 else 0)
@@ -232,6 +235,7 @@ private fun Cursor.toAsset(): MediaAsset = MediaAsset(
     width = getInt(getColumnIndexOrThrow("width")),
     height = getInt(getColumnIndexOrThrow("height")),
     sizeBytes = getLong(getColumnIndexOrThrow("size_bytes")),
+    durationMillis = getLong(getColumnIndexOrThrow("duration_millis")),
     relativePath = stringOrNull("relative_path"),
     isFavorite = getInt(getColumnIndexOrThrow("is_favorite")) != 0,
     isTrashed = getInt(getColumnIndexOrThrow("is_trashed")) != 0,
