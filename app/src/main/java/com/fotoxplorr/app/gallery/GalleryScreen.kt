@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.fotoxplorr.app.gallery
 
 import android.content.ContentResolver
@@ -398,7 +400,6 @@ private fun AssetGrid(assets: List<MediaAsset>, columns: Int, selectedIds: Set<M
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun Thumbnail(asset: MediaAsset, blur: Boolean, selected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     val resolver = LocalContext.current.contentResolver
