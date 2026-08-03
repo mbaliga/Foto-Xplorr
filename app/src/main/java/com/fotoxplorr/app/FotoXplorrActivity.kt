@@ -5,7 +5,9 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,7 +26,7 @@ import com.fotoxplorr.app.gallery.GalleryScreen
 import com.fotoxplorr.app.gallery.GalleryUiState
 import com.fotoxplorr.app.media.AndroidMediaStoreScanner
 import com.fotoxplorr.app.media.InMemoryMediaRepository
-import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaIndexer
 import com.fotoxplorr.app.media.ScanEvent
 import com.fotoxplorr.app.viewer.ViewerScreen
@@ -59,7 +61,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
     var scanState by remember { mutableStateOf<ScanState>(ScanState.Idle) }
     var scanGeneration by remember { mutableStateOf(0) }
-    var selectedAsset by remember { mutableStateOf<MediaAsset?>(null) }
+    var selectedAssetId by remember { mutableStateOf<MediaId?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
@@ -82,13 +84,29 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
         }
     }
 
-    val activeAsset = selectedAsset
+    val selectedIndex = selectedAssetId?.let { id ->
+        assets.indexOfFirst { it.id == id }
+    } ?: -1
+    val activeAsset = assets.getOrNull(selectedIndex)
+
     if (activeAsset != null) {
+        BackHandler { selectedAssetId = null }
         ViewerScreen(
             asset = activeAsset,
-            onClose = { selectedAsset = null },
+            position = selectedIndex + 1,
+            total = assets.size,
+            hasPrevious = selectedIndex > 0,
+            hasNext = selectedIndex < assets.lastIndex,
+            onPrevious = {
+                assets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id }
+            },
+            onNext = {
+                assets.getOrNull(selectedIndex + 1)?.let { selectedAssetId = it.id }
+            },
+            onClose = { selectedAssetId = null },
         )
     } else {
+        selectedAssetId = null
         GalleryScreen(
             state = GalleryUiState(
                 assets = assets,
@@ -99,7 +117,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
                 permissionLauncher.launch(requiredMediaPermissions())
             },
             onRefresh = { scanGeneration += 1 },
-            onOpenAsset = { selectedAsset = it },
+            onOpenAsset = { selectedAssetId = it.id },
         )
     }
 }
