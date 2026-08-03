@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -18,7 +19,6 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -28,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
@@ -35,9 +36,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.favorites.FavoriteStore
+import com.fotoxplorr.app.gallery.GalleryActions
 import com.fotoxplorr.app.gallery.GalleryPreferences
+import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.GalleryScreen
 import com.fotoxplorr.app.gallery.GalleryUiState
+import com.fotoxplorr.app.gallery.folderIdentity
 import com.fotoxplorr.app.media.AndroidMediaStoreScanner
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
@@ -45,18 +49,29 @@ import com.fotoxplorr.app.media.MediaIndexer
 import com.fotoxplorr.app.media.MediaStoreChangeObserver
 import com.fotoxplorr.app.media.ScanEvent
 import com.fotoxplorr.app.media.SqliteMediaRepository
+import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
+import com.fotoxplorr.app.ui.FotoXplorrTheme
 import com.fotoxplorr.app.viewer.ViewerScreen
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 
 class FotoXplorrActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) { FotoXplorrApp() }
+            val galleryPreferences = remember { GalleryPreferences(applicationContext) }
+            val preferences by galleryPreferences.observe().collectAsStateWithLifecycle()
+            FotoXplorrTheme(preferences) {
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    FotoXplorrApp(galleryPreferences, preferences)
+                }
             }
         }
     }
@@ -65,30 +80,38 @@ class FotoXplorrActivity : ComponentActivity() {
 private enum class PendingMediaOperation { TRASH, RESTORE, DELETE }
 
 @Composable
-private fun FotoXplorrActivity.FotoXplorrApp() {
+private fun FotoXplorrActivity.FotoXplorrApp(
+    galleryPreferences: GalleryPreferences,
+    preferences: GalleryPreferencesState,
+) {
     val repository = remember { SqliteMediaRepository(applicationContext) }
     val favoriteStore = remember { FavoriteStore(applicationContext) }
     val sensitiveStore = remember { SensitiveStore(applicationContext) }
     val privateFolderStore = remember { PrivateFolderStore(applicationContext) }
-    val galleryPreferences = remember { GalleryPreferences(applicationContext) }
+    val libraryStore = remember { LibraryStore(applicationContext) }
     val changeObserver = remember { MediaStoreChangeObserver(contentResolver) }
     val indexer = remember { MediaIndexer(AndroidMediaStoreScanner(contentResolver), repository) }
+    val scope = rememberCoroutineScope()
 
     val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val sensitiveIds by sensitiveStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val lockedFolders by privateFolderStore.observeLockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
     val unlockedFolders by privateFolderStore.observeUnlockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
-    val preferences by galleryPreferences.observe().collectAsStateWithLifecycle()
+    val library by libraryStore.observe().collectAsStateWithLifecycle()
 
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
     var scanState by remember { mutableStateOf<ScanState>(ScanState.Idle) }
     var scanGeneration by remember { mutableStateOf(0) }
     var viewerAssets by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
     var selectedAssetId by remember { mutableStateOf<MediaId?>(null) }
+    var slideshowActive by remember { mutableStateOf(false) }
     var pendingOperation by remember { mutableStateOf<PendingMediaOperation?>(null) }
     var pendingOperationIds by remember { mutableStateOf<Set<MediaId>>(emptySet()) }
     var userMessage by remember { mutableStateOf<String?>(null) }
+
+    val selectedIndex = selectedAssetId?.let { id -> viewerAssets.indexOfFirst { it.id == id } } ?: -1
+    val activeAsset = viewerAssets.getOrNull(selectedIndex)
 
     DisposableEffect(unlockedFolders.isNotEmpty()) {
         if (unlockedFolders.isNotEmpty()) {
@@ -96,9 +119,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
-        onDispose {
-            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        }
+        onDispose { window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
     }
 
     val mediaOperationLauncher = rememberLauncherForActivityResult(
@@ -112,10 +133,12 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
         if (result.resultCode == Activity.RESULT_OK && affectedIds.isNotEmpty()) {
             viewerAssets = viewerAssets.filterNot { it.id in affectedIds }
             if (selectedAssetId?.let(affectedIds::contains) == true) selectedAssetId = null
+            slideshowActive = false
 
             if (completedOperation == PendingMediaOperation.DELETE) {
                 favoriteStore.setFavorite(affectedIds, false)
                 sensitiveStore.setSensitive(affectedIds, false)
+                libraryStore.removeMissingMedia(assets.mapTo(linkedSetOf()) { it.id } - affectedIds)
             }
 
             userMessage = when (completedOperation) {
@@ -128,13 +151,72 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
         }
     }
 
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        permissionGranted = result.values.any { it } || hasMediaPermission()
+        if (permissionGranted) scanGeneration += 1
+    }
+
+    val exportMetadataLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val outcome = runCatching {
+                val root = JSONObject().apply {
+                    put("schema", 1)
+                    put("exportedAtMillis", System.currentTimeMillis())
+                    put("library", libraryStore.exportJson())
+                    put("favoriteIds", JSONArray(favoriteIds.map { it.value }))
+                    put("sensitiveIds", JSONArray(sensitiveIds.map { it.value }))
+                }
+                withContext(Dispatchers.IO) {
+                    contentResolver.openOutputStream(uri, "w")?.bufferedWriter()?.use { writer ->
+                        writer.write(root.toString(2))
+                    } ?: error("Unable to open backup destination")
+                }
+            }
+            userMessage = outcome.fold(
+                onSuccess = { "Metadata backup exported." },
+                onFailure = { it.message ?: "Could not export metadata." },
+            )
+        }
+    }
+
+    val importMetadataLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val outcome = runCatching {
+                val json = withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                        ?: error("Unable to open backup")
+                }
+                val root = JSONObject(json)
+                val libraryRoot = root.optJSONObject("library") ?: root
+                libraryStore.importJson(libraryRoot).getOrThrow()
+                val importedFavorites = root.optJSONArray("favoriteIds").toMediaIds()
+                val importedSensitive = root.optJSONArray("sensitiveIds").toMediaIds()
+                favoriteStore.setFavorite(favoriteIds, false)
+                favoriteStore.setFavorite(importedFavorites, true)
+                sensitiveStore.setSensitive(sensitiveIds, false)
+                sensitiveStore.setSensitive(importedSensitive, true)
+            }
+            userMessage = outcome.fold(
+                onSuccess = { "Metadata backup imported." },
+                onFailure = { it.message ?: "Could not import metadata." },
+            )
+        }
+    }
+
     fun requestMediaOperation(items: List<MediaAsset>, operation: PendingMediaOperation) {
         if (items.isEmpty()) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            userMessage = "System trash operations require Android 11 or newer. Foto Xplorr will not delete these photos directly."
+            userMessage = "System trash operations require Android 11 or newer. Foto Xplorr will not delete media directly."
             return
         }
-
         runCatching {
             pendingOperation = operation
             pendingOperationIds = items.mapTo(linkedSetOf()) { it.id }
@@ -152,27 +234,46 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
         }
     }
 
-    fun share(asset: MediaAsset) {
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = asset.mimeType.ifBlank { "image/*" }
-            putExtra(Intent.EXTRA_STREAM, asset.contentUri)
-            clipData = ClipData.newUri(contentResolver, asset.displayName, asset.contentUri)
+    fun share(items: List<MediaAsset>) {
+        if (items.isEmpty()) return
+        val intent = if (items.size == 1) {
+            Intent(Intent.ACTION_SEND).apply {
+                type = items.first().mimeType.ifBlank { "*/*" }
+                putExtra(Intent.EXTRA_STREAM, items.first().contentUri)
+            }
+        } else {
+            Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = commonShareType(items)
+                putParcelableArrayListExtra(
+                    Intent.EXTRA_STREAM,
+                    ArrayList(items.map { it.contentUri }),
+                )
+            }
+        }.apply {
+            clipData = items.toClipData(contentResolver)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        startActivity(Intent.createChooser(intent, "Share ${asset.displayName}"))
+        runCatching { startActivity(Intent.createChooser(intent, "Share ${items.size} item${if (items.size == 1) "" else "s"}")) }
+            .onFailure { userMessage = "No compatible sharing app was found." }
+    }
+
+    fun openExternally(asset: MediaAsset, action: String) {
+        val intent = Intent(action).apply {
+            setDataAndType(asset.contentUri, asset.mimeType.ifBlank { "*/*" })
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching { startActivity(Intent.createChooser(intent, if (action == Intent.ACTION_EDIT) "Edit with" else "Open with")) }
+            .onFailure { userMessage = "No compatible app was found." }
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        val privateViewerOpen = activeAsset?.let { folderIdentity(it).key.value in lockedFolders } == true
         privateFolderStore.lockAll()
-        selectedAssetId = null
-        viewerAssets = emptyList()
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions(),
-    ) { result ->
-        permissionGranted = result.values.any { it } || hasMediaPermission()
-        if (permissionGranted) scanGeneration += 1
+        slideshowActive = false
+        if (privateViewerOpen) {
+            selectedAssetId = null
+            viewerAssets = emptyList()
+        }
     }
 
     LaunchedEffect(permissionGranted) {
@@ -192,13 +293,11 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
         }
     }
 
-    val selectedIndex = selectedAssetId?.let { id -> viewerAssets.indexOfFirst { it.id == id } } ?: -1
-    val activeAsset = viewerAssets.getOrNull(selectedIndex)
-
     LaunchedEffect(selectedAssetId, activeAsset) {
         if (selectedAssetId != null && activeAsset == null) {
             selectedAssetId = null
             viewerAssets = emptyList()
+            slideshowActive = false
         }
     }
 
@@ -206,14 +305,16 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
         AlertDialog(
             onDismissRequest = { userMessage = null },
             text = { Text(message) },
-            confirmButton = {
-                TextButton(onClick = { userMessage = null }) { Text("OK") }
-            },
+            confirmButton = { TextButton(onClick = { userMessage = null }) { Text("OK") } },
         )
     }
 
     if (activeAsset != null) {
-        BackHandler { selectedAssetId = null; viewerAssets = emptyList() }
+        BackHandler {
+            selectedAssetId = null
+            viewerAssets = emptyList()
+            slideshowActive = false
+        }
         ViewerScreen(
             asset = activeAsset,
             position = selectedIndex + 1,
@@ -223,13 +324,31 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             hasPrevious = selectedIndex > 0,
             hasNext = selectedIndex < viewerAssets.lastIndex,
             canMoveToTrash = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+            slideshowActive = slideshowActive,
+            slideshowIntervalSeconds = preferences.slideshowIntervalSeconds,
+            onToggleSlideshow = { slideshowActive = !slideshowActive },
             onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
             onToggleSensitive = { sensitiveStore.toggle(activeAsset.id) },
-            onShare = { share(activeAsset) },
+            onShare = { share(listOf(activeAsset)) },
+            onEdit = { openExternally(activeAsset, Intent.ACTION_EDIT) },
+            onOpenWith = { openExternally(activeAsset, Intent.ACTION_VIEW) },
             onMoveToTrash = { requestMediaOperation(listOf(activeAsset), PendingMediaOperation.TRASH) },
-            onPrevious = { viewerAssets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id } },
-            onNext = { viewerAssets.getOrNull(selectedIndex + 1)?.let { selectedAssetId = it.id } },
-            onClose = { selectedAssetId = null; viewerAssets = emptyList() },
+            onPrevious = {
+                viewerAssets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id }
+            },
+            onNext = {
+                val nextIndex = when {
+                    selectedIndex < viewerAssets.lastIndex -> selectedIndex + 1
+                    slideshowActive && viewerAssets.size > 1 -> 0
+                    else -> -1
+                }
+                viewerAssets.getOrNull(nextIndex)?.let { selectedAssetId = it.id }
+            },
+            onClose = {
+                selectedAssetId = null
+                viewerAssets = emptyList()
+                slideshowActive = false
+            },
         )
     } else {
         GalleryScreen(
@@ -239,39 +358,99 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
                 sensitiveIds = sensitiveIds,
                 lockedFolders = lockedFolders,
                 unlockedFolders = unlockedFolders,
+                library = library,
                 permissionGranted = permissionGranted,
                 scanState = scanState,
                 preferences = preferences,
             ),
-            onRequestPermission = { permissionLauncher.launch(requiredMediaPermissions()) },
-            onRefresh = { scanGeneration += 1 },
-            onSetSort = galleryPreferences::setSort,
-            onSetGridColumns = galleryPreferences::setGridColumns,
-            onSetBlurSensitive = galleryPreferences::setBlurSensitive,
-            onProtectFolder = privateFolderStore::protect,
-            onUnlockFolder = privateFolderStore::unlock,
-            onLockFolder = privateFolderStore::lock,
-            onRemoveFolderProtection = privateFolderStore::removeProtection,
-            onSetFavorite = favoriteStore::setFavorite,
-            onSetSensitive = sensitiveStore::setSensitive,
-            onMoveToTrash = { requestMediaOperation(it, PendingMediaOperation.TRASH) },
-            onRestore = { requestMediaOperation(it, PendingMediaOperation.RESTORE) },
-            onDeletePermanently = { requestMediaOperation(it, PendingMediaOperation.DELETE) },
-            onOpenAsset = { asset, visible -> viewerAssets = visible; selectedAssetId = asset.id },
+            actions = GalleryActions(
+                onRequestPermission = { permissionLauncher.launch(requiredMediaPermissions()) },
+                onRefresh = { scanGeneration += 1 },
+                onSetSort = galleryPreferences::setSort,
+                onSetGridColumns = galleryPreferences::setGridColumns,
+                onSetBlurSensitive = galleryPreferences::setBlurSensitive,
+                onSetHideSensitive = galleryPreferences::setHideSensitive,
+                onSetShowVideos = galleryPreferences::setShowVideos,
+                onSetTimelineGrouping = galleryPreferences::setTimelineGrouping,
+                onSetThemeMode = galleryPreferences::setThemeMode,
+                onSetAccentPalette = galleryPreferences::setAccentPalette,
+                onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
+                onProtectFolder = privateFolderStore::protect,
+                onUnlockFolder = privateFolderStore::unlock,
+                onLockFolder = privateFolderStore::lock,
+                onRemoveFolderProtection = privateFolderStore::removeProtection,
+                onSetFavorite = favoriteStore::setFavorite,
+                onSetSensitive = sensitiveStore::setSensitive,
+                onSetArchived = libraryStore::setArchived,
+                onShare = ::share,
+                onMoveToTrash = { requestMediaOperation(it, PendingMediaOperation.TRASH) },
+                onRestore = { requestMediaOperation(it, PendingMediaOperation.RESTORE) },
+                onDeletePermanently = { requestMediaOperation(it, PendingMediaOperation.DELETE) },
+                onCreateCollection = { libraryStore.createCollection(it) },
+                onRenameCollection = { id, name -> libraryStore.renameCollection(id, name) },
+                onDeleteCollection = libraryStore::deleteCollection,
+                onAddToCollection = libraryStore::addToCollection,
+                onRemoveFromCollection = libraryStore::removeFromCollection,
+                onAddTag = libraryStore::addTag,
+                onRemoveTag = libraryStore::removeTag,
+                onExportMetadata = { exportMetadataLauncher.launch("foto-xplorr-metadata.json") },
+                onImportMetadata = { importMetadataLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
+                onOpenAsset = { asset, visible ->
+                    viewerAssets = visible
+                    selectedAssetId = asset.id
+                    slideshowActive = false
+                },
+                onStartSlideshow = { visible ->
+                    if (visible.isNotEmpty()) {
+                        viewerAssets = visible
+                        selectedAssetId = visible.first().id
+                        slideshowActive = true
+                    }
+                },
+            ),
         )
     }
 }
 
 private fun FotoXplorrActivity.hasMediaPermission(): Boolean =
-    requiredMediaPermissions().any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
+    requiredMediaPermissions().any { permission ->
+        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+    }
 
 private fun requiredMediaPermissions(): Array<String> = when {
     Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
         Manifest.permission.READ_MEDIA_IMAGES,
+        Manifest.permission.READ_MEDIA_VIDEO,
         Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
     )
-    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
+        Manifest.permission.READ_MEDIA_IMAGES,
+        Manifest.permission.READ_MEDIA_VIDEO,
+    )
     else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+}
+
+private fun commonShareType(items: List<MediaAsset>): String = when {
+    items.all { it.mimeType.startsWith("image/") } -> "image/*"
+    items.all { it.mimeType.startsWith("video/") } -> "video/*"
+    else -> "*/*"
+}
+
+private fun List<MediaAsset>.toClipData(resolver: android.content.ContentResolver): ClipData {
+    val first = first()
+    return ClipData.newUri(resolver, first.displayName, first.contentUri).also { clip ->
+        drop(1).forEach { asset -> clip.addItem(ClipData.Item(asset.contentUri)) }
+    }
+}
+
+private fun JSONArray?.toMediaIds(): Set<MediaId> {
+    if (this == null) return emptySet()
+    return buildSet {
+        for (index in 0 until length()) {
+            val value = optLong(index, -1L)
+            if (value >= 0L) add(MediaId(value))
+        }
+    }
 }
 
 sealed interface ScanState {
