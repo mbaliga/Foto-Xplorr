@@ -115,6 +115,13 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     } ?: -1
     val activeAsset = viewerAssets.getOrNull(selectedIndex)
 
+    LaunchedEffect(selectedAssetId, activeAsset) {
+        if (selectedAssetId != null && activeAsset == null) {
+            selectedAssetId = null
+            viewerAssets = emptyList()
+        }
+    }
+
     if (activeAsset != null) {
         BackHandler {
             selectedAssetId = null
@@ -142,7 +149,6 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             },
         )
     } else {
-        selectedAssetId = null
         GalleryScreen(
             state = GalleryUiState(
                 assets = assets,
