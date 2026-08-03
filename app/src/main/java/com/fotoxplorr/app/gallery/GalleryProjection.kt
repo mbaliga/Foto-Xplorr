@@ -7,9 +7,11 @@ internal enum class GallerySection {
     PHOTOS,
     FAVORITES,
     ALBUMS,
+    TRASH,
 }
 
 internal data class AlbumSummary(
+    val key: String,
     val name: String,
     val count: Int,
     val cover: MediaAsset,
@@ -25,17 +27,21 @@ internal fun visibleAssets(
     lockedFolders: Set<String> = emptySet(),
     unlockedFolders: Set<String> = emptySet(),
 ): List<MediaAsset> {
-    val privacyVisible = assets.filter { asset ->
-        val album = resolveAlbumName(asset.bucketName, asset.relativePath)
-        album !in lockedFolders || album in unlockedFolders
+    val trashScoped = if (section == GallerySection.TRASH) {
+        assets.filter { it.isTrashed }
+    } else {
+        assets.filterNot { it.isTrashed }
+    }
+
+    val privacyVisible = trashScoped.filter { asset ->
+        val folderKey = folderIdentity(asset).key.value
+        folderKey !in lockedFolders || folderKey in unlockedFolders
     }
 
     val scoped = when {
         section == GallerySection.FAVORITES -> privacyVisible.filter { it.id in favoriteIds }
         section == GallerySection.ALBUMS && selectedAlbum != null -> {
-            privacyVisible.filter {
-                resolveAlbumName(it.bucketName, it.relativePath) == selectedAlbum
-            }
+            privacyVisible.filter { folderIdentity(it).key.value == selectedAlbum }
         }
         else -> privacyVisible
     }
@@ -47,9 +53,7 @@ internal fun visibleAssets(
         scoped.filter { asset ->
             asset.displayName.lowercase().contains(normalizedQuery) ||
                 asset.mimeType.lowercase().contains(normalizedQuery) ||
-                resolveAlbumName(asset.bucketName, asset.relativePath)
-                    .lowercase()
-                    .contains(normalizedQuery)
+                folderIdentity(asset).displayName.lowercase().contains(normalizedQuery)
         }
     }
 
@@ -81,10 +85,13 @@ internal fun buildAlbumSummaries(
 ): List<AlbumSummary> {
     val normalizedQuery = query.trim().lowercase()
     return assets
-        .groupBy { resolveAlbumName(it.bucketName, it.relativePath) }
-        .map { (name, items) ->
+        .asSequence()
+        .filterNot { it.isTrashed }
+        .groupBy { folderIdentity(it).key.value }
+        .map { (key, items) ->
             AlbumSummary(
-                name = name,
+                key = key,
+                name = folderIdentity(items.first()).displayName,
                 count = items.size,
                 cover = items.first(),
             )
@@ -99,15 +106,4 @@ internal fun buildAlbumSummaries(
 internal fun resolveAlbumName(
     bucketName: String?,
     relativePath: String?,
-): String {
-    val bucket = bucketName?.trim().orEmpty()
-    if (bucket.isNotEmpty()) return bucket
-
-    val path = relativePath
-        ?.trim()
-        ?.trim('/')
-        .orEmpty()
-    if (path.isNotEmpty()) return path.substringAfterLast('/')
-
-    return "Other"
-}
+): String = folderIdentity(bucketName, relativePath).displayName
