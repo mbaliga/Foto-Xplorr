@@ -168,6 +168,7 @@ fun ViewerScreen(
                 onNext = onNext,
                 onToggleMetadata = { metadataVisible = !metadataVisible },
                 onClose = onClose,
+                modifier = Modifier.align(Alignment.TopCenter),
             )
         }
 
@@ -200,10 +201,10 @@ private fun ViewerControls(
     onNext: () -> Unit,
     onToggleMetadata: () -> Unit,
     onClose: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier
-            .align(Alignment.TopCenter)
+        modifier = modifier
             .fillMaxWidth()
             .background(Color.Black.copy(alpha = 0.76f))
             .padding(horizontal = 16.dp, vertical = 12.dp),
