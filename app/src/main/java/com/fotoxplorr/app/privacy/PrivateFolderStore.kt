@@ -45,6 +45,7 @@ class PrivateFolderStore(context: Context) {
                 lockedFoldersState.value = lockedFoldersState.value + folderKey
                 unlockedFoldersState.value = unlockedFoldersState.value + folderKey
                 attempts.remove(folderKey)
+                Unit
             } finally {
                 salt.fill(0)
                 hash.fill(0)
