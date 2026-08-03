@@ -7,7 +7,7 @@ value class MediaId(val value: Long)
 
 data class MediaAsset(
     val id: MediaId,
-    val contentUri: Uri,
+    val contentUriString: String,
     val displayName: String,
     val mimeType: String,
     val bucketName: String?,
@@ -19,4 +19,7 @@ data class MediaAsset(
     val relativePath: String?,
     val isFavorite: Boolean,
     val isTrashed: Boolean,
-)
+) {
+    val contentUri: Uri
+        get() = Uri.parse(contentUriString)
+}
