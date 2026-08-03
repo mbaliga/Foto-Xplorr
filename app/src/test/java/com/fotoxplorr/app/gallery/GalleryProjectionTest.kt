@@ -75,6 +75,69 @@ class GalleryProjectionTest {
         )
     }
 
+    @Test
+    fun `locked folder media is hidden from photos favourites and search`() {
+        val public = asset(1, "public.jpg", "Camera", "image/jpeg", 20, 100)
+        val private = asset(2, "secret.jpg", "Private A", "image/jpeg", 30, 200)
+        val assets = listOf(public, private)
+
+        assertEquals(
+            listOf(public),
+            visibleAssets(
+                assets = assets,
+                favoriteIds = setOf(private.id),
+                section = GallerySection.PHOTOS,
+                selectedAlbum = null,
+                query = "",
+                sort = GallerySort.NEWEST,
+                lockedFolders = setOf("Private A"),
+            ),
+        )
+        assertEquals(
+            emptyList<MediaAsset>(),
+            visibleAssets(
+                assets = assets,
+                favoriteIds = setOf(private.id),
+                section = GallerySection.FAVORITES,
+                selectedAlbum = null,
+                query = "",
+                sort = GallerySort.NEWEST,
+                lockedFolders = setOf("Private A"),
+            ),
+        )
+        assertEquals(
+            emptyList<MediaAsset>(),
+            visibleAssets(
+                assets = assets,
+                favoriteIds = emptySet(),
+                section = GallerySection.PHOTOS,
+                selectedAlbum = null,
+                query = "secret",
+                sort = GallerySort.NEWEST,
+                lockedFolders = setOf("Private A"),
+            ),
+        )
+    }
+
+    @Test
+    fun `unlocked folder media returns to projections`() {
+        val private = asset(2, "secret.jpg", "Private A", "image/jpeg", 30, 200)
+
+        assertEquals(
+            listOf(private),
+            visibleAssets(
+                assets = listOf(private),
+                favoriteIds = emptySet(),
+                section = GallerySection.ALBUMS,
+                selectedAlbum = "Private A",
+                query = "",
+                sort = GallerySort.NEWEST,
+                lockedFolders = setOf("Private A"),
+                unlockedFolders = setOf("Private A"),
+            ),
+        )
+    }
+
     private fun asset(
         id: Long,
         name: String,
@@ -84,7 +147,7 @@ class GalleryProjectionTest {
         size: Long,
     ) = MediaAsset(
         id = MediaId(id),
-        contentUri = Uri.parse("content://media/$id"),
+        contentUri = Uri.EMPTY,
         displayName = name,
         mimeType = mimeType,
         bucketName = album,
