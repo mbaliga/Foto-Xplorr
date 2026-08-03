@@ -22,11 +22,12 @@ class SceneOrientationController(
 ) : SensorEventListener {
     private val appContext = context.applicationContext
     private val sensorManager = appContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    private val rotationSensor = when (mode) {
+    private val rotationSensor: Sensor? = when (mode) {
         SceneOrientationMode.RELATIVE -> sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
             ?: sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         SceneOrientationMode.ABSOLUTE_NORTH -> sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
     }
+    private val rotationSensorType: Int? = rotationSensor?.type
     private val windowManager = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val rotationMatrix = FloatArray(9)
     private val remappedMatrix = FloatArray(9)
@@ -54,8 +55,9 @@ class SceneOrientationController(
     }
 
     fun start() {
-        if (running || rotationSensor == null) return
-        running = sensorManager.registerListener(this, rotationSensor, SensorManager.SENSOR_DELAY_GAME)
+        val sensor = rotationSensor ?: return
+        if (running) return
+        running = sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)
     }
 
     fun stop() {
@@ -72,7 +74,8 @@ class SceneOrientationController(
     }
 
     override fun onSensorChanged(event: SensorEvent) {
-        if (!enabled || event.sensor.type != rotationSensor?.type) return
+        val expectedType = rotationSensorType ?: return
+        if (!enabled || event.sensor.type != expectedType) return
         SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
         val matrix = remapForDisplay(rotationMatrix)
         SensorManager.getOrientation(matrix, orientation)
@@ -105,7 +108,8 @@ class SceneOrientationController(
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-        if (sensor?.type == rotationSensor?.type) onAccuracy(accuracy)
+        val expectedType = rotationSensorType ?: return
+        if (sensor?.type == expectedType) onAccuracy(accuracy)
     }
 
     @Suppress("DEPRECATION")
