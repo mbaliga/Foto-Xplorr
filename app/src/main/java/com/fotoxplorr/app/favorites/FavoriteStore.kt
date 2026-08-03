@@ -18,16 +18,13 @@ class FavoriteStore(context: Context) {
         }
         state.value = updated
         preferences.edit()
-            .putStringSet(KEY_FAVORITES, updated.mapTo(linkedSetOf()) { it.value.toString() })
+            .putStringSet(KEY_FAVORITES, FavoriteIdCodec.encode(updated))
             .apply()
     }
 
-    private fun load(): Set<MediaId> = preferences
-        .getStringSet(KEY_FAVORITES, emptySet())
-        .orEmpty()
-        .mapNotNullTo(linkedSetOf()) { value ->
-            value.toLongOrNull()?.let(::MediaId)
-        }
+    private fun load(): Set<MediaId> = FavoriteIdCodec.decode(
+        preferences.getStringSet(KEY_FAVORITES, emptySet()),
+    )
 
     private companion object {
         const val PREFERENCES_NAME = "foto_xplorr_favorites"
