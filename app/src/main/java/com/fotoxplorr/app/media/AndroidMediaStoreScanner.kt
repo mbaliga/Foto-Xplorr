@@ -26,7 +26,7 @@ class AndroidMediaStoreScanner(
                 projection(),
                 null,
                 null,
-                "${MediaStore.MediaColumns.DATE_TAKEN} DESC, ${MediaStore.MediaColumns.DATE_MODIFIED} DESC",
+                "${MediaStore.Images.ImageColumns.DATE_TAKEN} DESC, ${MediaStore.MediaColumns.DATE_MODIFIED} DESC",
             )?.use { cursor ->
                 val columns = CursorColumns(cursor)
                 val discovered = cursor.count
@@ -55,14 +55,14 @@ class AndroidMediaStoreScanner(
         add(MediaStore.MediaColumns._ID)
         add(MediaStore.MediaColumns.DISPLAY_NAME)
         add(MediaStore.MediaColumns.MIME_TYPE)
-        add(MediaStore.MediaColumns.DATE_TAKEN)
+        add(MediaStore.Images.ImageColumns.DATE_TAKEN)
         add(MediaStore.MediaColumns.DATE_MODIFIED)
         add(MediaStore.MediaColumns.WIDTH)
         add(MediaStore.MediaColumns.HEIGHT)
         add(MediaStore.MediaColumns.SIZE)
+        add(MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            add(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
             add(MediaStore.MediaColumns.RELATIVE_PATH)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -75,12 +75,12 @@ class AndroidMediaStoreScanner(
         private val id = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
         private val displayName = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
         private val mimeType = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
-        private val dateTaken = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_TAKEN)
+        private val dateTaken = cursor.getColumnIndexOrThrow(MediaStore.Images.ImageColumns.DATE_TAKEN)
         private val dateModified = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
         private val width = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.WIDTH)
         private val height = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.HEIGHT)
         private val size = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
-        private val bucketName = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+        private val bucketName = cursor.getColumnIndex(MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME)
         private val relativePath = cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
         private val favorite = cursor.getColumnIndex(MediaStore.MediaColumns.IS_FAVORITE)
         private val trashed = cursor.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
