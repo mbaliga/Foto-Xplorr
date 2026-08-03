@@ -1,11 +1,15 @@
 package com.fotoxplorr.app.privacy
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Base64
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 import java.security.SecureRandom
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 
@@ -13,62 +17,111 @@ class PrivateFolderStore(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val lockedFoldersState = MutableStateFlow(loadFolderNames())
     private val unlockedFoldersState = MutableStateFlow<Set<String>>(emptySet())
+    private val attempts = ConcurrentHashMap<String, AttemptState>()
 
     fun observeLockedFolders(): StateFlow<Set<String>> = lockedFoldersState.asStateFlow()
     fun observeUnlockedFolders(): StateFlow<Set<String>> = unlockedFoldersState.asStateFlow()
 
-    fun protect(folderName: String, password: CharArray): Result<Unit> = runCatching {
-        require(folderName.isNotBlank()) { "Folder name is required" }
-        require(password.size >= MIN_PASSWORD_LENGTH) {
-            "Password must contain at least $MIN_PASSWORD_LENGTH characters"
-        }
+    suspend fun protect(folderKey: String, password: CharArray): Result<Unit> = withContext(Dispatchers.Default) {
+        runCatching {
+            require(folderKey.isNotBlank()) { "Folder key is required" }
+            require(password.size >= MIN_PASSWORD_LENGTH) {
+                "Password must contain at least $MIN_PASSWORD_LENGTH characters"
+            }
 
-        val salt = ByteArray(SALT_BYTES).also(SecureRandom()::nextBytes)
-        val hash = derive(password, salt)
-        password.fill('\u0000')
+            val salt = ByteArray(SALT_BYTES).also(SecureRandom()::nextBytes)
+            val hash = try {
+                derive(password, salt)
+            } finally {
+                password.fill('\u0000')
+            }
 
-        preferences.edit()
-            .putString(keySalt(folderName), encode(salt))
-            .putString(keyHash(folderName), encode(hash))
-            .apply()
+            try {
+                preferences.edit()
+                    .putString(keySalt(folderKey), encode(salt))
+                    .putString(keyHash(folderKey), encode(hash))
+                    .apply()
 
-        lockedFoldersState.value = lockedFoldersState.value + folderName
-        unlockedFoldersState.value = unlockedFoldersState.value + folderName
+                lockedFoldersState.value = lockedFoldersState.value + folderKey
+                unlockedFoldersState.value = unlockedFoldersState.value + folderKey
+                attempts.remove(folderKey)
+            } finally {
+                salt.fill(0)
+                hash.fill(0)
+            }
+        }.onFailure { password.fill('\u0000') }
     }
 
-    fun unlock(folderName: String, password: CharArray): Boolean {
-        val salt = preferences.getString(keySalt(folderName), null)?.let(::decode)
-        val expected = preferences.getString(keyHash(folderName), null)?.let(::decode)
+    suspend fun unlock(folderKey: String, password: CharArray): Boolean = withContext(Dispatchers.Default) {
+        val now = SystemClock.elapsedRealtime()
+        val attempt = attempts[folderKey]
+        if (attempt != null && attempt.lockedUntilMillis > now) {
+            password.fill('\u0000')
+            return@withContext false
+        }
+
+        val salt = preferences.getString(keySalt(folderKey), null)?.let(::decode)
+        val expected = preferences.getString(keyHash(folderKey), null)?.let(::decode)
         if (salt == null || expected == null) {
             password.fill('\u0000')
-            return false
+            registerFailure(folderKey, now)
+            return@withContext false
         }
 
-        val actual = derive(password, salt)
-        password.fill('\u0000')
-        val matches = constantTimeEquals(expected, actual)
-        actual.fill(0)
-        if (matches) unlockedFoldersState.value = unlockedFoldersState.value + folderName
-        return matches
+        val actual = try {
+            derive(password, salt)
+        } finally {
+            password.fill('\u0000')
+            salt.fill(0)
+        }
+
+        val matches = try {
+            constantTimeEquals(expected, actual)
+        } finally {
+            expected.fill(0)
+            actual.fill(0)
+        }
+
+        if (matches) {
+            attempts.remove(folderKey)
+            unlockedFoldersState.value = unlockedFoldersState.value + folderKey
+        } else {
+            registerFailure(folderKey, now)
+        }
+        matches
     }
 
-    fun lock(folderName: String) {
-        unlockedFoldersState.value = unlockedFoldersState.value - folderName
+    fun lock(folderKey: String) {
+        unlockedFoldersState.value = unlockedFoldersState.value - folderKey
     }
 
     fun lockAll() {
         unlockedFoldersState.value = emptySet()
     }
 
-    fun removeProtection(folderName: String, password: CharArray): Boolean {
-        if (!unlock(folderName, password)) return false
-        preferences.edit()
-            .remove(keySalt(folderName))
-            .remove(keyHash(folderName))
-            .apply()
-        lockedFoldersState.value = lockedFoldersState.value - folderName
-        unlockedFoldersState.value = unlockedFoldersState.value - folderName
-        return true
+    suspend fun removeProtection(folderKey: String, password: CharArray): Boolean {
+        if (!unlock(folderKey, password)) return false
+        return withContext(Dispatchers.Default) {
+            preferences.edit()
+                .remove(keySalt(folderKey))
+                .remove(keyHash(folderKey))
+                .apply()
+            attempts.remove(folderKey)
+            lockedFoldersState.value = lockedFoldersState.value - folderKey
+            unlockedFoldersState.value = unlockedFoldersState.value - folderKey
+            true
+        }
+    }
+
+    private fun registerFailure(folderKey: String, now: Long) {
+        attempts.compute(folderKey) { _, previous ->
+            val nextCount = (previous?.failures ?: 0) + 1
+            if (nextCount >= MAX_FAILURES) {
+                AttemptState(0, now + LOCKOUT_MILLIS)
+            } else {
+                AttemptState(nextCount, 0L)
+            }
+        }
     }
 
     private fun loadFolderNames(): Set<String> = preferences.all.keys
@@ -76,6 +129,11 @@ class PrivateFolderStore(context: Context) {
         .filter { it.startsWith(HASH_PREFIX) }
         .map { it.removePrefix(HASH_PREFIX) }
         .toSet()
+
+    private data class AttemptState(
+        val failures: Int,
+        val lockedUntilMillis: Long,
+    )
 
     private companion object {
         const val PREFERENCES_NAME = "foto_xplorr_private_folders"
@@ -85,6 +143,8 @@ class PrivateFolderStore(context: Context) {
         const val SALT_BYTES = 16
         const val KEY_BITS = 256
         const val ITERATIONS = 210_000
+        const val MAX_FAILURES = 3
+        const val LOCKOUT_MILLIS = 30_000L
 
         fun keyHash(folder: String) = "$HASH_PREFIX$folder"
         fun keySalt(folder: String) = "$SALT_PREFIX$folder"
