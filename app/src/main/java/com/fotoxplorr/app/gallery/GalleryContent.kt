@@ -26,8 +26,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AssistChip
@@ -38,6 +40,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -50,6 +56,8 @@ import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.organize.LibraryState
 import com.fotoxplorr.app.organize.MediaCollection
+import com.fotoxplorr.app.spatial.LocalSpatialExperience
+import com.fotoxplorr.app.spatial.PlacesScreen
 
 @Composable
 fun TimelineScreen(
@@ -328,6 +336,22 @@ fun DiscoverScreen(
     summaries: List<SmartAlbumSummary>,
     onOpen: (SmartAlbumSummary) -> Unit,
 ) {
+    val spatial = LocalSpatialExperience.current
+    var showingPlaces by remember { mutableStateOf(false) }
+
+    if (showingPlaces && spatial != null) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            TextButton(onClick = { showingPlaces = false }) { Text("Back to Discover") }
+            PlacesScreen(
+                assets = spatial.assets,
+                geoState = spatial.geoState,
+                onIndexLocations = spatial.onIndexLocations,
+                onOpenAsset = spatial.onOpenAsset,
+            )
+        }
+        return
+    }
+
     LazyVerticalGrid(
         columns = GridCells.Adaptive(160.dp),
         modifier = Modifier.fillMaxSize(),
@@ -335,6 +359,45 @@ fun DiscoverScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (spatial != null) {
+            item(key = "places") {
+                Card(
+                    modifier = Modifier.combinedClickable(
+                        onClick = { showingPlaces = true },
+                        onLongClick = { showingPlaces = true },
+                    ),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().aspectRatio(1.35f),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Outlined.Map, contentDescription = null, modifier = Modifier.size(40.dp))
+                        if (spatial.geoState.locatedCount > 0) {
+                            Text(
+                                spatial.geoState.locatedCount.toString(),
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(8.dp)
+                                    .background(Color.Black.copy(alpha = 0.68f))
+                                    .padding(horizontal = 7.dp, vertical = 3.dp),
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    }
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("Places", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "Offline map, compass and elevation from embedded metadata",
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
         items(summaries, key = { it.album.name }) { summary ->
             Card(
                 modifier = Modifier.combinedClickable(
@@ -389,6 +452,7 @@ fun LibraryScreen(
     onOpenTag: (String) -> Unit,
     onOpenArchive: () -> Unit,
     onOpenTrash: () -> Unit,
+    onOpenPrivateFolders: () -> Unit,
     onOpenSettings: () -> Unit,
     onExportMetadata: () -> Unit,
     onImportMetadata: () -> Unit,
@@ -426,7 +490,7 @@ fun LibraryScreen(
                 title = "Private folders",
                 subtitle = "$privateAlbumCount protected · in-app access control",
                 icon = Icons.Outlined.Lock,
-                onClick = { },
+                onClick = onOpenPrivateFolders,
             )
         }
 
