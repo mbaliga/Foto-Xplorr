@@ -107,8 +107,8 @@ fun RichPhotoMapScreen(
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
     var selectedId by remember { mutableStateOf<MediaId?>(null) }
 
-    val assetById = remember(assets) { assets.associateBy { it.id } }
-    val selectedAsset = selectedId?.let { id -> assetById[id] }
+    val assetsById = remember(assets) { assets.associateBy { it.id } }
+    val selectedAsset = selectedId?.let(assetsById::get)
     val albums = remember(assets) {
         assets.mapNotNull { it.bucketName?.trim()?.takeIf(String::isNotEmpty) }
             .distinct()
@@ -119,19 +119,21 @@ fun RichPhotoMapScreen(
     val filtered = remember(assets, geoState.metadataById, tagsByMediaId, query, timeFilter, selectedAlbum) {
         val normalized = query.trim().lowercase()
         assets.filter { asset ->
-            val hasCoordinates = geoState.metadataById.containsKey(asset.id)
             val afterCutoff = timeFilter.windowMillis?.let { asset.dateTakenMillis >= now - it } ?: true
-            val inAlbum = selectedAlbum == null || asset.bucketName == selectedAlbum
-            val matches = normalized.isEmpty() ||
+            val matchesQuery = normalized.isEmpty() ||
                 asset.displayName.lowercase().contains(normalized) ||
                 asset.bucketName?.lowercase()?.contains(normalized) == true ||
                 tagsByMediaId[asset.id].orEmpty().any { it.lowercase().contains(normalized) }
-            hasCoordinates && !asset.isTrashed && afterCutoff && inAlbum && matches
+            asset.id in geoState.metadataById &&
+                !asset.isTrashed &&
+                afterCutoff &&
+                (selectedAlbum == null || asset.bucketName == selectedAlbum) &&
+                matchesQuery
         }
     }
 
     val controller = remember {
-        RichPhotoMapController(onSelected = { mediaId: MediaId -> selectedId = mediaId })
+        RichPhotoMapController { mediaId -> selectedId = mediaId }
     }
     val mapView = remember(context) {
         MapLibre.getInstance(context.applicationContext)
@@ -160,7 +162,7 @@ fun RichPhotoMapScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -182,7 +184,7 @@ fun RichPhotoMapScreen(
             Icon(Icons.Outlined.Layers, contentDescription = null)
         }
 
-        if (geoState.isIndexing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        if (geoState.isIndexing) LinearProgressIndicator(Modifier.fillMaxWidth())
 
         OutlinedTextField(
             value = query,
@@ -221,7 +223,7 @@ fun RichPhotoMapScreen(
             }
         }
 
-        Box(modifier = Modifier.weight(1f)) {
+        Box(Modifier.weight(1f)) {
             AndroidView(
                 factory = { mapView },
                 update = { controller.update(filtered, geoState.metadataById) },
@@ -252,11 +254,7 @@ fun RichPhotoMapScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                MediaImage(
-                    asset = selected,
-                    modifier = Modifier.size(96.dp),
-                    contentScale = ContentScale.Crop,
-                )
+                MediaImage(selected, Modifier.size(96.dp), ContentScale.Crop)
                 Column(Modifier.weight(1f)) {
                     ComposeText(selected.displayName, style = MaterialTheme.typography.titleSmall, maxLines = 1)
                     ComposeText(selected.bucketName ?: "Unknown album", style = MaterialTheme.typography.bodySmall)
@@ -275,7 +273,7 @@ fun RichPhotoMapScreen(
         }
 
         ComposeText(
-            "Pitched vector map with clustered media, client-side hillshade and 3D building extrusion. MapLibre Native Android does not currently expose an elevated terrain mesh, so hillshade is the terrain fallback.",
+            "Pitched vector map with clustered media, hillshade and 3D building extrusion. MapLibre Android currently provides hillshade rather than a raised terrain mesh.",
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -287,11 +285,11 @@ private class RichPhotoMapController(
     private val onSelected: (MediaId) -> Unit,
 ) {
     private var map: MapLibreMap? = null
-    private var source: GeoJsonSource? = null
-    private var selectedSource: GeoJsonSource? = null
-    private var pendingAssets: List<MediaAsset> = emptyList()
-    private var pendingMetadata: Map<MediaId, GeoMetadata> = emptyMap()
-    private var didFitInitialCamera = false
+    private var photoSource: GeoJsonSource? = null
+    private var selectionSource: GeoJsonSource? = null
+    private var assets: List<MediaAsset> = emptyList()
+    private var metadata: Map<MediaId, GeoMetadata> = emptyMap()
+    private var cameraFitted = false
     private var clickListenerInstalled = false
 
     fun attach(map: MapLibreMap) {
@@ -303,29 +301,29 @@ private class RichPhotoMapController(
             isAttributionEnabled = true
             isLogoEnabled = true
         }
-        map.setStyle(Style.Builder().fromUri(OPEN_FREE_MAP_STYLE)) { loadedStyle ->
-            installTerrainStyling(loadedStyle)
-            installPhotoLayers(loadedStyle)
+        map.setStyle(Style.Builder().fromUri(OPEN_FREE_MAP_STYLE)) { style ->
+            addTerrainStyling(style)
+            addPhotoLayers(style)
             if (!clickListenerInstalled) {
                 clickListenerInstalled = true
-                map.addOnMapClickListener { latLng -> handleClick(map, latLng) }
+                map.addOnMapClickListener { location -> handleMapClick(map, location) }
             }
-            updateSource()
+            refreshSource()
         }
     }
 
     fun update(assets: List<MediaAsset>, metadata: Map<MediaId, GeoMetadata>) {
-        pendingAssets = assets
-        pendingMetadata = metadata
-        updateSource()
+        this.assets = assets
+        this.metadata = metadata
+        refreshSource()
     }
 
     fun clearSelection() {
-        selectedSource?.setGeoJson(FeatureCollection.fromFeatures(emptyArray()))
+        selectionSource?.setGeoJson(FeatureCollection.fromFeatures(emptyArray()))
     }
 
-    private fun installPhotoLayers(style: Style) {
-        val photoSource = GeoJsonSource(
+    private fun addPhotoLayers(style: Style) {
+        val source = GeoJsonSource(
             PHOTO_SOURCE,
             FeatureCollection.fromFeatures(emptyArray()),
             GeoJsonOptions()
@@ -333,10 +331,10 @@ private class RichPhotoMapController(
                 .withClusterRadius(56)
                 .withClusterMaxZoom(14),
         )
-        source = photoSource
-        style.addSource(photoSource)
+        photoSource = source
+        style.addSource(source)
 
-        val clusterLayer = CircleLayer(CLUSTER_LAYER, PHOTO_SOURCE).apply {
+        val clusters: Layer = CircleLayer(CLUSTER_LAYER, PHOTO_SOURCE).apply {
             setFilter(Expression.has("point_count"))
             setProperties(
                 circleColor(Color.rgb(94, 77, 176)),
@@ -346,9 +344,9 @@ private class RichPhotoMapController(
                 circleStrokeWidth(2.2f),
             )
         }
-        style.addLayer(clusterLayer as Layer)
+        style.addLayer(clusters)
 
-        val pointLayer = CircleLayer(POINT_LAYER, PHOTO_SOURCE).apply {
+        val points: Layer = CircleLayer(POINT_LAYER, PHOTO_SOURCE).apply {
             setFilter(Expression.not(Expression.has("point_count")))
             setProperties(
                 circleColor(Color.rgb(255, 171, 64)),
@@ -358,15 +356,15 @@ private class RichPhotoMapController(
                 circleStrokeWidth(2f),
             )
         }
-        style.addLayer(pointLayer as Layer)
+        style.addLayer(points)
 
-        val selectionSource = GeoJsonSource(
+        val selected = GeoJsonSource(
             SELECTED_SOURCE,
             FeatureCollection.fromFeatures(emptyArray()),
         )
-        selectedSource = selectionSource
-        style.addSource(selectionSource)
-        val selectedLayer = CircleLayer(SELECTED_LAYER, SELECTED_SOURCE).apply {
+        selectionSource = selected
+        style.addSource(selected)
+        val selectedLayer: Layer = CircleLayer(SELECTED_LAYER, SELECTED_SOURCE).apply {
             setProperties(
                 circleColor(Color.WHITE),
                 circleRadius(14f),
@@ -375,36 +373,37 @@ private class RichPhotoMapController(
                 circleStrokeWidth(4f),
             )
         }
-        style.addLayer(selectedLayer as Layer)
+        style.addLayer(selectedLayer)
     }
 
-    private fun installTerrainStyling(style: Style) {
+    private fun addTerrainStyling(style: Style) {
         runCatching {
             if (style.getSource(HILLSHADE_SOURCE) == null) {
                 val tiles = TileSet("2.1.0", TERRARIUM_TILE_URL).apply {
                     attribution = "Elevation tiles: AWS Open Data / Mapzen terrain"
-                    setMinZoom(0.0)
-                    setMaxZoom(15.0)
+                    setMinZoom(0f)
+                    setMaxZoom(15f)
                 }
                 runCatching {
-                    tiles.javaClass.getMethod("setEncoding", String::class.java).invoke(tiles, "terrarium")
+                    tiles.javaClass.getMethod("setEncoding", String::class.java)
+                        .invoke(tiles, "terrarium")
                 }
                 style.addSource(RasterDemSource(HILLSHADE_SOURCE, tiles, 256))
-                val hillshadeLayer = HillshadeLayer(HILLSHADE_LAYER, HILLSHADE_SOURCE).apply {
+                val hillshade: Layer = HillshadeLayer(HILLSHADE_LAYER, HILLSHADE_SOURCE).apply {
                     setProperties(
                         hillshadeExaggeration(0.42f),
-                        hillshadeShadowColor(Color.rgb(22, 25, 34)),
-                        hillshadeHighlightColor(Color.rgb(240, 232, 210)),
-                        hillshadeAccentColor(Color.rgb(70, 83, 105)),
+                        hillshadeShadowColor(arrayOf("#161922")),
+                        hillshadeHighlightColor(arrayOf("#F0E8D2")),
+                        hillshadeAccentColor(arrayOf("#465369")),
                     )
                 }
-                style.addLayer(hillshadeLayer as Layer)
+                style.addLayer(hillshade)
             }
         }
 
         runCatching {
             if (style.getLayer(BUILDING_LAYER) == null && style.getSource("openmaptiles") != null) {
-                val buildingLayer = FillExtrusionLayer(BUILDING_LAYER, "openmaptiles").apply {
+                val buildings: Layer = FillExtrusionLayer(BUILDING_LAYER, "openmaptiles").apply {
                     sourceLayer = "building"
                     setFilter(
                         Expression.all(
@@ -420,20 +419,20 @@ private class RichPhotoMapController(
                         fillExtrusionOpacity(0.82f),
                     )
                 }
-                style.addLayer(buildingLayer as Layer)
+                style.addLayer(buildings)
             }
         }
     }
 
-    private fun updateSource() {
-        val currentMap = map ?: return
-        val currentSource = source ?: return
-        val features = pendingAssets.mapNotNull { asset ->
-            val metadata = pendingMetadata[asset.id] ?: return@mapNotNull null
+    private fun refreshSource() {
+        val map = map ?: return
+        val source = photoSource ?: return
+        val features = assets.mapNotNull { asset ->
+            val geo = metadata[asset.id] ?: return@mapNotNull null
             Feature.fromGeometry(
-                Point.fromLngLat(metadata.longitude, metadata.latitude),
+                Point.fromLngLat(geo.longitude, geo.latitude),
                 JsonObject().apply {
-                    addProperty("media_id", asset.id.value.toString())
+                    addProperty(MEDIA_ID_PROPERTY, asset.id.value.toString())
                     addProperty("name", asset.displayName)
                     addProperty("album", asset.bucketName.orEmpty())
                     addProperty("is_video", asset.isVideo)
@@ -441,59 +440,70 @@ private class RichPhotoMapController(
                 },
             )
         }
-        currentSource.setGeoJson(FeatureCollection.fromFeatures(features))
-        if (!didFitInitialCamera && features.isNotEmpty()) {
-            didFitInitialCamera = true
-            val locations = features.mapNotNull { feature ->
+        source.setGeoJson(FeatureCollection.fromFeatures(features))
+        if (!cameraFitted && features.isNotEmpty()) {
+            cameraFitted = true
+            val positions = features.mapNotNull { feature ->
                 (feature.geometry() as? Point)?.let { LatLng(it.latitude(), it.longitude()) }
             }
-            val centre = LatLng(
-                locations.map { it.latitude }.average(),
-                locations.map { it.longitude }.average(),
-            )
-            val latitudeSpan = locations.maxOf { it.latitude } - locations.minOf { it.latitude }
-            val longitudeSpan = locations.maxOf { it.longitude } - locations.minOf { it.longitude }
-            val spread = max(latitudeSpan, longitudeSpan).coerceAtLeast(0.0001)
-            val zoom = (7.6 - ln(spread) / ln(2.0)).coerceIn(1.2, 15.5)
-            val update = CameraUpdateFactory.newCameraPosition(
-                CameraPosition.Builder()
-                    .target(centre)
-                    .zoom(zoom)
-                    .tilt(56.0)
-                    .bearing(18.0)
-                    .build(),
-            )
-            currentMap.animateCamera(update, 1_200, null)
+            if (positions.isNotEmpty()) {
+                val centre = LatLng(
+                    positions.map { it.latitude }.average(),
+                    positions.map { it.longitude }.average(),
+                )
+                val latitudeSpan = positions.maxOf { it.latitude } - positions.minOf { it.latitude }
+                val longitudeSpan = positions.maxOf { it.longitude } - positions.minOf { it.longitude }
+                val spread = max(latitudeSpan, longitudeSpan).coerceAtLeast(0.0001)
+                val zoom = (7.6 - ln(spread) / ln(2.0)).coerceIn(1.2, 15.5)
+                map.animateCamera(
+                    CameraUpdateFactory.newCameraPosition(
+                        CameraPosition.Builder()
+                            .target(centre)
+                            .zoom(zoom)
+                            .tilt(56.0)
+                            .bearing(18.0)
+                            .build(),
+                    ),
+                    1_200,
+                    null,
+                )
+            }
         }
     }
 
-    private fun handleClick(map: MapLibreMap, latLng: LatLng): Boolean {
-        val screen = map.projection.toScreenLocation(latLng)
-        val clusters = map.queryRenderedFeatures(screen, arrayOf(CLUSTER_LAYER))
-        val cluster = clusters.firstOrNull()
+    private fun handleMapClick(map: MapLibreMap, location: LatLng): Boolean {
+        val screenPoint = map.projection.toScreenLocation(location)
+        val cluster = map.queryRenderedFeatures(screenPoint, CLUSTER_LAYER).firstOrNull()
         if (cluster != null) {
-            val expansion = source?.getClusterExpansionZoom(cluster)
+            val expansion = photoSource?.getClusterExpansionZoom(cluster)
                 ?: (map.cameraPosition.zoom + 2.0).toInt()
             map.animateCamera(
-                CameraUpdateFactory.newLatLngZoom(latLng, expansion.toDouble()),
+                CameraUpdateFactory.newLatLngZoom(location, expansion.toDouble()),
                 650,
                 null,
             )
             return true
         }
 
-        val points = map.queryRenderedFeatures(screen, arrayOf(POINT_LAYER))
-        val feature = points.firstOrNull() ?: return false
-        val id = feature.getStringProperty("media_id")?.toLongOrNull()?.let(::MediaId) ?: return false
-        selectedSource?.setGeoJson(FeatureCollection.fromFeature(feature))
-        onSelected(id)
-        val update = CameraUpdateFactory.newCameraPosition(
-            CameraPosition.Builder(map.cameraPosition)
-                .target(latLng)
-                .tilt(max(48.0, map.cameraPosition.tilt))
-                .build(),
+        val feature = map.queryRenderedFeatures(screenPoint, POINT_LAYER).firstOrNull() ?: return false
+        val mediaId = feature.properties()
+            ?.get(MEDIA_ID_PROPERTY)
+            ?.asString
+            ?.toLongOrNull()
+            ?.let(::MediaId)
+            ?: return false
+        selectionSource?.setGeoJson(FeatureCollection.fromFeature(feature))
+        onSelected(mediaId)
+        map.animateCamera(
+            CameraUpdateFactory.newCameraPosition(
+                CameraPosition.Builder(map.cameraPosition)
+                    .target(location)
+                    .tilt(max(48.0, map.cameraPosition.tilt))
+                    .build(),
+            ),
+            500,
+            null,
         )
-        map.animateCamera(update, 500, null)
         return true
     }
 
@@ -507,6 +517,7 @@ private class RichPhotoMapController(
         const val HILLSHADE_SOURCE = "foto-xplorr-dem"
         const val HILLSHADE_LAYER = "foto-xplorr-hillshade"
         const val BUILDING_LAYER = "foto-xplorr-buildings-3d"
+        const val MEDIA_ID_PROPERTY = "media_id"
         const val TERRARIUM_TILE_URL =
             "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
     }
