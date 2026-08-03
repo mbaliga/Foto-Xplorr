@@ -38,7 +38,6 @@ import com.fotoxplorr.app.media.MediaAsset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-
 data class GalleryUiState(
     val assets: List<MediaAsset>,
     val permissionGranted: Boolean,
@@ -50,13 +49,14 @@ fun GalleryScreen(
     state: GalleryUiState,
     onRequestPermission: () -> Unit,
     onRefresh: () -> Unit,
+    onOpenAsset: (MediaAsset) -> Unit,
 ) {
     when {
         !state.permissionGranted -> PermissionScreen(onRequestPermission)
         state.assets.isEmpty() && state.scanState is ScanState.Scanning -> LoadingScreen(state.scanState)
         state.assets.isEmpty() && state.scanState is ScanState.Error -> ErrorScreen(state.scanState.message, onRefresh)
         state.assets.isEmpty() && state.scanState is ScanState.Complete -> EmptyScreen(onRefresh)
-        else -> GalleryGrid(state, onRefresh)
+        else -> GalleryGrid(state, onRefresh, onOpenAsset)
     }
 }
 
@@ -94,7 +94,11 @@ private fun EmptyScreen(onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun GalleryGrid(state: GalleryUiState, onRefresh: () -> Unit) {
+private fun GalleryGrid(
+    state: GalleryUiState,
+    onRefresh: () -> Unit,
+    onOpenAsset: (MediaAsset) -> Unit,
+) {
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -122,14 +126,20 @@ private fun GalleryGrid(state: GalleryUiState, onRefresh: () -> Unit) {
                 items = state.assets,
                 key = { it.id.value },
             ) { asset ->
-                Thumbnail(asset)
+                Thumbnail(
+                    asset = asset,
+                    onClick = { onOpenAsset(asset) },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun Thumbnail(asset: MediaAsset) {
+private fun Thumbnail(
+    asset: MediaAsset,
+    onClick: () -> Unit,
+) {
     val resolver = LocalContext.current.contentResolver
     val bitmap by produceState<Bitmap?>(initialValue = null, asset.contentUri, asset.id) {
         value = loadThumbnail(resolver, asset)
@@ -138,7 +148,8 @@ private fun Thumbnail(asset: MediaAsset) {
     Box(
         modifier = Modifier
             .aspectRatio(1f)
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (bitmap == null) {
