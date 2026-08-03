@@ -32,6 +32,8 @@ import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaIndexer
 import com.fotoxplorr.app.media.ScanEvent
 import com.fotoxplorr.app.media.SqliteMediaRepository
+import com.fotoxplorr.app.privacy.PrivateFolderStore
+import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.viewer.ViewerScreen
 import kotlinx.coroutines.flow.collect
 
@@ -54,6 +56,8 @@ class FotoXplorrActivity : ComponentActivity() {
 private fun FotoXplorrActivity.FotoXplorrApp() {
     val repository = remember { SqliteMediaRepository(applicationContext) }
     val favoriteStore = remember { FavoriteStore(applicationContext) }
+    val sensitiveStore = remember { SensitiveStore(applicationContext) }
+    val privateFolderStore = remember { PrivateFolderStore(applicationContext) }
     val galleryPreferences = remember { GalleryPreferences(applicationContext) }
     val indexer = remember {
         MediaIndexer(
@@ -64,6 +68,11 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
 
     val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
+    val sensitiveIds by sensitiveStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
+    val lockedFolders by privateFolderStore.observeLockedFolders()
+        .collectAsStateWithLifecycle(initialValue = emptySet())
+    val unlockedFolders by privateFolderStore.observeUnlockedFolders()
+        .collectAsStateWithLifecycle(initialValue = emptySet())
     val preferences by galleryPreferences.observe().collectAsStateWithLifecycle()
 
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
@@ -105,9 +114,11 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             position = selectedIndex + 1,
             total = viewerAssets.size,
             isFavorite = activeAsset.id in favoriteIds,
+            isSensitive = activeAsset.id in sensitiveIds,
             hasPrevious = selectedIndex > 0,
             hasNext = selectedIndex < viewerAssets.lastIndex,
             onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
+            onToggleSensitive = { sensitiveStore.toggle(activeAsset.id) },
             onPrevious = {
                 viewerAssets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id }
             },
@@ -122,6 +133,9 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             state = GalleryUiState(
                 assets = assets,
                 favoriteIds = favoriteIds,
+                sensitiveIds = sensitiveIds,
+                lockedFolders = lockedFolders,
+                unlockedFolders = unlockedFolders,
                 permissionGranted = permissionGranted,
                 scanState = scanState,
                 preferences = preferences,
@@ -132,6 +146,13 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             onRefresh = { scanGeneration += 1 },
             onSetSort = galleryPreferences::setSort,
             onSetGridColumns = galleryPreferences::setGridColumns,
+            onSetBlurSensitive = galleryPreferences::setBlurSensitive,
+            onProtectFolder = { folderName, password ->
+                privateFolderStore.protect(folderName, password)
+            },
+            onUnlockFolder = privateFolderStore::unlock,
+            onLockFolder = privateFolderStore::lock,
+            onRemoveFolderProtection = privateFolderStore::removeProtection,
             onOpenAsset = { asset, visible ->
                 viewerAssets = visible
                 selectedAssetId = asset.id
