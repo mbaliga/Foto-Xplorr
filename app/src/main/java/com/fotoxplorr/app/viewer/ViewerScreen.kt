@@ -164,39 +164,59 @@ private fun ViewerControls(
     onToggleMetadata: () -> Unit,
     onClose: () -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.68f))
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .background(Color.Black.copy(alpha = 0.72f))
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("Close", color = Color.White, modifier = Modifier.clickable(onClick = onClose))
-        Text(asset.displayName, color = Color.White, modifier = Modifier.weight(1f), maxLines = 1)
-        Text(
-            text = if (metadataVisible) "Hide info" else "Info",
-            color = Color.White,
-            modifier = Modifier.clickable(onClick = onToggleMetadata),
-        )
-        Text("Share", color = Color.White, modifier = Modifier.clickable(onClick = onShare))
-        Text(
-            text = if (isSensitive) "Sensitive ✓" else "Sensitive",
-            color = Color.White,
-            modifier = Modifier.clickable(onClick = onToggleSensitive),
-        )
-        Text(
-            text = if (isFavorite) "★" else "☆",
-            color = Color.White,
-            modifier = Modifier.clickable(onClick = onToggleFavorite),
-        )
-        Text(
-            text = if (canMoveToTrash) "Trash" else "Trash unavailable",
-            color = if (canMoveToTrash) Color.White else Color.White.copy(alpha = 0.45f),
-            modifier = if (canMoveToTrash) Modifier.clickable(onClick = onMoveToTrash) else Modifier,
-        )
-        Text("$position / $total", color = Color.White)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ViewerAction("Close", onClose)
+            Text(asset.displayName, color = Color.White, modifier = Modifier.weight(1f), maxLines = 1)
+            Text("$position / $total", color = Color.White)
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ViewerAction(if (metadataVisible) "Hide info" else "Info", onToggleMetadata)
+            ViewerAction("Share", onShare)
+            ViewerAction(if (isSensitive) "Sensitive ✓" else "Sensitive", onToggleSensitive)
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ViewerAction(if (isFavorite) "★ Favourite" else "☆ Favourite", onToggleFavorite)
+            ViewerAction(
+                label = if (canMoveToTrash) "Move to trash" else "Trash unavailable",
+                onClick = onMoveToTrash,
+                enabled = canMoveToTrash,
+            )
+        }
     }
+}
+
+@Composable
+private fun ViewerAction(
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+) {
+    Text(
+        text = label,
+        color = if (enabled) Color.White else Color.White.copy(alpha = 0.45f),
+        modifier = if (enabled) Modifier.clickable(onClick = onClick) else Modifier,
+    )
 }
 
 @Composable
