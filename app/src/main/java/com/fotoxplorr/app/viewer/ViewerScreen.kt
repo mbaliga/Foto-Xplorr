@@ -55,6 +55,7 @@ fun ViewerScreen(
     canMoveToTrash: Boolean,
     onToggleFavorite: () -> Unit,
     onToggleSensitive: () -> Unit,
+    onShare: () -> Unit,
     onMoveToTrash: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -126,11 +127,7 @@ fun ViewerScreen(
         contentAlignment = Alignment.Center,
     ) {
         if (bitmap == null) {
-            Text(
-                text = asset.displayName,
-                color = Color.White,
-                modifier = Modifier.padding(24.dp),
-            )
+            Text(asset.displayName, color = Color.White, modifier = Modifier.padding(24.dp))
         } else {
             Image(
                 bitmap = bitmap!!.asImageBitmap(),
@@ -158,6 +155,7 @@ fun ViewerScreen(
                 canMoveToTrash = canMoveToTrash,
                 onToggleFavorite = onToggleFavorite,
                 onToggleSensitive = onToggleSensitive,
+                onShare = onShare,
                 onMoveToTrash = onMoveToTrash,
                 onToggleMetadata = { metadataVisible = !metadataVisible },
                 onClose = onClose,
@@ -165,10 +163,7 @@ fun ViewerScreen(
         }
 
         if (metadataVisible) {
-            MetadataPanel(
-                asset = asset,
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
+            MetadataPanel(asset = asset, modifier = Modifier.align(Alignment.BottomCenter))
         }
     }
 }
@@ -184,30 +179,25 @@ private fun ViewerControls(
     canMoveToTrash: Boolean,
     onToggleFavorite: () -> Unit,
     onToggleSensitive: () -> Unit,
+    onShare: () -> Unit,
     onMoveToTrash: () -> Unit,
     onToggleMetadata: () -> Unit,
     onClose: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.68f))
+        modifier = Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.68f))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("Close", color = Color.White, modifier = Modifier.clickable(onClick = onClose))
-        Text(
-            text = asset.displayName,
-            color = Color.White,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-        )
+        Text(asset.displayName, color = Color.White, modifier = Modifier.weight(1f), maxLines = 1)
         Text(
             text = if (metadataVisible) "Hide info" else "Info",
             color = Color.White,
             modifier = Modifier.clickable(onClick = onToggleMetadata),
         )
+        Text("Share", color = Color.White, modifier = Modifier.clickable(onClick = onShare))
         Text(
             text = if (isSensitive) "Sensitive ✓" else "Sensitive",
             color = Color.White,
@@ -221,11 +211,7 @@ private fun ViewerControls(
         Text(
             text = if (canMoveToTrash) "Trash" else "Trash unavailable",
             color = if (canMoveToTrash) Color.White else Color.White.copy(alpha = 0.45f),
-            modifier = if (canMoveToTrash) {
-                Modifier.clickable(onClick = onMoveToTrash)
-            } else {
-                Modifier
-            },
+            modifier = if (canMoveToTrash) Modifier.clickable(onClick = onMoveToTrash) else Modifier,
         )
         Text("$position / $total", color = Color.White)
     }
@@ -234,10 +220,7 @@ private fun ViewerControls(
 @Composable
 private fun MetadataPanel(asset: MediaAsset, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.82f))
-            .padding(16.dp),
+        modifier = modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.82f)).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         MetadataRow("Name", asset.displayName)
@@ -252,36 +235,26 @@ private fun MetadataPanel(asset: MediaAsset, modifier: Modifier = Modifier) {
 
 @Composable
 private fun MetadataRow(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(
-            text = label,
-            color = Color.White.copy(alpha = 0.68f),
-            modifier = Modifier.weight(0.3f),
-        )
-        Text(text = value, color = Color.White, modifier = Modifier.weight(0.7f))
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(label, color = Color.White.copy(alpha = 0.68f), modifier = Modifier.weight(0.3f))
+        Text(value, color = Color.White, modifier = Modifier.weight(0.7f))
     }
 }
 
-private suspend fun loadViewerBitmap(
-    resolver: ContentResolver,
-    asset: MediaAsset,
-): Bitmap? = withContext(Dispatchers.IO) {
-    runCatching {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            resolver.loadThumbnail(asset.contentUri, Size(2048, 2048), null)
-        } else {
-            resolver.openInputStream(asset.contentUri)?.use(BitmapFactory::decodeStream)
-        }
-    }.getOrNull()
-}
+private suspend fun loadViewerBitmap(resolver: ContentResolver, asset: MediaAsset): Bitmap? =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                resolver.loadThumbnail(asset.contentUri, Size(2048, 2048), null)
+            } else {
+                resolver.openInputStream(asset.contentUri)?.use(BitmapFactory::decodeStream)
+            }
+        }.getOrNull()
+    }
 
 private fun formatDate(epochMillis: Long): String {
     if (epochMillis <= 0L) return "Unknown"
-    return DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-        .format(Date(epochMillis))
+    return DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(epochMillis))
 }
 
 private fun formatBytes(bytes: Long): String {
@@ -293,11 +266,7 @@ private fun formatBytes(bytes: Long): String {
         value /= 1024.0
         unitIndex += 1
     }
-    return if (unitIndex == 0) {
-        "${value.roundToInt()} ${units[unitIndex]}"
-    } else {
-        "%.1f %s".format(value, units[unitIndex])
-    }
+    return if (unitIndex == 0) "${value.roundToInt()} ${units[unitIndex]}" else "%.1f %s".format(value, units[unitIndex])
 }
 
 private const val SWIPE_THRESHOLD_PX = 180f
