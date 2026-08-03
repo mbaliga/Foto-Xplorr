@@ -22,11 +22,15 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -35,11 +39,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.MediaId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 data class GalleryUiState(
     val assets: List<MediaAsset>,
+    val favoriteIds: Set<MediaId>,
     val permissionGranted: Boolean,
     val scanState: ScanState,
 )
@@ -49,14 +55,14 @@ fun GalleryScreen(
     state: GalleryUiState,
     onRequestPermission: () -> Unit,
     onRefresh: () -> Unit,
-    onOpenAsset: (MediaAsset) -> Unit,
+    onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
 ) {
     when {
         !state.permissionGranted -> PermissionScreen(onRequestPermission)
         state.assets.isEmpty() && state.scanState is ScanState.Scanning -> LoadingScreen(state.scanState)
         state.assets.isEmpty() && state.scanState is ScanState.Error -> ErrorScreen(state.scanState.message, onRefresh)
         state.assets.isEmpty() && state.scanState is ScanState.Complete -> EmptyScreen(onRefresh)
-        else -> GalleryGrid(state, onRefresh, onOpenAsset)
+        else -> GalleryBrowser(state, onRefresh, onOpenAsset)
     }
 }
 
@@ -94,11 +100,22 @@ private fun EmptyScreen(onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun GalleryGrid(
+private fun GalleryBrowser(
     state: GalleryUiState,
     onRefresh: () -> Unit,
-    onOpenAsset: (MediaAsset) -> Unit,
+    onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
 ) {
+    var section by remember { mutableStateOf(GallerySection.PHOTOS) }
+    var selectedAlbum by remember { mutableStateOf<String?>(null) }
+
+    val visible = visibleAssets(
+        assets = state.assets,
+        favoriteIds = state.favoriteIds,
+        section = section,
+        selectedAlbum = selectedAlbum,
+    )
+    val albums = buildAlbumSummaries(state.assets)
+
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -108,29 +125,131 @@ private fun GalleryGrid(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column {
-                Text("Foto Xplorr", style = MaterialTheme.typography.titleLarge)
-                Text("${state.assets.size} photos", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    text = selectedAlbum ?: "Foto Xplorr",
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Text(
+                    text = when {
+                        selectedAlbum != null -> "${visible.size} photos"
+                        section == GallerySection.ALBUMS -> "${albums.size} albums"
+                        section == GallerySection.FAVORITES -> "${visible.size} favourites"
+                        else -> "${visible.size} photos"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
             Text(
-                text = "Refresh",
-                modifier = Modifier.clickable(onClick = onRefresh),
+                text = if (selectedAlbum != null) "Back" else "Refresh",
+                modifier = Modifier.clickable {
+                    if (selectedAlbum != null) selectedAlbum = null else onRefresh()
+                },
                 style = MaterialTheme.typography.labelLarge,
             )
         }
 
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 112.dp),
-            modifier = Modifier.fillMaxSize(),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(
-                items = state.assets,
-                key = { it.id.value },
-            ) { asset ->
-                Thumbnail(
-                    asset = asset,
-                    onClick = { onOpenAsset(asset) },
+            GallerySection.entries.forEach { candidate ->
+                FilterChip(
+                    selected = section == candidate,
+                    onClick = {
+                        section = candidate
+                        selectedAlbum = null
+                    },
+                    label = {
+                        Text(
+                            when (candidate) {
+                                GallerySection.PHOTOS -> "Photos"
+                                GallerySection.FAVORITES -> "Favourites"
+                                GallerySection.ALBUMS -> "Albums"
+                            },
+                        )
+                    },
                 )
             }
+        }
+
+        when {
+            section == GallerySection.ALBUMS && selectedAlbum == null -> {
+                AlbumGrid(
+                    albums = albums,
+                    onOpenAlbum = { selectedAlbum = it.name },
+                )
+            }
+            visible.isEmpty() -> {
+                CenteredColumn {
+                    Text(
+                        if (section == GallerySection.FAVORITES) {
+                            "No favourites yet"
+                        } else {
+                            "No photos in this album"
+                        },
+                    )
+                }
+            }
+            else -> {
+                AssetGrid(
+                    assets = visible,
+                    onOpenAsset = { asset -> onOpenAsset(asset, visible) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlbumGrid(
+    albums: List<AlbumSummary>,
+    onOpenAlbum: (AlbumSummary) -> Unit,
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 156.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        items(albums, key = { it.name }) { album ->
+            Column(
+                modifier = Modifier
+                    .clickable { onOpenAlbum(album) }
+                    .padding(6.dp),
+            ) {
+                Thumbnail(asset = album.cover, onClick = { onOpenAlbum(album) })
+                Text(
+                    text = album.name,
+                    modifier = Modifier.padding(top = 8.dp),
+                    maxLines = 1,
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    text = "${album.count} photos",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AssetGrid(
+    assets: List<MediaAsset>,
+    onOpenAsset: (MediaAsset) -> Unit,
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 112.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        items(
+            items = assets,
+            key = { it.id.value },
+        ) { asset ->
+            Thumbnail(
+                asset = asset,
+                onClick = { onOpenAsset(asset) },
+            )
         }
     }
 }
