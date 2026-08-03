@@ -20,8 +20,13 @@ class SensitiveStore(context: Context) {
     }
 
     fun setSensitive(id: MediaId, sensitive: Boolean) {
+        setSensitive(setOf(id), sensitive)
+    }
+
+    fun setSensitive(ids: Set<MediaId>, sensitive: Boolean) {
+        if (ids.isEmpty()) return
         val updated = state.value.toMutableSet().apply {
-            if (sensitive) add(id) else remove(id)
+            if (sensitive) addAll(ids) else removeAll(ids)
         }
         persist(updated)
     }
