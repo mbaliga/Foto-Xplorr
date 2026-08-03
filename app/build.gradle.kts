@@ -55,6 +55,11 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
+    implementation("io.coil-kt.coil3:coil-compose:3.5.0")
+    implementation("io.coil-kt.coil3:coil-gif:3.5.0")
+    implementation("io.coil-kt.coil3:coil-svg:3.5.0")
+    implementation("io.coil-kt.coil3:coil-video:3.5.0")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
