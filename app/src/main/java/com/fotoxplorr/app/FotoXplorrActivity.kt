@@ -1,14 +1,17 @@
 package com.fotoxplorr.app
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -39,7 +42,6 @@ import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.viewer.ViewerScreen
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.debounce
 
 class FotoXplorrActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,7 +65,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     val sensitiveStore = remember { SensitiveStore(applicationContext) }
     val privateFolderStore = remember { PrivateFolderStore(applicationContext) }
     val galleryPreferences = remember { GalleryPreferences(applicationContext) }
-    val mediaStoreObserver = remember { MediaStoreChangeObserver(contentResolver) }
+    val changeObserver = remember { MediaStoreChangeObserver(contentResolver) }
     val indexer = remember {
         MediaIndexer(
             scanner = AndroidMediaStoreScanner(contentResolver),
@@ -85,11 +87,25 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     var scanGeneration by remember { mutableStateOf(0) }
     var viewerAssets by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
     var selectedAssetId by remember { mutableStateOf<MediaId?>(null) }
+    var pendingTrashAssetId by remember { mutableStateOf<MediaId?>(null) }
+
+    val trashLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        val trashedId = pendingTrashAssetId
+        pendingTrashAssetId = null
+        if (result.resultCode == Activity.RESULT_OK && trashedId != null) {
+            viewerAssets = viewerAssets.filterNot { it.id == trashedId }
+            selectedAssetId = null
+            scanGeneration += 1
+        }
+    }
 
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
         privateFolderStore.lockAll()
         selectedAssetId = null
         viewerAssets = emptyList()
+        pendingTrashAssetId = null
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -101,10 +117,9 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
 
     LaunchedEffect(permissionGranted) {
         if (!permissionGranted) return@LaunchedEffect
-
-        mediaStoreObserver.changes()
-            .debounce(MEDIASTORE_REFRESH_DEBOUNCE_MILLIS)
-            .collect { scanGeneration += 1 }
+        changeObserver.changes().collect {
+            scanGeneration += 1
+        }
     }
 
     LaunchedEffect(permissionGranted, scanGeneration) {
@@ -146,8 +161,22 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             isSensitive = activeAsset.id in sensitiveIds,
             hasPrevious = selectedIndex > 0,
             hasNext = selectedIndex < viewerAssets.lastIndex,
+            canMoveToTrash = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
             onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
             onToggleSensitive = { sensitiveStore.toggle(activeAsset.id) },
+            onMoveToTrash = {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    pendingTrashAssetId = activeAsset.id
+                    val request = MediaStore.createTrashRequest(
+                        contentResolver,
+                        listOf(activeAsset.contentUri),
+                        true,
+                    )
+                    trashLauncher.launch(
+                        IntentSenderRequest.Builder(request.intentSender).build(),
+                    )
+                }
+            },
             onPrevious = {
                 viewerAssets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id }
             },
@@ -216,5 +245,3 @@ sealed interface ScanState {
     data class Complete(val total: Int) : ScanState
     data class Error(val message: String) : ScanState
 }
-
-private const val MEDIASTORE_REFRESH_DEBOUNCE_MILLIS = 750L
