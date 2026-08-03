@@ -37,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +51,7 @@ import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class GalleryUiState(
@@ -71,10 +73,10 @@ fun GalleryScreen(
     onSetSort: (GallerySort) -> Unit,
     onSetGridColumns: (Int) -> Unit,
     onSetBlurSensitive: (Boolean) -> Unit,
-    onProtectFolder: (String, CharArray) -> Result<Unit>,
-    onUnlockFolder: (String, CharArray) -> Boolean,
+    onProtectFolder: suspend (String, CharArray) -> Result<Unit>,
+    onUnlockFolder: suspend (String, CharArray) -> Boolean,
     onLockFolder: (String) -> Unit,
-    onRemoveFolderProtection: (String, CharArray) -> Boolean,
+    onRemoveFolderProtection: suspend (String, CharArray) -> Boolean,
     onSetFavorite: (Set<MediaId>, Boolean) -> Unit,
     onSetSensitive: (Set<MediaId>, Boolean) -> Unit,
     onMoveToTrash: (List<MediaAsset>) -> Unit,
@@ -100,10 +102,21 @@ fun GalleryScreen(
             Button(onClick = onRefresh) { Text("Scan again") }
         }
         else -> GalleryBrowser(
-            state, onRefresh, onSetSort, onSetGridColumns, onSetBlurSensitive,
-            onProtectFolder, onUnlockFolder, onLockFolder, onRemoveFolderProtection,
-            onSetFavorite, onSetSensitive, onMoveToTrash, onRestore,
-            onDeletePermanently, onOpenAsset,
+            state = state,
+            onRefresh = onRefresh,
+            onSetSort = onSetSort,
+            onSetGridColumns = onSetGridColumns,
+            onSetBlurSensitive = onSetBlurSensitive,
+            onProtectFolder = onProtectFolder,
+            onUnlockFolder = onUnlockFolder,
+            onLockFolder = onLockFolder,
+            onRemoveFolderProtection = onRemoveFolderProtection,
+            onSetFavorite = onSetFavorite,
+            onSetSensitive = onSetSensitive,
+            onMoveToTrash = onMoveToTrash,
+            onRestore = onRestore,
+            onDeletePermanently = onDeletePermanently,
+            onOpenAsset = onOpenAsset,
         )
     }
 }
@@ -117,10 +130,10 @@ private fun GalleryBrowser(
     onSetSort: (GallerySort) -> Unit,
     onSetGridColumns: (Int) -> Unit,
     onSetBlurSensitive: (Boolean) -> Unit,
-    onProtectFolder: (String, CharArray) -> Result<Unit>,
-    onUnlockFolder: (String, CharArray) -> Boolean,
+    onProtectFolder: suspend (String, CharArray) -> Result<Unit>,
+    onUnlockFolder: suspend (String, CharArray) -> Boolean,
     onLockFolder: (String) -> Unit,
-    onRemoveFolderProtection: (String, CharArray) -> Boolean,
+    onRemoveFolderProtection: suspend (String, CharArray) -> Boolean,
     onSetFavorite: (Set<MediaId>, Boolean) -> Unit,
     onSetSensitive: (Set<MediaId>, Boolean) -> Unit,
     onMoveToTrash: (List<MediaAsset>) -> Unit,
@@ -135,7 +148,6 @@ private fun GalleryBrowser(
     var passwordAction by remember { mutableStateOf<PasswordAction?>(null) }
     var passwordFolderKey by remember { mutableStateOf<String?>(null) }
     var passwordFolderName by remember { mutableStateOf<String?>(null) }
-    var passwordError by remember { mutableStateOf<String?>(null) }
 
     val visible = visibleAssets(
         assets = state.assets,
@@ -282,7 +294,7 @@ private fun GalleryBrowser(
                 sensitiveIds = state.sensitiveIds,
                 blurSensitive = state.preferences.blurSensitive,
                 onClick = { asset ->
-                    if (selection.isActive) selection = selection.toggle(asset.id)
+                    if (selection.isActive || inTrash) selection = selection.toggle(asset.id)
                     else onOpenAsset(asset, visible)
                 },
                 onLongClick = { asset -> selection = selection.toggle(asset.id) },
@@ -305,31 +317,83 @@ private fun GalleryBrowser(
                 PasswordAction.UNLOCK -> "Unlock"
                 PasswordAction.REMOVE -> "Remove"
             },
-            error = passwordError,
+            failureMessage = if (action == PasswordAction.PROTECT) {
+                "Use at least 6 characters"
+            } else {
+                "Incorrect password or temporarily locked"
+            },
             onDismiss = {
                 passwordAction = null
                 passwordFolderKey = null
                 passwordFolderName = null
-                passwordError = null
             },
             onConfirm = { password ->
-                val success = when (action) {
+                when (action) {
                     PasswordAction.PROTECT -> onProtectFolder(folderKey, password).isSuccess
                     PasswordAction.UNLOCK -> onUnlockFolder(folderKey, password)
                     PasswordAction.REMOVE -> onRemoveFolderProtection(folderKey, password)
                 }
-                if (success) {
-                    if (action == PasswordAction.UNLOCK) selectedAlbumKey = folderKey
-                    passwordAction = null
-                    passwordFolderKey = null
-                    passwordFolderName = null
-                    passwordError = null
-                } else {
-                    passwordError = if (action == PasswordAction.PROTECT) "Use at least 6 characters" else "Incorrect password"
-                }
+            },
+            onSuccess = {
+                if (action == PasswordAction.UNLOCK) selectedAlbumKey = folderKey
+                passwordAction = null
+                passwordFolderKey = null
+                passwordFolderName = null
             },
         )
     }
+}
+
+@Composable
+private fun PasswordDialog(
+    title: String,
+    confirmLabel: String,
+    failureMessage: String,
+    onDismiss: () -> Unit,
+    onConfirm: suspend (CharArray) -> Boolean,
+    onSuccess: () -> Unit,
+) {
+    var password by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it; error = null },
+                    enabled = !busy,
+                    label = { Text("Password") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                )
+                if (busy) CircularProgressIndicator()
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = password.isNotEmpty() && !busy,
+                onClick = {
+                    val chars = password.toCharArray()
+                    password = ""
+                    busy = true
+                    scope.launch {
+                        val success = runCatching { onConfirm(chars) }.getOrDefault(false)
+                        busy = false
+                        if (success) onSuccess() else error = failureMessage
+                    }
+                },
+            ) { Text(confirmLabel) }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
@@ -349,9 +413,7 @@ private fun SelectionBar(
     onDelete: () -> Unit,
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth()
-            .background(MaterialTheme.colorScheme.secondaryContainer)
-            .padding(12.dp),
+        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer).padding(12.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -408,21 +470,6 @@ private fun GalleryControls(preferences: GalleryPreferencesState, onSetSort: (Ga
         Button(enabled = preferences.gridColumns > MIN_GRID_COLUMNS, onClick = { onSetGridColumns(preferences.gridColumns - 1) }) { Text("Larger") }
         Button(enabled = preferences.gridColumns < MAX_GRID_COLUMNS, onClick = { onSetGridColumns(preferences.gridColumns + 1) }) { Text("Smaller") }
     }
-}
-
-@Composable
-private fun PasswordDialog(title: String, confirmLabel: String, error: String?, onDismiss: () -> Unit, onConfirm: (CharArray) -> Unit) {
-    var password by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        } },
-        confirmButton = { TextButton(enabled = password.isNotEmpty(), onClick = { val chars = password.toCharArray(); password = ""; onConfirm(chars) }) { Text(confirmLabel) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
 }
 
 @Composable
