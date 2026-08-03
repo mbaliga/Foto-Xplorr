@@ -89,10 +89,10 @@ class AndroidMediaStoreScanner(
             val rawId = cursor.getLong(id)
             return MediaAsset(
                 id = MediaId(rawId),
-                contentUri = ContentUris.withAppendedId(
+                contentUriString = ContentUris.withAppendedId(
                     MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                     rawId,
-                ),
+                ).toString(),
                 displayName = cursor.getString(displayName).orEmpty(),
                 mimeType = cursor.getString(mimeType).orEmpty(),
                 bucketName = cursor.stringOrNull(bucketName),
