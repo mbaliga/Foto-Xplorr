@@ -19,17 +19,15 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesomeMosaic
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.PermMedia
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.ViewInAr
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -43,14 +41,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.ai.AiSettingsScreen
+import com.fotoxplorr.app.ai.RemoteAiPhotoScreen
 import com.fotoxplorr.app.ai.SimilarityExplorerScreen
 import com.fotoxplorr.app.experience.GalleryPreviewScreen
 import com.fotoxplorr.app.experience.PhotoWallScreen
+import com.fotoxplorr.app.gallery.folderIdentity
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.organize.LibraryStore
+import com.fotoxplorr.app.privacy.PrivateFolderStore
 
 private enum class ExploreExperience(
     val title: String,
@@ -82,6 +86,11 @@ private enum class ExploreExperience(
         "Stand at your current location and turn toward photos around you",
         Icons.Outlined.ViewInAr,
     ),
+    REMOTE_ANALYSIS(
+        "Ask your AI provider",
+        "Choose a photo, preview exactly what leaves the device, then confirm",
+        Icons.Outlined.SmartToy,
+    ),
     AI_SETTINGS(
         "AI and provider keys",
         "Local model management and encrypted optional provider credentials",
@@ -96,7 +105,20 @@ fun PlacesScreen(
     onIndexLocations: () -> Unit,
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
 ) {
+    val context = LocalContext.current
+    val privateFolderStore = remember(context) { PrivateFolderStore(context.applicationContext) }
+    val libraryStore = remember(context) { LibraryStore(context.applicationContext) }
+    val lockedFolders by privateFolderStore.observeLockedFolders().collectAsStateWithLifecycle()
+    val unlockedFolders by privateFolderStore.observeUnlockedFolders().collectAsStateWithLifecycle()
+    val library by libraryStore.observe().collectAsStateWithLifecycle()
     var experience by remember { mutableStateOf<ExploreExperience?>(null) }
+
+    val safeAssets = remember(assets, lockedFolders, unlockedFolders) {
+        assets.filter { asset ->
+            val key = folderIdentity(asset).key.value
+            key !in lockedFolders || key in unlockedFolders
+        }
+    }
 
     LaunchedEffect(experience, geoState.scannedCount, geoState.isIndexing) {
         if (
@@ -110,38 +132,44 @@ fun PlacesScreen(
 
     when (experience) {
         ExploreExperience.SIMILARITY -> SimilarityExplorerScreen(
-            assets = assets,
+            assets = safeAssets,
             onOpenAsset = onOpenAsset,
             onClose = { experience = null },
         )
         ExploreExperience.PHOTO_WALL -> PhotoWallScreen(
-            assets = assets,
+            assets = safeAssets,
             onOpenAsset = onOpenAsset,
             onClose = { experience = null },
         )
         ExploreExperience.GALLERY_PREVIEW -> GalleryPreviewScreen(
-            assets = assets,
+            assets = safeAssets,
             onOpenAsset = onOpenAsset,
             onClose = { experience = null },
         )
         ExploreExperience.PHOTO_MAP -> RichPhotoMapScreen(
-            assets = assets,
+            assets = safeAssets,
             geoState = geoState,
+            tagsByMediaId = library.tagsByMediaId,
             onIndexLocations = onIndexLocations,
             onOpenAsset = onOpenAsset,
             onClose = { experience = null },
         )
         ExploreExperience.SPATIAL_COMPASS -> SpatialPhotoSceneScreen(
-            assets = assets,
+            assets = safeAssets,
             geoState = geoState,
             onIndexLocations = onIndexLocations,
             onOpenAsset = onOpenAsset,
             onClose = { experience = null },
         )
+        ExploreExperience.REMOTE_ANALYSIS -> RemoteAiPhotoScreen(
+            assets = safeAssets,
+            onOpenSettings = { experience = ExploreExperience.AI_SETTINGS },
+            onClose = { experience = null },
+        )
         ExploreExperience.AI_SETTINGS -> AiSettingsScreen(onClose = { experience = null })
         null -> ExploreHub(
-            assets = assets,
-            locatedCount = geoState.locatedCount,
+            assets = safeAssets,
+            locatedCount = safeAssets.count { it.id in geoState.metadataById },
             locationIndexing = geoState.isIndexing,
             onOpen = { experience = it },
         )
@@ -168,7 +196,7 @@ private fun ExploreHub(
             Column {
                 Text("Immersive and AI", style = MaterialTheme.typography.headlineSmall)
                 Text(
-                    "Six optional ways to explore the same local library. The ordinary gallery continues to work with AI, network and location disabled.",
+                    "Seven optional ways to explore the permitted library. Locked folders stay excluded. The ordinary gallery works with AI, network and location disabled.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -186,6 +214,7 @@ private fun ExploreHub(
                     ExploreExperience.PHOTO_WALL,
                     ExploreExperience.GALLERY_PREVIEW,
                     ExploreExperience.SIMILARITY,
+                    ExploreExperience.REMOTE_ANALYSIS,
                     -> if (feature == ExploreExperience.GALLERY_PREVIEW) alternateCover else imageCover
                     else -> null
                 }
@@ -199,6 +228,7 @@ private fun ExploreHub(
                         ExploreExperience.PHOTO_WALL -> "OpenGL ES"
                         ExploreExperience.SIMILARITY -> "On-device"
                         ExploreExperience.GALLERY_PREVIEW -> "Touch + D-pad"
+                        ExploreExperience.REMOTE_ANALYSIS -> "Confirm before send"
                         ExploreExperience.AI_SETTINGS -> "Keystore"
                     },
                     onClick = { onOpen(feature) },
@@ -208,7 +238,7 @@ private fun ExploreHub(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Privacy boundaries", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Similarity indexing is local. Map tiles are requested only while the map is open. Current location is requested only inside Spatial compass. Remote AI stays disabled until a user adds and enables a provider key.",
+                        "Similarity indexing is local. Map tiles are requested only while the map is open. Current location is requested only inside Spatial compass. Remote analysis requires an enabled user key and per-request confirmation.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Spacer(Modifier.size(72.dp))
