@@ -52,8 +52,10 @@ fun ViewerScreen(
     isSensitive: Boolean,
     hasPrevious: Boolean,
     hasNext: Boolean,
+    canMoveToTrash: Boolean,
     onToggleFavorite: () -> Unit,
     onToggleSensitive: () -> Unit,
+    onMoveToTrash: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onClose: () -> Unit,
@@ -153,8 +155,10 @@ fun ViewerScreen(
                 isFavorite = isFavorite,
                 isSensitive = isSensitive,
                 metadataVisible = metadataVisible,
+                canMoveToTrash = canMoveToTrash,
                 onToggleFavorite = onToggleFavorite,
                 onToggleSensitive = onToggleSensitive,
+                onMoveToTrash = onMoveToTrash,
                 onToggleMetadata = { metadataVisible = !metadataVisible },
                 onClose = onClose,
             )
@@ -177,8 +181,10 @@ private fun ViewerControls(
     isFavorite: Boolean,
     isSensitive: Boolean,
     metadataVisible: Boolean,
+    canMoveToTrash: Boolean,
     onToggleFavorite: () -> Unit,
     onToggleSensitive: () -> Unit,
+    onMoveToTrash: () -> Unit,
     onToggleMetadata: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -211,6 +217,15 @@ private fun ViewerControls(
             text = if (isFavorite) "★" else "☆",
             color = Color.White,
             modifier = Modifier.clickable(onClick = onToggleFavorite),
+        )
+        Text(
+            text = if (canMoveToTrash) "Trash" else "Trash unavailable",
+            color = if (canMoveToTrash) Color.White else Color.White.copy(alpha = 0.45f),
+            modifier = if (canMoveToTrash) {
+                Modifier.clickable(onClick = onMoveToTrash)
+            } else {
+                Modifier
+            },
         )
         Text("$position / $total", color = Color.White)
     }
