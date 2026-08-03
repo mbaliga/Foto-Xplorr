@@ -1,0 +1,22 @@
+# Gradle
+.gradle/
+build/
+app/build/
+hyle-probe/build/
+wallpaper/build/
+crash-recovery/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local configuration
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Log/output from ad-hoc local builds
+*.log

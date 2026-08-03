@@ -15,6 +15,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          # hyle-design-system is a git submodule (D-A); without this the includeBuild()
+          # in settings.gradle.kts resolves to an empty directory and configuration fails.
+          submodules: true
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -23,13 +27,17 @@ jobs:
         with:
           packages: platform-tools platforms;android-36 build-tools;36.0.0
       - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "9.5.0"
+        # No explicit gradle-version: the checked-in wrapper (gradle/wrapper/gradle-wrapper.properties,
+        # 8.14.3) is now the single source of truth for the Gradle version, so it stays in
+        # lockstep with hyle-design-system's own wrapper and with the AGP 8.9.1 pin in the
+        # root build.gradle.kts (D-Q: composite builds require identical AGP versions
+        # across the root build and any includeBuild'd project).
       - name: Test and build debug APK
         shell: bash
         run: |
           set -o pipefail
-          gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug 2>&1 | tee build.log
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug 2>&1 | tee build.log
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4

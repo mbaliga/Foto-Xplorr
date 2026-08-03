@@ -60,11 +60,22 @@ Collections, tags, archive state, favourites and sensitive flags can be exported
 
 GitHub Actions runs JVM tests and assembles a debug APK for every pull-request update. The workflow uploads the complete Gradle build log, unit-test report and successful APK.
 
-Local builds require JDK 17, Android SDK 36 and Gradle 9.5:
+This repo consumes the [Hyle Design System](https://github.com/mbaliga/hyle-design-system) as a git
+submodule (`hyle-design-system/`) plus a Gradle `includeBuild`, so a fresh clone needs the submodule
+initialised, and its Android Gradle Plugin version is pinned to match Hyle's own AGP version exactly
+(currently 8.9.1 — Gradle composite builds hard-fail if the two drift apart):
 
 ```bash
-gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
+git clone --recurse-submodules https://github.com/mbaliga/foto-xplorr
+# or, if already cloned without --recurse-submodules:
+git submodule update --init
+
+./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug
 ```
+
+Local builds require JDK 17, Android SDK 36, and the checked-in Gradle wrapper (8.14.3, matching
+`hyle-design-system`'s own wrapper — avoid running a system-installed `gradle` of a different
+version against this project, since AGP 8.9.1 needs to stay paired with a compatible Gradle).
 
 The exact v2 acceptance boundary is documented in [`docs/v2-acceptance.md`](docs/v2-acceptance.md).
 

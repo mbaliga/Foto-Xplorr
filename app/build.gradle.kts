@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -71,6 +72,16 @@ dependencies {
     // Provider-key connections. No logging interceptor is included so secrets cannot be logged.
     implementation(platform("com.squareup.okhttp3:okhttp-bom:5.3.0"))
     implementation("com.squareup.okhttp3:okhttp")
+
+    // Hyle Design System, via git submodule + Gradle includeBuild dependency substitution
+    // (settings.gradle.kts) -- the constellation's one sanctioned sharing mechanism (D-A).
+    // Coordinates and versions must match hyle-design-system/*/build.gradle.kts exactly for
+    // substitution to resolve (group:artifact:version, not just the artifact name).
+    implementation("dev.aarso:hyle:0.2.0")
+    // Optional, additive, zero-dependency-on-:hyle reliability utility (plain
+    // android.widget views): captures a device-only crash and shows a recovery screen on
+    // next launch. Wired in FotoXplorrActivity/FotoXplorrApplication.
+    implementation("dev.aarso:crash-recovery:1.1.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver3:5.3.0")
