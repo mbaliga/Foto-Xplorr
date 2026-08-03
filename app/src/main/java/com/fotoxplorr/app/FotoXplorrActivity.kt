@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -16,9 +17,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -83,31 +88,68 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     var selectedAssetId by remember { mutableStateOf<MediaId?>(null) }
     var pendingOperation by remember { mutableStateOf<PendingMediaOperation?>(null) }
     var pendingOperationIds by remember { mutableStateOf<Set<MediaId>>(emptySet()) }
+    var userMessage by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(unlockedFolders.isNotEmpty()) {
+        if (unlockedFolders.isNotEmpty()) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        onDispose {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
 
     val mediaOperationLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult(),
     ) { result ->
+        val completedOperation = pendingOperation
         val affectedIds = pendingOperationIds
         pendingOperation = null
         pendingOperationIds = emptySet()
+
         if (result.resultCode == Activity.RESULT_OK && affectedIds.isNotEmpty()) {
             viewerAssets = viewerAssets.filterNot { it.id in affectedIds }
-            if (selectedAssetId in affectedIds) selectedAssetId = null
+            if (selectedAssetId?.let(affectedIds::contains) == true) selectedAssetId = null
+
+            if (completedOperation == PendingMediaOperation.DELETE) {
+                favoriteStore.setFavorite(affectedIds, false)
+                sensitiveStore.setSensitive(affectedIds, false)
+            }
+
+            userMessage = when (completedOperation) {
+                PendingMediaOperation.TRASH -> "Moved to Android's system trash."
+                PendingMediaOperation.RESTORE -> "Restored from trash."
+                PendingMediaOperation.DELETE -> "Permanently deleted."
+                null -> null
+            }
             scanGeneration += 1
         }
     }
 
     fun requestMediaOperation(items: List<MediaAsset>, operation: PendingMediaOperation) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || items.isEmpty()) return
-        pendingOperation = operation
-        pendingOperationIds = items.mapTo(linkedSetOf()) { it.id }
-        val uris = items.map { it.contentUri }
-        val request = when (operation) {
-            PendingMediaOperation.TRASH -> MediaStore.createTrashRequest(contentResolver, uris, true)
-            PendingMediaOperation.RESTORE -> MediaStore.createTrashRequest(contentResolver, uris, false)
-            PendingMediaOperation.DELETE -> MediaStore.createDeleteRequest(contentResolver, uris)
+        if (items.isEmpty()) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            userMessage = "System trash operations require Android 11 or newer. Foto Xplorr will not delete these photos directly."
+            return
         }
-        mediaOperationLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+
+        runCatching {
+            pendingOperation = operation
+            pendingOperationIds = items.mapTo(linkedSetOf()) { it.id }
+            val uris = items.map { it.contentUri }
+            val request = when (operation) {
+                PendingMediaOperation.TRASH -> MediaStore.createTrashRequest(contentResolver, uris, true)
+                PendingMediaOperation.RESTORE -> MediaStore.createTrashRequest(contentResolver, uris, false)
+                PendingMediaOperation.DELETE -> MediaStore.createDeleteRequest(contentResolver, uris)
+            }
+            mediaOperationLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+        }.onFailure { error ->
+            pendingOperation = null
+            pendingOperationIds = emptySet()
+            userMessage = error.message ?: "Unable to open Android's media confirmation."
+        }
     }
 
     fun share(asset: MediaAsset) {
@@ -158,6 +200,16 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             selectedAssetId = null
             viewerAssets = emptyList()
         }
+    }
+
+    userMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { userMessage = null },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { userMessage = null }) { Text("OK") }
+            },
+        )
     }
 
     if (activeAsset != null) {
