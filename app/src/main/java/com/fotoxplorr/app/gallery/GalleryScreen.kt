@@ -6,9 +6,10 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Size
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +31,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -72,16 +74,28 @@ fun GalleryScreen(
     onUnlockFolder: (String, CharArray) -> Boolean,
     onLockFolder: (String) -> Unit,
     onRemoveFolderProtection: (String, CharArray) -> Boolean,
+    onSetFavorite: (Set<MediaId>, Boolean) -> Unit,
+    onSetSensitive: (Set<MediaId>, Boolean) -> Unit,
+    onMoveToTrash: (List<MediaAsset>) -> Unit,
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
 ) {
     when {
-        !state.permissionGranted -> PermissionScreen(onRequestPermission)
-        state.assets.isEmpty() && state.scanState is ScanState.Scanning ->
-            LoadingScreen(state.scanState)
-        state.assets.isEmpty() && state.scanState is ScanState.Error ->
-            ErrorScreen(state.scanState.message, onRefresh)
-        state.assets.isEmpty() && state.scanState is ScanState.Complete ->
-            EmptyScreen(onRefresh)
+        !state.permissionGranted -> CenteredColumn {
+            Text("Foto Xplorr needs access to your photos to build a local gallery.")
+            Button(onClick = onRequestPermission) { Text("Choose photos") }
+        }
+        state.assets.isEmpty() && state.scanState is ScanState.Scanning -> CenteredColumn {
+            CircularProgressIndicator()
+            Text("Scanning")
+        }
+        state.assets.isEmpty() && state.scanState is ScanState.Error -> CenteredColumn {
+            Text(state.scanState.message)
+            Button(onClick = onRefresh) { Text("Retry") }
+        }
+        state.assets.isEmpty() -> CenteredColumn {
+            Text("No photos found")
+            Button(onClick = onRefresh) { Text("Scan again") }
+        }
         else -> GalleryBrowser(
             state = state,
             onRefresh = onRefresh,
@@ -92,33 +106,12 @@ fun GalleryScreen(
             onUnlockFolder = onUnlockFolder,
             onLockFolder = onLockFolder,
             onRemoveFolderProtection = onRemoveFolderProtection,
+            onSetFavorite = onSetFavorite,
+            onSetSensitive = onSetSensitive,
+            onMoveToTrash = onMoveToTrash,
             onOpenAsset = onOpenAsset,
         )
     }
-}
-
-@Composable
-private fun PermissionScreen(onRequestPermission: () -> Unit) = CenteredColumn {
-    Text("Foto Xplorr needs access to your photos to build a local gallery.")
-    Button(onClick = onRequestPermission) { Text("Choose photos") }
-}
-
-@Composable
-private fun LoadingScreen(state: ScanState.Scanning) = CenteredColumn {
-    CircularProgressIndicator()
-    Text(if (state.discovered > 0) "${state.scanned} / ${state.discovered}" else "Scanning")
-}
-
-@Composable
-private fun ErrorScreen(message: String, onRefresh: () -> Unit) = CenteredColumn {
-    Text(message)
-    Button(onClick = onRefresh) { Text("Retry") }
-}
-
-@Composable
-private fun EmptyScreen(onRefresh: () -> Unit) = CenteredColumn {
-    Text("No photos found")
-    Button(onClick = onRefresh) { Text("Scan again") }
 }
 
 private enum class PasswordAction { PROTECT, UNLOCK, REMOVE }
@@ -134,11 +127,15 @@ private fun GalleryBrowser(
     onUnlockFolder: (String, CharArray) -> Boolean,
     onLockFolder: (String) -> Unit,
     onRemoveFolderProtection: (String, CharArray) -> Boolean,
+    onSetFavorite: (Set<MediaId>, Boolean) -> Unit,
+    onSetSensitive: (Set<MediaId>, Boolean) -> Unit,
+    onMoveToTrash: (List<MediaAsset>) -> Unit,
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
 ) {
     var section by remember { mutableStateOf(GallerySection.PHOTOS) }
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
+    var selection by remember { mutableStateOf(GallerySelection()) }
     var passwordAction by remember { mutableStateOf<PasswordAction?>(null) }
     var passwordFolder by remember { mutableStateOf<String?>(null) }
     var passwordError by remember { mutableStateOf<String?>(null) }
@@ -153,92 +150,95 @@ private fun GalleryBrowser(
         lockedFolders = state.lockedFolders,
         unlockedFolders = state.unlockedFolders,
     )
+    val visibleIds = visible.mapTo(linkedSetOf()) { it.id }
+    val selectedAssets = visible.filter { it.id in selection.selectedIds }
     val albums = buildAlbumSummaries(state.assets, query)
     val activeAlbum = selectedAlbum
-    val activeAlbumProtected = activeAlbum != null && activeAlbum in state.lockedFolders
-    val activeAlbumUnlocked = activeAlbum != null && activeAlbum in state.unlockedFolders
+    val protected = activeAlbum != null && activeAlbum in state.lockedFolders
+    val unlocked = activeAlbum != null && activeAlbum in state.unlockedFolders
+
+    LaunchedEffect(visibleIds) {
+        selection = selection.retainAvailable(visibleIds)
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Header(
-            title = activeAlbum ?: "Foto Xplorr",
-            subtitle = when {
-                activeAlbumProtected && !activeAlbumUnlocked -> "Private folder"
-                activeAlbum != null -> "${visible.size} photos"
-                section == GallerySection.ALBUMS -> "${albums.size} albums"
-                section == GallerySection.FAVORITES -> "${visible.size} favourites"
-                else -> "${visible.size} photos"
-            },
-            action = if (activeAlbum != null) "Back" else "Refresh",
-            onAction = {
-                if (activeAlbum != null) selectedAlbum = null else onRefresh()
-            },
-        )
+        if (selection.isActive) {
+            SelectionBar(
+                count = selection.count,
+                allVisibleSelected = selection.count == visible.size,
+                canTrash = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                favoriteAction = bulkMarkAction(selection.selectedIds, state.favoriteIds),
+                sensitiveAction = bulkMarkAction(selection.selectedIds, state.sensitiveIds),
+                onClose = { selection = selection.clear() },
+                onSelectAll = { selection = selection.selectAll(visibleIds) },
+                onFavorite = {
+                    onSetFavorite(selection.selectedIds, bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK)
+                    selection = selection.clear()
+                },
+                onSensitive = {
+                    onSetSensitive(selection.selectedIds, bulkMarkAction(selection.selectedIds, state.sensitiveIds) == BulkMarkAction.MARK)
+                    selection = selection.clear()
+                },
+                onTrash = {
+                    onMoveToTrash(selectedAssets)
+                    selection = selection.clear()
+                },
+            )
+        } else {
+            Header(
+                title = activeAlbum ?: "Foto Xplorr",
+                subtitle = when {
+                    protected && !unlocked -> "Private folder"
+                    activeAlbum != null -> "${visible.size} photos"
+                    section == GallerySection.ALBUMS -> "${albums.size} albums"
+                    section == GallerySection.FAVORITES -> "${visible.size} favourites"
+                    else -> "${visible.size} photos"
+                },
+                action = if (activeAlbum != null) "Back" else "Refresh",
+                onAction = { if (activeAlbum != null) selectedAlbum = null else onRefresh() },
+            )
+        }
 
-        if (activeAlbum != null) {
+        if (!selection.isActive && activeAlbum != null) {
             FolderPrivacyActions(
-                protected = activeAlbumProtected,
-                unlocked = activeAlbumUnlocked,
-                onProtect = {
-                    passwordFolder = activeAlbum
-                    passwordAction = PasswordAction.PROTECT
-                },
-                onLock = {
-                    onLockFolder(activeAlbum)
-                    selectedAlbum = null
-                },
-                onRemove = {
-                    passwordFolder = activeAlbum
-                    passwordAction = PasswordAction.REMOVE
-                },
+                protected = protected,
+                unlocked = unlocked,
+                onProtect = { passwordFolder = activeAlbum; passwordAction = PasswordAction.PROTECT },
+                onLock = { onLockFolder(activeAlbum); selectedAlbum = null },
+                onRemove = { passwordFolder = activeAlbum; passwordAction = PasswordAction.REMOVE },
             )
         }
 
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp),
-            singleLine = true,
-            label = { Text("Search photos and albums") },
-        )
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            GallerySection.entries.forEach { candidate ->
-                FilterChip(
-                    selected = section == candidate,
-                    onClick = {
-                        section = candidate
-                        selectedAlbum = null
-                    },
-                    label = { Text(candidate.label()) },
-                )
+        if (!selection.isActive) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                singleLine = true,
+                label = { Text("Search photos and albums") },
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                GallerySection.entries.forEach { candidate ->
+                    FilterChip(
+                        selected = section == candidate,
+                        onClick = { section = candidate; selectedAlbum = null; selection = selection.clear() },
+                        label = { Text(candidate.label()) },
+                    )
+                }
             }
-        }
-
-        if (section != GallerySection.ALBUMS || activeAlbum != null) {
-            GalleryControls(
-                preferences = state.preferences,
-                onSetSort = onSetSort,
-                onSetGridColumns = onSetGridColumns,
-                onSetBlurSensitive = onSetBlurSensitive,
-            )
+            if (section != GallerySection.ALBUMS || activeAlbum != null) {
+                GalleryControls(state.preferences, onSetSort, onSetGridColumns, onSetBlurSensitive)
+            }
         }
 
         when {
-            activeAlbumProtected && !activeAlbumUnlocked -> CenteredColumn {
+            protected && !unlocked -> CenteredColumn {
                 Text("This folder is private")
-                Button(onClick = {
-                    passwordFolder = activeAlbum
-                    passwordAction = PasswordAction.UNLOCK
-                }) { Text("Unlock") }
+                Button(onClick = { passwordFolder = activeAlbum; passwordAction = PasswordAction.UNLOCK }) { Text("Unlock") }
             }
-
             section == GallerySection.ALBUMS && activeAlbum == null -> AlbumGrid(
                 albums = albums,
                 lockedFolders = state.lockedFolders,
@@ -246,33 +246,24 @@ private fun GalleryBrowser(
                 sensitiveIds = state.sensitiveIds,
                 blurSensitive = state.preferences.blurSensitive,
                 onOpenAlbum = { album ->
-                    if (album.name in state.lockedFolders &&
-                        album.name !in state.unlockedFolders
-                    ) {
+                    if (album.name in state.lockedFolders && album.name !in state.unlockedFolders) {
                         passwordFolder = album.name
                         passwordAction = PasswordAction.UNLOCK
-                    } else {
-                        selectedAlbum = album.name
-                    }
+                    } else selectedAlbum = album.name
                 },
             )
-
-            visible.isEmpty() -> CenteredColumn {
-                Text(
-                    when {
-                        query.isNotBlank() -> "No matches"
-                        section == GallerySection.FAVORITES -> "No favourites yet"
-                        else -> "No photos in this album"
-                    },
-                )
-            }
-
+            visible.isEmpty() -> CenteredColumn { Text(if (query.isNotBlank()) "No matches" else "No photos here") }
             else -> AssetGrid(
                 assets = visible,
                 columns = state.preferences.gridColumns,
+                selectedIds = selection.selectedIds,
                 sensitiveIds = state.sensitiveIds,
                 blurSensitive = state.preferences.blurSensitive,
-                onOpenAsset = { asset -> onOpenAsset(asset, visible) },
+                onClick = { asset ->
+                    if (selection.isActive) selection = selection.toggle(asset.id)
+                    else onOpenAsset(asset, visible)
+                },
+                onLongClick = { asset -> selection = selection.toggle(asset.id) },
             )
         }
     }
@@ -292,11 +283,7 @@ private fun GalleryBrowser(
                 PasswordAction.REMOVE -> "Remove"
             },
             error = passwordError,
-            onDismiss = {
-                passwordAction = null
-                passwordFolder = null
-                passwordError = null
-            },
+            onDismiss = { passwordAction = null; passwordFolder = null; passwordError = null },
             onConfirm = { password ->
                 val success = when (action) {
                     PasswordAction.PROTECT -> onProtectFolder(folder, password).isSuccess
@@ -308,306 +295,134 @@ private fun GalleryBrowser(
                     passwordAction = null
                     passwordFolder = null
                     passwordError = null
-                } else {
-                    passwordError = if (action == PasswordAction.PROTECT) {
-                        "Use at least 6 characters"
-                    } else {
-                        "Incorrect password"
-                    }
-                }
+                } else passwordError = if (action == PasswordAction.PROTECT) "Use at least 6 characters" else "Incorrect password"
             },
         )
     }
 }
 
 @Composable
-private fun Header(
-    title: String,
-    subtitle: String,
-    action: String,
-    onAction: () -> Unit,
+private fun SelectionBar(
+    count: Int,
+    allVisibleSelected: Boolean,
+    canTrash: Boolean,
+    favoriteAction: BulkMarkAction,
+    sensitiveAction: BulkMarkAction,
+    onClose: () -> Unit,
+    onSelectAll: () -> Unit,
+    onFavorite: () -> Unit,
+    onSensitive: () -> Unit,
+    onTrash: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column {
-            Text(title, style = MaterialTheme.typography.titleLarge)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall)
+    Column(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer).padding(12.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("$count selected", style = MaterialTheme.typography.titleMedium)
+            Text("Cancel", modifier = Modifier.combinedClickable(onClick = onClose, onLongClick = onClose))
         }
-        Text(
-            text = action,
-            modifier = Modifier.clickable(onClick = onAction),
-            style = MaterialTheme.typography.labelLarge,
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (!allVisibleSelected) Button(onClick = onSelectAll) { Text("Select all") }
+            Button(onClick = onFavorite) { Text(if (favoriteAction == BulkMarkAction.MARK) "Favourite" else "Unfavourite") }
+            Button(onClick = onSensitive) { Text(if (sensitiveAction == BulkMarkAction.MARK) "Sensitive" else "Not sensitive") }
+            Button(enabled = canTrash, onClick = onTrash) { Text("Trash") }
+        }
     }
 }
 
 @Composable
-private fun FolderPrivacyActions(
-    protected: Boolean,
-    unlocked: Boolean,
-    onProtect: () -> Unit,
-    onLock: () -> Unit,
-    onRemove: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+private fun Header(title: String, subtitle: String, action: String, onAction: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Column { Text(title, style = MaterialTheme.typography.titleLarge); Text(subtitle, style = MaterialTheme.typography.bodySmall) }
+        Text(action, modifier = Modifier.combinedClickable(onClick = onAction, onLongClick = onAction), style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable
+private fun FolderPrivacyActions(protected: Boolean, unlocked: Boolean, onProtect: () -> Unit, onLock: () -> Unit, onRemove: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         when {
             !protected -> Button(onClick = onProtect) { Text("Make private") }
-            unlocked -> {
-                Button(onClick = onLock) { Text("Lock now") }
-                Button(onClick = onRemove) { Text("Remove lock") }
-            }
+            unlocked -> { Button(onClick = onLock) { Text("Lock now") }; Button(onClick = onRemove) { Text("Remove lock") } }
         }
     }
 }
 
 @Composable
-private fun GalleryControls(
-    preferences: GalleryPreferencesState,
-    onSetSort: (GallerySort) -> Unit,
-    onSetGridColumns: (Int) -> Unit,
-    onSetBlurSensitive: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        GallerySort.entries.forEach { sort ->
-            FilterChip(
-                selected = preferences.sort == sort,
-                onClick = { onSetSort(sort) },
-                label = { Text(sort.label()) },
-            )
-        }
+private fun GalleryControls(preferences: GalleryPreferencesState, onSetSort: (GallerySort) -> Unit, onSetGridColumns: (Int) -> Unit, onSetBlurSensitive: (Boolean) -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        GallerySort.entries.forEach { sort -> FilterChip(selected = preferences.sort == sort, onClick = { onSetSort(sort) }, label = { Text(sort.label()) }) }
     }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("Blur sensitive")
-        Switch(
-            checked = preferences.blurSensitive,
-            onCheckedChange = onSetBlurSensitive,
-        )
-        Text("Grid ${preferences.gridColumns}")
-        Button(
-            enabled = preferences.gridColumns > MIN_GRID_COLUMNS,
-            onClick = { onSetGridColumns(preferences.gridColumns - 1) },
-        ) { Text("Larger") }
-        Button(
-            enabled = preferences.gridColumns < MAX_GRID_COLUMNS,
-            onClick = { onSetGridColumns(preferences.gridColumns + 1) },
-        ) { Text("Smaller") }
+        Switch(checked = preferences.blurSensitive, onCheckedChange = onSetBlurSensitive)
+        Button(enabled = preferences.gridColumns > MIN_GRID_COLUMNS, onClick = { onSetGridColumns(preferences.gridColumns - 1) }) { Text("Larger") }
+        Button(enabled = preferences.gridColumns < MAX_GRID_COLUMNS, onClick = { onSetGridColumns(preferences.gridColumns + 1) }) { Text("Smaller") }
     }
 }
 
 @Composable
-private fun PasswordDialog(
-    title: String,
-    confirmLabel: String,
-    error: String?,
-    onDismiss: () -> Unit,
-    onConfirm: (CharArray) -> Unit,
-) {
+private fun PasswordDialog(title: String, confirmLabel: String, error: String?, onDismiss: () -> Unit, onConfirm: (CharArray) -> Unit) {
     var password by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("Password") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                )
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = password.isNotEmpty(),
-                onClick = {
-                    val chars = password.toCharArray()
-                    password = ""
-                    onConfirm(chars)
-                },
-            ) { Text(confirmLabel) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        } },
+        confirmButton = { TextButton(enabled = password.isNotEmpty(), onClick = { val chars = password.toCharArray(); password = ""; onConfirm(chars) }) { Text(confirmLabel) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
 @Composable
-private fun AlbumGrid(
-    albums: List<AlbumSummary>,
-    lockedFolders: Set<String>,
-    unlockedFolders: Set<String>,
-    sensitiveIds: Set<MediaId>,
-    blurSensitive: Boolean,
-    onOpenAlbum: (AlbumSummary) -> Unit,
-) {
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 156.dp),
-        modifier = Modifier.fillMaxSize(),
-    ) {
+private fun AlbumGrid(albums: List<AlbumSummary>, lockedFolders: Set<String>, unlockedFolders: Set<String>, sensitiveIds: Set<MediaId>, blurSensitive: Boolean, onOpenAlbum: (AlbumSummary) -> Unit) {
+    LazyVerticalGrid(columns = GridCells.Adaptive(156.dp), modifier = Modifier.fillMaxSize()) {
         items(albums, key = { it.name }) { album ->
             val locked = album.name in lockedFolders && album.name !in unlockedFolders
-            Column(
-                modifier = Modifier
-                    .clickable { onOpenAlbum(album) }
-                    .padding(6.dp),
-            ) {
-                if (locked) {
-                    Box(
-                        modifier = Modifier
-                            .aspectRatio(1f)
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("Private")
-                    }
-                } else {
-                    Thumbnail(
-                        asset = album.cover,
-                        blur = blurSensitive && album.cover.id in sensitiveIds,
-                    ) { onOpenAlbum(album) }
-                }
-                Text(
-                    text = album.name,
-                    modifier = Modifier.padding(top = 8.dp),
-                    maxLines = 1,
-                )
-                Text(
-                    text = if (locked) "Locked" else "${album.count} photos",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+            Column(modifier = Modifier.combinedClickable(onClick = { onOpenAlbum(album) }, onLongClick = { onOpenAlbum(album) }).padding(6.dp)) {
+                if (locked) Box(modifier = Modifier.aspectRatio(1f).fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) { Text("Private") }
+                else Thumbnail(album.cover, blurSensitive && album.cover.id in sensitiveIds, false, { onOpenAlbum(album) }, { onOpenAlbum(album) })
+                Text(album.name, modifier = Modifier.padding(top = 8.dp), maxLines = 1)
+                Text(if (locked) "Locked" else "${album.count} photos", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
 }
 
 @Composable
-private fun AssetGrid(
-    assets: List<MediaAsset>,
-    columns: Int,
-    sensitiveIds: Set<MediaId>,
-    blurSensitive: Boolean,
-    onOpenAsset: (MediaAsset) -> Unit,
-) {
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(columns),
-        modifier = Modifier.fillMaxSize(),
-    ) {
+private fun AssetGrid(assets: List<MediaAsset>, columns: Int, selectedIds: Set<MediaId>, sensitiveIds: Set<MediaId>, blurSensitive: Boolean, onClick: (MediaAsset) -> Unit, onLongClick: (MediaAsset) -> Unit) {
+    LazyVerticalGrid(columns = GridCells.Fixed(columns), modifier = Modifier.fillMaxSize()) {
         items(assets, key = { it.id.value }) { asset ->
-            Thumbnail(
-                asset = asset,
-                blur = blurSensitive && asset.id in sensitiveIds,
-            ) { onOpenAsset(asset) }
+            Thumbnail(asset, blurSensitive && asset.id in sensitiveIds, asset.id in selectedIds, { onClick(asset) }, { onLongClick(asset) })
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Thumbnail(
-    asset: MediaAsset,
-    blur: Boolean = false,
-    onClick: () -> Unit,
-) {
+private fun Thumbnail(asset: MediaAsset, blur: Boolean, selected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     val resolver = LocalContext.current.contentResolver
-    val bitmap by produceState<Bitmap?>(initialValue = null, asset.contentUri, asset.id) {
-        value = loadThumbnail(resolver, asset)
-    }
-
-    Box(
-        modifier = Modifier
-            .aspectRatio(1f)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (bitmap == null) {
-            Text(asset.displayName.take(1).uppercase())
-        } else {
-            Image(
-                bitmap = bitmap!!.asImageBitmap(),
-                contentDescription = asset.displayName,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .then(if (blur) Modifier.blur(24.dp) else Modifier),
-                contentScale = ContentScale.Crop,
-            )
-            if (blur) {
-                Text(
-                    text = "Sensitive",
-                    modifier = Modifier
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                )
-            }
-        }
+    val bitmap by produceState<Bitmap?>(initialValue = null, asset.contentUri, asset.id) { value = loadThumbnail(resolver, asset) }
+    Box(modifier = Modifier.aspectRatio(1f).background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant).combinedClickable(onClick = onClick, onLongClick = onLongClick), contentAlignment = Alignment.Center) {
+        if (bitmap == null) Text(asset.displayName.take(1).uppercase())
+        else Image(bitmap = bitmap!!.asImageBitmap(), contentDescription = asset.displayName, modifier = Modifier.fillMaxSize().then(if (blur) Modifier.blur(24.dp) else Modifier), contentScale = ContentScale.Crop)
+        if (blur) Text("Sensitive", modifier = Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)).padding(6.dp))
+        if (selected) Text("✓", modifier = Modifier.align(Alignment.TopEnd).background(MaterialTheme.colorScheme.primary).padding(horizontal = 8.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.onPrimary)
     }
 }
 
-private fun GallerySection.label(): String = when (this) {
-    GallerySection.PHOTOS -> "Photos"
-    GallerySection.FAVORITES -> "Favourites"
-    GallerySection.ALBUMS -> "Albums"
-}
+private fun GallerySection.label() = when (this) { GallerySection.PHOTOS -> "Photos"; GallerySection.FAVORITES -> "Favourites"; GallerySection.ALBUMS -> "Albums" }
+private fun GallerySort.label() = when (this) { GallerySort.NEWEST -> "Newest"; GallerySort.OLDEST -> "Oldest"; GallerySort.NAME -> "Name"; GallerySort.SIZE -> "Size" }
 
-private fun GallerySort.label(): String = when (this) {
-    GallerySort.NEWEST -> "Newest"
-    GallerySort.OLDEST -> "Oldest"
-    GallerySort.NAME -> "Name"
-    GallerySort.SIZE -> "Size"
-}
-
-private suspend fun loadThumbnail(
-    resolver: ContentResolver,
-    asset: MediaAsset,
-): Bitmap? = withContext(Dispatchers.IO) {
+private suspend fun loadThumbnail(resolver: ContentResolver, asset: MediaAsset): Bitmap? = withContext(Dispatchers.IO) {
     runCatching {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            resolver.loadThumbnail(asset.contentUri, Size(360, 360), null)
-        } else {
-            MediaStore.Images.Thumbnails.getThumbnail(
-                resolver,
-                asset.id.value,
-                MediaStore.Images.Thumbnails.MINI_KIND,
-                null,
-            ) ?: resolver.openInputStream(asset.contentUri)?.use(BitmapFactory::decodeStream)
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) resolver.loadThumbnail(asset.contentUri, Size(360, 360), null)
+        else MediaStore.Images.Thumbnails.getThumbnail(resolver, asset.id.value, MediaStore.Images.Thumbnails.MINI_KIND, null)
+            ?: resolver.openInputStream(asset.contentUri)?.use(BitmapFactory::decodeStream)
     }.getOrNull()
 }
 
 @Composable
 private fun CenteredColumn(content: @Composable () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
-    ) {
-        content()
-    }
+    Column(modifier = Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)) { content() }
 }
