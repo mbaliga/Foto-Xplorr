@@ -11,6 +11,7 @@ data class MediaAsset(
     val displayName: String,
     val mimeType: String,
     val bucketName: String?,
+    val bucketId: Long? = null,
     val dateTakenMillis: Long,
     val dateModifiedSeconds: Long,
     val width: Int,
