@@ -5,7 +5,6 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
-import android.net.Uri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -201,7 +200,7 @@ private fun SQLiteDatabase.inTransaction(block: (SQLiteDatabase) -> Unit) {
 
 private fun MediaAsset.toValues(): ContentValues = ContentValues(13).apply {
     put("id", id.value)
-    put("content_uri", contentUri.toString())
+    put("content_uri", contentUriString)
     put("display_name", displayName)
     put("mime_type", mimeType)
     put("bucket_name", bucketName)
@@ -217,7 +216,7 @@ private fun MediaAsset.toValues(): ContentValues = ContentValues(13).apply {
 
 private fun Cursor.toAsset(): MediaAsset = MediaAsset(
     id = MediaId(getLong(getColumnIndexOrThrow("id"))),
-    contentUri = Uri.parse(getString(getColumnIndexOrThrow("content_uri"))),
+    contentUriString = getString(getColumnIndexOrThrow("content_uri")),
     displayName = getString(getColumnIndexOrThrow("display_name")),
     mimeType = getString(getColumnIndexOrThrow("mime_type")),
     bucketName = stringOrNull("bucket_name"),
