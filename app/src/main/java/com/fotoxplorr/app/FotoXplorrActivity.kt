@@ -55,6 +55,8 @@ class FotoXplorrActivity : ComponentActivity() {
     }
 }
 
+private enum class PendingMediaOperation { TRASH, RESTORE, DELETE }
+
 @Composable
 private fun FotoXplorrActivity.FotoXplorrApp() {
     val repository = remember { SqliteMediaRepository(applicationContext) }
@@ -63,9 +65,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     val privateFolderStore = remember { PrivateFolderStore(applicationContext) }
     val galleryPreferences = remember { GalleryPreferences(applicationContext) }
     val changeObserver = remember { MediaStoreChangeObserver(contentResolver) }
-    val indexer = remember {
-        MediaIndexer(AndroidMediaStoreScanner(contentResolver), repository)
-    }
+    val indexer = remember { MediaIndexer(AndroidMediaStoreScanner(contentResolver), repository) }
 
     val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
@@ -79,29 +79,33 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     var scanGeneration by remember { mutableStateOf(0) }
     var viewerAssets by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
     var selectedAssetId by remember { mutableStateOf<MediaId?>(null) }
-    var pendingTrashIds by remember { mutableStateOf<Set<MediaId>>(emptySet()) }
+    var pendingOperation by remember { mutableStateOf<PendingMediaOperation?>(null) }
+    var pendingOperationIds by remember { mutableStateOf<Set<MediaId>>(emptySet()) }
 
-    val trashLauncher = rememberLauncherForActivityResult(
+    val mediaOperationLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult(),
     ) { result ->
-        val trashedIds = pendingTrashIds
-        pendingTrashIds = emptySet()
-        if (result.resultCode == Activity.RESULT_OK && trashedIds.isNotEmpty()) {
-            viewerAssets = viewerAssets.filterNot { it.id in trashedIds }
-            if (selectedAssetId in trashedIds) selectedAssetId = null
+        val affectedIds = pendingOperationIds
+        pendingOperation = null
+        pendingOperationIds = emptySet()
+        if (result.resultCode == Activity.RESULT_OK && affectedIds.isNotEmpty()) {
+            viewerAssets = viewerAssets.filterNot { it.id in affectedIds }
+            if (selectedAssetId in affectedIds) selectedAssetId = null
             scanGeneration += 1
         }
     }
 
-    fun requestTrash(items: List<MediaAsset>) {
+    fun requestMediaOperation(items: List<MediaAsset>, operation: PendingMediaOperation) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || items.isEmpty()) return
-        pendingTrashIds = items.mapTo(linkedSetOf()) { it.id }
-        val request = MediaStore.createTrashRequest(
-            contentResolver,
-            items.map { it.contentUri },
-            true,
-        )
-        trashLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+        pendingOperation = operation
+        pendingOperationIds = items.mapTo(linkedSetOf()) { it.id }
+        val uris = items.map { it.contentUri }
+        val request = when (operation) {
+            PendingMediaOperation.TRASH -> MediaStore.createTrashRequest(contentResolver, uris, true)
+            PendingMediaOperation.RESTORE -> MediaStore.createTrashRequest(contentResolver, uris, false)
+            PendingMediaOperation.DELETE -> MediaStore.createDeleteRequest(contentResolver, uris)
+        }
+        mediaOperationLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
@@ -157,7 +161,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             canMoveToTrash = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
             onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
             onToggleSensitive = { sensitiveStore.toggle(activeAsset.id) },
-            onMoveToTrash = { requestTrash(listOf(activeAsset)) },
+            onMoveToTrash = { requestMediaOperation(listOf(activeAsset), PendingMediaOperation.TRASH) },
             onPrevious = { viewerAssets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id } },
             onNext = { viewerAssets.getOrNull(selectedIndex + 1)?.let { selectedAssetId = it.id } },
             onClose = { selectedAssetId = null; viewerAssets = emptyList() },
@@ -185,7 +189,9 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             onRemoveFolderProtection = privateFolderStore::removeProtection,
             onSetFavorite = favoriteStore::setFavorite,
             onSetSensitive = sensitiveStore::setSensitive,
-            onMoveToTrash = ::requestTrash,
+            onMoveToTrash = { requestMediaOperation(it, PendingMediaOperation.TRASH) },
+            onRestore = { requestMediaOperation(it, PendingMediaOperation.RESTORE) },
+            onDeletePermanently = { requestMediaOperation(it, PendingMediaOperation.DELETE) },
             onOpenAsset = { asset, visible -> viewerAssets = visible; selectedAssetId = asset.id },
         )
     }
