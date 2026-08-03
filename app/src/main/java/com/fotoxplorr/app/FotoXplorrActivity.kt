@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.gallery.GalleryScreen
 import com.fotoxplorr.app.gallery.GalleryUiState
 import com.fotoxplorr.app.media.AndroidMediaStoreScanner
@@ -50,6 +51,7 @@ class FotoXplorrActivity : ComponentActivity() {
 @Composable
 private fun FotoXplorrActivity.FotoXplorrApp() {
     val repository = remember { InMemoryMediaRepository() }
+    val favoriteStore = remember { FavoriteStore(applicationContext) }
     val indexer = remember {
         MediaIndexer(
             scanner = AndroidMediaStoreScanner(contentResolver),
@@ -57,6 +59,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
         )
     }
     val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
 
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
     var scanState by remember { mutableStateOf<ScanState>(ScanState.Idle) }
@@ -95,8 +98,10 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
             asset = activeAsset,
             position = selectedIndex + 1,
             total = assets.size,
+            isFavorite = activeAsset.id in favoriteIds,
             hasPrevious = selectedIndex > 0,
             hasNext = selectedIndex < assets.lastIndex,
+            onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
             onPrevious = {
                 assets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id }
             },
