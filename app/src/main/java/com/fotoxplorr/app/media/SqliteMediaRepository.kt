@@ -84,6 +84,7 @@ private class CatalogueOpenHelper(context: Context) : SQLiteOpenHelper(
                 $COL_DISPLAY_NAME TEXT NOT NULL,
                 $COL_MIME_TYPE TEXT NOT NULL,
                 $COL_BUCKET_NAME TEXT,
+                $COL_BUCKET_ID INTEGER,
                 $COL_DATE_TAKEN INTEGER NOT NULL,
                 $COL_DATE_MODIFIED INTEGER NOT NULL,
                 $COL_WIDTH INTEGER NOT NULL,
@@ -101,7 +102,9 @@ private class CatalogueOpenHelper(context: Context) : SQLiteOpenHelper(
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion < 1) onCreate(db)
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE $TABLE_MEDIA ADD COLUMN $COL_BUCKET_ID INTEGER")
+        }
     }
 
     fun readAll(): List<MediaAsset> = readableDatabase.query(
@@ -153,13 +156,14 @@ private class CatalogueOpenHelper(context: Context) : SQLiteOpenHelper(
 
     private companion object {
         const val DATABASE_NAME = "foto_xplorr_catalogue.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
         const val TABLE_MEDIA = "media"
         const val COL_ID = "id"
         const val COL_CONTENT_URI = "content_uri"
         const val COL_DISPLAY_NAME = "display_name"
         const val COL_MIME_TYPE = "mime_type"
         const val COL_BUCKET_NAME = "bucket_name"
+        const val COL_BUCKET_ID = "bucket_id"
         const val COL_DATE_TAKEN = "date_taken"
         const val COL_DATE_MODIFIED = "date_modified"
         const val COL_WIDTH = "width"
@@ -176,6 +180,7 @@ private class CatalogueOpenHelper(context: Context) : SQLiteOpenHelper(
             COL_DISPLAY_NAME,
             COL_MIME_TYPE,
             COL_BUCKET_NAME,
+            COL_BUCKET_ID,
             COL_DATE_TAKEN,
             COL_DATE_MODIFIED,
             COL_WIDTH,
@@ -198,12 +203,13 @@ private fun SQLiteDatabase.inTransaction(block: (SQLiteDatabase) -> Unit) {
     }
 }
 
-private fun MediaAsset.toValues(): ContentValues = ContentValues(13).apply {
+private fun MediaAsset.toValues(): ContentValues = ContentValues(14).apply {
     put("id", id.value)
     put("content_uri", contentUriString)
     put("display_name", displayName)
     put("mime_type", mimeType)
     put("bucket_name", bucketName)
+    put("bucket_id", bucketId)
     put("date_taken", dateTakenMillis)
     put("date_modified", dateModifiedSeconds)
     put("width", width)
@@ -220,6 +226,7 @@ private fun Cursor.toAsset(): MediaAsset = MediaAsset(
     displayName = getString(getColumnIndexOrThrow("display_name")),
     mimeType = getString(getColumnIndexOrThrow("mime_type")),
     bucketName = stringOrNull("bucket_name"),
+    bucketId = longOrNull("bucket_id"),
     dateTakenMillis = getLong(getColumnIndexOrThrow("date_taken")),
     dateModifiedSeconds = getLong(getColumnIndexOrThrow("date_modified")),
     width = getInt(getColumnIndexOrThrow("width")),
@@ -233,4 +240,9 @@ private fun Cursor.toAsset(): MediaAsset = MediaAsset(
 private fun Cursor.stringOrNull(column: String): String? {
     val index = getColumnIndexOrThrow(column)
     return if (isNull(index)) null else getString(index)
+}
+
+private fun Cursor.longOrNull(column: String): Long? {
+    val index = getColumnIndexOrThrow(column)
+    return if (isNull(index)) null else getLong(index)
 }
