@@ -35,7 +35,7 @@ enum class SmartAlbum {
     UNTAGGED,
 }
 
-internal data class AlbumSummary(
+data class AlbumSummary(
     val key: String,
     val name: String,
     val count: Int,
