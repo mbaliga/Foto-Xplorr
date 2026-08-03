@@ -394,7 +394,11 @@ private class RichPhotoMapController(
                         hillshadeExaggeration(0.42f),
                         hillshadeShadowColor(arrayOf("#161922")),
                         hillshadeHighlightColor(arrayOf("#F0E8D2")),
-                        hillshadeAccentColor(arrayOf("#465369")),
+                        // hillshadeAccentColor has no String[] overload (unlike shadow/highlight
+                        // above) -- only Int, String or Expression. PropertyFactory.PropertyValue
+                        // is invariant in its generic type, so passing an Array<String> here fails
+                        // to resolve against any overload at compile time.
+                        hillshadeAccentColor("#465369"),
                     )
                 }
                 style.addLayer(hillshade)
