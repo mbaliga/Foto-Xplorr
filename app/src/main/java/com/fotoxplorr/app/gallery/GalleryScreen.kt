@@ -15,12 +15,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material.icons.outlined.Archive
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Collections
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DriveFileMove
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Favorite
-import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.ImageSearch
 import androidx.compose.material.icons.outlined.Label
@@ -51,7 +52,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -60,7 +60,6 @@ import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.organize.LibraryState
-import kotlinx.coroutines.launch
 
 data class GalleryUiState(
     val assets: List<MediaAsset>,
@@ -94,10 +93,14 @@ data class GalleryActions(
     val onSetSensitive: (Set<MediaId>, Boolean) -> Unit,
     val onSetArchived: (Set<MediaId>, Boolean) -> Unit,
     val onShare: (List<MediaAsset>) -> Unit,
+    val onShareClean: (List<MediaAsset>) -> Unit,
+    val onCopyToFolder: (List<MediaAsset>) -> Unit,
+    val onMoveToFolder: (List<MediaAsset>) -> Unit,
+    val onRenameAsset: (MediaAsset, String) -> Unit,
     val onMoveToTrash: (List<MediaAsset>) -> Unit,
     val onRestore: (List<MediaAsset>) -> Unit,
     val onDeletePermanently: (List<MediaAsset>) -> Unit,
-    val onCreateCollection: (String) -> Unit,
+    val onCreateCollection: (String) -> String?,
     val onRenameCollection: (String, String) -> Unit,
     val onDeleteCollection: (String) -> Unit,
     val onAddToCollection: (String, Set<MediaId>) -> Unit,
@@ -174,10 +177,10 @@ private fun GalleryBrowser(
     var settingsVisible by remember { mutableStateOf(false) }
     var createCollectionVisible by remember { mutableStateOf(false) }
     var renameCollection by remember { mutableStateOf<BrowserRoute.Collection?>(null) }
+    var renameAsset by remember { mutableStateOf<MediaAsset?>(null) }
     var addToCollectionIds by remember { mutableStateOf<Set<MediaId>?>(null) }
     var addTagIds by remember { mutableStateOf<Set<MediaId>?>(null) }
     var passwordRequest by remember { mutableStateOf<PasswordRequest?>(null) }
-    val scope = rememberCoroutineScope()
 
     val timelineAssets = everydayAssets(
         assets = state.assets,
@@ -235,6 +238,7 @@ private fun GalleryBrowser(
     val inArchive = (route as? BrowserRoute.Smart)?.album == SmartAlbum.ARCHIVED
     val collectionRoute = route as? BrowserRoute.Collection
     val albumRoute = route as? BrowserRoute.DeviceAlbum
+    val tagRoute = route as? BrowserRoute.Tag
 
     LaunchedEffect(currentIds) {
         selection = selection.retainAvailable(currentIds)
@@ -332,6 +336,45 @@ private fun GalleryBrowser(
                                     },
                                 )
                                 DropdownMenuItem(
+                                    text = { Text("Share without common EXIF metadata") },
+                                    leadingIcon = { Icon(Icons.Outlined.Share, null) },
+                                    enabled = selectedAssets.all { !it.isVideo && it.mimeType.startsWith("image/") },
+                                    onClick = {
+                                        selectionMenuVisible = false
+                                        actions.onShareClean(selectedAssets)
+                                        selection = selection.clear()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Copy to folder") },
+                                    leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
+                                    onClick = {
+                                        selectionMenuVisible = false
+                                        actions.onCopyToFolder(selectedAssets)
+                                        selection = selection.clear()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Move to folder safely") },
+                                    leadingIcon = { Icon(Icons.Outlined.DriveFileMove, null) },
+                                    enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                                    onClick = {
+                                        selectionMenuVisible = false
+                                        actions.onMoveToFolder(selectedAssets)
+                                        selection = selection.clear()
+                                    },
+                                )
+                                if (selectedAssets.size == 1) {
+                                    DropdownMenuItem(
+                                        text = { Text("Rename file") },
+                                        leadingIcon = { Icon(Icons.Outlined.Edit, null) },
+                                        onClick = {
+                                            selectionMenuVisible = false
+                                            renameAsset = selectedAssets.first()
+                                        },
+                                    )
+                                }
+                                DropdownMenuItem(
                                     text = { Text("Add to collection") },
                                     leadingIcon = { Icon(Icons.Outlined.Collections, null) },
                                     onClick = {
@@ -347,6 +390,17 @@ private fun GalleryBrowser(
                                         addTagIds = selection.selectedIds
                                     },
                                 )
+                                tagRoute?.let { tag ->
+                                    DropdownMenuItem(
+                                        text = { Text("Remove #${tag.tag}") },
+                                        leadingIcon = { Icon(Icons.Outlined.Close, null) },
+                                        onClick = {
+                                            selectionMenuVisible = false
+                                            actions.onRemoveTag(selection.selectedIds, tag.tag)
+                                            selection = selection.clear()
+                                        },
+                                    )
+                                }
                                 collectionRoute?.let { collection ->
                                     DropdownMenuItem(
                                         text = { Text("Remove from collection") },
@@ -564,6 +618,7 @@ private fun GalleryBrowser(
                         onOpenTag = { route = BrowserRoute.Tag(it) },
                         onOpenArchive = { route = BrowserRoute.Smart(SmartAlbum.ARCHIVED) },
                         onOpenTrash = { route = BrowserRoute.Smart(SmartAlbum.TRASH) },
+                        onOpenPrivateFolders = { destination = GalleryDestination.ALBUMS },
                         onOpenSettings = { settingsVisible = true },
                         onExportMetadata = actions.onExportMetadata,
                         onImportMetadata = actions.onImportMetadata,
@@ -617,12 +672,28 @@ private fun GalleryBrowser(
             },
         )
     }
+    renameAsset?.let { asset ->
+        TextEntryDialog(
+            title = "Rename file",
+            label = "File name",
+            initialValue = asset.displayName,
+            confirmLabel = "Rename",
+            onDismiss = { renameAsset = null },
+            onConfirm = {
+                actions.onRenameAsset(asset, it)
+                renameAsset = null
+                selection = selection.clear()
+            },
+        )
+    }
     addToCollectionIds?.let { ids ->
         CollectionPickerDialog(
             collections = state.library.collections,
             onDismiss = { addToCollectionIds = null },
-            onCreateCollection = {
-                actions.onCreateCollection(it)
+            onCreateCollection = { name ->
+                actions.onCreateCollection(name)?.let { collectionId ->
+                    actions.onAddToCollection(collectionId, ids)
+                }
                 addToCollectionIds = null
                 selection = selection.clear()
             },
