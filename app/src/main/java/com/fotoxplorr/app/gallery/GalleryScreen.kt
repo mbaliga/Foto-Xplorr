@@ -24,6 +24,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -48,6 +49,7 @@ data class GalleryUiState(
     val favoriteIds: Set<MediaId>,
     val permissionGranted: Boolean,
     val scanState: ScanState,
+    val preferences: GalleryPreferencesState,
 )
 
 @Composable
@@ -55,6 +57,8 @@ fun GalleryScreen(
     state: GalleryUiState,
     onRequestPermission: () -> Unit,
     onRefresh: () -> Unit,
+    onSetSort: (GallerySort) -> Unit,
+    onSetGridColumns: (Int) -> Unit,
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
 ) {
     when {
@@ -62,7 +66,7 @@ fun GalleryScreen(
         state.assets.isEmpty() && state.scanState is ScanState.Scanning -> LoadingScreen(state.scanState)
         state.assets.isEmpty() && state.scanState is ScanState.Error -> ErrorScreen(state.scanState.message, onRefresh)
         state.assets.isEmpty() && state.scanState is ScanState.Complete -> EmptyScreen(onRefresh)
-        else -> GalleryBrowser(state, onRefresh, onOpenAsset)
+        else -> GalleryBrowser(state, onRefresh, onSetSort, onSetGridColumns, onOpenAsset)
     }
 }
 
@@ -103,18 +107,23 @@ private fun EmptyScreen(onRefresh: () -> Unit) {
 private fun GalleryBrowser(
     state: GalleryUiState,
     onRefresh: () -> Unit,
+    onSetSort: (GallerySort) -> Unit,
+    onSetGridColumns: (Int) -> Unit,
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
 ) {
     var section by remember { mutableStateOf(GallerySection.PHOTOS) }
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
+    var query by remember { mutableStateOf("") }
 
     val visible = visibleAssets(
         assets = state.assets,
         favoriteIds = state.favoriteIds,
         section = section,
         selectedAlbum = selectedAlbum,
+        query = query,
+        sort = state.preferences.sort,
     )
-    val albums = buildAlbumSummaries(state.assets)
+    val albums = buildAlbumSummaries(state.assets, query)
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -125,12 +134,9 @@ private fun GalleryBrowser(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column {
+                Text(selectedAlbum ?: "Foto Xplorr", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    text = selectedAlbum ?: "Foto Xplorr",
-                    style = MaterialTheme.typography.titleLarge,
-                )
-                Text(
-                    text = when {
+                    when {
                         selectedAlbum != null -> "${visible.size} photos"
                         section == GallerySection.ALBUMS -> "${albums.size} albums"
                         section == GallerySection.FAVORITES -> "${visible.size} favourites"
@@ -148,6 +154,16 @@ private fun GalleryBrowser(
             )
         }
 
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+            singleLine = true,
+            label = { Text("Search photos and albums") },
+        )
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -161,52 +177,70 @@ private fun GalleryBrowser(
                         section = candidate
                         selectedAlbum = null
                     },
-                    label = {
-                        Text(
-                            when (candidate) {
-                                GallerySection.PHOTOS -> "Photos"
-                                GallerySection.FAVORITES -> "Favourites"
-                                GallerySection.ALBUMS -> "Albums"
-                            },
-                        )
-                    },
+                    label = { Text(candidate.label()) },
                 )
             }
         }
 
-        when {
-            section == GallerySection.ALBUMS && selectedAlbum == null -> {
-                AlbumGrid(
-                    albums = albums,
-                    onOpenAlbum = { selectedAlbum = it.name },
-                )
-            }
-            visible.isEmpty() -> {
-                CenteredColumn {
-                    Text(
-                        if (section == GallerySection.FAVORITES) {
-                            "No favourites yet"
-                        } else {
-                            "No photos in this album"
-                        },
+        if (section != GallerySection.ALBUMS || selectedAlbum != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                GallerySort.entries.forEach { sort ->
+                    FilterChip(
+                        selected = state.preferences.sort == sort,
+                        onClick = { onSetSort(sort) },
+                        label = { Text(sort.label()) },
                     )
                 }
             }
-            else -> {
-                AssetGrid(
-                    assets = visible,
-                    onOpenAsset = { asset -> onOpenAsset(asset, visible) },
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Grid ${state.preferences.gridColumns}")
+                Button(
+                    enabled = state.preferences.gridColumns > MIN_GRID_COLUMNS,
+                    onClick = { onSetGridColumns(state.preferences.gridColumns - 1) },
+                ) { Text("Larger") }
+                Button(
+                    enabled = state.preferences.gridColumns < MAX_GRID_COLUMNS,
+                    onClick = { onSetGridColumns(state.preferences.gridColumns + 1) },
+                ) { Text("Smaller") }
+            }
+        }
+
+        when {
+            section == GallerySection.ALBUMS && selectedAlbum == null -> AlbumGrid(albums) {
+                selectedAlbum = it.name
+            }
+            visible.isEmpty() -> CenteredColumn {
+                Text(
+                    when {
+                        query.isNotBlank() -> "No matches"
+                        section == GallerySection.FAVORITES -> "No favourites yet"
+                        else -> "No photos in this album"
+                    },
                 )
             }
+            else -> AssetGrid(
+                assets = visible,
+                columns = state.preferences.gridColumns,
+                onOpenAsset = { asset -> onOpenAsset(asset, visible) },
+            )
         }
     }
 }
 
 @Composable
-private fun AlbumGrid(
-    albums: List<AlbumSummary>,
-    onOpenAlbum: (AlbumSummary) -> Unit,
-) {
+private fun AlbumGrid(albums: List<AlbumSummary>, onOpenAlbum: (AlbumSummary) -> Unit) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 156.dp),
         modifier = Modifier.fillMaxSize(),
@@ -217,17 +251,9 @@ private fun AlbumGrid(
                     .clickable { onOpenAlbum(album) }
                     .padding(6.dp),
             ) {
-                Thumbnail(asset = album.cover, onClick = { onOpenAlbum(album) })
-                Text(
-                    text = album.name,
-                    modifier = Modifier.padding(top = 8.dp),
-                    maxLines = 1,
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(
-                    text = "${album.count} photos",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                Thumbnail(album.cover) { onOpenAlbum(album) }
+                Text(album.name, modifier = Modifier.padding(top = 8.dp), maxLines = 1)
+                Text("${album.count} photos", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -236,29 +262,21 @@ private fun AlbumGrid(
 @Composable
 private fun AssetGrid(
     assets: List<MediaAsset>,
+    columns: Int,
     onOpenAsset: (MediaAsset) -> Unit,
 ) {
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 112.dp),
+        columns = GridCells.Fixed(columns),
         modifier = Modifier.fillMaxSize(),
     ) {
-        items(
-            items = assets,
-            key = { it.id.value },
-        ) { asset ->
-            Thumbnail(
-                asset = asset,
-                onClick = { onOpenAsset(asset) },
-            )
+        items(assets, key = { it.id.value }) { asset ->
+            Thumbnail(asset) { onOpenAsset(asset) }
         }
     }
 }
 
 @Composable
-private fun Thumbnail(
-    asset: MediaAsset,
-    onClick: () -> Unit,
-) {
+private fun Thumbnail(asset: MediaAsset, onClick: () -> Unit) {
     val resolver = LocalContext.current.contentResolver
     val bitmap by produceState<Bitmap?>(initialValue = null, asset.contentUri, asset.id) {
         value = loadThumbnail(resolver, asset)
@@ -282,6 +300,19 @@ private fun Thumbnail(
             )
         }
     }
+}
+
+private fun GallerySection.label(): String = when (this) {
+    GallerySection.PHOTOS -> "Photos"
+    GallerySection.FAVORITES -> "Favourites"
+    GallerySection.ALBUMS -> "Albums"
+}
+
+private fun GallerySort.label(): String = when (this) {
+    GallerySort.NEWEST -> "Newest"
+    GallerySort.OLDEST -> "Oldest"
+    GallerySort.NAME -> "Name"
+    GallerySort.SIZE -> "Size"
 }
 
 private suspend fun loadThumbnail(
