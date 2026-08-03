@@ -8,18 +8,12 @@ import org.junit.Test
 class GalleryProjectionTest {
     @Test
     fun `bucket name takes precedence`() {
-        assertEquals(
-            "Camera",
-            resolveAlbumName(" Camera ", "DCIM/Screenshots/"),
-        )
+        assertEquals("Camera", resolveAlbumName(" Camera ", "DCIM/Screenshots/"))
     }
 
     @Test
     fun `relative path supplies album when bucket is missing`() {
-        assertEquals(
-            "Screenshots",
-            resolveAlbumName(null, "Pictures/Screenshots/"),
-        )
+        assertEquals("Screenshots", resolveAlbumName(null, "Pictures/Screenshots/"))
     }
 
     @Test
@@ -34,25 +28,11 @@ class GalleryProjectionTest {
 
         assertEquals(
             listOf(camera),
-            visibleAssets(
-                assets = listOf(camera, screenshot),
-                favoriteIds = emptySet(),
-                section = GallerySection.PHOTOS,
-                selectedAlbum = null,
-                query = "sunset",
-                sort = GallerySort.NEWEST,
-            ),
+            visibleAssets(listOf(camera, screenshot), emptySet(), GallerySection.PHOTOS, null, "sunset", GallerySort.NEWEST),
         )
         assertEquals(
             listOf(screenshot),
-            visibleAssets(
-                assets = listOf(camera, screenshot),
-                favoriteIds = emptySet(),
-                section = GallerySection.PHOTOS,
-                selectedAlbum = null,
-                query = "screenshots",
-                sort = GallerySort.NEWEST,
-            ),
+            visibleAssets(listOf(camera, screenshot), emptySet(), GallerySection.PHOTOS, null, "screenshots", GallerySort.NEWEST),
         )
     }
 
@@ -63,64 +43,34 @@ class GalleryProjectionTest {
 
         assertEquals(
             listOf(large, small),
-            visibleAssets(
-                assets = listOf(small, large),
-                favoriteIds = emptySet(),
-                section = GallerySection.PHOTOS,
-                selectedAlbum = null,
-                query = "",
-                sort = GallerySort.SIZE,
-            ),
+            visibleAssets(listOf(small, large), emptySet(), GallerySection.PHOTOS, null, "", GallerySort.SIZE),
         )
     }
 
     @Test
-    fun `locked folder media is hidden from photos favourites and search`() {
+    fun `locked folder media is hidden using stable key`() {
         val public = asset(1, "public.jpg", "Camera", "image/jpeg", 20, 100)
-        val private = asset(2, "secret.jpg", "Private A", "image/jpeg", 30, 200)
-        val assets = listOf(public, private)
+        val private = asset(2, "secret.jpg", "Private A", "image/jpeg", 30, 200, "Pictures/Private A/")
+        val privateKey = folderIdentity(private).key.value
 
         assertEquals(
             listOf(public),
             visibleAssets(
-                assets = assets,
+                assets = listOf(public, private),
                 favoriteIds = setOf(private.id),
                 section = GallerySection.PHOTOS,
                 selectedAlbum = null,
                 query = "",
                 sort = GallerySort.NEWEST,
-                lockedFolders = setOf("Private A"),
-            ),
-        )
-        assertEquals(
-            emptyList<MediaAsset>(),
-            visibleAssets(
-                assets = assets,
-                favoriteIds = setOf(private.id),
-                section = GallerySection.FAVORITES,
-                selectedAlbum = null,
-                query = "",
-                sort = GallerySort.NEWEST,
-                lockedFolders = setOf("Private A"),
-            ),
-        )
-        assertEquals(
-            emptyList<MediaAsset>(),
-            visibleAssets(
-                assets = assets,
-                favoriteIds = emptySet(),
-                section = GallerySection.PHOTOS,
-                selectedAlbum = null,
-                query = "secret",
-                sort = GallerySort.NEWEST,
-                lockedFolders = setOf("Private A"),
+                lockedFolders = setOf(privateKey),
             ),
         )
     }
 
     @Test
     fun `unlocked folder media returns to projections`() {
-        val private = asset(2, "secret.jpg", "Private A", "image/jpeg", 30, 200)
+        val private = asset(2, "secret.jpg", "Private A", "image/jpeg", 30, 200, "Pictures/Private A/")
+        val privateKey = folderIdentity(private).key.value
 
         assertEquals(
             listOf(private),
@@ -128,12 +78,27 @@ class GalleryProjectionTest {
                 assets = listOf(private),
                 favoriteIds = emptySet(),
                 section = GallerySection.ALBUMS,
-                selectedAlbum = "Private A",
+                selectedAlbum = privateKey,
                 query = "",
                 sort = GallerySort.NEWEST,
-                lockedFolders = setOf("Private A"),
-                unlockedFolders = setOf("Private A"),
+                lockedFolders = setOf(privateKey),
+                unlockedFolders = setOf(privateKey),
             ),
+        )
+    }
+
+    @Test
+    fun `trashed media appears only in trash`() {
+        val normal = asset(1, "normal.jpg", "Camera", "image/jpeg", 10, 100)
+        val trashed = asset(2, "trashed.jpg", "Camera", "image/jpeg", 20, 100, trashed = true)
+
+        assertEquals(
+            listOf(normal),
+            visibleAssets(listOf(normal, trashed), emptySet(), GallerySection.PHOTOS, null, "", GallerySort.NEWEST),
+        )
+        assertEquals(
+            listOf(trashed),
+            visibleAssets(listOf(normal, trashed), emptySet(), GallerySection.TRASH, null, "", GallerySort.NEWEST),
         )
     }
 
@@ -144,6 +109,8 @@ class GalleryProjectionTest {
         mimeType: String,
         dateTaken: Long,
         size: Long,
+        relativePath: String? = null,
+        trashed: Boolean = false,
     ) = MediaAsset(
         id = MediaId(id),
         contentUriString = "content://media/$id",
@@ -155,8 +122,8 @@ class GalleryProjectionTest {
         width = 100,
         height = 100,
         sizeBytes = size,
-        relativePath = null,
+        relativePath = relativePath,
         isFavorite = false,
-        isTrashed = false,
+        isTrashed = trashed,
     )
 }
