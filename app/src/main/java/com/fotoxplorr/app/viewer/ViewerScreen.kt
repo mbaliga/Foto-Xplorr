@@ -15,10 +15,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -105,7 +105,7 @@ fun ViewerScreen(
                             scale = 2.5f
                         }
                     },
-                    onLongPress = onClose,
+                    onLongPress = { onClose() },
                 )
             }
             .transformable(transformState),
@@ -165,7 +165,9 @@ private fun ViewerControls(
     onClose: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.68f))
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.68f))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -200,7 +202,10 @@ private fun ViewerControls(
 @Composable
 private fun MetadataPanel(asset: MediaAsset, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.82f)).padding(16.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.82f))
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         MetadataRow("Name", asset.displayName)
@@ -235,7 +240,11 @@ private fun formatBytes(bytes: Long): String {
         value /= 1024.0
         unitIndex += 1
     }
-    return if (unitIndex == 0) "${value.roundToInt()} ${units[unitIndex]}" else "%.1f %s".format(value, units[unitIndex])
+    return if (unitIndex == 0) {
+        "${value.roundToInt()} ${units[unitIndex]}"
+    } else {
+        "%.1f %s".format(value, units[unitIndex])
+    }
 }
 
 private const val SWIPE_THRESHOLD_PX = 180f
