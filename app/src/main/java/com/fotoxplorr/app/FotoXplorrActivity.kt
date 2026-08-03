@@ -32,12 +32,14 @@ import com.fotoxplorr.app.media.AndroidMediaStoreScanner
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaIndexer
+import com.fotoxplorr.app.media.MediaStoreChangeObserver
 import com.fotoxplorr.app.media.ScanEvent
 import com.fotoxplorr.app.media.SqliteMediaRepository
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.viewer.ViewerScreen
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.debounce
 
 class FotoXplorrActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -61,6 +63,7 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     val sensitiveStore = remember { SensitiveStore(applicationContext) }
     val privateFolderStore = remember { PrivateFolderStore(applicationContext) }
     val galleryPreferences = remember { GalleryPreferences(applicationContext) }
+    val mediaStoreObserver = remember { MediaStoreChangeObserver(contentResolver) }
     val indexer = remember {
         MediaIndexer(
             scanner = AndroidMediaStoreScanner(contentResolver),
@@ -94,6 +97,14 @@ private fun FotoXplorrActivity.FotoXplorrApp() {
     ) { result ->
         permissionGranted = result.values.any { it } || hasMediaPermission()
         if (permissionGranted) scanGeneration += 1
+    }
+
+    LaunchedEffect(permissionGranted) {
+        if (!permissionGranted) return@LaunchedEffect
+
+        mediaStoreObserver.changes()
+            .debounce(MEDIASTORE_REFRESH_DEBOUNCE_MILLIS)
+            .collect { scanGeneration += 1 }
     }
 
     LaunchedEffect(permissionGranted, scanGeneration) {
@@ -205,3 +216,5 @@ sealed interface ScanState {
     data class Complete(val total: Int) : ScanState
     data class Error(val message: String) : ScanState
 }
+
+private const val MEDIASTORE_REFRESH_DEBOUNCE_MILLIS = 750L
