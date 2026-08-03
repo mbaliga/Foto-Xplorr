@@ -49,9 +49,11 @@ fun ViewerScreen(
     position: Int,
     total: Int,
     isFavorite: Boolean,
+    isSensitive: Boolean,
     hasPrevious: Boolean,
     hasNext: Boolean,
     onToggleFavorite: () -> Unit,
+    onToggleSensitive: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onClose: () -> Unit,
@@ -149,8 +151,10 @@ fun ViewerScreen(
                 position = position,
                 total = total,
                 isFavorite = isFavorite,
+                isSensitive = isSensitive,
                 metadataVisible = metadataVisible,
                 onToggleFavorite = onToggleFavorite,
+                onToggleSensitive = onToggleSensitive,
                 onToggleMetadata = { metadataVisible = !metadataVisible },
                 onClose = onClose,
             )
@@ -171,8 +175,10 @@ private fun ViewerControls(
     position: Int,
     total: Int,
     isFavorite: Boolean,
+    isSensitive: Boolean,
     metadataVisible: Boolean,
     onToggleFavorite: () -> Unit,
+    onToggleSensitive: () -> Unit,
     onToggleMetadata: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -184,11 +190,7 @@ private fun ViewerControls(
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = "Close",
-            color = Color.White,
-            modifier = Modifier.clickable(onClick = onClose),
-        )
+        Text("Close", color = Color.White, modifier = Modifier.clickable(onClick = onClose))
         Text(
             text = asset.displayName,
             color = Color.White,
@@ -201,22 +203,21 @@ private fun ViewerControls(
             modifier = Modifier.clickable(onClick = onToggleMetadata),
         )
         Text(
+            text = if (isSensitive) "Sensitive ✓" else "Sensitive",
+            color = Color.White,
+            modifier = Modifier.clickable(onClick = onToggleSensitive),
+        )
+        Text(
             text = if (isFavorite) "★" else "☆",
             color = Color.White,
             modifier = Modifier.clickable(onClick = onToggleFavorite),
         )
-        Text(
-            text = "$position / $total",
-            color = Color.White,
-        )
+        Text("$position / $total", color = Color.White)
     }
 }
 
 @Composable
-private fun MetadataPanel(
-    asset: MediaAsset,
-    modifier: Modifier = Modifier,
-) {
+private fun MetadataPanel(asset: MediaAsset, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -245,11 +246,7 @@ private fun MetadataRow(label: String, value: String) {
             color = Color.White.copy(alpha = 0.68f),
             modifier = Modifier.weight(0.3f),
         )
-        Text(
-            text = value,
-            color = Color.White,
-            modifier = Modifier.weight(0.7f),
-        )
+        Text(text = value, color = Color.White, modifier = Modifier.weight(0.7f))
     }
 }
 
