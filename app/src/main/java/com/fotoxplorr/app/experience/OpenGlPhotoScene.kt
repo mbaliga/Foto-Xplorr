@@ -169,9 +169,12 @@ private class PhotoWallSurfaceView(
             }
         },
     )
-    private val orientation = SceneOrientationController(context) { yaw, pitch ->
-        renderer.setSensorOrientation(yaw, pitch)
-    }
+    private val orientation = SceneOrientationController(
+        context = context,
+        onOrientation = { yaw: Float, pitch: Float ->
+            renderer.setSensorOrientation(yaw, pitch)
+        },
+    )
 
     init {
         setEGLContextClientVersion(2)
