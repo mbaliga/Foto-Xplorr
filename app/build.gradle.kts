@@ -143,7 +143,7 @@ dependencies {
     // Optional, additive, zero-dependency-on-:hyle reliability utility (plain
     // android.widget views): captures a device-only crash and shows a recovery screen on
     // next launch. Wired in FotoXplorrActivity/FotoXplorrApplication.
-    implementation("dev.aarso:crash-recovery:1.2.0")
+    implementation("dev.aarso:crash-recovery:1.3.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver3:5.3.0")

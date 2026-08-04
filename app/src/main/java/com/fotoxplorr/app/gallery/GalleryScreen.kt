@@ -64,10 +64,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.ScanState
-import com.fotoxplorr.app.hyle.BackupCounts
 import com.fotoxplorr.app.hyle.FloatingPillControl
+import com.fotoxplorr.app.hyle.ShakeToRefresh
 import com.fotoxplorr.app.hyle.PanelSide
-import com.fotoxplorr.app.hyle.PullToBackupHost
 import com.fotoxplorr.app.hyle.ScanActivityAlertBanner
 import com.fotoxplorr.app.hyle.SlideInPanel
 import com.fotoxplorr.app.media.MediaAsset
@@ -448,6 +447,15 @@ private fun GalleryBrowser(
                                             actions.onRefresh()
                                         },
                                     )
+                                    // Backup's explicit home since the pull gesture retired —
+                                    // the same local metadata export the pull used to fire.
+                                    DropdownMenuItem(
+                                        text = { Text("Create backup") },
+                                        onClick = {
+                                            topMenuVisible = false
+                                            actions.onExportMetadata()
+                                        },
+                                    )
                                     albumRoute?.let { album ->
                                         val protected = album.key in state.lockedFolders
                                         val unlocked = album.key in state.unlockedFolders
@@ -560,28 +568,19 @@ private fun GalleryBrowser(
                                 },
                                 onOpenSettings = { settingsDialogVisible = true },
                             )
-                            route == BrowserRoute.Root -> PullToBackupHost(
-                                onBackupTriggered = {
-                                    // Foto Xplorr has no cloud-backup subsystem; the local
-                                    // metadata export is the one real backup action that
-                                    // exists, so that is what this gesture fires. The active
-                                    // phase acknowledges that the OS document picker was
-                                    // launched, not that a file has been written.
-                                    actions.onExportMetadata()
-                                    kotlinx.coroutines.delay(900)
-                                },
-                                counts = BackupCounts(
-                                    total = destinationAssets.size,
-                                    backedUp = destinationAssets.size,
-                                ),
-                                header = {
-                                    ScanActivityAlertBanner(
-                                        scanState = state.scanState,
-                                        showWhenIdle = state.recognitionProgress.running ||
-                                            state.recognitionProgress.message != null,
-                                    )
-                                },
-                            ) {
+                            route == BrowserRoute.Root -> Column {
+                                // Pull-to-backup is retired (owner direction, 2026-08-05): the
+                                // pull-down space at a room's top belongs to the fonebrew
+                                // top-room reveal, so no other gesture may claim it — and the
+                                // static "PULL TO CREATE BACKUP" copy went with it. Refresh is
+                                // now physical (ShakeToRefresh below); backup is an explicit,
+                                // named item in the header overflow menu instead of a gesture.
+                                ScanActivityAlertBanner(
+                                    scanState = state.scanState,
+                                    showWhenIdle = state.recognitionProgress.running ||
+                                        state.recognitionProgress.message != null,
+                                )
+                                ShakeToRefresh(onShake = actions.onRefresh)
                                 DestinationContent(
                                     destination = destination,
                                     assets = destinationAssets,
