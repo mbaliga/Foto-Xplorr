@@ -32,12 +32,17 @@ jobs:
         # lockstep with hyle-design-system's own wrapper and with the AGP 8.9.1 pin in the
         # root build.gradle.kts (D-Q: composite builds require identical AGP versions
         # across the root build and any includeBuild'd project).
-      - name: Test and build debug APK
+      - name: Test, lint and build debug APK
         shell: bash
         run: |
           set -o pipefail
           chmod +x ./gradlew
-          ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug 2>&1 | tee build.log
+          # lintDebug was previously absent from CI, which is how an
+          # UnusedBoxWithConstraintsScope error in app/src/main/.../ai was able to sit on the
+          # branch unnoticed -- `lintDebug` only ever got run by hand, so "lint passes" was a
+          # claim rather than a gate. It is part of the build now so it stays true.
+          ./gradlew --no-daemon --stacktrace \
+            :app:testDebugUnitTest :app:lintDebug :app:assembleDebug 2>&1 | tee build.log
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -45,6 +50,13 @@ jobs:
           name: foto-xplorr-build-log
           path: build.log
           if-no-files-found: error
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foto-xplorr-lint
+          path: app/build/reports/lint-results-debug.html
+          if-no-files-found: warn
       - name: Upload unit test report
         if: always()
         uses: actions/upload-artifact@v4
