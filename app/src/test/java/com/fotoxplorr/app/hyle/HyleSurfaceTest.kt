@@ -4,34 +4,80 @@ import com.fotoxplorr.app.ScanState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.util.Locale
 
 /**
- * The strings and geometry the mockups pin down. These exist because the previous version of
- * this surface rendered no copy at all: asserting the exact wording keeps that from silently
- * regressing again.
+ * Pull-to-backup — and the copy its tests used to pin ("PULL TO CREATE BACKUP") — was retired
+ * by owner direction (2026-08-05): the pull-down space belongs to the fonebrew top-room reveal
+ * (see docs/fonebrew-navigation.md), so no other gesture may claim it and no instructional
+ * copy may sit in a gesture space. Its replacement is the shake gesture; the decision logic is
+ * pinned here with the same rigor the retired copy had, so the gesture cannot silently drift.
  */
-class BackupHeaderTextTest {
+class ShakePeakTrainTest {
+
+    private fun train() = ShakePeakTrain(
+        thresholdG = 2.4f,
+        required = 3,
+        windowMs = 900L,
+        separationMs = 90L,
+        cooldownMs = 2_000L,
+    )
 
     @Test
-    fun `each phase says what the mockups say`() {
-        assertEquals("PULL TO CREATE BACKUP", backupStatusText(BackupPullPhase.IDLE))
-        assertEquals("RELEASE TO CREATE BACKUP", backupStatusText(BackupPullPhase.ARMED))
-        assertEquals("Backing up", backupStatusText(BackupPullPhase.ACTIVE))
+    fun `one bump is not a shake`() {
+        val t = train()
+        assertEquals(false, t.onSample(3.5f, 1_000))
     }
 
     @Test
-    fun `image count is grouped and pluralised`() {
-        assertEquals("12,366 Images", imageCountText(12366, Locale.US))
-        assertEquals("1 Image", imageCountText(1, Locale.US))
-        assertEquals("No Images", imageCountText(0, Locale.US))
-        assertEquals("No Images", imageCountText(-4, Locale.US))
+    fun `three separated peaks inside the window fire exactly once`() {
+        val t = train()
+        assertEquals(false, t.onSample(3.0f, 1_000))
+        assertEquals(false, t.onSample(3.0f, 1_200))
+        assertTrue(t.onSample(3.0f, 1_400))
     }
 
     @Test
-    fun `counter values are grouped`() {
-        assertEquals("12,322", formatCount(12322, Locale.US))
-        assertEquals("0", formatCount(0, Locale.US))
+    fun `sub-threshold samples never count`() {
+        val t = train()
+        assertEquals(false, t.onSample(1.0f, 1_000))
+        assertEquals(false, t.onSample(2.3f, 1_200))
+        assertEquals(false, t.onSample(1.9f, 1_400))
+        // Two real peaks after the noise still are not enough on their own.
+        assertEquals(false, t.onSample(3.0f, 1_600))
+        assertEquals(false, t.onSample(3.0f, 1_800))
+    }
+
+    @Test
+    fun `a rapid burst collapses into one peak`() {
+        val t = train()
+        // Samples 10ms apart are one swing of the hand, not three: no fire.
+        assertEquals(false, t.onSample(3.0f, 1_000))
+        assertEquals(false, t.onSample(3.2f, 1_010))
+        assertEquals(false, t.onSample(3.1f, 1_020))
+    }
+
+    @Test
+    fun `peaks spread wider than the window never accumulate`() {
+        val t = train()
+        assertEquals(false, t.onSample(3.0f, 1_000))
+        assertEquals(false, t.onSample(3.0f, 2_000))
+        // 1_000 has aged out of the 900ms window by now; only 2_000 and 3_000 remain.
+        assertEquals(false, t.onSample(3.0f, 3_000))
+    }
+
+    @Test
+    fun `the cooldown swallows an over-enthusiastic shake`() {
+        val t = train()
+        t.onSample(3.0f, 1_000)
+        t.onSample(3.0f, 1_200)
+        assertTrue(t.onSample(3.0f, 1_400))
+        // Still shaking: inside the 2s refractory period nothing fires...
+        assertEquals(false, t.onSample(3.5f, 1_600))
+        assertEquals(false, t.onSample(3.5f, 1_800))
+        // ...and afterwards a fresh full train is required.
+        assertEquals(false, t.onSample(3.0f, 3_500))
+        assertEquals(false, t.onSample(3.0f, 3_700))
+        assertTrue(t.onSample(3.0f, 3_900))
     }
 }
 

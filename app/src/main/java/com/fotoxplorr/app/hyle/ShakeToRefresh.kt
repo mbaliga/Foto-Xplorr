@@ -42,35 +42,12 @@ fun ShakeToRefresh(onShake: () -> Unit) {
         val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         val accelerometer = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
 
+        val train = ShakePeakTrain()
         val listener = object : SensorEventListener {
-            private var peakTimes = LongArray(SHAKES_REQUIRED)
-            private var peakCount = 0
-            private var lastPeakAt = 0L
-            private var firedAt = 0L
-
             override fun onSensorChanged(event: SensorEvent) {
                 val (x, y, z) = event.values
                 val gForce = sqrt(x * x + y * y + z * z) / SensorManager.GRAVITY_EARTH
-                if (gForce < SHAKE_THRESHOLD_G) return
-                val now = System.currentTimeMillis()
-                if (now - firedAt < COOLDOWN_MS) return
-                // Successive readings above threshold belong to ONE peak; a new peak needs a
-                // dip long enough for the hand to reverse direction.
-                if (now - lastPeakAt < PEAK_SEPARATION_MS) return
-                lastPeakAt = now
-                // Slide the window: drop peaks older than the window, then record this one.
-                val cutoff = now - SHAKE_WINDOW_MS
-                var kept = 0
-                for (i in 0 until peakCount) {
-                    if (peakTimes[i] >= cutoff) peakTimes[kept++] = peakTimes[i]
-                }
-                peakCount = kept
-                if (peakCount < peakTimes.size) peakTimes[peakCount++] = now
-                if (peakCount >= SHAKES_REQUIRED) {
-                    peakCount = 0
-                    firedAt = now
-                    currentOnShake()
-                }
+                if (train.onSample(gForce, System.currentTimeMillis())) currentOnShake()
             }
 
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
@@ -95,6 +72,52 @@ fun ShakeToRefresh(onShake: () -> Unit) {
             lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
             sensorManager?.unregisterListener(listener)
         }
+    }
+}
+
+/**
+ * The pure shake decision, separated from the sensor plumbing so it is unit-testable: feed it
+ * gravity-normalized samples with timestamps; it says when a genuine shake completed.
+ *
+ * A shake is a *train* of peaks, not one bump: [required] distinct peaks above [thresholdG]
+ * inside [windowMs], where peaks closer than [separationMs] collapse into one (successive
+ * over-threshold readings belong to a single swing of the hand). After firing, [cooldownMs]
+ * of refractory time stops one enthusiastic shake from triggering twice.
+ */
+internal class ShakePeakTrain(
+    private val thresholdG: Float = SHAKE_THRESHOLD_G,
+    private val required: Int = SHAKES_REQUIRED,
+    private val windowMs: Long = SHAKE_WINDOW_MS,
+    private val separationMs: Long = PEAK_SEPARATION_MS,
+    private val cooldownMs: Long = COOLDOWN_MS,
+) {
+    private val peakTimes = LongArray(required)
+    private var peakCount = 0
+    private var lastPeakAt = 0L
+    private var firedAt = 0L
+
+    /** Returns true exactly when this sample completes a shake. */
+    fun onSample(gForce: Float, nowMillis: Long): Boolean {
+        if (gForce < thresholdG) return false
+        if (firedAt != 0L && nowMillis - firedAt < cooldownMs) return false
+        // Successive readings above threshold belong to ONE peak; a new peak needs a dip long
+        // enough for the hand to reverse direction.
+        if (lastPeakAt != 0L && nowMillis - lastPeakAt < separationMs) return false
+        lastPeakAt = nowMillis
+        // Slide the window: drop peaks older than the window, then record this one.
+        val cutoff = nowMillis - windowMs
+        var kept = 0
+        for (i in 0 until peakCount) {
+            if (peakTimes[i] >= cutoff) peakTimes[kept++] = peakTimes[i]
+        }
+        peakCount = kept
+        if (peakCount < peakTimes.size) peakTimes[peakCount++] = nowMillis
+        if (peakCount >= required) {
+            peakCount = 0
+            firedAt = nowMillis
+            return true
+        }
+        return false
     }
 }
 
