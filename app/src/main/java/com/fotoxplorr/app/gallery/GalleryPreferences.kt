@@ -42,8 +42,14 @@ data class GalleryPreferencesState(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val accentPalette: AccentPalette = AccentPalette.VIOLET,
     val slideshowIntervalSeconds: Int = DEFAULT_SLIDESHOW_INTERVAL_SECONDS,
-    /** Settings screen's "Default View": which destination/grid opens when the app launches. */
-    val defaultDestination: GalleryDestination = GalleryDestination.TIMELINE,
+    /**
+     * Settings screen's "Default View": which destination opens when the app launches. Now
+     * one of the nine primary destinations from the mockups, not one of the four retired
+     * bottom-nav tabs. Existing installs that stored a bottom-nav value fall through
+     * [enumValue]'s unknown-name guard and land back on PHOTOS, which is the closest
+     * equivalent of the old TIMELINE default.
+     */
+    val defaultDestination: HyleDestination = HyleDestination.PHOTOS,
 )
 
 class GalleryPreferences(context: Context) {
@@ -87,7 +93,7 @@ class GalleryPreferences(context: Context) {
         state.value.copy(accentPalette = palette),
     ) { putString(KEY_ACCENT_PALETTE, palette.name) }
 
-    fun setDefaultDestination(destination: GalleryDestination) = update(
+    fun setDefaultDestination(destination: HyleDestination) = update(
         state.value.copy(defaultDestination = destination),
     ) { putString(KEY_DEFAULT_DESTINATION, destination.name) }
 
@@ -120,7 +126,7 @@ class GalleryPreferences(context: Context) {
         slideshowIntervalSeconds = preferences
             .getInt(KEY_SLIDESHOW_INTERVAL, DEFAULT_SLIDESHOW_INTERVAL_SECONDS)
             .coerceIn(MIN_SLIDESHOW_INTERVAL_SECONDS, MAX_SLIDESHOW_INTERVAL_SECONDS),
-        defaultDestination = enumValue(KEY_DEFAULT_DESTINATION, GalleryDestination.TIMELINE),
+        defaultDestination = enumValue(KEY_DEFAULT_DESTINATION, HyleDestination.PHOTOS),
     )
 
     private inline fun <reified T : Enum<T>> enumValue(key: String, fallback: T): T =

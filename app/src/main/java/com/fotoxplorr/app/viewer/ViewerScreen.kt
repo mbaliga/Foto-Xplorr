@@ -69,9 +69,15 @@ fun ViewerScreen(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onClose: () -> Unit,
-    /** For the image-detail screen's related-photos grid; empty is a safe fallback. */
+    /**
+     * The assets being paged through. Feeds both the image-detail screen's related-photos
+     * grid and the bottom filmstrip scrubber; empty is a safe fallback (the strip hides
+     * itself below two items).
+     */
     relatedAssets: List<MediaAsset> = emptyList(),
     onOpenRelated: (MediaAsset) -> Unit = {},
+    /** Jump straight to an asset in [relatedAssets], from the filmstrip. */
+    onSelectAsset: (MediaAsset) -> Unit = onOpenRelated,
 ) {
     var controlsVisible by remember(asset.id) { mutableStateOf(true) }
     var metadataVisible by remember(asset.id) { mutableStateOf(false) }
@@ -207,6 +213,16 @@ fun ViewerScreen(
 
         if (metadataVisible) {
             MetadataPanel(asset = asset, modifier = Modifier.align(Alignment.BottomCenter))
+        } else if (controlsVisible && relatedAssets.size > 1) {
+            // The filmstrip from the viewer mockup. It shares the bottom edge with the
+            // metadata panel, so only one of the two is ever shown; the strip is the default
+            // because scrubbing between shots is the more common action.
+            FilmstripScrubber(
+                assets = relatedAssets,
+                currentIndex = position - 1,
+                onSelect = onSelectAsset,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
 
         // Zoomed-image minimap: only meaningful once the user has actually zoomed in.

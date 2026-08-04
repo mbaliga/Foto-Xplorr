@@ -7,13 +7,15 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -26,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -33,27 +36,42 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.aarso.hyle.Provenance
 import dev.aarso.hyle.Pulse
 import dev.aarso.hyle.tokens.HyleTokens
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.text.NumberFormat
+import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
- * Pull-to-backup, governed by Hyle's law (state is SHOWN by material, never SAID by
- * language): no "PULL TO CREATE BACKUP" / "RELEASE TO CREATE BACKUP" / "Backing up N of M"
- * copy anywhere in this file. Pull progress, the release threshold, and the in-progress
- * state are expressed entirely through [BackupPulseIndicator]'s shape, motion and Hyle's
- * Pulse ("heartbeat, not weather") idiom; a numeric percentage is available but demoted to
- * small, secondary, optional text -- never the headline, and never shown while active.
+ * Pull-to-backup.
+ *
+ * This file previously rendered no words at all, on the reading that Hyle's law ("state is
+ * SHOWN by material, never SAID by language") forbade them. The owner's mockups settle it
+ * the other way: all three states are drawn with explicit copy -- "PULL TO CREATE BACKUP"
+ * over a "12,366 Images" count, "RELEASE TO CREATE BACKUP" over the same count, and
+ * "Backing up" beside a live "12,322 of 12,366" counter. The mockups are the source of
+ * truth for this app's surface, so the copy is here. The Hyle indicator (shape, sweep,
+ * spin, Provenance hue + glyph) is kept alongside it, so the state is now both shown and
+ * said rather than neither.
  */
 enum class BackupPullPhase { IDLE, ARMED, ACTIVE }
+
+/** Live counts for the header copy. [backedUp] only matters while a backup is running. */
+data class BackupCounts(
+    val total: Int = 0,
+    val backedUp: Int = 0,
+)
 
 @Stable
 class PullToBackupState internal constructor(
@@ -137,8 +155,6 @@ private class PullToBackupNestedScrollConnection(
     private val state: PullToBackupState,
 ) : NestedScrollConnection {
     override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-        // An upward drag while mid-pull retracts the indicator before the list itself scrolls,
-        // so releasing never leaves it stranded half-open.
         if (source == NestedScrollSource.UserInput && available.y < 0f && state.pullPx > 0f) {
             val consumedY = -state.consumePull(-available.y)
             return Offset(0f, consumedY)
@@ -147,8 +163,6 @@ private class PullToBackupNestedScrollConnection(
     }
 
     override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-        // The scrollable content had nothing left to consume for a downward drag, i.e. it's
-        // already at its top edge -- treat the remainder as a pull.
         if (source == NestedScrollSource.UserInput && available.y > 0f) {
             val consumedY = state.consumePull(available.y)
             return Offset(0f, consumedY)
@@ -166,22 +180,30 @@ private class PullToBackupNestedScrollConnection(
 }
 
 /**
- * Wraps a scrollable [content] (a gallery grid) with a pull-to-backup affordance revealed
- * above it. See [BackupPullPhase]'s doc header for the no-literal-status-text rule.
+ * Wraps a scrollable [content] (the gallery grid) with the pull-to-backup header above it.
+ *
+ * The header is always laid out (not only mid-pull) so the grid never jumps when a pull
+ * starts, matching the mockups where the header band sits above the first tile row at rest.
  */
 @Composable
 fun PullToBackupHost(
     onBackupTriggered: suspend () -> Unit,
+    counts: BackupCounts,
     modifier: Modifier = Modifier,
     thresholdDp: Dp = 64.dp,
+    header: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val state = rememberPullToBackupState(thresholdDp, onBackupTriggered)
     val connection = remember(state) { PullToBackupNestedScrollConnection(state) }
-    val density = LocalDensity.current
-    val thresholdPx = with(density) { thresholdDp.toPx() }
 
-    Box(modifier.fillMaxSize()) {
+    Column(modifier.fillMaxSize()) {
+        BackupHeader(
+            phase = state.phase,
+            progressFraction = state.progressFraction,
+            counts = counts,
+        )
+        header?.invoke()
         Box(
             Modifier
                 .fillMaxSize()
@@ -190,29 +212,105 @@ fun PullToBackupHost(
         ) {
             content()
         }
-        if (state.pullPx > 0f || state.phase == BackupPullPhase.ACTIVE) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = HyleSpacing.md.dp)
-                    .offset {
-                        IntOffset(0, ((state.pullPx - thresholdPx) * 0.35f).roundToInt().coerceAtMost(0))
-                    },
-            ) {
-                BackupPulseIndicator(phase = state.phase, progressFraction = state.progressFraction)
-            }
-        }
     }
 }
 
 /**
- * Idle -> armed -> active expressed as shape + motion + Hyle's colour-blind-safe Provenance
- * idiom (glyph + hue, never hue alone): a neutral groove fills clockwise while pulling
- * (shape/position only -- no colour claim yet since nothing has happened); at the armed
- * threshold it switches to Provenance.Cloud's cyan + hollow-ring glyph; while active it
- * spins (motion) and breathes via [Pulse.WATCHED] (Hyle's "heartbeat, not weather" idiom).
- * The optional numeric readout is small, secondary text -- shown only while idle-pulling,
- * never during the active phase, and never the headline.
+ * The header band from the mockups: indicator + status line, with a count line beneath while
+ * idle/armed, and an inline "N of M" counter on the right while backing up.
+ */
+@Composable
+fun BackupHeader(
+    phase: BackupPullPhase,
+    progressFraction: Float,
+    counts: BackupCounts,
+    modifier: Modifier = Modifier,
+) {
+    val active = phase == BackupPullPhase.ACTIVE
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (active) Arrangement.SpaceBetween else Arrangement.Center,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                BackupPulseIndicator(phase = phase, progressFraction = progressFraction)
+                Text(
+                    text = backupStatusText(phase),
+                    style = TextStyle(
+                        fontSize = if (active) 15.sp else 14.sp,
+                        fontWeight = if (active) FontWeight.Medium else FontWeight.SemiBold,
+                        letterSpacing = if (active) 0.sp else 1.4.sp,
+                    ),
+                    color = Color.White,
+                )
+            }
+            if (active) {
+                BackupCounter(counts)
+            }
+        }
+        if (!active) {
+            Text(
+                text = imageCountText(counts.total),
+                style = TextStyle(fontSize = 12.sp),
+                color = Color.White.copy(alpha = 0.45f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun BackupCounter(counts: BackupCounts) {
+    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(
+            text = formatCount(counts.backedUp.coerceIn(0, counts.total)),
+            style = TextStyle(fontSize = 15.sp),
+            color = Color.White.copy(alpha = 0.42f),
+        )
+        Text(
+            text = "of",
+            style = TextStyle(fontSize = 15.sp),
+            color = Color.White.copy(alpha = 0.42f),
+        )
+        Text(
+            text = formatCount(counts.total),
+            style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold),
+            color = Color.White,
+        )
+    }
+}
+
+/** The three status strings the mockups specify. Pure, so the wording is unit-testable. */
+internal fun backupStatusText(phase: BackupPullPhase): String = when (phase) {
+    BackupPullPhase.IDLE -> "PULL TO CREATE BACKUP"
+    BackupPullPhase.ARMED -> "RELEASE TO CREATE BACKUP"
+    BackupPullPhase.ACTIVE -> "Backing up"
+}
+
+/** "12,366 Images" / "1 Image" / "No Images", grouped per the mockups' thousands separator. */
+internal fun imageCountText(total: Int, locale: Locale = Locale.getDefault()): String = when {
+    total <= 0 -> "No Images"
+    total == 1 -> "1 Image"
+    else -> "${formatCount(total, locale)} Images"
+}
+
+internal fun formatCount(value: Int, locale: Locale = Locale.getDefault()): String =
+    NumberFormat.getIntegerInstance(locale).format(value.toLong())
+
+/**
+ * Idle -> armed -> active as shape + motion + Hyle's colour-blind-safe Provenance idiom
+ * (glyph + hue, never hue alone): a neutral groove fills clockwise while pulling, switches
+ * to Provenance.Cloud's cyan + hollow-ring glyph at the armed threshold, and spins while
+ * active, breathing via [Pulse.WATCHED].
  */
 @Composable
 fun BackupPulseIndicator(
@@ -221,7 +319,7 @@ fun BackupPulseIndicator(
     modifier: Modifier = Modifier,
 ) {
     val cloud = Provenance.Cloud
-    val neutral = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+    val neutral = Color.White.copy(alpha = 0.55f)
     val pulseAlpha by rememberPulseAlpha(Pulse.WATCHED)
     val spinTransition = rememberInfiniteTransition(label = "hyle-backup-spin")
     val rotationDegrees by spinTransition.animateFloat(
@@ -235,41 +333,43 @@ fun BackupPulseIndicator(
 
     val ringColor = when (phase) {
         BackupPullPhase.IDLE -> neutral
-        BackupPullPhase.ARMED -> cloud.composeHue
+        BackupPullPhase.ARMED -> Color.White
         BackupPullPhase.ACTIVE -> cloud.composeHue.copy(alpha = pulseAlpha)
     }
     val sweepDegrees = when (phase) {
-        BackupPullPhase.IDLE -> 360f * progressFraction
+        // A rest-state ring with no sweep would read as "broken"; the mockups draw a partial
+        // arc at rest, so idle keeps a minimum visible sweep that grows with the pull.
+        BackupPullPhase.IDLE -> (90f + 270f * progressFraction)
         BackupPullPhase.ARMED -> 360f
         BackupPullPhase.ACTIVE -> 120f
     }
 
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Canvas(Modifier.size(HyleTokens.Dimension.sizeControlLg.dp)) {
-            val stroke = Stroke(width = size.minDimension * 0.12f, cap = StrokeCap.Round)
-            drawCircle(color = neutral.copy(alpha = neutral.alpha * 0.4f), style = stroke)
-            if (sweepDegrees > 0f) {
-                if (phase == BackupPullPhase.ACTIVE) {
-                    withTransform({ rotate(rotationDegrees, pivot = center) }) {
-                        drawArc(color = ringColor, startAngle = -90f, sweepAngle = sweepDegrees, useCenter = false, style = stroke)
-                    }
-                } else {
-                    drawArc(color = ringColor, startAngle = -90f, sweepAngle = sweepDegrees, useCenter = false, style = stroke)
-                }
+    Canvas(modifier.size(INDICATOR_SIZE.dp)) {
+        val stroke = Stroke(width = size.minDimension * 0.14f, cap = StrokeCap.Round)
+        drawCircle(color = Color.White.copy(alpha = 0.18f), style = stroke)
+        if (phase == BackupPullPhase.ACTIVE) {
+            withTransform({ rotate(rotationDegrees, pivot = center) }) {
+                drawArc(
+                    color = ringColor, startAngle = -90f, sweepAngle = sweepDegrees,
+                    useCenter = false, style = stroke,
+                )
             }
-            // Redundant non-colour channel (Provenance rule, WCAG 1.4.1): Cloud's own glyph is a
-            // hollow ring (vs on-device's filled disc) -- echoed here as a small centre ring so the
-            // affordance still reads by shape alone in greyscale / under colour-blindness.
-            if (phase != BackupPullPhase.IDLE) {
-                drawCircle(color = ringColor, radius = size.minDimension * 0.14f, style = Stroke(width = size.minDimension * 0.045f))
-            }
+        } else {
+            drawArc(
+                color = ringColor, startAngle = -90f, sweepAngle = sweepDegrees,
+                useCenter = false, style = stroke,
+            )
         }
-        if (phase == BackupPullPhase.IDLE && progressFraction > 0.08f) {
-            Text(
-                "${(progressFraction * 100).roundToInt()}%",
-                style = MaterialTheme.typography.labelSmall,
-                color = neutral,
+        // Redundant non-colour channel (Provenance rule, WCAG 1.4.1): Cloud's glyph is a
+        // hollow ring, echoed here so the state still reads by shape alone in greyscale.
+        if (phase == BackupPullPhase.ACTIVE) {
+            drawCircle(
+                color = ringColor,
+                radius = size.minDimension * 0.14f,
+                style = Stroke(width = size.minDimension * 0.05f),
             )
         }
     }
 }
+
+private const val INDICATOR_SIZE = 16

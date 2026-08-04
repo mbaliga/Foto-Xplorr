@@ -8,37 +8,38 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.material3.Text
 import com.fotoxplorr.app.R
 import dev.aarso.hyle.tokens.HyleTokens
 import kotlin.math.abs
 
 /**
- * Item for [HyleDestinationRail]. Deliberately opaque to the caller's data model (no
- * MediaAsset here) so this stays a reusable Hyle-styled UI primitive; callers supply
- * per-item trailing content (e.g. thumbnail previews) via [HyleDestinationRail]'s
- * `trailingContent` slot.
+ * Item for [HyleDestinationRail].
  */
 data class HyleRailItem(
     val id: String,
@@ -46,16 +47,21 @@ data class HyleRailItem(
 )
 
 /**
- * A Compose port of Hyle's tactile-kit "Folders" cascading-tab browser (see
- * hyle-design-system/kit/tactile-kit.html's `.folder`/`.flip`/`.ftab` rules and the
- * `layoutStack()` function): numbered, labelled rounded-rect tabs stacked with the
- * selected one expanded, centred and accent-filled (`.flip.foc .ftab{background:var(--acc)}`)
- * while the rest recede -- alternating indent and dimming alpha with distance from the
- * selection, exactly like the web version's per-tab left/right offset and z-index stack.
+ * The destination rail exactly as the owner's mockups draw it (see the reference images:
+ * the nine-item list over the grid, and the Settings panel):
  *
- * The web original's `--ease: cubic-bezier(.4,0,.2,1)` is [FastOutSlowInEasing] verbatim
- * (see kit/README.md's "Bridges to the design system" table), so this reuses that Compose
- * easing rather than approximating it.
+ *  - large, light-weight type on pure black -- no numbering, no icons, no filled tab chrome;
+ *  - the active item is bright white and bold, marked by a small filled square bullet in
+ *    the gutter to its left;
+ *  - every other item dims progressively with distance from the active one.
+ *
+ * This replaces an earlier reading of the same mockups as Hyle's tactile-kit "Folders"
+ * cascading-tab browser -- numbered `01`-`09` rows on an accent-violet fill. The distance
+ * falloff from that version was the one part the mockups agree with, so it is kept (as
+ * alpha only); everything else here is redrawn from the images. The one non-visual carry
+ * over is the select tick + haptic, which the mockups cannot show either way.
+ *
+ * The web original's `--ease: cubic-bezier(.4,0,.2,1)` remains [FastOutSlowInEasing].
  */
 @Composable
 fun HyleDestinationRail(
@@ -63,72 +69,93 @@ fun HyleDestinationRail(
     selectedId: String,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
-    icons: Map<String, ImageVector> = emptyMap(),
     trailingContent: @Composable (HyleRailItem) -> Unit = {},
 ) {
     val view = LocalView.current
     val tick = rememberTabTickPlayer()
     val selectedIndex = items.indexOfFirst { it.id == selectedId }.coerceAtLeast(0)
-    val accent = HyleTokens.Color.colorPaletteAccentViolet.toComposeColor()
-    val surface = HyleTokens.Color.controlSurfaceRaised.toComposeColor()
 
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(HyleSpacing.sm.dp),
+        verticalArrangement = Arrangement.spacedBy(RAIL_ITEM_GAP.dp),
     ) {
         items.forEachIndexed { index, item ->
             val isSelected = item.id == selectedId
-            val distance = abs(selectedIndex - index).coerceAtMost(4)
-            val targetWidthFraction = if (isSelected) 1f else (0.95f - 0.025f * distance)
-            val targetAlpha = if (isSelected) 1f else (0.78f - 0.11f * distance).coerceAtLeast(0.32f)
+            val targetAlpha = railItemAlpha(abs(selectedIndex - index), isSelected)
             val ease = tween<Float>(HyleTokens.Duration.durationCalm, easing = FastOutSlowInEasing)
-            val widthFraction by animateFloatAsState(targetWidthFraction, ease, label = "hyle-rail-width")
-            val rowAlpha by animateFloatAsState(targetAlpha, ease, label = "hyle-rail-alpha")
+            val itemAlpha by animateFloatAsState(targetAlpha, ease, label = "hyle-rail-alpha")
 
             Row(
                 modifier = Modifier
-                    .fillMaxWidth(widthFraction)
-                    .alpha(rowAlpha)
-                    .clip(RoundedCornerShape(HyleTokens.Dimension.radiusLg.dp))
-                    .background(if (isSelected) accent else surface)
-                    .clickable {
+                    .fillMaxWidth()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        // No ripple: the mockups show flat type on black with no touch chrome.
+                        indication = null,
+                    ) {
                         if (!isSelected) {
                             view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                             tick.play()
                             onSelect(item.id)
                         }
                     }
-                    .padding(horizontal = HyleSpacing.lg.dp, vertical = HyleSpacing.md.dp),
+                    .semantics { selected = isSelected }
+                    .padding(vertical = RAIL_ITEM_PADDING.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(HyleSpacing.md.dp),
             ) {
-                val onTint = if (isSelected) {
-                    HyleTokens.Color.colorTextInverse.toComposeColor()
-                } else {
-                    HyleTokens.Color.colorTextPrimary.toComposeColor()
-                }
-                Text(
-                    text = pad(index + 1),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = onTint.copy(alpha = if (isSelected) 0.72f else 0.5f),
-                )
-                icons[item.id]?.let { icon ->
-                    Icon(icon, contentDescription = null, tint = onTint)
+                // Fixed-width gutter so labels stay on one optical left edge whether or not
+                // they carry the bullet -- exactly how the mockups align them.
+                Box(
+                    modifier = Modifier.width(BULLET_GUTTER.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    if (isSelected) {
+                        Box(
+                            Modifier
+                                .size(BULLET_SIZE.dp)
+                                .background(Color.White),
+                        )
+                    }
                 }
                 Text(
                     text = item.label,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                    color = onTint,
-                    modifier = Modifier.weight(1f),
+                    style = TextStyle(
+                        fontSize = RAIL_FONT_SIZE.sp,
+                        lineHeight = RAIL_LINE_HEIGHT.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Light,
+                        letterSpacing = (-0.5).sp,
+                    ),
+                    color = Color.White.copy(alpha = itemAlpha),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
-                if (isSelected) trailingContent(item)
+                if (isSelected) {
+                    Box(Modifier.padding(start = 12.dp)) { trailingContent(item) }
+                }
             }
         }
     }
 }
 
-private fun pad(n: Int): String = if (n < 10) "0$n" else n.toString()
+/**
+ * Opacity for a rail item [distance] rows from the selected one. Pure so the falloff can be
+ * asserted in a unit test rather than eyeballed: the selected row is fully opaque, its
+ * neighbours stay clearly legible, and anything four or more rows away settles at a floor
+ * that is still readable rather than invisible (matching the mockups, where "Pets" and
+ * "Protected" at the extremes are dim but never disappear).
+ */
+internal fun railItemAlpha(distance: Int, isSelected: Boolean): Float {
+    if (isSelected) return 1f
+    return (0.62f - 0.10f * distance.coerceAtMost(5)).coerceAtLeast(0.22f)
+}
+
+private const val RAIL_FONT_SIZE = 34
+private const val RAIL_LINE_HEIGHT = 40
+private const val RAIL_ITEM_GAP = 6
+private const val RAIL_ITEM_PADDING = 5
+private const val BULLET_GUTTER = 26
+private const val BULLET_SIZE = 10
 
 /** Real short UI sound cue on tab-select, via SoundPool (res/raw/hyle_tab_tick.wav). */
 @Composable

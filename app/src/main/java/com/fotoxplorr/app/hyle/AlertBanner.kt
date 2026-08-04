@@ -12,17 +12,17 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.Error
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -31,25 +31,37 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.ScanState
 import dev.aarso.hyle.Pulse
 import dev.aarso.hyle.tokens.HyleTokens
 import kotlinx.coroutines.delay
 
 /**
- * The library-scan activity signal ("Notifications & Alerts" surface in the mockups),
- * expressed per Hyle's law: icon + motion + structured layout carry the state, not a
- * literal "Notifications & Alerts appear here" placeholder or a "Scanning…" sentence.
- * Wired to the app's real [ScanState] (MediaIndexer's background scan/index pass) -- there
- * is no separate notifications subsystem in Foto Xplorr to hang a richer banner off, so
- * this reflects the one real background-activity signal the app already has.
+ * The "Notifications & Alerts" band from the mockups: a warning glyph beside a single line
+ * of status copy, centred on black above the grid.
+ *
+ * This file previously rendered an icon and a bare progress bar with no sentence at all,
+ * on a reading of Hyle's law that a literal status line was forbidden. The mockups draw the
+ * sentence explicitly, so it is here; the icon, motion and Hyle hues stay alongside it.
+ *
+ * The band is wired to the app's real [ScanState] (MediaIndexer's background scan), which is
+ * the one genuine background-activity signal Foto Xplorr has -- so its text is factual
+ * rather than a mock string. When there is nothing to report it shows the mockups' resting
+ * line, [IDLE_MESSAGE], only if [showWhenIdle] is set by the caller; otherwise it collapses
+ * so the grid can run edge to edge.
  */
 @Composable
 fun ScanActivityAlertBanner(
     scanState: ScanState,
     modifier: Modifier = Modifier,
+    showWhenIdle: Boolean = false,
 ) {
     var showCompletionPulse by remember { mutableStateOf(false) }
     LaunchedEffect(scanState) {
@@ -60,21 +72,44 @@ fun ScanActivityAlertBanner(
         }
     }
 
-    val visible = scanState is ScanState.Scanning || scanState is ScanState.Error || showCompletionPulse
+    val visible = showWhenIdle ||
+        scanState is ScanState.Scanning ||
+        scanState is ScanState.Error ||
+        showCompletionPulse
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(tween(HyleTokens.Duration.durationCalm)) + expandVertically(tween(HyleTokens.Duration.durationCalm)),
         exit = fadeOut(tween(HyleTokens.Duration.durationCalm)) + shrinkVertically(tween(HyleTokens.Duration.durationCalm)),
         modifier = modifier,
     ) {
-        AlertBannerRow(scanState = scanState, completed = showCompletionPulse && scanState !is ScanState.Scanning)
+        AlertBannerRow(
+            scanState = scanState,
+            completed = showCompletionPulse && scanState !is ScanState.Scanning,
+        )
     }
+}
+
+/** The resting sentence the mockups show when nothing needs attention. */
+const val IDLE_MESSAGE = "Notifications & Alerts appear here"
+
+/**
+ * The one line of copy the banner shows for a given state. Pure, so the wording is
+ * unit-testable without composing anything.
+ */
+internal fun alertBannerMessage(scanState: ScanState, completed: Boolean): String = when {
+    scanState is ScanState.Error -> scanState.message
+    scanState is ScanState.Scanning && scanState.discovered > 0 ->
+        "Indexing ${scanState.scanned} of ${scanState.discovered}"
+    scanState is ScanState.Scanning -> "Indexing your library"
+    completed && scanState is ScanState.Complete -> "Library up to date · ${scanState.total} items"
+    else -> IDLE_MESSAGE
 }
 
 @Composable
 private fun AlertBannerRow(scanState: ScanState, completed: Boolean) {
     val isScanning = scanState is ScanState.Scanning
     val isError = scanState is ScanState.Error
+    val idle = !isScanning && !isError && !completed
     val pulseAlpha by rememberPulseAlpha(Pulse.WATCHED)
     val spinTransition = rememberInfiniteTransition(label = "hyle-alert-spin")
     val rotationDegrees by spinTransition.animateFloat(
@@ -85,33 +120,40 @@ private fun AlertBannerRow(scanState: ScanState, completed: Boolean) {
     )
 
     val icon = when {
-        isError -> Icons.Outlined.Error
-        completed -> Icons.Outlined.CheckCircle
-        else -> Icons.Outlined.Refresh
+        isScanning -> Icons.Outlined.Refresh
+        completed && !isError -> Icons.Outlined.CheckCircle
+        // The mockups draw a red warning triangle on the resting banner, so idle and error
+        // share the glyph and differ only in what the sentence says.
+        else -> Icons.Filled.Warning
     }
     val tint = when {
-        isError -> HyleTokens.Color.colorFeedbackDanger.toComposeColor()
+        isError || idle -> HyleTokens.Color.colorFeedbackDanger.toComposeColor()
         completed -> HyleTokens.Color.colorFeedbackSuccess.toComposeColor()
         else -> HyleTokens.Color.colorPaletteAccentViolet.toComposeColor().copy(alpha = pulseAlpha)
     }
+    val message = alertBannerMessage(scanState, completed)
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = HyleSpacing.lg.dp, vertical = HyleSpacing.sm.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(HyleSpacing.sm.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
     ) {
         Icon(
             imageVector = icon,
-            // Decorative: the equivalent factual copy already exists elsewhere for assistive
-            // tech (GalleryEmptyState's scan-progress/error text) -- this banner is a
-            // supplementary ambient signal, not the only channel a screen reader relies on.
             contentDescription = null,
             tint = tint,
             modifier = Modifier
-                .size(HyleTokens.Dimension.sizeControlSm.dp)
+                .size(16.dp)
                 .graphicsLayer { rotationZ = if (isScanning) rotationDegrees else 0f },
+        )
+        Text(
+            text = message,
+            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium),
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         if (isScanning) {
             val scanning = scanState as ScanState.Scanning
@@ -124,8 +166,6 @@ private fun AlertBannerRow(scanState: ScanState, completed: Boolean) {
             } else {
                 LinearProgressIndicator(modifier = Modifier.weight(1f).height(3.dp), color = tint)
             }
-        } else {
-            Spacer(Modifier.weight(1f))
         }
     }
 }

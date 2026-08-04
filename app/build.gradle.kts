@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -40,6 +42,23 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+
+    lint {
+        // Locale-dependent String.format is used throughout for EXIF/size readouts that are
+        // numeric-only; the app has no translations, so this is noise rather than a defect.
+        disable += "DefaultLocale"
+    }
+}
+
+// Without this, Kotlin infers its jvmTarget from the JDK running Gradle (21 on the current
+// toolchain) while AGP compiles Java at 17 from `compileOptions` above, and the build fails
+// with "Inconsistent JVM-target compatibility detected for tasks 'compileDebugJavaWithJavac'
+// (17) and 'compileDebugKotlin' (21)". Pinning Kotlin to the same 17 makes the build
+// independent of whichever JDK happens to run it.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 
@@ -86,6 +105,16 @@ dependencies {
 
     // On-device image embeddings. The model is installed into app-private storage on demand.
     implementation("com.google.mediapipe:tasks-vision:0.10.35")
+
+    // On-device recognition for the Pets / People / Identity destinations. These are the
+    // *bundled* ML Kit artifacts on purpose: they ship their models inside the APK, so they
+    // need no Play Services, no first-use download and -- critically for this app's
+    // local-first posture -- no network at all. Nothing here can reach a remote endpoint,
+    // which is why personal photos can be run through it while the BYOK remote-AI path in
+    // com.fotoxplorr.app.ai stays strictly opt-in and strictly separate.
+    implementation("com.google.mlkit:face-detection:16.1.7")
+    implementation("com.google.mlkit:image-labeling:17.0.9")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 
     // Native vector maps with clustering, pitch/bearing, hillshade and 3D building extrusions.
     implementation("org.maplibre.gl:android-sdk:13.0.2")

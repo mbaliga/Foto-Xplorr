@@ -7,25 +7,25 @@ package com.fotoxplorr.app.gallery
 
 import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Favorite
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.ImageSearch
 import androidx.compose.material.icons.outlined.Label
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Restore
@@ -42,31 +42,39 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.ScanState
+import com.fotoxplorr.app.hyle.BackupCounts
+import com.fotoxplorr.app.hyle.FloatingPillControl
+import com.fotoxplorr.app.hyle.PanelSide
 import com.fotoxplorr.app.hyle.PullToBackupHost
 import com.fotoxplorr.app.hyle.ScanActivityAlertBanner
+import com.fotoxplorr.app.hyle.SlideInPanel
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.organize.LibraryState
+import com.fotoxplorr.app.recognition.RecognitionIndex
+import com.fotoxplorr.app.recognition.RecognitionProgress
 import com.fotoxplorr.app.spatial.GeoMetadataRepository
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.SpatialExperience
@@ -82,6 +90,9 @@ data class GalleryUiState(
     val permissionGranted: Boolean,
     val scanState: ScanState,
     val preferences: GalleryPreferencesState,
+    /** On-device recognition results backing the Pets / People / Identity destinations. */
+    val recognition: RecognitionIndex = RecognitionIndex.EMPTY,
+    val recognitionProgress: RecognitionProgress = RecognitionProgress(),
 )
 
 data class GalleryActions(
@@ -96,7 +107,9 @@ data class GalleryActions(
     val onSetThemeMode: (ThemeMode) -> Unit,
     val onSetAccentPalette: (AccentPalette) -> Unit,
     val onSetSlideshowInterval: (Int) -> Unit,
-    val onSetDefaultDestination: (GalleryDestination) -> Unit,
+    val onSetDefaultDestination: (HyleDestination) -> Unit,
+    /** Kick off (or resume) the on-device recognition pass. */
+    val onIndexRecognition: () -> Unit,
     val onProtectFolder: suspend (String, CharArray) -> Result<Unit>,
     val onUnlockFolder: suspend (String, CharArray) -> Boolean,
     val onLockFolder: (String) -> Unit,
@@ -175,7 +188,12 @@ fun GalleryScreen(
     }
 }
 
-private sealed interface BrowserRoute {
+/**
+ * Drill-down routes *below* a destination. The nine top-level destinations are not routes:
+ * they are the primary IA and live in the slide-in rail, so switching between them never
+ * pushes anything.
+ */
+sealed interface BrowserRoute {
     data object Root : BrowserRoute
     data class DeviceAlbum(val key: String, val name: String) : BrowserRoute
     data class Collection(val id: String, val name: String) : BrowserRoute
@@ -191,50 +209,54 @@ private data class PasswordRequest(
     val folderName: String,
 )
 
+/**
+ * The app shell, rebuilt around the owner's mockups.
+ *
+ * The primary IA is now the nine-category rail (Pets / People / Identity / Screenshots /
+ * Photos / Videos / Favourites / Places / Protected), presented as a panel that slides in
+ * over the grid from the left edge -- the grid stays visible at the right edge throughout,
+ * exactly as the mockups draw it. Launching lands on the grid with the rail one edge-swipe
+ * (or one tap on the header's menu button) away.
+ *
+ * The previous four-tab bottom `NavigationBar` (Photos / Albums / Discover / Library) is
+ * retired as the default IA. Its screens are not deleted: Albums, Discover and Library are
+ * reachable from the settings panel, so nothing that worked before became unreachable.
+ */
 @Composable
 private fun GalleryBrowser(
     state: GalleryUiState,
     actions: GalleryActions,
 ) {
-    // "Default View" setting (Settings screen): which destination opens on launch.
     var destination by remember { mutableStateOf(state.preferences.defaultDestination) }
     var route by remember { mutableStateOf<BrowserRoute>(BrowserRoute.Root) }
     var query by remember { mutableStateOf("") }
     var searchVisible by remember { mutableStateOf(false) }
     var selection by remember { mutableStateOf(GallerySelection()) }
-    var topMenuVisible by remember { mutableStateOf(false) }
     var selectionMenuVisible by remember { mutableStateOf(false) }
-    var settingsVisible by remember { mutableStateOf(false) }
+    var topMenuVisible by remember { mutableStateOf(false) }
+    var railOpen by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
+    var settingsDialogVisible by remember { mutableStateOf(false) }
     var createCollectionVisible by remember { mutableStateOf(false) }
-    var browsingDestinations by remember { mutableStateOf(false) }
     var renameCollection by remember { mutableStateOf<BrowserRoute.Collection?>(null) }
-
-    if (browsingDestinations) {
-        BackHandler { browsingDestinations = false }
-        DestinationBrowserScreen(
-            state = state,
-            actions = actions,
-            onClose = { browsingDestinations = false },
-        )
-        return
-    }
     var renameAsset by remember { mutableStateOf<MediaAsset?>(null) }
     var addToCollectionIds by remember { mutableStateOf<Set<MediaId>?>(null) }
     var addTagIds by remember { mutableStateOf<Set<MediaId>?>(null) }
     var passwordRequest by remember { mutableStateOf<PasswordRequest?>(null) }
+    var legacyScreen by remember { mutableStateOf<LegacyScreen?>(null) }
 
-    val timelineAssets = everydayAssets(
-        assets = state.assets,
-        archivedIds = state.library.archivedIds,
-        sensitiveIds = state.sensitiveIds,
-        lockedFolders = state.lockedFolders,
-        unlockedFolders = state.unlockedFolders,
-        preferences = state.preferences,
-        query = query,
-        tagsByMediaId = state.library.tagsByMediaId,
-    )
+    val gridState = rememberLazyGridState()
+    val gridScope = rememberCoroutineScope()
+
+    // Recognition runs once per library state change, on demand rather than at every
+    // recomposition, so opening the app does not restart a completed pass.
+    LaunchedEffect(state.assets.size) {
+        if (state.assets.isNotEmpty()) actions.onIndexRecognition()
+    }
+
+    val destinationAssets = destinationAssets(destination, state, query)
     val currentAssets = when (val current = route) {
-        BrowserRoute.Root -> if (destination == GalleryDestination.TIMELINE) timelineAssets else emptyList()
+        BrowserRoute.Root -> destinationAssets
         is BrowserRoute.DeviceAlbum -> assetsForAlbum(
             assets = state.assets,
             albumKey = current.key,
@@ -290,8 +312,14 @@ private fun GalleryBrowser(
         searchVisible = false
     }
 
-    BackHandler(enabled = selection.isActive || searchVisible || route != BrowserRoute.Root) {
+    BackHandler(
+        enabled = railOpen || settingsOpen || legacyScreen != null ||
+            selection.isActive || searchVisible || route != BrowserRoute.Root,
+    ) {
         when {
+            railOpen -> railOpen = false
+            settingsOpen -> settingsOpen = false
+            legacyScreen != null -> legacyScreen = null
             selection.isActive -> selection = selection.clear()
             searchVisible -> {
                 searchVisible = false
@@ -301,415 +329,324 @@ private fun GalleryBrowser(
         }
     }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        topBar = {
-            if (selection.isActive) {
-                CenterAlignedTopAppBar(
-                    title = { Text("${selection.count} selected") },
-                    navigationIcon = {
-                        IconButton(onClick = { selection = selection.clear() }) {
-                            Icon(Icons.Outlined.Close, contentDescription = "Clear selection")
-                        }
+    // Fraction of the collection currently scrolled past, driving the pill's scrubber handle.
+    val scrollFraction by remember(gridState) {
+        derivedStateOf {
+            val info = gridState.layoutInfo
+            val total = info.totalItemsCount
+            if (total <= 1) 0f else gridState.firstVisibleItemIndex.toFloat() / (total - 1)
+        }
+    }
+
+    val railItems = remember {
+        HyleDestination.entries.map { com.fotoxplorr.app.hyle.HyleRailItem(it.name, it.label) }
+    }
+
+    SlideInPanel(
+        open = railOpen,
+        onOpenChange = { railOpen = it },
+        side = PanelSide.LEFT,
+        panelWidth = RAIL_PANEL_WIDTH.dp,
+        panel = {
+            DestinationRailPanel(
+                items = railItems,
+                selectedId = destination.name,
+                onSelect = { id ->
+                    destination = HyleDestination.valueOf(id)
+                    route = BrowserRoute.Root
+                    railOpen = false
+                    gridScope.launch { gridState.scrollToItem(0) }
+                },
+                state = state,
+            )
+        },
+    ) {
+        SlideInPanel(
+            open = settingsOpen,
+            onOpenChange = { settingsOpen = it },
+            side = PanelSide.RIGHT,
+            panelWidth = SETTINGS_PANEL_WIDTH.dp,
+            panel = {
+                SettingsPanel(
+                    preferences = state.preferences,
+                    onOpenAllSettings = {
+                        settingsOpen = false
+                        settingsDialogVisible = true
                     },
-                    actions = {
-                        IconButton(onClick = { selection = selection.selectAll(currentIds) }) {
-                            Icon(Icons.Outlined.SelectAll, contentDescription = "Select all")
-                        }
-                        if (!inTrash) {
-                            IconButton(onClick = { actions.onShare(selectedAssets) }) {
-                                Icon(Icons.Outlined.Share, contentDescription = "Share")
-                            }
-                            IconButton(onClick = {
-                                val mark = bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK
-                                actions.onSetFavorite(selection.selectedIds, mark)
-                                selection = selection.clear()
-                            }) {
-                                Icon(Icons.Outlined.Favorite, contentDescription = "Toggle favourite")
-                            }
-                        }
-                        IconButton(onClick = { selectionMenuVisible = true }) {
-                            Icon(Icons.Outlined.MoreVert, contentDescription = "More actions")
-                        }
-                        DropdownMenu(
-                            expanded = selectionMenuVisible,
-                            onDismissRequest = { selectionMenuVisible = false },
-                        ) {
-                            if (inTrash) {
-                                DropdownMenuItem(
-                                    text = { Text("Restore") },
-                                    leadingIcon = { Icon(Icons.Outlined.Restore, null) },
-                                    enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
-                                    onClick = {
-                                        selectionMenuVisible = false
-                                        actions.onRestore(selectedAssets)
-                                        selection = selection.clear()
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Delete permanently") },
-                                    leadingIcon = { Icon(Icons.Outlined.Delete, null) },
-                                    enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
-                                    onClick = {
-                                        selectionMenuVisible = false
-                                        actions.onDeletePermanently(selectedAssets)
-                                        selection = selection.clear()
-                                    },
-                                )
-                            } else {
-                                DropdownMenuItem(
-                                    text = { Text(if (inArchive) "Unarchive" else "Archive") },
-                                    leadingIcon = { Icon(Icons.Outlined.Archive, null) },
-                                    onClick = {
-                                        selectionMenuVisible = false
-                                        actions.onSetArchived(selection.selectedIds, !inArchive)
-                                        selection = selection.clear()
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Mark sensitive") },
-                                    leadingIcon = { Icon(Icons.Outlined.VisibilityOff, null) },
-                                    onClick = {
-                                        selectionMenuVisible = false
-                                        val mark = bulkMarkAction(selection.selectedIds, state.sensitiveIds) == BulkMarkAction.MARK
-                                        actions.onSetSensitive(selection.selectedIds, mark)
-                                        selection = selection.clear()
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Share without common EXIF metadata") },
-                                    leadingIcon = { Icon(Icons.Outlined.Share, null) },
-                                    enabled = selectedAssets.all { !it.isVideo && it.mimeType.startsWith("image/") },
-                                    onClick = {
-                                        selectionMenuVisible = false
-                                        actions.onShareClean(selectedAssets)
-                                        selection = selection.clear()
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Copy to folder") },
-                                    leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
-                                    onClick = {
-                                        selectionMenuVisible = false
-                                        actions.onCopyToFolder(selectedAssets)
-                                        selection = selection.clear()
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Move to folder safely") },
-                                    leadingIcon = { Icon(Icons.Outlined.DriveFileMove, null) },
-                                    enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
-                                    onClick = {
-                                        selectionMenuVisible = false
-                                        actions.onMoveToFolder(selectedAssets)
-                                        selection = selection.clear()
-                                    },
-                                )
-                                if (selectedAssets.size == 1) {
-                                    DropdownMenuItem(
-                                        text = { Text("Rename file") },
-                                        leadingIcon = { Icon(Icons.Outlined.Edit, null) },
-                                        onClick = {
-                                            selectionMenuVisible = false
-                                            renameAsset = selectedAssets.first()
-                                        },
-                                    )
-                                }
-                                DropdownMenuItem(
-                                    text = { Text("Add to collection") },
-                                    leadingIcon = { Icon(Icons.Outlined.Collections, null) },
-                                    onClick = {
-                                        selectionMenuVisible = false
-                                        addToCollectionIds = selection.selectedIds
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Add tag") },
-                                    leadingIcon = { Icon(Icons.Outlined.Label, null) },
-                                    onClick = {
-                                        selectionMenuVisible = false
-                                        addTagIds = selection.selectedIds
-                                    },
-                                )
-                                tagRoute?.let { tag ->
-                                    DropdownMenuItem(
-                                        text = { Text("Remove #${tag.tag}") },
-                                        leadingIcon = { Icon(Icons.Outlined.Close, null) },
-                                        onClick = {
-                                            selectionMenuVisible = false
-                                            actions.onRemoveTag(selection.selectedIds, tag.tag)
-                                            selection = selection.clear()
-                                        },
-                                    )
-                                }
-                                collectionRoute?.let { collection ->
-                                    DropdownMenuItem(
-                                        text = { Text("Remove from collection") },
-                                        leadingIcon = { Icon(Icons.Outlined.Close, null) },
-                                        onClick = {
-                                            selectionMenuVisible = false
-                                            actions.onRemoveFromCollection(collection.id, selection.selectedIds)
-                                            selection = selection.clear()
-                                        },
-                                    )
-                                }
-                                DropdownMenuItem(
-                                    text = { Text("Move to trash") },
-                                    leadingIcon = { Icon(Icons.Outlined.Delete, null) },
-                                    enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
-                                    onClick = {
-                                        selectionMenuVisible = false
-                                        actions.onMoveToTrash(selectedAssets)
-                                        selection = selection.clear()
-                                    },
-                                )
-                            }
-                        }
+                    onSetDefaultDestination = actions.onSetDefaultDestination,
+                    onOpenLegacyScreen = {
+                        settingsOpen = false
+                        legacyScreen = it
                     },
                 )
-            } else {
-                CenterAlignedTopAppBar(
-                    title = {
-                        Column {
-                            Text(route.title(destination))
-                            Text(
-                                text = route.subtitle(currentAssets.size, state.assets.size),
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                        }
-                    },
-                    navigationIcon = {
-                        if (route != BrowserRoute.Root) {
-                            TextButton(onClick = { route = BrowserRoute.Root }) { Text("Back") }
-                        }
-                    },
-                    actions = {
-                        if (currentAssets.isNotEmpty()) {
-                            IconButton(onClick = { actions.onStartSlideshow(currentAssets) }) {
-                                Icon(Icons.Outlined.PlayArrow, contentDescription = "Start slideshow")
-                            }
-                        }
-                        IconButton(onClick = { searchVisible = !searchVisible }) {
-                            Icon(Icons.Outlined.Search, contentDescription = "Search")
-                        }
-                        IconButton(onClick = { topMenuVisible = true }) {
-                            Icon(Icons.Outlined.MoreVert, contentDescription = "More")
-                        }
-                        DropdownMenu(
-                            expanded = topMenuVisible,
-                            onDismissRequest = { topMenuVisible = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Refresh library") },
-                                onClick = {
-                                    topMenuVisible = false
-                                    actions.onRefresh()
-                                },
-                            )
-                            albumRoute?.let { album ->
-                                val protected = album.key in state.lockedFolders
-                                val unlocked = album.key in state.unlockedFolders
-                                when {
-                                    !protected -> DropdownMenuItem(
-                                        text = { Text("Make folder private") },
+            },
+        ) {
+            Scaffold(
+                modifier = Modifier.fillMaxSize(),
+                containerColor = Color.Black,
+                topBar = {
+                    if (selection.isActive) {
+                        SelectionTopBar(
+                            selection = selection,
+                            selectedAssets = selectedAssets,
+                            currentIds = currentIds,
+                            inTrash = inTrash,
+                            inArchive = inArchive,
+                            state = state,
+                            actions = actions,
+                            menuVisible = selectionMenuVisible,
+                            onMenuVisibleChange = { selectionMenuVisible = it },
+                            onSelectionChange = { selection = it },
+                            onRenameAsset = { renameAsset = it },
+                            onAddToCollection = { addToCollectionIds = it },
+                            onAddTag = { addTagIds = it },
+                            tagRoute = tagRoute,
+                            collectionRoute = collectionRoute,
+                        )
+                    } else {
+                        CenterAlignedTopAppBar(
+                            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                                containerColor = Color.Black,
+                                titleContentColor = Color.White,
+                                navigationIconContentColor = Color.White,
+                                actionIconContentColor = Color.White,
+                            ),
+                            title = {
+                                Text(
+                                    route.title(destination),
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            },
+                            navigationIcon = {
+                                if (route != BrowserRoute.Root) {
+                                    TextButton(onClick = { route = BrowserRoute.Root }) { Text("Back") }
+                                } else {
+                                    // The obvious tap affordance for the rail, alongside the
+                                    // left-edge swipe the mockups imply.
+                                    IconButton(onClick = { railOpen = true }) {
+                                        Icon(Icons.Outlined.Menu, contentDescription = "Destinations")
+                                    }
+                                }
+                            },
+                            actions = {
+                                if (currentAssets.isNotEmpty()) {
+                                    IconButton(onClick = { actions.onStartSlideshow(currentAssets) }) {
+                                        Icon(Icons.Outlined.PlayArrow, contentDescription = "Start slideshow")
+                                    }
+                                }
+                                IconButton(onClick = { topMenuVisible = true }) {
+                                    Icon(Icons.Outlined.MoreVert, contentDescription = "More")
+                                }
+                                DropdownMenu(
+                                    expanded = topMenuVisible,
+                                    onDismissRequest = { topMenuVisible = false },
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Refresh library") },
                                         onClick = {
                                             topMenuVisible = false
-                                            passwordRequest = PasswordRequest(PasswordAction.PROTECT, album.key, album.name)
+                                            actions.onRefresh()
                                         },
                                     )
-                                    unlocked -> {
+                                    albumRoute?.let { album ->
+                                        val protected = album.key in state.lockedFolders
+                                        val unlocked = album.key in state.unlockedFolders
+                                        when {
+                                            !protected -> DropdownMenuItem(
+                                                text = { Text("Make folder private") },
+                                                onClick = {
+                                                    topMenuVisible = false
+                                                    passwordRequest = PasswordRequest(
+                                                        PasswordAction.PROTECT, album.key, album.name,
+                                                    )
+                                                },
+                                            )
+                                            unlocked -> {
+                                                DropdownMenuItem(
+                                                    text = { Text("Lock now") },
+                                                    onClick = {
+                                                        topMenuVisible = false
+                                                        actions.onLockFolder(album.key)
+                                                        route = BrowserRoute.Root
+                                                    },
+                                                )
+                                                DropdownMenuItem(
+                                                    text = { Text("Remove protection") },
+                                                    onClick = {
+                                                        topMenuVisible = false
+                                                        passwordRequest = PasswordRequest(
+                                                            PasswordAction.REMOVE, album.key, album.name,
+                                                        )
+                                                    },
+                                                )
+                                            }
+                                        }
+                                    }
+                                    collectionRoute?.let { collection ->
                                         DropdownMenuItem(
-                                            text = { Text("Lock now") },
+                                            text = { Text("Rename collection") },
                                             onClick = {
                                                 topMenuVisible = false
-                                                actions.onLockFolder(album.key)
+                                                renameCollection = collection
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Delete collection") },
+                                            onClick = {
+                                                topMenuVisible = false
+                                                actions.onDeleteCollection(collection.id)
                                                 route = BrowserRoute.Root
                                             },
                                         )
-                                        DropdownMenuItem(
-                                            text = { Text("Remove protection") },
-                                            onClick = {
-                                                topMenuVisible = false
-                                                passwordRequest = PasswordRequest(PasswordAction.REMOVE, album.key, album.name)
-                                            },
+                                    }
+                                    DropdownMenuItem(
+                                        text = { Text("Settings") },
+                                        leadingIcon = { Icon(Icons.Outlined.Settings, null) },
+                                        onClick = {
+                                            topMenuVisible = false
+                                            settingsOpen = true
+                                        },
+                                    )
+                                }
+                            },
+                        )
+                    }
+                },
+                floatingActionButton = {
+                    if (!selection.isActive && legacyScreen == LegacyScreen.ALBUMS) {
+                        FloatingActionButton(onClick = { createCollectionVisible = true }) {
+                            Icon(Icons.Outlined.Add, contentDescription = "Create collection")
+                        }
+                    }
+                },
+            ) { padding ->
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                        .padding(padding),
+                ) {
+                    Column(Modifier.fillMaxSize()) {
+                        if (searchVisible) {
+                            OutlinedTextField(
+                                value = query,
+                                onValueChange = { query = it },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                singleLine = true,
+                                leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                                trailingIcon = {
+                                    if (query.isNotEmpty()) {
+                                        IconButton(onClick = { query = "" }) {
+                                            Icon(Icons.Outlined.Close, contentDescription = "Clear search")
+                                        }
+                                    }
+                                },
+                                placeholder = { Text("Search names, albums, types and tags") },
+                            )
+                        }
+
+                        val legacy = legacyScreen
+                        when {
+                            legacy != null -> LegacyScreenHost(
+                                screen = legacy,
+                                state = state,
+                                actions = actions,
+                                query = query,
+                                onOpenRoute = { route = it; legacyScreen = null },
+                                onRequestUnlock = { key, name ->
+                                    passwordRequest = PasswordRequest(PasswordAction.UNLOCK, key, name)
+                                },
+                                onOpenSettings = { settingsDialogVisible = true },
+                            )
+                            route == BrowserRoute.Root -> PullToBackupHost(
+                                onBackupTriggered = {
+                                    // Foto Xplorr has no cloud-backup subsystem; the local
+                                    // metadata export is the one real backup action that
+                                    // exists, so that is what this gesture fires. The active
+                                    // phase acknowledges that the OS document picker was
+                                    // launched, not that a file has been written.
+                                    actions.onExportMetadata()
+                                    kotlinx.coroutines.delay(900)
+                                },
+                                counts = BackupCounts(
+                                    total = destinationAssets.size,
+                                    backedUp = destinationAssets.size,
+                                ),
+                                header = {
+                                    ScanActivityAlertBanner(
+                                        scanState = state.scanState,
+                                        showWhenIdle = state.recognitionProgress.running ||
+                                            state.recognitionProgress.message != null,
+                                    )
+                                },
+                            ) {
+                                DestinationContent(
+                                    destination = destination,
+                                    assets = destinationAssets,
+                                    state = state,
+                                    actions = actions,
+                                    selection = selection,
+                                    onSelectionChange = { selection = it },
+                                    gridState = gridState,
+                                    onRequestUnlock = { key, name ->
+                                        passwordRequest = PasswordRequest(
+                                            PasswordAction.UNLOCK, key, name,
+                                        )
+                                    },
+                                )
+                            }
+                            else -> MediaGridScreen(
+                                assets = currentAssets,
+                                columns = state.preferences.gridColumns,
+                                favoriteIds = state.favoriteIds,
+                                sensitiveIds = state.sensitiveIds,
+                                blurSensitive = state.preferences.blurSensitive,
+                                selectedIds = selection.selectedIds,
+                                emptyMessage = if (query.isBlank()) "Nothing here yet" else "No matching media",
+                                onOpen = { asset -> actions.onOpenAsset(asset, currentAssets) },
+                                onToggleSelection = { id -> selection = selection.toggle(id) },
+                                gridState = gridState,
+                            )
+                        }
+                    }
+
+                    // The floating pill from the mockups, replacing the retired bottom nav.
+                    if (!selection.isActive && legacyScreen == null) {
+                        FloatingPillControl(
+                            scrollFraction = scrollFraction,
+                            onScrub = { fraction ->
+                                val total = gridState.layoutInfo.totalItemsCount
+                                if (total > 0) {
+                                    gridScope.launch {
+                                        gridState.scrollToItem(
+                                            ((total - 1) * fraction).toInt().coerceIn(0, total - 1),
                                         )
                                     }
                                 }
-                            }
-                            collectionRoute?.let { collection ->
-                                DropdownMenuItem(
-                                    text = { Text("Rename collection") },
-                                    onClick = {
-                                        topMenuVisible = false
-                                        renameCollection = collection
-                                    },
+                            },
+                            onSearch = { searchVisible = !searchVisible },
+                            onToggleDensity = {
+                                val next = state.preferences.gridColumns + 1
+                                actions.onSetGridColumns(
+                                    if (next > MAX_GRID_COLUMNS) MIN_GRID_COLUMNS else next,
                                 )
-                                DropdownMenuItem(
-                                    text = { Text("Delete collection") },
-                                    onClick = {
-                                        topMenuVisible = false
-                                        actions.onDeleteCollection(collection.id)
-                                        route = BrowserRoute.Root
-                                    },
-                                )
-                            }
-                            DropdownMenuItem(
-                                text = { Text("Destinations (new navigation)") },
-                                leadingIcon = { Icon(Icons.Outlined.Dashboard, null) },
-                                onClick = {
-                                    topMenuVisible = false
-                                    browsingDestinations = true
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Settings") },
-                                leadingIcon = { Icon(Icons.Outlined.Settings, null) },
-                                onClick = {
-                                    topMenuVisible = false
-                                    settingsVisible = true
-                                },
-                            )
-                        }
-                    },
-                )
-            }
-        },
-        bottomBar = {
-            if (!selection.isActive && route == BrowserRoute.Root) {
-                GalleryNavigationBar(destination) { destination = it }
-            }
-        },
-        floatingActionButton = {
-            if (!selection.isActive && route == BrowserRoute.Root &&
-                (destination == GalleryDestination.ALBUMS || destination == GalleryDestination.LIBRARY)
-            ) {
-                FloatingActionButton(onClick = { createCollectionVisible = true }) {
-                    Icon(Icons.Outlined.Add, contentDescription = "Create collection")
-                }
-            }
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-        ) {
-            if (!selection.isActive) {
-                ScanActivityAlertBanner(scanState = state.scanState)
-            }
-            if (searchVisible) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    singleLine = true,
-                    leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                    trailingIcon = {
-                        if (query.isNotEmpty()) {
-                            IconButton(onClick = { query = "" }) {
-                                Icon(Icons.Outlined.Close, contentDescription = "Clear search")
-                            }
-                        }
-                    },
-                    placeholder = { Text("Search names, albums, types and tags") },
-                )
-            }
-
-            when (val current = route) {
-                BrowserRoute.Root -> when (destination) {
-                    GalleryDestination.TIMELINE -> PullToBackupHost(
-                        onBackupTriggered = {
-                            // Foto Xplorr has no cloud-backup subsystem; the local metadata
-                            // export (Library screen's Export, above) is the one real backup
-                            // action that exists, so that's what this gesture fires. The
-                            // active/spinning phase is a fixed acknowledgment that the OS
-                            // document picker was launched, NOT a signal that a file has
-                            // actually been written yet -- that completion happens later,
-                            // asynchronously, once the user picks a destination, and there is
-                            // no synchronous hook back into this gesture for it.
-                            actions.onExportMetadata()
-                            kotlinx.coroutines.delay(900)
-                        },
-                    ) {
-                        TimelineScreen(
-                            assets = timelineAssets,
-                            grouping = state.preferences.timelineGrouping,
-                            columns = state.preferences.gridColumns,
-                            favoriteIds = state.favoriteIds,
-                            sensitiveIds = state.sensitiveIds,
-                            blurSensitive = state.preferences.blurSensitive,
-                            selectedIds = selection.selectedIds,
-                            onOpen = { asset -> actions.onOpenAsset(asset, timelineAssets) },
-                            onToggleSelection = { id -> selection = selection.toggle(id) },
+                            },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .navigationBarsPadding(),
                         )
                     }
-                    GalleryDestination.ALBUMS -> AlbumsScreen(
-                        assets = state.assets,
-                        collections = state.library.collections,
-                        archivedIds = state.library.archivedIds,
-                        lockedFolders = state.lockedFolders,
-                        unlockedFolders = state.unlockedFolders,
-                        showVideos = state.preferences.showVideos,
-                        query = query,
-                        onOpenAlbum = { album ->
-                            if (album.key in state.lockedFolders && album.key !in state.unlockedFolders) {
-                                passwordRequest = PasswordRequest(PasswordAction.UNLOCK, album.key, album.name)
-                            } else {
-                                route = BrowserRoute.DeviceAlbum(album.key, album.name)
-                            }
-                        },
-                        onOpenCollection = { collection ->
-                            route = BrowserRoute.Collection(collection.id, collection.name)
-                        },
-                    )
-                    GalleryDestination.DISCOVER -> DiscoverScreen(
-                        summaries = smartAlbumSummaries(
-                            assets = state.assets,
-                            favoriteIds = state.favoriteIds,
-                            sensitiveIds = state.sensitiveIds,
-                            archivedIds = state.library.archivedIds,
-                            tagsByMediaId = state.library.tagsByMediaId,
-                            lockedFolders = state.lockedFolders,
-                            unlockedFolders = state.unlockedFolders,
-                            preferences = state.preferences,
-                        ),
-                        onOpen = { route = BrowserRoute.Smart(it.album) },
-                    )
-                    GalleryDestination.LIBRARY -> LibraryScreen(
-                        library = state.library,
-                        privateAlbumCount = state.lockedFolders.size,
-                        trashCount = state.assets.count { it.isTrashed },
-                        onOpenCollection = { route = BrowserRoute.Collection(it.id, it.name) },
-                        onOpenTag = { route = BrowserRoute.Tag(it) },
-                        onOpenArchive = { route = BrowserRoute.Smart(SmartAlbum.ARCHIVED) },
-                        onOpenTrash = { route = BrowserRoute.Smart(SmartAlbum.TRASH) },
-                        onOpenPrivateFolders = { destination = GalleryDestination.ALBUMS },
-                        onOpenSettings = { settingsVisible = true },
-                        onExportMetadata = actions.onExportMetadata,
-                        onImportMetadata = actions.onImportMetadata,
-                    )
                 }
-                else -> MediaGridScreen(
-                    assets = currentAssets,
-                    columns = state.preferences.gridColumns,
-                    favoriteIds = state.favoriteIds,
-                    sensitiveIds = state.sensitiveIds,
-                    blurSensitive = state.preferences.blurSensitive,
-                    selectedIds = selection.selectedIds,
-                    emptyMessage = if (query.isBlank()) "Nothing here yet" else "No matching media",
-                    onOpen = { asset -> actions.onOpenAsset(asset, currentAssets) },
-                    onToggleSelection = { id -> selection = selection.toggle(id) },
-                )
             }
         }
     }
 
-    if (settingsVisible) {
+    if (settingsDialogVisible) {
         GallerySettingsDialog(
             preferences = state.preferences,
-            onDismiss = { settingsVisible = false },
+            onDismiss = { settingsDialogVisible = false },
             actions = actions,
         )
     }
@@ -821,50 +758,199 @@ private fun GalleryBrowser(
 }
 
 @Composable
-private fun GalleryNavigationBar(
-    selected: GalleryDestination,
-    onSelect: (GalleryDestination) -> Unit,
+private fun SelectionTopBar(
+    selection: GallerySelection,
+    selectedAssets: List<MediaAsset>,
+    currentIds: Set<MediaId>,
+    inTrash: Boolean,
+    inArchive: Boolean,
+    state: GalleryUiState,
+    actions: GalleryActions,
+    menuVisible: Boolean,
+    onMenuVisibleChange: (Boolean) -> Unit,
+    onSelectionChange: (GallerySelection) -> Unit,
+    onRenameAsset: (MediaAsset) -> Unit,
+    onAddToCollection: (Set<MediaId>) -> Unit,
+    onAddTag: (Set<MediaId>) -> Unit,
+    tagRoute: BrowserRoute.Tag?,
+    collectionRoute: BrowserRoute.Collection?,
 ) {
-    NavigationBar {
-        GalleryDestination.entries.forEach { destination ->
-            NavigationBarItem(
-                selected = destination == selected,
-                onClick = { onSelect(destination) },
-                icon = { Icon(destination.icon(), contentDescription = null) },
-                label = { Text(destination.label()) },
-            )
-        }
-    }
+    CenterAlignedTopAppBar(
+        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+            containerColor = Color.Black,
+            titleContentColor = Color.White,
+            navigationIconContentColor = Color.White,
+            actionIconContentColor = Color.White,
+        ),
+        title = { Text("${selection.count} selected") },
+        navigationIcon = {
+            IconButton(onClick = { onSelectionChange(selection.clear()) }) {
+                Icon(Icons.Outlined.Close, contentDescription = "Clear selection")
+            }
+        },
+        actions = {
+            IconButton(onClick = { onSelectionChange(selection.selectAll(currentIds)) }) {
+                Icon(Icons.Outlined.SelectAll, contentDescription = "Select all")
+            }
+            if (!inTrash) {
+                IconButton(onClick = { actions.onShare(selectedAssets) }) {
+                    Icon(Icons.Outlined.Share, contentDescription = "Share")
+                }
+                IconButton(onClick = {
+                    val mark = bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK
+                    actions.onSetFavorite(selection.selectedIds, mark)
+                    onSelectionChange(selection.clear())
+                }) {
+                    Icon(Icons.Outlined.Favorite, contentDescription = "Toggle favourite")
+                }
+            }
+            IconButton(onClick = { onMenuVisibleChange(true) }) {
+                Icon(Icons.Outlined.MoreVert, contentDescription = "More actions")
+            }
+            DropdownMenu(expanded = menuVisible, onDismissRequest = { onMenuVisibleChange(false) }) {
+                if (inTrash) {
+                    DropdownMenuItem(
+                        text = { Text("Restore") },
+                        leadingIcon = { Icon(Icons.Outlined.Restore, null) },
+                        enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                        onClick = {
+                            onMenuVisibleChange(false)
+                            actions.onRestore(selectedAssets)
+                            onSelectionChange(selection.clear())
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete permanently") },
+                        leadingIcon = { Icon(Icons.Outlined.Delete, null) },
+                        enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                        onClick = {
+                            onMenuVisibleChange(false)
+                            actions.onDeletePermanently(selectedAssets)
+                            onSelectionChange(selection.clear())
+                        },
+                    )
+                } else {
+                    DropdownMenuItem(
+                        text = { Text(if (inArchive) "Unarchive" else "Archive") },
+                        leadingIcon = { Icon(Icons.Outlined.Archive, null) },
+                        onClick = {
+                            onMenuVisibleChange(false)
+                            actions.onSetArchived(selection.selectedIds, !inArchive)
+                            onSelectionChange(selection.clear())
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Mark sensitive") },
+                        leadingIcon = { Icon(Icons.Outlined.VisibilityOff, null) },
+                        onClick = {
+                            onMenuVisibleChange(false)
+                            val mark = bulkMarkAction(selection.selectedIds, state.sensitiveIds) == BulkMarkAction.MARK
+                            actions.onSetSensitive(selection.selectedIds, mark)
+                            onSelectionChange(selection.clear())
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Share without common EXIF metadata") },
+                        leadingIcon = { Icon(Icons.Outlined.Share, null) },
+                        enabled = selectedAssets.all { !it.isVideo && it.mimeType.startsWith("image/") },
+                        onClick = {
+                            onMenuVisibleChange(false)
+                            actions.onShareClean(selectedAssets)
+                            onSelectionChange(selection.clear())
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Copy to folder") },
+                        leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
+                        onClick = {
+                            onMenuVisibleChange(false)
+                            actions.onCopyToFolder(selectedAssets)
+                            onSelectionChange(selection.clear())
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Move to folder safely") },
+                        leadingIcon = { Icon(Icons.Outlined.DriveFileMove, null) },
+                        enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                        onClick = {
+                            onMenuVisibleChange(false)
+                            actions.onMoveToFolder(selectedAssets)
+                            onSelectionChange(selection.clear())
+                        },
+                    )
+                    if (selectedAssets.size == 1) {
+                        DropdownMenuItem(
+                            text = { Text("Rename file") },
+                            leadingIcon = { Icon(Icons.Outlined.Edit, null) },
+                            onClick = {
+                                onMenuVisibleChange(false)
+                                onRenameAsset(selectedAssets.first())
+                            },
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text("Add to collection") },
+                        leadingIcon = { Icon(Icons.Outlined.Collections, null) },
+                        onClick = {
+                            onMenuVisibleChange(false)
+                            onAddToCollection(selection.selectedIds)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Add tag") },
+                        leadingIcon = { Icon(Icons.Outlined.Label, null) },
+                        onClick = {
+                            onMenuVisibleChange(false)
+                            onAddTag(selection.selectedIds)
+                        },
+                    )
+                    tagRoute?.let { tag ->
+                        DropdownMenuItem(
+                            text = { Text("Remove #${tag.tag}") },
+                            leadingIcon = { Icon(Icons.Outlined.Close, null) },
+                            onClick = {
+                                onMenuVisibleChange(false)
+                                actions.onRemoveTag(selection.selectedIds, tag.tag)
+                                onSelectionChange(selection.clear())
+                            },
+                        )
+                    }
+                    collectionRoute?.let { collection ->
+                        DropdownMenuItem(
+                            text = { Text("Remove from collection") },
+                            leadingIcon = { Icon(Icons.Outlined.Close, null) },
+                            onClick = {
+                                onMenuVisibleChange(false)
+                                actions.onRemoveFromCollection(collection.id, selection.selectedIds)
+                                onSelectionChange(selection.clear())
+                            },
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text("Move to trash") },
+                        leadingIcon = { Icon(Icons.Outlined.Delete, null) },
+                        enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                        onClick = {
+                            onMenuVisibleChange(false)
+                            actions.onMoveToTrash(selectedAssets)
+                            onSelectionChange(selection.clear())
+                        },
+                    )
+                }
+            }
+        },
+    )
 }
 
-internal fun GalleryDestination.label(): String = when (this) {
-    GalleryDestination.TIMELINE -> "Photos"
-    GalleryDestination.ALBUMS -> "Albums"
-    GalleryDestination.DISCOVER -> "Discover"
-    GalleryDestination.LIBRARY -> "Library"
-}
-
-private fun GalleryDestination.icon(): ImageVector = when (this) {
-    GalleryDestination.TIMELINE -> Icons.Outlined.Home
-    GalleryDestination.ALBUMS -> Icons.Outlined.Album
-    GalleryDestination.DISCOVER -> Icons.Outlined.ImageSearch
-    GalleryDestination.LIBRARY -> Icons.Outlined.Collections
-}
-
-private fun BrowserRoute.title(destination: GalleryDestination): String = when (this) {
-    BrowserRoute.Root -> destination.label()
+fun BrowserRoute.title(destination: HyleDestination): String = when (this) {
+    BrowserRoute.Root -> destination.label
     is BrowserRoute.DeviceAlbum -> name
     is BrowserRoute.Collection -> name
     is BrowserRoute.Smart -> album.title()
     is BrowserRoute.Tag -> "#$tag"
 }
 
-private fun BrowserRoute.subtitle(visibleCount: Int, totalCount: Int): String = when (this) {
-    BrowserRoute.Root -> if (visibleCount > 0) "$visibleCount shown · $totalCount indexed" else "$totalCount indexed"
-    else -> "$visibleCount items"
-}
-
-private fun MediaAsset.matchesGallerySearch(query: String, tags: Set<String>): Boolean {
+internal fun MediaAsset.matchesGallerySearch(query: String, tags: Set<String>): Boolean {
     val normalized = query.trim().lowercase()
     if (normalized.isEmpty()) return true
     return displayName.lowercase().contains(normalized) ||
@@ -881,14 +967,14 @@ private fun GalleryEmptyState(
     onAction: (() -> Unit)? = null,
     progress: Boolean = false,
 ) {
-    androidx.compose.foundation.layout.Box(
+    Box(
         modifier = Modifier.fillMaxSize(),
-        contentAlignment = androidx.compose.ui.Alignment.Center,
+        contentAlignment = Alignment.Center,
     ) {
         Column(
             modifier = Modifier.padding(32.dp),
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
-            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             if (progress) CircularProgressIndicator()
             Text(title, style = MaterialTheme.typography.headlineSmall)
@@ -899,3 +985,6 @@ private fun GalleryEmptyState(
         }
     }
 }
+
+private const val RAIL_PANEL_WIDTH = 300
+private const val SETTINGS_PANEL_WIDTH = 320

@@ -54,6 +54,8 @@ import com.fotoxplorr.app.media.ScanEvent
 import com.fotoxplorr.app.media.SqliteMediaRepository
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
+import com.fotoxplorr.app.recognition.RecognitionIndexer
+import com.fotoxplorr.app.recognition.RecognitionStore
 import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.ui.FotoXplorrTheme
 import com.fotoxplorr.app.viewer.ViewerScreen
@@ -101,6 +103,11 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val fileOperations = remember { MediaFileOperations(applicationContext) }
     val cleanShareExporter = remember { CleanShareExporter(applicationContext) }
     val changeObserver = remember { MediaStoreChangeObserver(contentResolver) }
+    // On-device recognition backing the Pets / People / Identity destinations. Bundled ML
+    // Kit models only -- nothing here can reach the network, so personal photos never leave
+    // the device (the BYOK remote-AI path stays separate and strictly opt-in).
+    val recognitionStore = remember { RecognitionStore(applicationContext) }
+    val recognitionIndexer = remember { RecognitionIndexer(applicationContext, recognitionStore) }
     val indexer = remember { MediaIndexer(AndroidMediaStoreScanner(contentResolver), repository) }
     val scope = rememberCoroutineScope()
 
@@ -110,6 +117,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val lockedFolders by privateFolderStore.observeLockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
     val unlockedFolders by privateFolderStore.observeUnlockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
     val library by libraryStore.observe().collectAsStateWithLifecycle()
+    val recognition by recognitionStore.observe().collectAsStateWithLifecycle()
+    val recognitionProgress by recognitionStore.observeProgress().collectAsStateWithLifecycle()
 
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
     var scanState by remember { mutableStateOf<ScanState>(ScanState.Idle) }
@@ -124,6 +133,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     var pendingRenameAsset by remember { mutableStateOf<MediaAsset?>(null) }
     var pendingRenameName by remember { mutableStateOf<String?>(null) }
     var userMessage by remember { mutableStateOf<String?>(null) }
+    var recognitionGeneration by remember { mutableStateOf(0) }
 
     val selectedIndex = selectedAssetId?.let { id -> viewerAssets.indexOfFirst { it.id == id } } ?: -1
     val activeAsset = viewerAssets.getOrNull(selectedIndex)
@@ -439,6 +449,17 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
     }
 
+    LaunchedEffect(Unit) { recognitionStore.reload() }
+
+    // Guarded on a generation counter rather than the asset list itself, so a recomposition
+    // never restarts a pass that already finished. RecognitionIndexer is itself idempotent:
+    // it only visits assets whose stored result is missing or stale.
+    LaunchedEffect(recognitionGeneration) {
+        if (recognitionGeneration > 0 && assets.isNotEmpty()) {
+            recognitionIndexer.index(assets)
+        }
+    }
+
     LaunchedEffect(selectedAssetId, activeAsset) {
         if (selectedAssetId != null && activeAsset == null) {
             selectedAssetId = null
@@ -501,6 +522,12 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     selectedAssetId = related.id
                 }
             },
+            onSelectAsset = { picked ->
+                if (viewerAssets.any { it.id == picked.id }) {
+                    selectedAssetId = picked.id
+                    slideshowActive = false
+                }
+            },
         )
     } else {
         GalleryScreen(
@@ -514,6 +541,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 permissionGranted = permissionGranted,
                 scanState = scanState,
                 preferences = preferences,
+                recognition = recognition,
+                recognitionProgress = recognitionProgress,
             ),
             actions = GalleryActions(
                 onRequestPermission = { permissionLauncher.launch(requiredMediaPermissions()) },
@@ -528,6 +557,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onSetAccentPalette = galleryPreferences::setAccentPalette,
                 onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
                 onSetDefaultDestination = galleryPreferences::setDefaultDestination,
+                onIndexRecognition = { recognitionGeneration += 1 },
                 onProtectFolder = privateFolderStore::protect,
                 onUnlockFolder = privateFolderStore::unlock,
                 onLockFolder = privateFolderStore::lock,

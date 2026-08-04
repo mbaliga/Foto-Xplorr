@@ -1,8 +1,11 @@
 package com.fotoxplorr.app.gallery
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -11,58 +14,44 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Face
-import androidx.compose.material.icons.outlined.Favorite
-import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
-import androidx.compose.material.icons.outlined.Map
-import androidx.compose.material.icons.outlined.Pets
-import androidx.compose.material.icons.outlined.PhotoLibrary
-import androidx.compose.material.icons.outlined.Screenshot
-import androidx.compose.material.icons.outlined.Videocam
-import androidx.compose.material3.Card
-import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.hyle.HyleDestinationRail
 import com.fotoxplorr.app.hyle.HyleRailItem
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
 
 /**
- * The new left-nav / destination list from the mockups: Pets, People, Identity, Screenshots,
- * Photos, Videos, Favourites, Places, Protected. A parallel, additive entry point to the
- * existing four-destination bottom-nav IA (Timeline/Albums/Discover/Library in
- * [GalleryScreen]) -- reachable from the root screen's overflow menu -- rather than a
- * replacement of it: rewiring the whole app's primary navigation without the ability to
- * compile-check the result here felt like the wrong risk trade-off. See the PR description
- * for what "wired into existing navigation" means concretely for each new screen.
+ * The nine primary destinations from the owner's mockups. These are the app's top-level
+ * information architecture -- reached from the slide-in rail, not from a route -- and have
+ * replaced the retired four-tab bottom navigation (Photos / Albums / Discover / Library) as
+ * the default IA.
  */
 enum class HyleDestination(val label: String) {
     PETS("Pets"),
@@ -76,160 +65,216 @@ enum class HyleDestination(val label: String) {
     PROTECTED("Protected"),
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DestinationBrowserScreen(
+/** Which assets a destination shows. Kept separate from the UI so it is testable. */
+fun destinationAssets(
+    destination: HyleDestination,
     state: GalleryUiState,
-    actions: GalleryActions,
-    onClose: () -> Unit,
+    query: String = "",
+): List<MediaAsset> {
+    fun smart(album: SmartAlbum) = smartAlbumAssets(
+        album, state.assets, state.favoriteIds, state.sensitiveIds,
+        state.library.archivedIds, state.library.tagsByMediaId, state.lockedFolders,
+        state.unlockedFolders, state.preferences,
+    )
+
+    fun everyday() = everydayAssets(
+        assets = state.assets,
+        archivedIds = state.library.archivedIds,
+        sensitiveIds = state.sensitiveIds,
+        lockedFolders = state.lockedFolders,
+        unlockedFolders = state.unlockedFolders,
+        preferences = state.preferences,
+        query = "",
+        tagsByMediaId = state.library.tagsByMediaId,
+    )
+
+    val base = when (destination) {
+        HyleDestination.PHOTOS -> everyday()
+        HyleDestination.VIDEOS -> smart(SmartAlbum.VIDEOS)
+        HyleDestination.SCREENSHOTS -> smart(SmartAlbum.SCREENSHOTS)
+        HyleDestination.FAVOURITES -> smart(SmartAlbum.FAVORITES)
+        // Backed by the on-device recognition pass (com.fotoxplorr.app.recognition).
+        HyleDestination.PEOPLE -> everyday().filter { it.id in state.recognition.peopleMediaIds }
+        HyleDestination.PETS -> everyday().filter { it.id in state.recognition.petMediaIds }
+        HyleDestination.IDENTITY -> everyday().filter { it.id in state.recognition.identityMediaIds }
+        // Rendered by their own panes rather than a flat grid.
+        HyleDestination.PLACES, HyleDestination.PROTECTED -> emptyList()
+    }
+    if (query.isBlank()) return base
+    return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id)) }
+}
+
+/**
+ * The empty-state sentence for a destination, given what the recognition pass currently
+ * knows. Pure so the copy is unit-testable -- and so the honest distinction between "the
+ * pass has not run yet", "it ran and found nothing" and "it failed" cannot quietly collapse
+ * into a single vague string.
+ */
+fun destinationEmptyMessage(
+    destination: HyleDestination,
+    progress: com.fotoxplorr.app.recognition.RecognitionProgress,
+): String {
+    val recognitionBacked = destination in setOf(
+        HyleDestination.PETS, HyleDestination.PEOPLE, HyleDestination.IDENTITY,
+    )
+    if (!recognitionBacked) return "Nothing here yet"
+    progress.message?.let { return "On-device recognition stopped: $it" }
+    if (progress.running) {
+        return if (progress.total > 0) {
+            "Looking through your photos on this device… ${progress.completed} of ${progress.total}"
+        } else {
+            "Looking through your photos on this device…"
+        }
+    }
+    return when (destination) {
+        HyleDestination.PETS -> "No cats, dogs or other pets found in your photos"
+        HyleDestination.PEOPLE -> "No faces found in your photos"
+        HyleDestination.IDENTITY -> "No identity documents found in your photos"
+        else -> "Nothing here yet"
+    }
+}
+
+/** The rail panel content: the nine destinations, as the mockups draw them. */
+@Composable
+fun DestinationRailPanel(
+    items: List<HyleRailItem>,
+    selectedId: String,
+    onSelect: (String) -> Unit,
+    state: GalleryUiState,
     modifier: Modifier = Modifier,
 ) {
-    var selected by remember { mutableStateOf(HyleDestination.PHOTOS) }
-    var pendingUnlock by remember { mutableStateOf<Pair<String, String>?>(null) }
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .statusBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 24.dp, end = 16.dp, top = 40.dp, bottom = 40.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        HyleDestinationRail(
+            items = items,
+            selectedId = selectedId,
+            onSelect = onSelect,
+            trailingContent = { item ->
+                RailThumbnailCascade(
+                    destinationAssets(HyleDestination.valueOf(item.id), state).take(3),
+                )
+            },
+        )
+    }
+}
 
-    fun assetsFor(destination: HyleDestination): List<MediaAsset> = when (destination) {
-        HyleDestination.PHOTOS -> everydayAssets(
-            assets = state.assets,
-            archivedIds = state.library.archivedIds,
-            sensitiveIds = state.sensitiveIds,
+/** What a destination actually renders: a grid, the map, or the protected-folder list. */
+@Composable
+fun DestinationContent(
+    destination: HyleDestination,
+    assets: List<MediaAsset>,
+    state: GalleryUiState,
+    actions: GalleryActions,
+    selection: GallerySelection,
+    onSelectionChange: (GallerySelection) -> Unit,
+    gridState: LazyGridState,
+    onRequestUnlock: (String, String) -> Unit,
+) {
+    when (destination) {
+        HyleDestination.PLACES -> {
+            val spatial = LocalSpatialExperience.current
+            if (spatial != null) {
+                PlacesScreen(
+                    assets = spatial.assets,
+                    geoState = spatial.geoState,
+                    onIndexLocations = spatial.onIndexLocations,
+                    onOpenAsset = spatial.onOpenAsset,
+                )
+            } else {
+                DestinationMessage("Places is unavailable here")
+            }
+        }
+        HyleDestination.PROTECTED -> ProtectedFoldersPane(
             lockedFolders = state.lockedFolders,
             unlockedFolders = state.unlockedFolders,
-            preferences = state.preferences,
-            query = "",
-            tagsByMediaId = state.library.tagsByMediaId,
+            onOpenFolder = { key -> onRequestUnlock(key, key) },
         )
-        HyleDestination.VIDEOS -> smartAlbumAssets(
-            SmartAlbum.VIDEOS, state.assets, state.favoriteIds, state.sensitiveIds,
-            state.library.archivedIds, state.library.tagsByMediaId, state.lockedFolders,
-            state.unlockedFolders, state.preferences,
-        )
-        HyleDestination.SCREENSHOTS -> smartAlbumAssets(
-            SmartAlbum.SCREENSHOTS, state.assets, state.favoriteIds, state.sensitiveIds,
-            state.library.archivedIds, state.library.tagsByMediaId, state.lockedFolders,
-            state.unlockedFolders, state.preferences,
-        )
-        HyleDestination.FAVOURITES -> smartAlbumAssets(
-            SmartAlbum.FAVORITES, state.assets, state.favoriteIds, state.sensitiveIds,
-            state.library.archivedIds, state.library.tagsByMediaId, state.lockedFolders,
-            state.unlockedFolders, state.preferences,
-        )
-        // No pet/face/identity recognition pipeline exists in Foto Xplorr -- these are
-        // honestly empty rather than populated with anything fabricated.
-        HyleDestination.PETS, HyleDestination.PEOPLE, HyleDestination.IDENTITY,
-        HyleDestination.PLACES, HyleDestination.PROTECTED,
-        -> emptyList()
-    }
-
-    val icons = remember {
-        mapOf(
-            HyleDestination.PETS.name to Icons.Outlined.Pets,
-            HyleDestination.PEOPLE.name to Icons.Outlined.Face,
-            HyleDestination.IDENTITY.name to Icons.Outlined.Fingerprint,
-            HyleDestination.SCREENSHOTS.name to Icons.Outlined.Screenshot,
-            HyleDestination.PHOTOS.name to Icons.Outlined.PhotoLibrary,
-            HyleDestination.VIDEOS.name to Icons.Outlined.Videocam,
-            HyleDestination.FAVOURITES.name to Icons.Outlined.Favorite,
-            HyleDestination.PLACES.name to Icons.Outlined.Map,
-            HyleDestination.PROTECTED.name to Icons.Outlined.Lock,
-        )
-    }
-    val railItems = remember { HyleDestination.entries.map { HyleRailItem(it.name, it.label) } }
-
-    Scaffold(
-        modifier = modifier,
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("Destinations") },
-                navigationIcon = {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Outlined.Close, contentDescription = "Close destinations")
-                    }
-                },
+        else -> Column(Modifier.fillMaxSize()) {
+            if (destination == HyleDestination.PEOPLE && state.recognition.people.isNotEmpty()) {
+                PeopleStrip(
+                    clusters = state.recognition.people,
+                    assets = state.assets,
+                    onOpenPerson = { ids ->
+                        val personAssets = assets.filter { it.id in ids }
+                        personAssets.firstOrNull()?.let { actions.onOpenAsset(it, personAssets) }
+                    },
+                )
+            }
+            TimelineScreen(
+                assets = assets,
+                grouping = state.preferences.timelineGrouping,
+                columns = state.preferences.gridColumns,
+                favoriteIds = state.favoriteIds,
+                sensitiveIds = state.sensitiveIds,
+                blurSensitive = state.preferences.blurSensitive,
+                selectedIds = selection.selectedIds,
+                onOpen = { asset -> actions.onOpenAsset(asset, assets) },
+                onToggleSelection = { id -> onSelectionChange(selection.toggle(id)) },
+                // The mockups' main grid is one continuous mosaic with no date headers.
+                showDateHeaders = false,
+                gridState = gridState,
             )
-        },
-    ) { padding ->
-        Row(Modifier.fillMaxSize().padding(padding)) {
-            HyleDestinationRail(
-                items = railItems,
-                selectedId = selected.name,
-                onSelect = { id -> selected = HyleDestination.valueOf(id) },
-                icons = icons,
-                modifier = Modifier
-                    .width(232.dp)
-                    .fillMaxHeight()
-                    .verticalScroll(rememberScrollState())
-                    .padding(12.dp),
-                trailingContent = { item ->
-                    RailThumbnailCascade(assetsFor(HyleDestination.valueOf(item.id)).take(3))
-                },
-            )
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                when (selected) {
-                    HyleDestination.PLACES -> {
-                        val spatial = LocalSpatialExperience.current
-                        if (spatial != null) {
-                            PlacesScreen(
-                                assets = spatial.assets,
-                                geoState = spatial.geoState,
-                                onIndexLocations = spatial.onIndexLocations,
-                                onOpenAsset = spatial.onOpenAsset,
-                            )
-                        } else {
-                            MediaGridScreen(
-                                assets = emptyList(), columns = state.preferences.gridColumns,
-                                favoriteIds = emptySet(), sensitiveIds = emptySet(), blurSensitive = false,
-                                selectedIds = emptySet(), emptyMessage = "Places is unavailable here",
-                                onOpen = {}, onToggleSelection = {},
-                            )
-                        }
-                    }
-                    HyleDestination.PROTECTED -> ProtectedFoldersPane(
-                        lockedFolders = state.lockedFolders,
-                        unlockedFolders = state.unlockedFolders,
-                        onOpenFolder = { key -> pendingUnlock = key to key },
-                    )
-                    HyleDestination.PETS, HyleDestination.PEOPLE, HyleDestination.IDENTITY -> MediaGridScreen(
-                        assets = emptyList(),
-                        columns = state.preferences.gridColumns,
-                        favoriteIds = emptySet(),
-                        sensitiveIds = emptySet(),
-                        blurSensitive = false,
-                        selectedIds = emptySet(),
-                        emptyMessage = when (selected) {
-                            HyleDestination.PETS -> "No pet-recognition pipeline in this build"
-                            HyleDestination.PEOPLE -> "No face-grouping pipeline in this build"
-                            else -> "No identity-recognition pipeline in this build"
-                        },
-                        onOpen = {},
-                        onToggleSelection = {},
-                    )
-                    else -> {
-                        val destinationAssets = assetsFor(selected)
-                        MediaGridScreen(
-                            assets = destinationAssets,
-                            columns = state.preferences.gridColumns,
-                            favoriteIds = state.favoriteIds,
-                            sensitiveIds = state.sensitiveIds,
-                            blurSensitive = state.preferences.blurSensitive,
-                            selectedIds = emptySet(),
-                            emptyMessage = "Nothing here yet",
-                            onOpen = { asset -> actions.onOpenAsset(asset, destinationAssets) },
-                            onToggleSelection = {},
-                        )
-                    }
-                }
+            if (assets.isEmpty()) {
+                DestinationMessage(destinationEmptyMessage(destination, state.recognitionProgress))
             }
         }
     }
+}
 
-    pendingUnlock?.let { (key, name) ->
-        PasswordDialog(
-            title = "Unlock $name",
-            confirmLabel = "Unlock",
-            failureMessage = "Incorrect password or temporarily locked",
-            onDismiss = { pendingUnlock = null },
-            onConfirm = { password -> actions.onUnlockFolder(key, password) },
-            onSuccess = { pendingUnlock = null },
+/** The people found by clustering, as a row of round covers above the People grid. */
+@Composable
+private fun PeopleStrip(
+    clusters: List<com.fotoxplorr.app.recognition.PersonCluster>,
+    assets: List<MediaAsset>,
+    onOpenPerson: (Set<MediaId>) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth().background(Color.Black),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        items(clusters, key = { it.id }) { cluster ->
+            val cover = assets.firstOrNull { it.id in cluster.mediaIds }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(Color(0xFF1A1A1A))
+                        .clickable { onOpenPerson(cluster.mediaIds.toSet()) },
+                ) {
+                    cover?.let {
+                        MediaImage(it, Modifier.fillMaxSize(), ContentScale.Crop)
+                    }
+                }
+                Text(
+                    // Clusters are unnamed: nothing on the device knows who these people are,
+                    // and inventing names would be fabrication. Numbering them is honest.
+                    "Person ${cluster.id + 1}",
+                    style = TextStyle(fontSize = 11.sp),
+                    color = Color.White.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DestinationMessage(message: String) {
+    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+        Text(
+            message,
+            modifier = Modifier.padding(32.dp),
+            style = TextStyle(fontSize = 15.sp),
+            color = Color.White.copy(alpha = 0.55f),
         )
     }
 }
@@ -241,31 +286,32 @@ private fun ProtectedFoldersPane(
     onOpenFolder: (String) -> Unit,
 ) {
     if (lockedFolders.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                "No protected folders yet",
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.padding(32.dp),
-            )
-        }
+        DestinationMessage("No protected folders yet")
         return
     }
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().background(Color.Black),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         items(lockedFolders.toList().sorted(), key = { it }) { key ->
             val unlocked = key in unlockedFolders
-            Card(onClick = { onOpenFolder(key) }, modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Icon(if (unlocked) Icons.Outlined.LockOpen else Icons.Outlined.Lock, contentDescription = null)
-                    Text(key, modifier = Modifier.weight(1f))
-                }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF141414))
+                    .clickable { onOpenFolder(key) }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    if (unlocked) Icons.Outlined.LockOpen else Icons.Outlined.Lock,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.75f),
+                )
+                Text(key, color = Color.White, modifier = Modifier.weight(1f))
             }
         }
     }
@@ -284,6 +330,165 @@ private fun RailThumbnailCascade(assets: List<MediaAsset>) {
                     .clip(RoundedCornerShape(6.dp))
                     .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(6.dp)),
                 contentScale = ContentScale.Crop,
+            )
+        }
+    }
+}
+
+/**
+ * The screens the retired bottom navigation used to own. They are kept, and kept reachable
+ * from the settings panel, so retiring that navigation removed a default rather than a
+ * feature.
+ */
+enum class LegacyScreen(val label: String) {
+    ALBUMS("Albums"),
+    DISCOVER("Discover"),
+    LIBRARY("Library"),
+}
+
+@Composable
+fun LegacyScreenHost(
+    screen: LegacyScreen,
+    state: GalleryUiState,
+    actions: GalleryActions,
+    query: String,
+    onOpenRoute: (BrowserRoute) -> Unit,
+    onRequestUnlock: (String, String) -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        when (screen) {
+            LegacyScreen.ALBUMS -> AlbumsScreen(
+                assets = state.assets,
+                collections = state.library.collections,
+                archivedIds = state.library.archivedIds,
+                lockedFolders = state.lockedFolders,
+                unlockedFolders = state.unlockedFolders,
+                showVideos = state.preferences.showVideos,
+                query = query,
+                onOpenAlbum = { album ->
+                    if (album.key in state.lockedFolders && album.key !in state.unlockedFolders) {
+                        onRequestUnlock(album.key, album.name)
+                    } else {
+                        onOpenRoute(BrowserRoute.DeviceAlbum(album.key, album.name))
+                    }
+                },
+                onOpenCollection = { collection ->
+                    onOpenRoute(BrowserRoute.Collection(collection.id, collection.name))
+                },
+            )
+            LegacyScreen.DISCOVER -> DiscoverScreen(
+                summaries = smartAlbumSummaries(
+                    assets = state.assets,
+                    favoriteIds = state.favoriteIds,
+                    sensitiveIds = state.sensitiveIds,
+                    archivedIds = state.library.archivedIds,
+                    tagsByMediaId = state.library.tagsByMediaId,
+                    lockedFolders = state.lockedFolders,
+                    unlockedFolders = state.unlockedFolders,
+                    preferences = state.preferences,
+                ),
+                onOpen = { onOpenRoute(BrowserRoute.Smart(it.album)) },
+            )
+            LegacyScreen.LIBRARY -> LibraryScreen(
+                library = state.library,
+                privateAlbumCount = state.lockedFolders.size,
+                trashCount = state.assets.count { it.isTrashed },
+                onOpenCollection = { onOpenRoute(BrowserRoute.Collection(it.id, it.name)) },
+                onOpenTag = { onOpenRoute(BrowserRoute.Tag(it)) },
+                onOpenArchive = { onOpenRoute(BrowserRoute.Smart(SmartAlbum.ARCHIVED)) },
+                onOpenTrash = { onOpenRoute(BrowserRoute.Smart(SmartAlbum.TRASH)) },
+                onOpenPrivateFolders = { },
+                onOpenSettings = onOpenSettings,
+                onExportMetadata = actions.onExportMetadata,
+                onImportMetadata = actions.onImportMetadata,
+            )
+        }
+    }
+}
+
+/**
+ * The settings panel from the mockup: a small letterspaced "SETTINGS" label over large
+ * light "Default View" type, sliding in from the right with the grid still showing at the
+ * left edge.
+ */
+@Composable
+fun SettingsPanel(
+    preferences: GalleryPreferencesState,
+    onOpenAllSettings: () -> Unit,
+    onSetDefaultDestination: (HyleDestination) -> Unit,
+    onOpenLegacyScreen: (LegacyScreen) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .statusBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 28.dp, end = 20.dp, top = 32.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            "SETTINGS",
+            style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp),
+            color = Color.White,
+        )
+        Text(
+            "Default View",
+            style = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Light),
+            color = Color.White,
+            modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
+        )
+        // Now over the nine destinations, not the four retired bottom-nav tabs.
+        HyleDestination.entries.forEach { candidate ->
+            val selected = preferences.defaultDestination == candidate
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSetDefaultDestination(candidate) }
+                    .padding(vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(width = 20.dp, height = 10.dp), contentAlignment = Alignment.CenterStart) {
+                    if (selected) Box(Modifier.size(8.dp).background(Color.White))
+                }
+                Text(
+                    candidate.label,
+                    style = TextStyle(
+                        fontSize = 18.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Light,
+                    ),
+                    color = Color.White.copy(alpha = if (selected) 1f else 0.55f),
+                )
+            }
+        }
+
+        Text(
+            "MORE",
+            style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp),
+            color = Color.White,
+            modifier = Modifier.padding(top = 26.dp, bottom = 4.dp),
+        )
+        LegacyScreen.entries.forEach { screen ->
+            TextButton(
+                onClick = { onOpenLegacyScreen(screen) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    screen.label,
+                    color = Color.White.copy(alpha = 0.75f),
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            }
+        }
+        TextButton(onClick = onOpenAllSettings, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "All settings…",
+                color = Color.White,
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.bodyLarge,
             )
         }
     }

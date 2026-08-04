@@ -282,13 +282,15 @@ fun GallerySettingsDialog(
                     }
                 }
                 item {
+                    // The nine primary destinations from the mockups, not the four retired
+                    // bottom-nav tabs this list used to offer.
                     SettingsSection("Default View") {
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(GalleryDestination.entries, key = { it.name }) { candidate ->
+                            items(HyleDestination.entries, key = { it.name }) { candidate ->
                                 FilterChip(
                                     selected = preferences.defaultDestination == candidate,
                                     onClick = { actions.onSetDefaultDestination(candidate) },
-                                    label = { Text(candidate.label()) },
+                                    label = { Text(candidate.label) },
                                 )
                             }
                         }

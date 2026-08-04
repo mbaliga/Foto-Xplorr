@@ -20,8 +20,10 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Collections
@@ -59,6 +61,20 @@ import com.fotoxplorr.app.organize.MediaCollection
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
 
+/**
+ * Gutter between grid tiles. The mockups draw an essentially seamless mosaic -- a hairline
+ * of black between tiles and nothing at the screen edges -- so this is 1dp rather than the
+ * 2dp the grid used before, and no content padding is applied.
+ */
+private val GRID_GUTTER = 1.dp
+
+/**
+ * The pure-black canvas the mockups sit every grid on. Deliberately a literal black rather
+ * than `colorScheme.background`: the mockups are black regardless of the theme's surface
+ * tint, and OLED-black is the whole visual point of the design.
+ */
+val GRID_BACKGROUND: Color = Color.Black
+
 @Composable
 fun TimelineScreen(
     assets: List<MediaAsset>,
@@ -70,17 +86,42 @@ fun TimelineScreen(
     selectedIds: Set<MediaId>,
     onOpen: (MediaAsset) -> Unit,
     onToggleSelection: (MediaId) -> Unit,
+    /**
+     * Whether to draw date-group headers. The mockups' main grid has none -- it is one
+     * continuous mosaic -- so the primary destination passes `false` here. The Timeline
+     * grouping preference still drives this everywhere it applies (see
+     * `GalleryDestination.PHOTOS`' own grouped variant), so the feature is switched off in
+     * this view rather than deleted.
+     */
+    showDateHeaders: Boolean = true,
+    gridState: LazyGridState = rememberLazyGridState(),
 ) {
     if (assets.isEmpty()) {
         GalleryMessage("No media matches the current filters")
         return
     }
+    if (!showDateHeaders || grouping == TimelineGrouping.NONE) {
+        MediaGridScreen(
+            assets = assets,
+            columns = columns,
+            favoriteIds = favoriteIds,
+            sensitiveIds = sensitiveIds,
+            blurSensitive = blurSensitive,
+            selectedIds = selectedIds,
+            emptyMessage = "No media matches the current filters",
+            onOpen = onOpen,
+            onToggleSelection = onToggleSelection,
+            gridState = gridState,
+        )
+        return
+    }
     val groups = timelineGroups(assets, grouping)
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        state = gridState,
+        modifier = Modifier.fillMaxSize().background(GRID_BACKGROUND),
+        verticalArrangement = Arrangement.spacedBy(GRID_GUTTER),
+        horizontalArrangement = Arrangement.spacedBy(GRID_GUTTER),
     ) {
         groups.forEach { group ->
             item(
@@ -90,13 +131,17 @@ fun TimelineScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.background.copy(alpha = 0.96f))
+                        .background(GRID_BACKGROUND)
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(group.title, style = MaterialTheme.typography.titleSmall)
-                    Text("${group.assets.size}", style = MaterialTheme.typography.labelMedium)
+                    Text(group.title, style = MaterialTheme.typography.titleSmall, color = Color.White)
+                    Text(
+                        "${group.assets.size}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White.copy(alpha = 0.6f),
+                    )
                 }
             }
             items(group.assets, key = { it.id.value }) { asset ->
@@ -126,6 +171,7 @@ fun MediaGridScreen(
     emptyMessage: String,
     onOpen: (MediaAsset) -> Unit,
     onToggleSelection: (MediaId) -> Unit,
+    gridState: LazyGridState = rememberLazyGridState(),
 ) {
     if (assets.isEmpty()) {
         GalleryMessage(emptyMessage)
@@ -133,9 +179,10 @@ fun MediaGridScreen(
     }
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        state = gridState,
+        modifier = Modifier.fillMaxSize().background(GRID_BACKGROUND),
+        verticalArrangement = Arrangement.spacedBy(GRID_GUTTER),
+        horizontalArrangement = Arrangement.spacedBy(GRID_GUTTER),
     ) {
         items(assets, key = { it.id.value }) { asset ->
             MediaTile(
@@ -165,7 +212,9 @@ private fun MediaTile(
     Box(
         modifier = Modifier
             .aspectRatio(1f)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            // Black rather than surfaceVariant: an unloaded tile should read as a gap in the
+            // mosaic, not as a light grey block punched through it.
+            .background(GRID_BACKGROUND)
             .combinedClickable(
                 onClick = { if (selected) onToggleSelection() else onOpen() },
                 onLongClick = onToggleSelection,
