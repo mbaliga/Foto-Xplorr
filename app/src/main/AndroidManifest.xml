@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!--
+      dev.aarso:hyle declares minSdk=31 (see hyle-design-system/hyle/build.gradle.kts);
+      this app's own minSdk stays 26 (unchanged: lowering device support was out of
+      scope for this change). tools:overrideLibrary is the standard AGP manifest-merger
+      escape hatch for "I know a dependency asks for a higher minSdk than the app
+      declares, keep the app's own minSdk/targetSdk". This has NOT been verified against
+      an actual API 26 to 30 device/emulator in this environment (no Android SDK
+      available): it only suppresses the manifest-merger error. If :hyle's Compose
+      Modifiers/AGSL shaders (still unreleased per its own README) end up calling any
+      API gated above 26, that would need to be caught by lint/testing on a real device
+      or emulator running API below 31, which this change could not do.
+    -->
+    <uses-sdk tools:overrideLibrary="dev.aarso.hyle" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <uses-feature
+        android:glEsVersion="0x00030000"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.sensor.gyroscope"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.location.gps"
+        android:required="false" />
+
+    <application
+        android:name=".FotoXplorrApplication"
+        android:allowBackup="false"
+        android:label="Foto Xplorr"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.FotoXplorr">
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <activity
+            android:name=".FotoXplorrActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

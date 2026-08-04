@@ -1,0 +1,72 @@
+name: Android debug APK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # hyle-design-system is a git submodule (D-A); without this the includeBuild()
+          # in settings.gradle.kts resolves to an empty directory and configuration fails.
+          submodules: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
+      - uses: gradle/actions/setup-gradle@v4
+        # No explicit gradle-version: the checked-in wrapper (gradle/wrapper/gradle-wrapper.properties,
+        # 8.14.3) is now the single source of truth for the Gradle version, so it stays in
+        # lockstep with hyle-design-system's own wrapper and with the AGP 8.9.1 pin in the
+        # root build.gradle.kts (D-Q: composite builds require identical AGP versions
+        # across the root build and any includeBuild'd project).
+      - name: Test, lint and build debug APK
+        shell: bash
+        run: |
+          set -o pipefail
+          chmod +x ./gradlew
+          # lintDebug was previously absent from CI, which is how an
+          # UnusedBoxWithConstraintsScope error in app/src/main/.../ai was able to sit on the
+          # branch unnoticed -- `lintDebug` only ever got run by hand, so "lint passes" was a
+          # claim rather than a gate. It is part of the build now so it stays true.
+          ./gradlew --no-daemon --stacktrace \
+            :app:testDebugUnitTest :app:lintDebug :app:assembleDebug 2>&1 | tee build.log
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foto-xplorr-build-log
+          path: build.log
+          if-no-files-found: error
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foto-xplorr-lint
+          path: app/build/reports/lint-results-debug.html
+          if-no-files-found: warn
+      - name: Upload unit test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foto-xplorr-unit-tests
+          path: app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: warn
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: foto-xplorr-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
