@@ -207,22 +207,27 @@ fun DestinationContent(
                     },
                 )
             }
-            TimelineScreen(
-                assets = assets,
-                grouping = state.preferences.timelineGrouping,
-                columns = state.preferences.gridColumns,
-                favoriteIds = state.favoriteIds,
-                sensitiveIds = state.sensitiveIds,
-                blurSensitive = state.preferences.blurSensitive,
-                selectedIds = selection.selectedIds,
-                onOpen = { asset -> actions.onOpenAsset(asset, assets) },
-                onToggleSelection = { id -> onSelectionChange(selection.toggle(id)) },
-                // The mockups' main grid is one continuous mosaic with no date headers.
-                showDateHeaders = false,
-                gridState = gridState,
-            )
+            // Either the grid or the empty state, never both: TimelineScreen renders its own
+            // generic "No media matches the current filters" when handed an empty list, which
+            // would otherwise stack above this destination's far more useful message and push
+            // it off-screen, since both fill the available height.
             if (assets.isEmpty()) {
                 DestinationMessage(destinationEmptyMessage(destination, state.recognitionProgress))
+            } else {
+                TimelineScreen(
+                    assets = assets,
+                    grouping = state.preferences.timelineGrouping,
+                    columns = state.preferences.gridColumns,
+                    favoriteIds = state.favoriteIds,
+                    sensitiveIds = state.sensitiveIds,
+                    blurSensitive = state.preferences.blurSensitive,
+                    selectedIds = selection.selectedIds,
+                    onOpen = { asset -> actions.onOpenAsset(asset, assets) },
+                    onToggleSelection = { id -> onSelectionChange(selection.toggle(id)) },
+                    // The mockups' main grid is one continuous mosaic with no date headers.
+                    showDateHeaders = false,
+                    gridState = gridState,
+                )
             }
         }
     }

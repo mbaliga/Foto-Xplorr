@@ -76,6 +76,43 @@ class DestinationEmptyMessageTest {
     }
 }
 
+class DestinationEmptyMessageDistinctnessTest {
+
+    /**
+     * DestinationContent renders either the grid or this message, never both. TimelineScreen
+     * has its own generic "No media matches the current filters" for an empty list, and for a
+     * while both were rendered -- stacking two contradictory empty states and pushing the
+     * useful one off-screen. If any of these ever collapses into a generic string, the two
+     * have been confused again.
+     */
+    @Test
+    fun `recognition destinations never fall back to a generic message`() {
+        val states = listOf(
+            RecognitionProgress(),
+            RecognitionProgress(running = true),
+            RecognitionProgress(running = true, completed = 3, total = 9),
+            RecognitionProgress(message = "boom"),
+        )
+        listOf(HyleDestination.PETS, HyleDestination.PEOPLE, HyleDestination.IDENTITY)
+            .forEach { destination ->
+                states.forEach { progress ->
+                    val message = destinationEmptyMessage(destination, progress)
+                    assertTrue(message, message.isNotBlank())
+                    assertTrue(message, message != "No media matches the current filters")
+                    assertTrue(message, message != "Nothing here yet")
+                }
+            }
+    }
+
+    @Test
+    fun `each recognition destination says something different when empty`() {
+        val messages = listOf(
+            HyleDestination.PETS, HyleDestination.PEOPLE, HyleDestination.IDENTITY,
+        ).map { destinationEmptyMessage(it, RecognitionProgress()) }
+        assertEquals(messages.size, messages.toSet().size)
+    }
+}
+
 class HyleDestinationTest {
 
     @Test

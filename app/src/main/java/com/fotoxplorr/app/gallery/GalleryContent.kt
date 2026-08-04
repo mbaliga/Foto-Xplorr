@@ -633,8 +633,19 @@ private fun SectionHeading(title: String, subtitle: String) {
 
 @Composable
 private fun GalleryMessage(message: String) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(message, modifier = Modifier.padding(32.dp), style = MaterialTheme.typography.bodyLarge)
+    // Drawn on [GRID_BACKGROUND], which is a literal black regardless of theme, so the text
+    // colour has to be explicit too -- inheriting onSurface would render this dark-on-black
+    // and effectively invisible whenever the app is in light theme.
+    Box(
+        Modifier.fillMaxSize().background(GRID_BACKGROUND),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            message,
+            modifier = Modifier.padding(32.dp),
+            style = MaterialTheme.typography.bodyLarge,
+            color = Color.White.copy(alpha = 0.55f),
+        )
     }
 }
 
