@@ -14,7 +14,6 @@ import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -372,7 +371,10 @@ private fun SimilarityMap(
         }.take(MAX_VISIBLE_THUMBNAILS)
     }
 
-    BoxWithConstraints(
+    // Plain Box, not BoxWithConstraints: this composable never reads the constraints scope
+    // (it measures itself via onSizeChanged below), so BoxWithConstraints was paying for a
+    // subcomposition it did not use -- which lint flags as an error.
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .background(Color(0xFF0B0B0E))

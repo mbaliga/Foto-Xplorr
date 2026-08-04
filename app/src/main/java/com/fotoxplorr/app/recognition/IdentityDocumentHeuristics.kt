@@ -45,13 +45,18 @@ object IdentityDocumentHeuristics {
         "voter id", "permanent account number",
     )
 
-    /** Field labels that appear on documents but rarely together elsewhere. */
+    /**
+     * Field labels that appear on documents but rarely together elsewhere. Kept deliberately
+     * specific: a generic word like "class" (a real driving-licence field) also appears in
+     * ordinary messages about school classes, and a unit test caught it scoring on exactly
+     * that, so it was removed rather than left to false-positive.
+     */
     private val FIELD_PHRASES = listOf(
         "date of birth", "dob", "place of birth", "date of issue", "date of expiry",
         "expiry date", "expires", "valid until", "valid from", "nationality", "surname",
         "given name", "given names", "sex", "issuing authority", "authority", "holder",
         "signature", "licence no", "license no", "document no", "card number", "id no",
-        "issued by", "blood group", "father's name", "class", "endorsements",
+        "issued by", "blood group", "father's name", "endorsements",
     )
 
     /** Issuer-ish words: weak alone, meaningful next to the above. */

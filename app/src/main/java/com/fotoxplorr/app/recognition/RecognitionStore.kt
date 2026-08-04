@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import androidx.core.database.sqlite.transaction
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import kotlinx.coroutines.Dispatchers
@@ -174,11 +175,9 @@ private class RecognitionOpenHelper(context: Context) :
     }
 
     fun upsert(rows: List<AssetRecognition>) {
-        val db = writableDatabase
-        db.beginTransaction()
-        try {
+        writableDatabase.transaction {
             rows.forEach { row ->
-                db.insertWithOnConflict(
+                insertWithOnConflict(
                     TABLE_ASSETS, null,
                     ContentValues().apply {
                         put("media_id", row.mediaId.value)
@@ -189,9 +188,9 @@ private class RecognitionOpenHelper(context: Context) :
                     },
                     SQLiteDatabase.CONFLICT_REPLACE,
                 )
-                db.delete(TABLE_FACES, "media_id = ?", arrayOf(row.mediaId.value.toString()))
+                delete(TABLE_FACES, "media_id = ?", arrayOf(row.mediaId.value.toString()))
                 row.faceDescriptors.forEach { face ->
-                    db.insertWithOnConflict(
+                    insertWithOnConflict(
                         TABLE_FACES, null,
                         ContentValues().apply {
                             put("media_id", row.mediaId.value)
@@ -203,9 +202,6 @@ private class RecognitionOpenHelper(context: Context) :
                     )
                 }
             }
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
         }
     }
 
@@ -213,17 +209,12 @@ private class RecognitionOpenHelper(context: Context) :
         val known = revisions().keys
         val stale = known - availableIds
         if (stale.isEmpty()) return
-        val db = writableDatabase
-        db.beginTransaction()
-        try {
+        writableDatabase.transaction {
             stale.forEach { id ->
                 val args = arrayOf(id.value.toString())
-                db.delete(TABLE_FACES, "media_id = ?", args)
-                db.delete(TABLE_ASSETS, "media_id = ?", args)
+                delete(TABLE_FACES, "media_id = ?", args)
+                delete(TABLE_ASSETS, "media_id = ?", args)
             }
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
         }
     }
 

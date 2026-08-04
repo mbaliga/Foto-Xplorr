@@ -90,7 +90,7 @@ fun TimelineScreen(
      * Whether to draw date-group headers. The mockups' main grid has none -- it is one
      * continuous mosaic -- so the primary destination passes `false` here. The Timeline
      * grouping preference still drives this everywhere it applies (see
-     * `GalleryDestination.PHOTOS`' own grouped variant), so the feature is switched off in
+     * the grouped variant this delegates to), so the feature is switched off in
      * this view rather than deleted.
      */
     showDateHeaders: Boolean = true,

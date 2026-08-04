@@ -14,13 +14,6 @@ internal enum class GallerySection {
     TRASH,
 }
 
-enum class GalleryDestination {
-    TIMELINE,
-    ALBUMS,
-    DISCOVER,
-    LIBRARY,
-}
-
 enum class SmartAlbum {
     FAVORITES,
     RECENT,

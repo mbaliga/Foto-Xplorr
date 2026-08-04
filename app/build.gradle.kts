@@ -88,6 +88,9 @@ dependencies {
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
+    // Already on the classpath transitively; declared explicitly because this module now uses
+    // its KTX helpers directly (SQLiteDatabase.transaction, Bitmap.get).
+    implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
@@ -112,6 +115,15 @@ dependencies {
     // local-first posture -- no network at all. Nothing here can reach a remote endpoint,
     // which is why personal photos can be run through it while the BYOK remote-AI path in
     // com.fotoxplorr.app.ai stays strictly opt-in and strictly separate.
+    //
+    // COST, measured on the debug APK: the bundled native libraries total ~121 MB across all
+    // four ABIs (~30 MB for a single ABI, which is what a device actually installs from an
+    // app bundle or ABI split). The unbundled `*-play-services` variants of these three
+    // artifacts would remove that entirely, but they require Google Play Services and a
+    // first-use model download over the network -- which would break the offline, local-first
+    // guarantee these destinations are built on. The size is the deliberate price of that
+    // guarantee; if it ever needs cutting, dropping text-recognition (the largest single
+    // contributor, ~11 MB/ABI) would cost only the Identity destination.
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("com.google.mlkit:image-labeling:17.0.9")
     implementation("com.google.mlkit:text-recognition:16.0.1")

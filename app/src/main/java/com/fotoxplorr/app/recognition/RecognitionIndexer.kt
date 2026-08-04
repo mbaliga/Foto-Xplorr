@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Rect
 import android.os.Build
 import android.util.Size
+import androidx.core.graphics.get
 import com.fotoxplorr.app.media.MediaAsset
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
@@ -230,7 +231,7 @@ class RecognitionIndexer(
             val sourceY = top + (y * height) / PATCH_SIDE
             for (x in 0 until PATCH_SIDE) {
                 val sourceX = left + (x * width) / PATCH_SIDE
-                val pixel = bitmap.getPixel(sourceX, sourceY)
+                val pixel = bitmap[sourceX, sourceY]
                 val luminance = 0.2126f * Color.red(pixel) +
                     0.7152f * Color.green(pixel) +
                     0.0722f * Color.blue(pixel)

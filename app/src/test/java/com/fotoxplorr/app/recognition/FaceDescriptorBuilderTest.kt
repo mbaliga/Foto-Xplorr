@@ -194,6 +194,11 @@ class FaceDescriptorBuilderTest {
             "different face geometry should not cluster together, distance was $distance",
             distance > FaceClustering.DEFAULT_MAX_COSINE_DISTANCE,
         )
+        // Pins the compressive distance scale that FaceClustering's threshold is chosen
+        // against: a 2.4x vertical stretch -- far more than two real people differ by --
+        // only reaches ~0.075. If a future descriptor change moves this, the threshold must
+        // move with it, and this assertion is what will say so.
+        assertTrue("distance was $distance", distance in 0.05f..0.11f)
     }
 
     @Test

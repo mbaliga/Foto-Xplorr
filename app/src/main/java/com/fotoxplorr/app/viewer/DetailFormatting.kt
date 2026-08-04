@@ -22,8 +22,12 @@ object DetailFormatting {
         val dateTime = Instant.ofEpochMilli(epochMillis).atZone(zoneId)
         val day = DateTimeFormatter.ofPattern("EEEE", locale).format(dateTime)
         val date = DateTimeFormatter.ofPattern("d MMM yyyy", locale).format(dateTime)
-        val time = DateTimeFormatter.ofPattern("h:mm a", locale).format(dateTime)
-        return "$day • $date • $time"
+        // JDK 9+ CLDR data renders the day-period lowercase ("pm") for many locales; the
+        // mockup shows it uppercase, and uppercasing only the marker keeps the rest of the
+        // line locale-correct.
+        val hourMinute = DateTimeFormatter.ofPattern("h:mm", locale).format(dateTime)
+        val marker = DateTimeFormatter.ofPattern("a", locale).format(dateTime).uppercase(locale)
+        return "$day • $date • $hourMinute $marker"
     }
 
     /**

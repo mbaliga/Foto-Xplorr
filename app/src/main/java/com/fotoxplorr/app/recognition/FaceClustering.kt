@@ -23,10 +23,24 @@ object FaceClustering {
 
     /**
      * Cosine distance (1 - cosine similarity) above which two faces are treated as different
-     * people. Deliberately tight: over-splitting is recoverable by the user, over-merging is
-     * not. Not tuned against a labelled face dataset -- see the class note.
+     * people.
+     *
+     * ### Why this number is so small
+     * Cosine distance over [FaceDescriptorBuilder]'s descriptor is *compressive*: because the
+     * descriptor is a set of aligned coordinates rather than a trained embedding, even a
+     * drastic change in face geometry moves it only a little. A face stretched to 2.4x its
+     * height -- far more distortion than any two real people differ by -- lands at a cosine
+     * distance of roughly 0.075 (asserted in FaceDescriptorBuilderTest, so the figure stays
+     * honest if the descriptor changes). A threshold in the 0.3 range, which is the usual
+     * ballpark for a trained face embedding, would therefore merge the entire library into a
+     * single "person". This is set well below that measured figure instead.
+     *
+     * It is still **not calibrated against a labelled face dataset** -- no such data was
+     * available here. It is chosen to fail in the recoverable direction: too tight, so one
+     * person may appear as several groups, rather than too loose, which would show one
+     * person's photos under another's.
      */
-    const val DEFAULT_MAX_COSINE_DISTANCE: Float = 0.32f
+    const val DEFAULT_MAX_COSINE_DISTANCE: Float = 0.03f
 
     /** Faces smaller than this fraction of the frame are too low-detail to cluster. */
     const val MIN_RELATIVE_AREA: Float = 0.004f

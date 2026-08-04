@@ -19,7 +19,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -56,7 +55,7 @@ fun FloatingPillControl(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    var trackWidthPx by remember { mutableStateOf(0f) }
+    var trackWidthPx by remember { mutableFloatStateOf(0f) }
     var dragFraction by remember { mutableFloatStateOf(-1f) }
     val shownFraction = if (dragFraction >= 0f) dragFraction else scrollFraction.coerceIn(0f, 1f)
 
