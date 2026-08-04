@@ -1,3 +1,6 @@
 [submodule "hyle-design-system"]
 	path = hyle-design-system
 	url = https://github.com/mbaliga/hyle-design-system
+[submodule "shared-libraries"]
+	path = shared-libraries
+	url = https://github.com/mbaliga/Shared-Libraries-asoc.git
