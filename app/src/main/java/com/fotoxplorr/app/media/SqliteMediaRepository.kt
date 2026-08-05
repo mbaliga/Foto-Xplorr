@@ -56,6 +56,10 @@ class SqliteMediaRepository(context: Context) : MediaRepository {
         }
     }
 
+    // Reads the in-memory mirror rather than the database: it is populated from disk at
+    // construction and kept in step by every mutation above, so it is authoritative and free.
+    override suspend fun count(): Int = state.value.size
+
     private fun normalize(items: Collection<MediaAsset>): List<MediaAsset> = items
         .distinctBy { it.id }
         .sortedWith(

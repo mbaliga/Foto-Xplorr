@@ -19,18 +19,23 @@ class AndroidMediaStoreScanner(
     private val resolver: ContentResolver,
 ) : MediaScanner {
 
-    override fun scan(): Flow<ScanEvent> = flow {
+    override fun scan(plan: ScanPlan): Flow<ScanEvent> = flow {
         emit(ScanEvent.Started(SOURCE_NAME))
 
         try {
-            queryMedia()?.use { cursor ->
+            queryMedia(plan)?.use { cursor ->
                 val columns = CursorColumns(cursor)
                 val discovered = cursor.count
                 var scanned = 0
+                var newestModified = 0L
 
                 while (cursor.moveToNext()) {
                     currentCoroutineContext().ensureActive()
-                    emit(ScanEvent.AssetFound(columns.toAsset(cursor)))
+                    val asset = columns.toAsset(cursor)
+                    if (asset.dateModifiedSeconds > newestModified) {
+                        newestModified = asset.dateModifiedSeconds
+                    }
+                    emit(ScanEvent.AssetFound(asset))
                     scanned += 1
 
                     if (scanned == discovered || scanned % PROGRESS_INTERVAL == 0) {
@@ -38,8 +43,14 @@ class AndroidMediaStoreScanner(
                     }
                 }
 
-                emit(ScanEvent.Completed(total = scanned))
-            } ?: emit(ScanEvent.Completed(total = 0))
+                emit(
+                    ScanEvent.Completed(
+                        total = scanned,
+                        plan = plan,
+                        newestModifiedSeconds = newestModified.takeIf { it > 0L },
+                    ),
+                )
+            } ?: emit(ScanEvent.Completed(total = 0, plan = plan, newestModifiedSeconds = null))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -47,13 +58,24 @@ class AndroidMediaStoreScanner(
         }
     }.flowOn(Dispatchers.IO)
 
-    private fun queryMedia(): Cursor? {
+    private fun queryMedia(plan: ScanPlan): Cursor? {
         val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
-        val selection = "${MediaStore.Files.FileColumns.MEDIA_TYPE}=? OR ${MediaStore.Files.FileColumns.MEDIA_TYPE}=?"
-        val selectionArgs = arrayOf(
+        val mediaTypeClause =
+            "(${MediaStore.Files.FileColumns.MEDIA_TYPE}=? OR ${MediaStore.Files.FileColumns.MEDIA_TYPE}=?)"
+        val baseArgs = arrayOf(
             MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
             MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
         )
+        // A delta narrows to rows touched since the (rewound) watermark. `>=` rather than
+        // `>` is deliberate — see ScanPlan's note on second-granular timestamps.
+        val selection = when (plan) {
+            is ScanPlan.Full -> mediaTypeClause
+            is ScanPlan.Delta -> "$mediaTypeClause AND ${MediaStore.MediaColumns.DATE_MODIFIED}>=?"
+        }
+        val selectionArgs = when (plan) {
+            is ScanPlan.Full -> baseArgs
+            is ScanPlan.Delta -> baseArgs + plan.sinceSeconds.toString()
+        }
         val sortOrder = "${MediaStore.Images.ImageColumns.DATE_TAKEN} DESC, ${MediaStore.MediaColumns.DATE_MODIFIED} DESC"
 
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {

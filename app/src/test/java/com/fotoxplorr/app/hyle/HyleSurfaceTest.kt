@@ -84,9 +84,35 @@ class ShakePeakTrainTest {
 class AlertBannerTextTest {
 
     @Test
-    fun `idle shows the mockups resting sentence`() {
+    fun `idle says nothing at all`() {
+        // Was "Notifications & Alerts appear here" — a label describing a container rather
+        // than reporting state, which is the placeholder chrome the fonebrew pattern bans.
+        // The banner collapses when idle so the grid runs edge to edge.
+        assertEquals("", IDLE_MESSAGE)
         assertEquals(IDLE_MESSAGE, alertBannerMessage(ScanState.Idle, completed = false))
-        assertEquals("Notifications & Alerts appear here", IDLE_MESSAGE)
+    }
+
+    @Test
+    fun `an incremental pass reports new work, never the library total`() {
+        // The regression this guards: one screenshot used to re-report the whole library
+        // ("Indexing 3456 of 21526"), which read as a full re-index of everything.
+        assertEquals(
+            "Added 2 new items",
+            alertBannerMessage(ScanState.Complete(total = 2, incremental = true), completed = true),
+        )
+        assertEquals(
+            "Added 1 new item",
+            alertBannerMessage(ScanState.Complete(total = 1, incremental = true), completed = true),
+        )
+        assertEquals(
+            "Library up to date",
+            alertBannerMessage(ScanState.Complete(total = 0, incremental = true), completed = true),
+        )
+        // A genuine full pass still reports the library total, because that is what it did.
+        assertEquals(
+            "Library up to date · 21526 items",
+            alertBannerMessage(ScanState.Complete(total = 21_526, incremental = false), completed = true),
+        )
     }
 
     @Test

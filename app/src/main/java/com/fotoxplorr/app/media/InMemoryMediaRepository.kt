@@ -38,6 +38,8 @@ class InMemoryMediaRepository : MediaRepository {
         }
     }
 
+    override suspend fun count(): Int = state.value.size
+
     private companion object {
         val assetOrdering = compareByDescending<MediaAsset> { it.dateTakenMillis }
             .thenByDescending { it.dateModifiedSeconds }

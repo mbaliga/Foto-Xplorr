@@ -50,7 +50,9 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaIndexer
 import com.fotoxplorr.app.media.MediaStoreChangeObserver
+import com.fotoxplorr.app.media.PrefsScanWatermark
 import com.fotoxplorr.app.media.ScanEvent
+import com.fotoxplorr.app.media.ScanPlan
 import com.fotoxplorr.app.media.SqliteMediaRepository
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
@@ -61,7 +63,8 @@ import com.fotoxplorr.app.ui.FotoXplorrTheme
 import com.fotoxplorr.app.viewer.ViewerScreen
 import dev.aarso.crashrecovery.CrashRecovery
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -87,6 +90,13 @@ class FotoXplorrActivity : ComponentActivity() {
     }
 }
 
+/**
+ * One screenshot emits several MediaStore notifications (insert, thumbnail, metadata).
+ * Long enough to collapse that burst into a single delta pass, short enough that a new
+ * photo still appears while the user is looking at the grid.
+ */
+private const val MEDIA_CHANGE_DEBOUNCE_MS = 800L
+
 private enum class PendingMediaOperation { TRASH, RESTORE, DELETE }
 private enum class PendingTreeOperation { COPY, MOVE }
 
@@ -108,7 +118,13 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // the device (the BYOK remote-AI path stays separate and strictly opt-in).
     val recognitionStore = remember { RecognitionStore(applicationContext) }
     val recognitionIndexer = remember { RecognitionIndexer(applicationContext, recognitionStore) }
-    val indexer = remember { MediaIndexer(AndroidMediaStoreScanner(contentResolver), repository) }
+    val indexer = remember {
+        MediaIndexer(
+            scanner = AndroidMediaStoreScanner(contentResolver),
+            repository = repository,
+            watermark = PrefsScanWatermark(applicationContext),
+        )
+    }
     val scope = rememberCoroutineScope()
 
     val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
@@ -122,7 +138,17 @@ private fun FotoXplorrActivity.FotoXplorrApp(
 
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
     var scanState by remember { mutableStateOf<ScanState>(ScanState.Idle) }
-    var scanGeneration by remember { mutableStateOf(0) }
+
+    // Rescans are REQUESTS on a conflated channel, not a LaunchedEffect key.
+    //
+    // This used to be `LaunchedEffect(permissionGranted, scanGeneration)` with the observer
+    // bumping scanGeneration. Every MediaStore change therefore re-keyed the effect, which
+    // CANCELLED the running scan and started a fresh full one — so taking a screenshot sent
+    // "Indexing 3456 of 21526" back to 0, and under any churn the scan could never finish.
+    // A channel decouples "something changed" from "a scan is running": requests that arrive
+    // mid-scan are collapsed into one follow-up pass instead of killing the current one.
+    val scanRequests = remember { Channel<Boolean>(Channel.CONFLATED) }
+
     var viewerAssets by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
     var selectedAssetId by remember { mutableStateOf<MediaId?>(null) }
     var slideshowActive by remember { mutableStateOf(false) }
@@ -172,7 +198,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 PendingMediaOperation.DELETE -> "Permanently deleted."
                 null -> null
             }
-            scanGeneration += 1
+            scanRequests.trySend(false)
         } else if (affectedIds.isNotEmpty()) {
             userMessage = "Android cancelled the media operation."
         }
@@ -210,7 +236,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             pendingRenameName = null
             userMessage = outcome.fold(
                 onSuccess = {
-                    scanGeneration += 1
+                    scanRequests.trySend(false)
                     "Renamed to $it."
                 },
                 onFailure = { it.message ?: "Android did not allow this file to be renamed." },
@@ -258,7 +284,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     pendingRenameName = null
                     userMessage = outcome.fold(
                         onSuccess = {
-                            scanGeneration += 1
+                            scanRequests.trySend(false)
                             "Renamed to $it."
                         },
                         onFailure = { it.message ?: "Android did not allow this file to be renamed." },
@@ -307,7 +333,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
         permissionGranted = result.values.any { it } || hasMediaPermission()
-        if (permissionGranted) scanGeneration += 1
+        if (permissionGranted) scanRequests.trySend(false)
     }
 
     val exportMetadataLauncher = rememberLauncherForActivityResult(
@@ -433,18 +459,31 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     }
 
     LaunchedEffect(permissionGranted) {
-        if (permissionGranted) changeObserver.changes().collect { scanGeneration += 1 }
+        if (!permissionGranted) return@LaunchedEffect
+        // One screenshot emits several MediaStore notifications (insert, thumbnail,
+        // metadata). Debouncing collapses that burst into a single delta pass.
+        changeObserver.changes()
+            .debounce(MEDIA_CHANGE_DEBOUNCE_MS)
+            .collect { scanRequests.trySend(false) }
     }
 
-    LaunchedEffect(permissionGranted, scanGeneration) {
+    LaunchedEffect(permissionGranted) {
         if (!permissionGranted) return@LaunchedEffect
-        indexer.refresh().collect { event ->
-            scanState = when (event) {
-                is ScanEvent.Started -> ScanState.Scanning(0, 0)
-                is ScanEvent.Progress -> ScanState.Scanning(event.scanned, event.discovered)
-                is ScanEvent.AssetFound -> scanState
-                is ScanEvent.Completed -> ScanState.Complete(event.total)
-                is ScanEvent.Failed -> ScanState.Error(event.error.message ?: "Unable to scan media")
+        scanRequests.trySend(true) // first pass after a grant is a full one
+        for (userRequested in scanRequests) {
+            indexer.refresh(userRequested = userRequested).collect { event ->
+                scanState = when (event) {
+                    is ScanEvent.Started -> scanState.takeIf { it is ScanState.Scanning }
+                        ?: ScanState.Scanning(0, 0)
+                    is ScanEvent.Progress -> ScanState.Scanning(event.scanned, event.discovered)
+                    is ScanEvent.AssetFound -> scanState
+                    is ScanEvent.Completed -> ScanState.Complete(
+                        total = event.total,
+                        incremental = event.plan is ScanPlan.Delta,
+                    )
+                    is ScanEvent.Failed ->
+                        ScanState.Error(event.error.message ?: "Unable to scan media")
+                }
             }
         }
     }
@@ -546,7 +585,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             ),
             actions = GalleryActions(
                 onRequestPermission = { permissionLauncher.launch(requiredMediaPermissions()) },
-                onRefresh = { scanGeneration += 1 },
+                onRefresh = { scanRequests.trySend(true) },
                 onSetSort = galleryPreferences::setSort,
                 onSetGridColumns = galleryPreferences::setGridColumns,
                 onSetBlurSensitive = galleryPreferences::setBlurSensitive,
@@ -651,6 +690,7 @@ private fun JSONArray?.toMediaIds(): Set<MediaId> {
 sealed interface ScanState {
     data object Idle : ScanState
     data class Scanning(val scanned: Int, val discovered: Int) : ScanState
-    data class Complete(val total: Int) : ScanState
+    /** @param incremental true when this was a delta pass (a few changed items), not a full library scan. */
+    data class Complete(val total: Int, val incremental: Boolean = false) : ScanState
     data class Error(val message: String) : ScanState
 }
