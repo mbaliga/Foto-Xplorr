@@ -33,8 +33,18 @@ navigation act and it happens **on the content**, not through chrome.
 - The top room is NOT yet required in any app (owner, 2026-08-05). What is required now is
   keeping its gesture unclaimed and its copy off the screen — no "PULL TO …" static text.
 
-**Refresh is a shake**, not a pull (`ShakeToRefresh` in this repo, `hyle/ShakeToRefresh.kt`).
-A deliberate physical gesture that needs no affordance copy and competes with no scroll.
+**Refresh is a shake**, not a pull (`ShakeToRefresh`, now in `dev.aarso:cell-shell`). A
+deliberate physical gesture that needs no affordance copy and competes with no scroll.
+
+## Where the pattern lives
+
+`dev.aarso:cell-shell`, in Shared-Libraries-asoc. **One implementation, not one per app** —
+"followed everywhere" is a claim about consistency, and two apps each deriving their own
+version of the same gesture is exactly how consistency drifts. It ships `SpatialShell` +
+`SpatialController` (the rooms and their motion), `WordWheelRail`, `EdgeTimelineScrubber` and
+`ShakeToRefresh`. Its motion constants are ported verbatim from Android-IDE-core's
+`ui/spatial/SpatialRoot.kt` and are documented there as a **contract, not defaults**: an app
+that tunes them has broken the thing the module exists to guarantee.
 
 ## What fonebrew navigation is NOT
 
@@ -44,9 +54,12 @@ These are the things the first test builds got wrong. Do not reintroduce them:
   swipe and lives *over the content*; a small header affordance may open it but must not be
   a `Menu` icon opening a drawer-style list.
 - **No bottom `NavigationBar` / tab bar.** (Fylz shipped "Files / Recovery" tabs — wrong.)
-- **No full-screen Material settings dialogs.** Settings slide in as a panel over the room
-  (Foto Xplorr's `SlideInPanel` from the right is the shape); a centered `AlertDialog`-style
-  "Gallery settings" card is wrong.
+- **No slide-over panels either.** A slide-over covers the screen you were on; the owner was
+  explicit that the current view should *move a bit and then swivel away*. Foto Xplorr's
+  `SlideInPanel` was the first attempt at this and was wrong; `SpatialShell` replaced it.
+- **No full-screen Material settings dialogs.** Settings are the right-hand room, rendered in
+  the app's own theme. A modal window floating over a room is two contradictory ideas of where
+  you are — and it is how Fylz ended up with a light-themed screen inside a black app.
 - **No static instructional copy in gesture spaces** ("PULL TO CREATE BACKUP"). If a gesture
   needs a permanent caption, the gesture is wrong.
 
@@ -55,15 +68,17 @@ These are the things the first test builds got wrong. Do not reintroduce them:
 | App | Has | Needs |
 |---|---|---|
 | fonebrew (IDE-core) | rooms implementation (`ui/rooms/`) | is the reference |
-| Foto Xplorr | nine destinations + `SlideInPanel` rail exists, but presented behind a hamburger; settings are a Material dialog | word-wheel rail presentation + motion; settings → slide-in panel; hamburger retired |
-| Fylz | neither — hamburger-less but bottom tabs, chip tabs, Material tools screen (light) | full pattern adoption; one theme |
+| Foto Xplorr | **adopted.** Rail = left room, settings = right room, top reserved. Hamburger, app bar, `SlideInPanel` and the settings dialog all retired. Date-keyed edge scrubber over the grid | the top room itself, when there is something to put in it |
+| Fylz | **adopted.** Locations = left room, Tools + settings = right room, Recovery = bottom room. Bottom tabs, workspace chips and the light Tools screen retired. Sort-keyed edge scrubber | as above |
 | csapp / assay | standard Material consoles | pattern adoption once the two testable apps validate it |
 
 ## Motion notes for the implementer
 
-- Rail focus transitions: single spring (medium stiffness, slight overshoot acceptable on
-  the bullet, none on text weight). Text weight/alpha interpolate with the row's distance to
-  the focus line *continuously during drag* — not at settle.
+- The settle is `tween(320ms, CubicBezierEasing(0.4f, 0f, 0.2f, 1f))` and **has no spring**.
+  The reference implementation is emphatic about this: a room is a place you arrive at, not
+  something that bounces into position. Pinned by `SpatialMotionTest`.
+- Rail focus: text weight/alpha interpolate with the row's distance to the focus line
+  *continuously during drag* — not at settle. The bullet travels between rows.
 - The reveal melt: drive a corner/edge distortion from pull distance; the surface being
   revealed scales from ~0.97 and un-blurs. Nothing fades in from nothing — material flows.
 - Every transition must remain interruptible mid-flight (drag reversal inverts it).

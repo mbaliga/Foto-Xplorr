@@ -39,8 +39,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.fotoxplorr.app.hyle.HyleDestinationRail
-import com.fotoxplorr.app.hyle.HyleRailItem
+import dev.aarso.cellshell.WheelItem
+import dev.aarso.cellshell.WordWheelRail
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
@@ -134,35 +134,44 @@ fun destinationEmptyMessage(
     }
 }
 
-/** The rail panel content: the nine destinations, as the mockups draw them. */
+/**
+ * The left room: the nine destinations as the constellation's word wheel.
+ *
+ * The rail itself is `dev.aarso:cell-shell`'s [WordWheelRail], not a local one. The falloff maths
+ * came *from* this app originally — the shared version is a port of `hyle/DestinationRail.kt` —
+ * but it now carries the travelling bullet and the drag-driven weighting the owner's reference
+ * video shows, and every app in the constellation gets the same wheel rather than each growing
+ * its own.
+ *
+ * No scroll wrapper: the wheel measures its own rows against the height it is given and takes
+ * care of overflow itself. Wrapping it in a `verticalScroll` would hand it an infinite height to
+ * measure against, which is the fastest way to make a distance-weighted list stop weighting.
+ */
 @Composable
 fun DestinationRailPanel(
-    items: List<HyleRailItem>,
+    items: List<WheelItem>,
     selectedId: String,
     onSelect: (String) -> Unit,
     state: GalleryUiState,
     modifier: Modifier = Modifier,
 ) {
-    Column(
+    WordWheelRail(
+        items = items,
+        selectedId = selectedId,
+        onSelect = onSelect,
+        inkColor = Color.White,
+        accentColor = MaterialTheme.colorScheme.primary,
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
             .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
             .padding(start = 24.dp, end = 16.dp, top = 40.dp, bottom = 40.dp),
-        verticalArrangement = Arrangement.Center,
-    ) {
-        HyleDestinationRail(
-            items = items,
-            selectedId = selectedId,
-            onSelect = onSelect,
-            trailingContent = { item ->
-                RailThumbnailCascade(
-                    destinationAssets(HyleDestination.valueOf(item.id), state).take(3),
-                )
-            },
-        )
-    }
+        trailing = { item ->
+            RailThumbnailCascade(
+                destinationAssets(HyleDestination.valueOf(item.id), state).take(3),
+            )
+        },
+    )
 }
 
 /** What a destination actually renders: a grid, the map, or the protected-folder list. */

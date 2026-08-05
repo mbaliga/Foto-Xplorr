@@ -42,7 +42,8 @@ includeBuild("hyle-design-system") {
     }
 }
 
-// Shared constellation libraries (dev.aarso:crash-recovery, dev.aarso:search-core), pulled in by
+// Shared constellation libraries (dev.aarso:crash-recovery, dev.aarso:cell-shell,
+// dev.aarso:search-core), pulled in by
 // the same sanctioned mechanism as Hyle (D-A): git submodule + Gradle includeBuild. Gradle
 // substitutes those coordinates with this build's projects, so no Maven registry is involved.
 //

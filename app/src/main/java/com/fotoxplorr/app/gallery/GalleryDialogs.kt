@@ -194,18 +194,23 @@ fun PasswordDialog(
     )
 }
 
+/**
+ * Every gallery setting, as a plain list.
+ *
+ * This used to be the body of a Material `AlertDialog`. The dialog is retired along with the
+ * rest of the old chrome: settings are a *room* now (a surface parked off the right edge that
+ * the home grid lifts and parts to reveal), and a modal window floating over that would be a
+ * second, contradictory idea of where you are. Same content, no dialog — so it also inherits
+ * the app's own dark theme instead of the platform's dialog surface.
+ */
 @Composable
-fun GallerySettingsDialog(
+fun GallerySettingsList(
     preferences: GalleryPreferencesState,
-    onDismiss: () -> Unit,
     actions: GalleryActions,
+    modifier: Modifier = Modifier,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Gallery settings") },
-        text = {
             LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp),
+                modifier = modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 item {
@@ -315,9 +320,6 @@ fun GallerySettingsDialog(
                     }
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
-    )
 }
 
 @Composable

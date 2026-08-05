@@ -62,6 +62,7 @@ import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.ui.FotoXplorrTheme
 import com.fotoxplorr.app.viewer.ViewerScreen
 import dev.aarso.crashrecovery.CrashRecovery
+import dev.aarso.crashrecovery.CrashRecoveryStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.debounce
@@ -76,7 +77,7 @@ class FotoXplorrActivity : ComponentActivity() {
         // First thing, per dev.aarso:crash-recovery's documented contract: if a crash was
         // captured last run, show the recovery screen instead of this activity's real
         // content and finish this instance.
-        if (CrashRecovery.maybeShowRecovery(this, appLabel = "Foto Xplorr")) return
+        if (CrashRecovery.maybeShowRecovery(this, appLabel = "Foto Xplorr", style = CRASH_STYLE)) return
         enableEdgeToEdge()
         setContent {
             val galleryPreferences = remember { GalleryPreferences(applicationContext) }
@@ -89,6 +90,22 @@ class FotoXplorrActivity : ComponentActivity() {
         }
     }
 }
+
+/**
+ * Foto Xplorr's accent, handed to the recovery screen.
+ *
+ * The screen ships its own neutral paper/ink surface and only ever takes an accent from its
+ * host, deliberately: a crash surface that arrives in a stranger's colours is one more thing
+ * that does not look like the app the user was just in. These are the theme's VIOLET pair —
+ * the app's default — as plain @ColorInt values, because crash-recovery holds no dependency on
+ * Compose or on any design system and must be handed platform colours.
+ */
+private val CRASH_STYLE = CrashRecoveryStyle.accent(
+    light = 0xFF6E49B8.toInt(),
+    onLight = 0xFFFFFFFF.toInt(),
+    dark = 0xFFCBB4FF.toInt(),
+    onDark = 0xFF221636.toInt(),
+)
 
 /**
  * One screenshot emits several MediaStore notifications (insert, thumbnail, metadata).

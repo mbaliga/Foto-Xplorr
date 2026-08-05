@@ -1,13 +1,11 @@
 package com.fotoxplorr.app.hyle
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -16,49 +14,44 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlin.math.roundToInt
+import androidx.compose.ui.unit.sp
 
 /**
- * The floating control from the mockups that replaces the old four-tab bottom
- * `NavigationBar`: a dark rounded pill holding a search button on the left, a horizontal
- * position scrubber with a dot handle across the middle, and a grid-density toggle on the
- * right.
+ * The floating control from the mockups that replaced the old four-tab bottom `NavigationBar`:
+ * a dark rounded pill holding search on the left, a readout across the middle, and the
+ * grid-density toggle on the right.
  *
- * The scrubber is a *position* control -- dragging it jumps the grid to that point in the
- * collection, which is what makes a 12,000-item single grid navigable without date headers.
- * [scrollFraction] drives the handle from the grid, and [onScrub] drives the grid from the
- * handle, so the two stay in sync in both directions.
+ * The middle used to be a horizontal position scrubber. It is a readout now because the
+ * Niagara-style [dev.aarso.cellshell.EdgeTimelineScrubber] down the right edge does that job
+ * properly — it names the month under the finger, which a 200px track with a dot on it never
+ * could — and two position controls on one screen that can disagree about where you are is
+ * worse than either alone. So the pill stops competing to *set* position and reports it
+ * instead, which is the thing the edge strip is too narrow to say in words.
+ *
+ * @param caption what the middle reads. Empty renders nothing rather than an empty gap, so a
+ *   destination with no timeline (Places, Protected) gets a two-button pill instead of a hole.
  */
 @Composable
 fun FloatingPillControl(
-    scrollFraction: Float,
-    onScrub: (Float) -> Unit,
+    caption: String,
     onSearch: () -> Unit,
     onToggleDensity: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val density = LocalDensity.current
-    var trackWidthPx by remember { mutableFloatStateOf(0f) }
-    var dragFraction by remember { mutableFloatStateOf(-1f) }
-    val shownFraction = if (dragFraction >= 0f) dragFraction else scrollFraction.coerceIn(0f, 1f)
-
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -69,83 +62,31 @@ fun FloatingPillControl(
             .height(PILL_HEIGHT.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PillIconButton(
-            onClick = onSearch,
-            description = "Search",
-        ) {
+        PillIconButton(onClick = onSearch, description = "Search") {
             Icon(Icons.Outlined.Search, contentDescription = null, tint = Color.White)
         }
 
-        Box(
+        Text(
+            text = caption,
+            style = TextStyle(
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center,
+            ),
+            // Quieter than the icons either side of it: this is a readout, not a control, and
+            // it should not read as something to press.
+            color = Color.White.copy(alpha = 0.72f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .weight(1f)
-                .height(PILL_HEIGHT.dp)
-                .padding(horizontal = 8.dp)
-                .onSizeChanged { trackWidthPx = it.width.toFloat() }
-                .semantics { contentDescription = "Scroll position" }
-                .pointerInput(Unit) {
-                    detectTapGestures { offset ->
-                        if (trackWidthPx > 0f) onScrub((offset.x / trackWidthPx).coerceIn(0f, 1f))
-                    }
-                }
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures(
-                        onDragStart = { offset: Offset ->
-                            if (trackWidthPx > 0f) {
-                                dragFraction = (offset.x / trackWidthPx).coerceIn(0f, 1f)
-                                onScrub(dragFraction)
-                            }
-                        },
-                        onHorizontalDrag = { change, amount ->
-                            change.consume()
-                            if (trackWidthPx > 0f) {
-                                dragFraction = (dragFraction + amount / trackWidthPx).coerceIn(0f, 1f)
-                                onScrub(dragFraction)
-                            }
-                        },
-                        onDragEnd = { dragFraction = -1f },
-                        onDragCancel = { dragFraction = -1f },
-                    )
-                },
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(TRACK_HEIGHT.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.85f)),
-            )
-            val handleOffsetPx = with(density) {
-                handleOffsetPx(shownFraction, trackWidthPx, HANDLE_SIZE.dp.toPx())
-            }
-            Box(
-                Modifier
-                    .offset { IntOffset(handleOffsetPx.roundToInt(), 0) }
-                    .size(HANDLE_SIZE.dp)
-                    .clip(CircleShape)
-                    .background(Color.White),
-            )
-        }
+                .padding(horizontal = 8.dp),
+        )
 
-        PillIconButton(
-            onClick = onToggleDensity,
-            description = "Change grid density",
-        ) {
+        PillIconButton(onClick = onToggleDensity, description = "Change grid density") {
             Icon(Icons.Outlined.GridView, contentDescription = null, tint = Color.White)
         }
     }
-}
-
-/**
- * Left edge of the scrubber handle, in pixels, for a given [fraction] of a [trackWidthPx]
- * track. Kept pure and internal so the clamping (the handle must stay fully inside the
- * track at both ends) is unit-testable.
- */
-internal fun handleOffsetPx(fraction: Float, trackWidthPx: Float, handleSizePx: Float): Float {
-    if (trackWidthPx <= 0f) return 0f
-    val travel = (trackWidthPx - handleSizePx).coerceAtLeast(0f)
-    return travel * fraction.coerceIn(0f, 1f)
 }
 
 @Composable
@@ -169,5 +110,3 @@ private fun PillIconButton(
 private val PILL_BACKGROUND = Color(0xFF141414)
 private const val PILL_HEIGHT = 52
 private const val BUTTON_SIZE = 44
-private const val TRACK_HEIGHT = 3
-private const val HANDLE_SIZE = 12
