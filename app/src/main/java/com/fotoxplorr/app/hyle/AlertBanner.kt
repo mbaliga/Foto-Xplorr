@@ -89,8 +89,18 @@ fun ScanActivityAlertBanner(
     }
 }
 
-/** The resting sentence the mockups show when nothing needs attention. */
-const val IDLE_MESSAGE = "Notifications & Alerts appear here"
+/**
+ * Empty by design.
+ *
+ * This used to read "Notifications & Alerts appear here" — a label describing a container
+ * rather than saying anything true about the app's state, which is exactly the kind of
+ * placeholder chrome the fonebrew pattern bans (docs/fonebrew-navigation.md). The banner now
+ * collapses entirely when there is nothing to report, so the grid runs edge to edge.
+ *
+ * Kept as a constant rather than deleted because [alertBannerMessage] is a total function and
+ * its callers still need a defined "nothing to say" result.
+ */
+const val IDLE_MESSAGE = ""
 
 /**
  * The one line of copy the banner shows for a given state. Pure, so the wording is
@@ -101,6 +111,14 @@ internal fun alertBannerMessage(scanState: ScanState, completed: Boolean): Strin
     scanState is ScanState.Scanning && scanState.discovered > 0 ->
         "Indexing ${scanState.scanned} of ${scanState.discovered}"
     scanState is ScanState.Scanning -> "Indexing your library"
+    // An incremental pass found a handful of changed items, so reporting the library total
+    // would be a lie dressed as progress — the very thing that made a single screenshot look
+    // like a full re-index. Say what actually happened instead.
+    completed && scanState is ScanState.Complete && scanState.incremental -> when (scanState.total) {
+        0 -> "Library up to date"
+        1 -> "Added 1 new item"
+        else -> "Added ${scanState.total} new items"
+    }
     completed && scanState is ScanState.Complete -> "Library up to date · ${scanState.total} items"
     else -> IDLE_MESSAGE
 }

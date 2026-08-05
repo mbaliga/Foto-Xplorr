@@ -143,7 +143,13 @@ dependencies {
     // Optional, additive, zero-dependency-on-:hyle reliability utility (plain
     // android.widget views): captures a device-only crash and shows a recovery screen on
     // next launch. Wired in FotoXplorrActivity/FotoXplorrApplication.
-    implementation("dev.aarso:crash-recovery:1.1.0")
+    implementation("dev.aarso:crash-recovery:1.4.0")
+    // The constellation's navigation and motion shell: the fonebrew spatial pattern (rooms
+    // parked off the screen edges, the home card lifting and parting to reveal them), the
+    // word-wheel rail and the Niagara-style edge scrubber. Shared rather than local because
+    // the owner asked for one navigation feel across every app, and two apps each deriving
+    // their own version of it is precisely how that feel drifts apart.
+    implementation("dev.aarso:cell-shell:0.1.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver3:5.3.0")

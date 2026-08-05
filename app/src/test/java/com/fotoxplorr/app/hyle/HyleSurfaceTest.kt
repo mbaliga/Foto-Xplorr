@@ -4,43 +4,46 @@ import com.fotoxplorr.app.ScanState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.util.Locale
 
 /**
- * The strings and geometry the mockups pin down. These exist because the previous version of
- * this surface rendered no copy at all: asserting the exact wording keeps that from silently
- * regressing again.
+ * Shake detection, the rail's focus falloff, the slide-in panel geometry and the pill's
+ * scrubber all used to be pinned here. Every one of those moved to `dev.aarso:cell-shell`
+ * (shake and the rail) or was retired outright (the slide-over panels the spatial shell
+ * replaced, and the pill's scrubber the edge scrubber replaced), and their tests moved or
+ * retired with them. What is left is what is still this app's own.
  */
-class BackupHeaderTextTest {
-
-    @Test
-    fun `each phase says what the mockups say`() {
-        assertEquals("PULL TO CREATE BACKUP", backupStatusText(BackupPullPhase.IDLE))
-        assertEquals("RELEASE TO CREATE BACKUP", backupStatusText(BackupPullPhase.ARMED))
-        assertEquals("Backing up", backupStatusText(BackupPullPhase.ACTIVE))
-    }
-
-    @Test
-    fun `image count is grouped and pluralised`() {
-        assertEquals("12,366 Images", imageCountText(12366, Locale.US))
-        assertEquals("1 Image", imageCountText(1, Locale.US))
-        assertEquals("No Images", imageCountText(0, Locale.US))
-        assertEquals("No Images", imageCountText(-4, Locale.US))
-    }
-
-    @Test
-    fun `counter values are grouped`() {
-        assertEquals("12,322", formatCount(12322, Locale.US))
-        assertEquals("0", formatCount(0, Locale.US))
-    }
-}
-
 class AlertBannerTextTest {
 
     @Test
-    fun `idle shows the mockups resting sentence`() {
+    fun `idle says nothing at all`() {
+        // Was "Notifications & Alerts appear here" — a label describing a container rather
+        // than reporting state, which is the placeholder chrome the fonebrew pattern bans.
+        // The banner collapses when idle so the grid runs edge to edge.
+        assertEquals("", IDLE_MESSAGE)
         assertEquals(IDLE_MESSAGE, alertBannerMessage(ScanState.Idle, completed = false))
-        assertEquals("Notifications & Alerts appear here", IDLE_MESSAGE)
+    }
+
+    @Test
+    fun `an incremental pass reports new work, never the library total`() {
+        // The regression this guards: one screenshot used to re-report the whole library
+        // ("Indexing 3456 of 21526"), which read as a full re-index of everything.
+        assertEquals(
+            "Added 2 new items",
+            alertBannerMessage(ScanState.Complete(total = 2, incremental = true), completed = true),
+        )
+        assertEquals(
+            "Added 1 new item",
+            alertBannerMessage(ScanState.Complete(total = 1, incremental = true), completed = true),
+        )
+        assertEquals(
+            "Library up to date",
+            alertBannerMessage(ScanState.Complete(total = 0, incremental = true), completed = true),
+        )
+        // A genuine full pass still reports the library total, because that is what it did.
+        assertEquals(
+            "Library up to date · 21526 items",
+            alertBannerMessage(ScanState.Complete(total = 21_526, incremental = false), completed = true),
+        )
     }
 
     @Test
@@ -74,90 +77,5 @@ class AlertBannerTextTest {
             alertBannerMessage(ScanState.Complete(12), completed = true),
         )
         assertEquals(IDLE_MESSAGE, alertBannerMessage(ScanState.Complete(12), completed = false))
-    }
-}
-
-class RailAlphaTest {
-
-    @Test
-    fun `the selected row is fully opaque`() {
-        assertEquals(1f, railItemAlpha(0, isSelected = true), 0f)
-    }
-
-    @Test
-    fun `alpha falls off with distance`() {
-        val near = railItemAlpha(1, isSelected = false)
-        val mid = railItemAlpha(3, isSelected = false)
-        val far = railItemAlpha(5, isSelected = false)
-        assertTrue(near > mid)
-        assertTrue(mid > far)
-    }
-
-    @Test
-    fun `distant rows stay readable rather than vanishing`() {
-        // The mockups keep the extremes dim but visible, so the floor must not reach zero.
-        (0..40).forEach { distance ->
-            val alpha = railItemAlpha(distance, isSelected = false)
-            assertTrue("alpha at distance $distance was $alpha", alpha >= 0.22f)
-            assertTrue(alpha <= 1f)
-        }
-    }
-}
-
-class SlideInPanelGeometryTest {
-
-    @Test
-    fun `a closed left panel sits one width off the left edge`() {
-        assertEquals(-300f, panelOffsetPx(0f, 300f, PanelSide.LEFT), 1e-4f)
-    }
-
-    @Test
-    fun `a closed right panel sits one width off the right edge`() {
-        assertEquals(300f, panelOffsetPx(0f, 300f, PanelSide.RIGHT), 1e-4f)
-    }
-
-    @Test
-    fun `an open panel is flush with its edge on both sides`() {
-        assertEquals(0f, panelOffsetPx(1f, 300f, PanelSide.LEFT), 1e-4f)
-        assertEquals(0f, panelOffsetPx(1f, 300f, PanelSide.RIGHT), 1e-4f)
-    }
-
-    @Test
-    fun `a half open panel is half hidden`() {
-        assertEquals(-150f, panelOffsetPx(0.5f, 300f, PanelSide.LEFT), 1e-4f)
-        assertEquals(150f, panelOffsetPx(0.5f, 300f, PanelSide.RIGHT), 1e-4f)
-    }
-
-    @Test
-    fun `progress outside zero to one is clamped`() {
-        assertEquals(0f, panelOffsetPx(1.8f, 300f, PanelSide.LEFT), 1e-4f)
-        assertEquals(-300f, panelOffsetPx(-2f, 300f, PanelSide.LEFT), 1e-4f)
-    }
-}
-
-class PillScrubberTest {
-
-    @Test
-    fun `the handle starts flush left and ends inside the track`() {
-        assertEquals(0f, handleOffsetPx(0f, 200f, 12f), 1e-4f)
-        assertEquals(188f, handleOffsetPx(1f, 200f, 12f), 1e-4f)
-    }
-
-    @Test
-    fun `the handle never leaves the track`() {
-        listOf(-1f, 0f, 0.5f, 1f, 2f).forEach { fraction ->
-            val offset = handleOffsetPx(fraction, 200f, 12f)
-            assertTrue("offset $offset for fraction $fraction", offset >= 0f && offset <= 188f)
-        }
-    }
-
-    @Test
-    fun `an unmeasured track produces no offset`() {
-        assertEquals(0f, handleOffsetPx(0.5f, 0f, 12f), 0f)
-    }
-
-    @Test
-    fun `a handle wider than the track does not push it negative`() {
-        assertEquals(0f, handleOffsetPx(1f, 10f, 40f), 0f)
     }
 }

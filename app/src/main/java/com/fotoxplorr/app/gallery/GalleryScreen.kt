@@ -10,11 +10,15 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Close
@@ -25,7 +29,6 @@ import androidx.compose.material.icons.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.Label
-import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Restore
@@ -61,15 +64,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.ScanState
-import com.fotoxplorr.app.hyle.BackupCounts
 import com.fotoxplorr.app.hyle.FloatingPillControl
-import com.fotoxplorr.app.hyle.PanelSide
-import com.fotoxplorr.app.hyle.PullToBackupHost
 import com.fotoxplorr.app.hyle.ScanActivityAlertBanner
-import com.fotoxplorr.app.hyle.SlideInPanel
+import dev.aarso.cellshell.EdgeTimelineScrubber
+import dev.aarso.cellshell.RoomEdge
+import dev.aarso.cellshell.ShakeToRefresh
+import dev.aarso.cellshell.SpatialShell
+import dev.aarso.cellshell.rememberSpatialController
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.organize.LibraryState
@@ -210,17 +215,30 @@ private data class PasswordRequest(
 )
 
 /**
- * The app shell, rebuilt around the owner's mockups.
+ * The app shell, on the constellation's spatial navigation.
  *
- * The primary IA is now the nine-category rail (Pets / People / Identity / Screenshots /
- * Photos / Videos / Favourites / Places / Protected), presented as a panel that slides in
- * over the grid from the left edge -- the grid stays visible at the right edge throughout,
- * exactly as the mockups draw it. Launching lands on the grid with the rail one edge-swipe
- * (or one tap on the header's menu button) away.
+ * The primary IA is the nine-category rail (Pets / People / Identity / Screenshots / Photos /
+ * Videos / Favourites / Places / Protected), and it is a **room**: a surface parked off the
+ * left edge that the grid lifts and parts to reveal. Settings is the same thing off the right.
+ * Neither is a screen — switching to one pushes no back-stack entry, the grid stays alive and
+ * visible behind it, and dragging it back is the way out. The motion comes from
+ * `dev.aarso:cell-shell`, which every app in the constellation now shares, because the owner
+ * asked for one navigation feel everywhere and the only way to guarantee that is one
+ * implementation.
  *
- * The previous four-tab bottom `NavigationBar` (Photos / Albums / Discover / Library) is
- * retired as the default IA. Its screens are not deleted: Albums, Discover and Library are
- * reachable from the settings panel, so nothing that worked before became unreachable.
+ * What this replaced, and why none of it survived:
+ *  - Two nested `SlideInPanel`s. A slide-over is a different idea: it covers the screen you
+ *    were on. The owner was explicit that the current view should *move and swivel away*, and
+ *    that the slide-over was wrong.
+ *  - The hamburger and the `CenterAlignedTopAppBar` behind it. With the rail an edge away, a
+ *    button whose only job was to open it is chrome earning nothing; the header shrinks to the
+ *    title and the two actions that are genuinely per-view.
+ *  - The Material settings `AlertDialog`. Settings live in the right room now, in the app's own
+ *    theme — a modal window floating over a room is two contradictory ideas of where you are,
+ *    and it was also the light-themed screen inside a black app the owner reported.
+ *
+ * The top edge is deliberately left empty. It is reserved, and no other gesture may claim the
+ * pull-down space — which is why refresh is [ShakeToRefresh] and not a pull.
  */
 @Composable
 private fun GalleryBrowser(
@@ -234,9 +252,10 @@ private fun GalleryBrowser(
     var selection by remember { mutableStateOf(GallerySelection()) }
     var selectionMenuVisible by remember { mutableStateOf(false) }
     var topMenuVisible by remember { mutableStateOf(false) }
-    var railOpen by remember { mutableStateOf(false) }
-    var settingsOpen by remember { mutableStateOf(false) }
-    var settingsDialogVisible by remember { mutableStateOf(false) }
+    // The two rooms are the shell's state, not booleans here: a room is fractionally open for
+    // most of its life (the finger is mid-drag), which a Boolean cannot express.
+    val shell = rememberSpatialController()
+    var allSettingsOpen by remember { mutableStateOf(false) }
     var createCollectionVisible by remember { mutableStateOf(false) }
     var renameCollection by remember { mutableStateOf<BrowserRoute.Collection?>(null) }
     var renameAsset by remember { mutableStateOf<MediaAsset?>(null) }
@@ -313,12 +332,13 @@ private fun GalleryBrowser(
     }
 
     BackHandler(
-        enabled = railOpen || settingsOpen || legacyScreen != null ||
+        enabled = !shell.atHome || legacyScreen != null ||
             selection.isActive || searchVisible || route != BrowserRoute.Root,
     ) {
         when {
-            railOpen -> railOpen = false
-            settingsOpen -> settingsOpen = false
+            // A room is not a back-stack entry, but Back is still the gesture people reach for
+            // to leave one, so it closes the room rather than the app.
+            !shell.atHome -> shell.closeAll()
             legacyScreen != null -> legacyScreen = null
             selection.isActive -> selection = selection.clear()
             searchVisible -> {
@@ -329,58 +349,54 @@ private fun GalleryBrowser(
         }
     }
 
-    // Fraction of the collection currently scrolled past, driving the pill's scrubber handle.
-    val scrollFraction by remember(gridState) {
-        derivedStateOf {
-            val info = gridState.layoutInfo
-            val total = info.totalItemsCount
-            if (total <= 1) 0f else gridState.firstVisibleItemIndex.toFloat() / (total - 1)
-        }
+    // Where the grid actually is, for the edge scrubber's resting marker. Derived so a scroll
+    // invalidates only what draws the marker, not the whole browser.
+    val firstVisibleIndex by remember(gridState) {
+        derivedStateOf { gridState.firstVisibleItemIndex }
     }
+    // The scrubber's stops, in the grid's index space. Both surfaces that show it render
+    // headerless grids, so grid item n is asset n — see timelineStops.
+    val scrubberAssets = if (route == BrowserRoute.Root) destinationAssets else currentAssets
+    val scrubberStops = remember(scrubberAssets) { timelineStops(scrubberAssets) }
 
     val railItems = remember {
-        HyleDestination.entries.map { com.fotoxplorr.app.hyle.HyleRailItem(it.name, it.label) }
+        HyleDestination.entries.map { dev.aarso.cellshell.WheelItem(it.name, it.label) }
     }
 
-    SlideInPanel(
-        open = railOpen,
-        onOpenChange = { railOpen = it },
-        side = PanelSide.LEFT,
-        panelWidth = RAIL_PANEL_WIDTH.dp,
-        panel = {
+    SpatialShell(
+        controller = shell,
+        accentColor = MaterialTheme.colorScheme.primary,
+        // The rooms sit on the same black the grid does, so opening one reads as the surface
+        // moving rather than as a different app appearing behind it.
+        scrimColor = Color.Black,
+        cardColor = Color.Black,
+        modifier = Modifier.fillMaxSize(),
+        left = {
             DestinationRailPanel(
                 items = railItems,
                 selectedId = destination.name,
                 onSelect = { id ->
                     destination = HyleDestination.valueOf(id)
                     route = BrowserRoute.Root
-                    railOpen = false
+                    shell.closeAll()
                     gridScope.launch { gridState.scrollToItem(0) }
                 },
                 state = state,
             )
         },
+        right = {
+            SettingsRoom(
+                state = state,
+                actions = actions,
+                allSettingsOpen = allSettingsOpen,
+                onAllSettingsOpenChange = { allSettingsOpen = it },
+                onOpenLegacyScreen = {
+                    shell.closeAll()
+                    legacyScreen = it
+                },
+            )
+        },
     ) {
-        SlideInPanel(
-            open = settingsOpen,
-            onOpenChange = { settingsOpen = it },
-            side = PanelSide.RIGHT,
-            panelWidth = SETTINGS_PANEL_WIDTH.dp,
-            panel = {
-                SettingsPanel(
-                    preferences = state.preferences,
-                    onOpenAllSettings = {
-                        settingsOpen = false
-                        settingsDialogVisible = true
-                    },
-                    onSetDefaultDestination = actions.onSetDefaultDestination,
-                    onOpenLegacyScreen = {
-                        settingsOpen = false
-                        legacyScreen = it
-                    },
-                )
-            },
-        ) {
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
                 containerColor = Color.Black,
@@ -404,29 +420,16 @@ private fun GalleryBrowser(
                             collectionRoute = collectionRoute,
                         )
                     } else {
-                        CenterAlignedTopAppBar(
-                            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                                containerColor = Color.Black,
-                                titleContentColor = Color.White,
-                                navigationIconContentColor = Color.White,
-                                actionIconContentColor = Color.White,
-                            ),
-                            title = {
-                                Text(
-                                    route.title(destination),
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                            },
-                            navigationIcon = {
-                                if (route != BrowserRoute.Root) {
-                                    TextButton(onClick = { route = BrowserRoute.Root }) { Text("Back") }
-                                } else {
-                                    // The obvious tap affordance for the rail, alongside the
-                                    // left-edge swipe the mockups imply.
-                                    IconButton(onClick = { railOpen = true }) {
-                                        Icon(Icons.Outlined.Menu, contentDescription = "Destinations")
-                                    }
-                                }
+                        // A plain header row, not a CenterAlignedTopAppBar. The app bar existed
+                        // mostly to hold the hamburger, and the hamburger existed to open a rail
+                        // that is now one edge-drag away — so both go, and the header keeps only
+                        // what is genuinely per-view: where you are, and the two actions for it.
+                        BrowserHeader(
+                            title = route.title(destination),
+                            onBack = if (route != BrowserRoute.Root) {
+                                { route = BrowserRoute.Root }
+                            } else {
+                                null
                             },
                             actions = {
                                 if (currentAssets.isNotEmpty()) {
@@ -446,6 +449,15 @@ private fun GalleryBrowser(
                                         onClick = {
                                             topMenuVisible = false
                                             actions.onRefresh()
+                                        },
+                                    )
+                                    // Backup's explicit home since the pull gesture retired —
+                                    // the same local metadata export the pull used to fire.
+                                    DropdownMenuItem(
+                                        text = { Text("Create backup") },
+                                        onClick = {
+                                            topMenuVisible = false
+                                            actions.onExportMetadata()
                                         },
                                     )
                                     albumRoute?.let { album ->
@@ -504,7 +516,7 @@ private fun GalleryBrowser(
                                         leadingIcon = { Icon(Icons.Outlined.Settings, null) },
                                         onClick = {
                                             topMenuVisible = false
-                                            settingsOpen = true
+                                            shell.open(RoomEdge.RIGHT)
                                         },
                                     )
                                 }
@@ -558,30 +570,24 @@ private fun GalleryBrowser(
                                 onRequestUnlock = { key, name ->
                                     passwordRequest = PasswordRequest(PasswordAction.UNLOCK, key, name)
                                 },
-                                onOpenSettings = { settingsDialogVisible = true },
+                                onOpenSettings = {
+                                    allSettingsOpen = true
+                                    shell.open(RoomEdge.RIGHT)
+                                },
                             )
-                            route == BrowserRoute.Root -> PullToBackupHost(
-                                onBackupTriggered = {
-                                    // Foto Xplorr has no cloud-backup subsystem; the local
-                                    // metadata export is the one real backup action that
-                                    // exists, so that is what this gesture fires. The active
-                                    // phase acknowledges that the OS document picker was
-                                    // launched, not that a file has been written.
-                                    actions.onExportMetadata()
-                                    kotlinx.coroutines.delay(900)
-                                },
-                                counts = BackupCounts(
-                                    total = destinationAssets.size,
-                                    backedUp = destinationAssets.size,
-                                ),
-                                header = {
-                                    ScanActivityAlertBanner(
-                                        scanState = state.scanState,
-                                        showWhenIdle = state.recognitionProgress.running ||
-                                            state.recognitionProgress.message != null,
-                                    )
-                                },
-                            ) {
+                            route == BrowserRoute.Root -> Column {
+                                // Pull-to-backup is retired (owner direction, 2026-08-05): the
+                                // pull-down space at a room's top belongs to the fonebrew
+                                // top-room reveal, so no other gesture may claim it — and the
+                                // static "PULL TO CREATE BACKUP" copy went with it. Refresh is
+                                // now physical (ShakeToRefresh below); backup is an explicit,
+                                // named item in the header overflow menu instead of a gesture.
+                                ScanActivityAlertBanner(
+                                    scanState = state.scanState,
+                                    showWhenIdle = state.recognitionProgress.running ||
+                                        state.recognitionProgress.message != null,
+                                )
+                                ShakeToRefresh(onShake = actions.onRefresh)
                                 DestinationContent(
                                     destination = destination,
                                     assets = destinationAssets,
@@ -612,20 +618,33 @@ private fun GalleryBrowser(
                         }
                     }
 
+                    // The Niagara-style timeline scrubber: glide a finger down the right edge
+                    // and the grid sweeps with it, a bubble naming the month under the finger.
+                    // This is what makes a 21,000-item continuous mosaic navigable, and it is
+                    // why the pill no longer carries a scrubber of its own — two position
+                    // controls on one screen is one too many, and the edge is the one the owner
+                    // asked for.
+                    if (!selection.isActive && legacyScreen == null && scrubberStops.isNotEmpty()) {
+                        EdgeTimelineScrubber(
+                            stops = scrubberStops,
+                            itemCount = scrubberAssets.size,
+                            currentIndex = firstVisibleIndex,
+                            onScrubTo = { index ->
+                                // scrollToItem, not animateScrollToItem: the finger is already
+                                // moving, so the grid must track it rather than chase it.
+                                gridScope.launch { gridState.scrollToItem(index) }
+                            },
+                            inkColor = Color.White,
+                            accentColor = MaterialTheme.colorScheme.primary,
+                            bubbleTextColor = Color.Black,
+                            modifier = Modifier.align(Alignment.CenterEnd),
+                        )
+                    }
+
                     // The floating pill from the mockups, replacing the retired bottom nav.
                     if (!selection.isActive && legacyScreen == null) {
                         FloatingPillControl(
-                            scrollFraction = scrollFraction,
-                            onScrub = { fraction ->
-                                val total = gridState.layoutInfo.totalItemsCount
-                                if (total > 0) {
-                                    gridScope.launch {
-                                        gridState.scrollToItem(
-                                            ((total - 1) * fraction).toInt().coerceIn(0, total - 1),
-                                        )
-                                    }
-                                }
-                            },
+                            caption = pillCaption(scrubberAssets, firstVisibleIndex),
                             onSearch = { searchVisible = !searchVisible },
                             onToggleDensity = {
                                 val next = state.preferences.gridColumns + 1
@@ -640,16 +659,8 @@ private fun GalleryBrowser(
                     }
                 }
             }
-        }
     }
 
-    if (settingsDialogVisible) {
-        GallerySettingsDialog(
-            preferences = state.preferences,
-            onDismiss = { settingsDialogVisible = false },
-            actions = actions,
-        )
-    }
     if (createCollectionVisible) {
         TextEntryDialog(
             title = "New collection",
@@ -986,5 +997,121 @@ private fun GalleryEmptyState(
     }
 }
 
-private const val RAIL_PANEL_WIDTH = 300
-private const val SETTINGS_PANEL_WIDTH = 320
+/**
+ * The header for the browsing surface: where you are, and the actions for it.
+ *
+ * Deliberately a plain Row rather than a `CenterAlignedTopAppBar`. The app bar's centred title
+ * and its navigation slot were built around a hamburger that no longer exists — the rail is an
+ * edge-drag away — and a centred title over an off-centre back affordance reads as chrome for
+ * its own sake. Left-aligned, one line, no container colour of its own: the header sits on the
+ * grid's black rather than drawing a bar across the top of it.
+ */
+@Composable
+private fun BrowserHeader(
+    title: String,
+    onBack: (() -> Unit)?,
+    actions: @Composable RowScope.() -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black)
+            .statusBarsPadding()
+            .padding(start = 20.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (onBack != null) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Outlined.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Color.White,
+                )
+            }
+        }
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        actions()
+    }
+}
+
+/**
+ * The settings room — the surface parked off the right edge.
+ *
+ * Two depths on one surface rather than a panel plus a dialog: the compact panel from the
+ * mockups, and every setting behind "All settings…". Both render inside the app's own theme,
+ * which is the fix for the light-coloured settings screen the owner found in an otherwise black
+ * app: an `AlertDialog` paints on the platform's dialog surface, and no amount of theming the
+ * app changes that.
+ */
+@Composable
+private fun SettingsRoom(
+    state: GalleryUiState,
+    actions: GalleryActions,
+    allSettingsOpen: Boolean,
+    onAllSettingsOpenChange: (Boolean) -> Unit,
+    onOpenLegacyScreen: (LegacyScreen) -> Unit,
+) {
+    // Back inside the room steps out of the full list before it closes the room, so "all
+    // settings" is not a one-way door.
+    BackHandler(enabled = allSettingsOpen) { onAllSettingsOpenChange(false) }
+
+    if (!allSettingsOpen) {
+        SettingsPanel(
+            preferences = state.preferences,
+            onOpenAllSettings = { onAllSettingsOpenChange(true) },
+            onSetDefaultDestination = actions.onSetDefaultDestination,
+            onOpenLegacyScreen = onOpenLegacyScreen,
+        )
+        return
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .statusBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { onAllSettingsOpenChange(false) }) {
+                Icon(
+                    Icons.AutoMirrored.Outlined.ArrowBack,
+                    contentDescription = "Back to settings",
+                    tint = Color.White,
+                )
+            }
+            Text(
+                "All settings",
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+            )
+        }
+        GallerySettingsList(
+            preferences = state.preferences,
+            actions = actions,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/**
+ * What the pill says between its two buttons.
+ *
+ * The pill used to hold a horizontal scrubber there. That became a second position control the
+ * moment the edge scrubber arrived, and two of them disagreeing about where you are is worse
+ * than either alone — so the space now reports position in words instead of competing to set
+ * it: which month you are looking at, and how far through.
+ */
+private fun pillCaption(assets: List<MediaAsset>, firstVisibleIndex: Int): String {
+    if (assets.isEmpty()) return ""
+    val index = firstVisibleIndex.coerceIn(0, assets.lastIndex)
+    val month = monthLabel(assets[index])
+    return "$month · ${index + 1} of ${assets.size}"
+}
