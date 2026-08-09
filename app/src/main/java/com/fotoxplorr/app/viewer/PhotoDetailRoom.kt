@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -23,28 +24,17 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudOff
-import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -65,122 +55,117 @@ private val SECONDARY_TEXT = Color(0xFF8A8A8A)
 private val MUTED_TEXT = Color(0xFF6A6A6A)
 
 /**
- * The image-detail screen, redrawn against the owner's detail mockup: the photo, an
- * "Add a Caption" affordance, a date line, the filename beside a cloud/backup-state glyph,
- * an EXIF card carrying a format badge + flash glyph + dynamic-range badge, and a
- * related-photos mosaic below.
+ * The viewer's **top room**: what this photo is, and where it was taken.
+ *
+ * This was `ImageDetailScreen`, a full-screen Material `Scaffold` with a centred app bar and a
+ * close button, reached by tapping a "Details" text button. That was a screen, and the
+ * constellation does not have screens — `docs/fonebrew-navigation.md` is explicit that a modal
+ * window floating over a room is two contradictory ideas of where you are. It is a room now:
+ * pulled down from the top of the viewer, with the photo still alive on the parked card behind
+ * it, and no chrome of its own because the card *is* the way back.
+ *
+ * The order is the reference video's: filename, date, the camera card, the place plate the
+ * photo flies into, the caption affordance, then the file's own facts. Related photos stay at
+ * the bottom, below everything the room exists to say.
  *
  * The caption row is still an affordance without storage -- Foto Xplorr has no caption
  * field in its data model, and inventing one was out of scope here -- so tapping it does
  * nothing yet. It is drawn because the mockup draws it; it is not claimed to persist.
+ *
+ * @param exif read by the viewer rather than here. The shell composes a room only once it is
+ *   at least slightly open, so a room that read its own EXIF would start that read on the first
+ *   pixel of the pull and show an empty card for the rest of it — the facts have to be in hand
+ *   before the gesture begins, not fetched because it did.
+ * @param reveal how open the room is, 0..1. Read on the draw pass so a drag animates the
+ *   arrival without recomposing the room's content on every frame.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ImageDetailScreen(
+fun PhotoDetailRoom(
     asset: MediaAsset,
+    exif: ImageExifDetails,
     relatedAssets: List<MediaAsset>,
     onOpenRelated: (MediaAsset) -> Unit,
-    onClose: () -> Unit,
+    reveal: () -> Float,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
-    var exif by remember(asset.id) { mutableStateOf(ImageExifDetails()) }
-    LaunchedEffect(asset.id) {
-        exif = readImageExifDetails(context, asset)
-    }
-
-    Scaffold(
-        modifier = modifier,
-        containerColor = PANEL_BACKGROUND,
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("Details", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = PANEL_BACKGROUND,
-                    titleContentColor = PRIMARY_TEXT,
-                    navigationIconContentColor = PRIMARY_TEXT,
-                ),
-                navigationIcon = {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Outlined.Close, contentDescription = "Back to viewer")
-                    }
-                },
+    // The shell deliberately consumes no insets — it says so in its own KDoc, because doing so
+    // would lift its drag-sensitive edges off the physical screen edge. So a room pads for the
+    // status bar itself, exactly as the rail and settings rooms already do.
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3),
+        modifier = modifier
+            .fillMaxSize()
+            .background(PANEL_BACKGROUND)
+            .statusBarsPadding(),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            RoomHeader(asset = asset, reveal = reveal)
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Box(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+                ExifCard(asset = asset, exif = exif)
+            }
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            PlaceBlock(asset = asset, exif = exif, reveal = reveal)
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Text(
+                text = "Add a Caption",
+                color = MUTED_TEXT,
+                style = TextStyle(fontSize = 16.sp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = false) {}
+                    .padding(horizontal = 20.dp, vertical = 18.dp),
             )
-        },
-    ) { padding ->
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
-            modifier = Modifier
-                .fillMaxSize()
-                .background(PANEL_BACKGROUND)
-                .padding(padding),
-            contentPadding = PaddingValues(bottom = 24.dp),
-        ) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                MediaImage(
-                    asset = asset,
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            InformationBlock(asset = asset, exif = exif, reveal = reveal)
+        }
+        if (relatedAssets.isNotEmpty()) {
+            items(relatedAssets, key = { it.id.value }) { related ->
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .aspectRatio(asset.aspectRatio.coerceIn(0.5f, 2.2f)),
-                    contentScale = ContentScale.Fit,
-                )
-            }
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Text(
-                    text = "Add a Caption",
-                    color = MUTED_TEXT,
-                    style = TextStyle(fontSize = 16.sp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = false) {}
-                        .padding(horizontal = 20.dp, vertical = 18.dp),
-                )
-            }
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                DetailPanel(asset = asset, exif = exif)
-            }
-            if (relatedAssets.isNotEmpty()) {
-                items(relatedAssets, key = { it.id.value }) { related ->
-                    Box(
-                        modifier = Modifier
-                            .aspectRatio(1f)
-                            .padding(1.dp)
-                            .background(Color.Black)
-                            .clickable { onOpenRelated(related) },
-                    ) {
-                        MediaImage(
-                            asset = related,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop,
-                        )
-                    }
+                        .aspectRatio(1f)
+                        .padding(1.dp)
+                        .background(Color.Black)
+                        .clickable { onOpenRelated(related) },
+                ) {
+                    MediaImage(
+                        asset = related,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
                 }
             }
         }
     }
 }
 
-/** Date line, filename + cloud glyph, and the EXIF card -- the mockup's middle block. */
+/** Filename, date line and the local-storage glyph — the room's first block. */
 @Composable
-private fun DetailPanel(asset: MediaAsset, exif: ImageExifDetails) {
+private fun RoomHeader(asset: MediaAsset, reveal: () -> Float) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.Black)
-            .padding(horizontal = 20.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .graphicsLayer { alpha = PlaceMorph.textAlpha(reveal()) }
+            .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            text = DetailFormatting.dateLine(asset.dateTakenMillis),
-            color = PRIMARY_TEXT,
-            style = TextStyle(fontSize = 15.sp),
-        )
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            Text(
+                text = asset.displayName.substringBeforeLast('.'),
+                color = PRIMARY_TEXT,
+                style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Medium),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
             // Foto Xplorr has no cloud-backup subsystem, so this reports the one backup
             // state it can actually establish: whether the file is still present locally in
             // MediaStore (on device) or has been moved to the system trash (not backed up
@@ -191,15 +176,96 @@ private fun DetailPanel(asset: MediaAsset, exif: ImageExifDetails) {
                 tint = SECONDARY_TEXT,
                 modifier = Modifier.size(18.dp),
             )
+        }
+        Text(
+            text = DetailFormatting.dateLine(asset.dateTakenMillis),
+            color = SECONDARY_TEXT,
+            style = TextStyle(fontSize = 14.sp),
+        )
+    }
+}
+
+/**
+ * The place plate, or an honest absence.
+ *
+ * Most libraries are mostly un-geotagged — screenshots, downloads, anything shared through a
+ * messenger that strips EXIF, and every file this app's own clean-share export has been through.
+ * A plate drawn at 0°,0° for those would be a confident lie, so the block says the fix is
+ * missing instead, and says it quietly.
+ */
+@Composable
+private fun PlaceBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: () -> Float) {
+    val latitude = exif.latitude
+    val longitude = exif.longitude
+    Box(Modifier.padding(horizontal = 20.dp)) {
+        if (latitude != null && longitude != null) {
+            PlacePlate(
+                asset = asset,
+                latitude = latitude,
+                longitude = longitude,
+                reveal = reveal,
+            )
+        } else {
             Text(
-                text = asset.displayName.substringBeforeLast('.'),
-                color = SECONDARY_TEXT,
-                style = TextStyle(fontSize = 15.sp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                text = "No location in this file",
+                color = MUTED_TEXT,
+                style = TextStyle(fontSize = 14.sp),
+                modifier = Modifier
+                    .graphicsLayer { alpha = PlaceMorph.textAlpha(reveal()) }
+                    .padding(vertical = 6.dp),
             )
         }
-        ExifCard(asset = asset, exif = exif)
+    }
+}
+
+/**
+ * The file's own facts, in the shape of the owner's second reference screenshot: kind, size,
+ * where it lives, when it changed, its pixel dimensions and — only when the file actually
+ * records one — its colour space.
+ */
+@Composable
+private fun InformationBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: () -> Float) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer { alpha = PlaceMorph.textAlpha(reveal()) }
+            .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Text(
+            text = "Information",
+            color = PRIMARY_TEXT,
+            style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Medium),
+            modifier = Modifier.padding(bottom = 3.dp),
+        )
+        InformationRow("Kind", DetailFormatting.formatBadge(asset.mimeType) ?: asset.mimeType)
+        InformationRow("Size", DetailFormatting.byteLine(asset.sizeBytes))
+        InformationRow("Dimensions", "${asset.width} × ${asset.height}")
+        if (asset.isVideo && asset.durationMillis > 0L) {
+            InformationRow("Duration", DetailFormatting.durationLine(asset.durationMillis))
+        }
+        asset.bucketName?.takeIf(String::isNotBlank)?.let { InformationRow("Album", it) }
+        asset.relativePath?.takeIf(String::isNotBlank)?.let { InformationRow("Where", it) }
+        InformationRow("Modified", DetailFormatting.dateLine(asset.dateModifiedSeconds * 1_000L))
+        exif.colorSpace?.let { InformationRow("Color space", it) }
+    }
+}
+
+@Composable
+private fun InformationRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(
+            text = label,
+            color = MUTED_TEXT,
+            style = TextStyle(fontSize = 13.sp),
+            modifier = Modifier.weight(0.36f),
+        )
+        Text(
+            text = value,
+            color = SECONDARY_TEXT,
+            style = TextStyle(fontSize = 13.sp),
+            modifier = Modifier.weight(0.64f),
+        )
     }
 }
 
@@ -343,6 +409,15 @@ data class ImageExifDetails(
     val exposureBiasEv: Double? = null,
     /** Raw EXIF flash bitfield; bit 0 set means the flash fired. */
     val flash: Int? = null,
+    /**
+     * The embedded GPS fix, if the file carries one. Both are null together — a latitude
+     * without a longitude is not half a location, it is no location, and letting them vary
+     * independently would invite a caller to draw a pin on one axis of nonsense.
+     */
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    /** Human-readable colour space, when the file names one. */
+    val colorSpace: String? = null,
 )
 
 suspend fun readImageExifDetails(context: Context, asset: MediaAsset): ImageExifDetails {
@@ -362,6 +437,10 @@ private fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
         ?: exif.getAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS)
     val shutter = exif.getAttributeDouble(ExifInterface.TAG_EXPOSURE_TIME, Double.NaN)
         .takeUnless(Double::isNaN)
+    // getLatLong() returns null unless BOTH the coordinate and its hemisphere ref are present
+    // and well-formed, which is exactly the guarantee ImageExifDetails.latitude documents —
+    // so the pair is destructured from one call rather than read as two independent tags.
+    val latLong = exif.latLong
     return ImageExifDetails(
         make = exif.getAttribute(ExifInterface.TAG_MAKE)?.trim()?.takeIf(String::isNotEmpty),
         model = exif.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf(String::isNotEmpty),
@@ -375,7 +454,21 @@ private fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
         exposureBiasEv = exif.getAttributeDouble(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, Double.NaN)
             .takeUnless(Double::isNaN),
         flash = exif.getAttributeInt(ExifInterface.TAG_FLASH, -1).takeIf { it >= 0 },
+        latitude = latLong?.get(0),
+        longitude = latLong?.get(1),
+        colorSpace = colorSpaceName(exif.getAttributeInt(ExifInterface.TAG_COLOR_SPACE, -1)),
     )
+}
+
+/**
+ * EXIF stores colour space as a number: 1 is sRGB and 0xFFFF ("uncalibrated") is what almost
+ * everything else writes, most often for Display P3. Anything else is unspecified, and is
+ * reported as nothing rather than guessed at — the room omits the row entirely in that case.
+ */
+internal fun colorSpaceName(raw: Int): String? = when (raw) {
+    1 -> "sRGB"
+    0xFFFF -> "Uncalibrated"
+    else -> null
 }
 
 internal fun formatShutterSpeed(seconds: Double): String = when {

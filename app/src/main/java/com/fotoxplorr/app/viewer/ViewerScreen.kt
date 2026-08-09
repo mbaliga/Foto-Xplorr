@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -38,15 +39,28 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
+import dev.aarso.cellshell.SpatialShell
+import dev.aarso.cellshell.rememberSpatialController
 import kotlinx.coroutines.delay
-import java.text.DateFormat
-import java.util.Date
-import kotlin.math.roundToInt
 
+/**
+ * The full-screen viewer, as a spatial shell with one room above it.
+ *
+ * Pulling down from the top reveals [PhotoDetailRoom] — what this photo is and where it was
+ * taken — with the photo itself still alive on the parked card behind it. That replaces two
+ * separate surfaces that used to say overlapping things about the same file: a bottom
+ * `MetadataPanel` behind an "Info" button, and a full-screen Material details screen behind a
+ * "Details" button. Two buttons, two layouts and two half-answers about one photo is exactly
+ * the drift `docs/fonebrew-navigation.md` describes; the room is the single answer.
+ *
+ * The top edge is the only edge with a room here, so the shell refuses drags from the other
+ * three and draws no peek on them.
+ */
 @Composable
 fun ViewerScreen(
     asset: MediaAsset,
@@ -70,7 +84,7 @@ fun ViewerScreen(
     onNext: () -> Unit,
     onClose: () -> Unit,
     /**
-     * The assets being paged through. Feeds both the image-detail screen's related-photos
+     * The assets being paged through. Feeds both the top room's related-photos
      * grid and the bottom filmstrip scrubber; empty is a safe fallback (the strip hides
      * itself below two items).
      */
@@ -80,30 +94,28 @@ fun ViewerScreen(
     onSelectAsset: (MediaAsset) -> Unit = onOpenRelated,
 ) {
     var controlsVisible by remember(asset.id) { mutableStateOf(true) }
-    var metadataVisible by remember(asset.id) { mutableStateOf(false) }
-    var detailsVisible by remember(asset.id) { mutableStateOf(false) }
     var scale by remember(asset.id) { mutableFloatStateOf(1f) }
     var offsetX by remember(asset.id) { mutableFloatStateOf(0f) }
     var offsetY by remember(asset.id) { mutableFloatStateOf(0f) }
     var dragDistance by remember(asset.id) { mutableFloatStateOf(0f) }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    val shell = rememberSpatialController()
 
-    if (detailsVisible) {
-        BackHandler { detailsVisible = false }
-        ImageDetailScreen(
-            asset = asset,
-            relatedAssets = relatedAssets.filter { it.id != asset.id }.take(30),
-            onOpenRelated = { related ->
-                detailsVisible = false
-                onOpenRelated(related)
-            },
-            onClose = { detailsVisible = false },
-        )
-        return
+    // Read here rather than inside the room: the shell only composes a room once it is slightly
+    // open, so reading it there would start the EXIF load on the first pixel of the pull and
+    // leave the card empty for the rest of the gesture.
+    val context = LocalContext.current
+    var exif by remember(asset.id) { mutableStateOf(ImageExifDetails()) }
+    LaunchedEffect(asset.id) {
+        exif = readImageExifDetails(context, asset)
     }
 
-    LaunchedEffect(asset.id, slideshowActive, slideshowIntervalSeconds, metadataVisible) {
-        if (slideshowActive && total > 1 && !metadataVisible) {
+    // A room is not a back-stack entry, but Back is the gesture people reach for to leave one.
+    // Disabled at home so the activity's own handler still closes the viewer.
+    BackHandler(enabled = !shell.atHome) { shell.closeAll() }
+
+    LaunchedEffect(asset.id, slideshowActive, slideshowIntervalSeconds, shell.anyRoomVisible) {
+        if (slideshowActive && total > 1 && !shell.anyRoomVisible) {
             delay(slideshowIntervalSeconds.coerceAtLeast(2) * 1_000L)
             onNext()
         }
@@ -123,120 +135,137 @@ fun ViewerScreen(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .onSizeChanged { containerSize = it }
-            .pointerInput(asset.id, scale) {
-                detectHorizontalDragGestures(
-                    onDragStart = { dragDistance = 0f },
-                    onHorizontalDrag = { change, amount ->
-                        if (scale == 1f) {
-                            change.consume()
-                            dragDistance += amount
-                        }
-                    },
-                    onDragEnd = {
-                        when {
-                            dragDistance <= -SWIPE_THRESHOLD_PX && hasNext -> onNext()
-                            dragDistance >= SWIPE_THRESHOLD_PX && hasPrevious -> onPrevious()
-                        }
-                        dragDistance = 0f
-                    },
-                    onDragCancel = { dragDistance = 0f },
-                )
-            }
-            .pointerInput(asset.id) {
-                detectTapGestures(
-                    onTap = { controlsVisible = !controlsVisible },
-                    onDoubleTap = {
-                        if (!asset.isVideo) {
-                            if (scale > 1f) {
-                                scale = 1f
-                                offsetX = 0f
-                                offsetY = 0f
-                            } else {
-                                scale = 2.5f
-                            }
-                        }
-                    },
-                )
-            }
-            .then(if (asset.isVideo) Modifier else Modifier.transformable(transformState)),
-        contentAlignment = Alignment.Center,
+    SpatialShell(
+        controller = shell,
+        accentColor = MaterialTheme.colorScheme.primary,
+        // The room sits on the same black the photo does, so opening it reads as the surface
+        // moving rather than as a different screen appearing behind it.
+        scrimColor = Color.Black,
+        cardColor = Color.Black,
+        modifier = Modifier.fillMaxSize(),
+        top = {
+            PhotoDetailRoom(
+                asset = asset,
+                exif = exif,
+                relatedAssets = relatedAssets.filter { it.id != asset.id }.take(30),
+                onOpenRelated = { related ->
+                    shell.closeAll()
+                    onOpenRelated(related)
+                },
+                reveal = { shell.vProgress },
+            )
+        },
     ) {
-        if (asset.isVideo) {
-            VideoPlayer(asset = asset, modifier = Modifier.fillMaxSize())
-        } else {
-            MediaImage(
-                asset = asset,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offsetX + if (scale == 1f) dragDistance else 0f
-                        translationY = offsetY
-                    },
-                contentScale = ContentScale.Fit,
-            )
-        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .onSizeChanged { containerSize = it }
+                .pointerInput(asset.id, scale) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragDistance = 0f },
+                        onHorizontalDrag = { change, amount ->
+                            if (scale == 1f) {
+                                change.consume()
+                                dragDistance += amount
+                            }
+                        },
+                        onDragEnd = {
+                            when {
+                                dragDistance <= -SWIPE_THRESHOLD_PX && hasNext -> onNext()
+                                dragDistance >= SWIPE_THRESHOLD_PX && hasPrevious -> onPrevious()
+                            }
+                            dragDistance = 0f
+                        },
+                        onDragCancel = { dragDistance = 0f },
+                    )
+                }
+                .pointerInput(asset.id) {
+                    detectTapGestures(
+                        onTap = { controlsVisible = !controlsVisible },
+                        onDoubleTap = {
+                            if (!asset.isVideo) {
+                                if (scale > 1f) {
+                                    scale = 1f
+                                    offsetX = 0f
+                                    offsetY = 0f
+                                } else {
+                                    scale = 2.5f
+                                }
+                            }
+                        },
+                    )
+                }
+                .then(if (asset.isVideo) Modifier else Modifier.transformable(transformState)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (asset.isVideo) {
+                VideoPlayer(asset = asset, modifier = Modifier.fillMaxSize())
+            } else {
+                MediaImage(
+                    asset = asset,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            translationX = offsetX + if (scale == 1f) dragDistance else 0f
+                            translationY = offsetY
+                        },
+                    contentScale = ContentScale.Fit,
+                )
+            }
 
-        if (controlsVisible) {
-            ViewerControls(
-                asset = asset,
-                position = position,
-                total = total,
-                isFavorite = isFavorite,
-                isSensitive = isSensitive,
-                metadataVisible = metadataVisible,
-                canMoveToTrash = canMoveToTrash,
-                slideshowActive = slideshowActive,
-                hasPrevious = hasPrevious,
-                hasNext = hasNext,
-                onToggleSlideshow = onToggleSlideshow,
-                onToggleFavorite = onToggleFavorite,
-                onToggleSensitive = onToggleSensitive,
-                onShare = onShare,
-                onEdit = onEdit,
-                onOpenWith = onOpenWith,
-                onMoveToTrash = onMoveToTrash,
-                onPrevious = onPrevious,
-                onNext = onNext,
-                onToggleMetadata = { metadataVisible = !metadataVisible },
-                onOpenDetails = { detailsVisible = true },
-                onClose = onClose,
-                modifier = Modifier.align(Alignment.TopCenter),
-            )
-        }
+            if (controlsVisible) {
+                ViewerControls(
+                    asset = asset,
+                    position = position,
+                    total = total,
+                    isFavorite = isFavorite,
+                    isSensitive = isSensitive,
+                    canMoveToTrash = canMoveToTrash,
+                    slideshowActive = slideshowActive,
+                    hasPrevious = hasPrevious,
+                    hasNext = hasNext,
+                    onToggleSlideshow = onToggleSlideshow,
+                    onToggleFavorite = onToggleFavorite,
+                    onToggleSensitive = onToggleSensitive,
+                    onShare = onShare,
+                    onEdit = onEdit,
+                    onOpenWith = onOpenWith,
+                    onMoveToTrash = onMoveToTrash,
+                    onPrevious = onPrevious,
+                    onNext = onNext,
+                    onClose = onClose,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
+            }
 
-        if (metadataVisible) {
-            MetadataPanel(asset = asset, modifier = Modifier.align(Alignment.BottomCenter))
-        } else if (controlsVisible && relatedAssets.size > 1) {
-            // The filmstrip from the viewer mockup. It shares the bottom edge with the
-            // metadata panel, so only one of the two is ever shown; the strip is the default
-            // because scrubbing between shots is the more common action.
-            FilmstripScrubber(
-                assets = relatedAssets,
-                currentIndex = position - 1,
-                onSelect = onSelectAsset,
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
-        }
+            // The filmstrip from the viewer mockup. It used to share the bottom edge with a
+            // metadata panel and hide whenever that was up; the panel is the top room now, so
+            // the strip simply owns the bottom edge.
+            if (controlsVisible && relatedAssets.size > 1) {
+                FilmstripScrubber(
+                    assets = relatedAssets,
+                    currentIndex = position - 1,
+                    onSelect = onSelectAsset,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
 
-        // Zoomed-image minimap: only meaningful once the user has actually zoomed in.
-        if (!asset.isVideo && scale > 1.05f) {
-            ZoomMinimap(
-                asset = asset,
-                scale = scale,
-                offsetX = offsetX,
-                offsetY = offsetY,
-                containerSize = containerSize,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(16.dp),
-            )
+            // Zoomed-image minimap: only meaningful once the user has actually zoomed in.
+            if (!asset.isVideo && scale > 1.05f) {
+                ZoomMinimap(
+                    asset = asset,
+                    scale = scale,
+                    offsetX = offsetX,
+                    offsetY = offsetY,
+                    containerSize = containerSize,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(16.dp),
+                )
+            }
         }
     }
 }
@@ -311,7 +340,6 @@ private fun ViewerControls(
     total: Int,
     isFavorite: Boolean,
     isSensitive: Boolean,
-    metadataVisible: Boolean,
     canMoveToTrash: Boolean,
     slideshowActive: Boolean,
     hasPrevious: Boolean,
@@ -325,8 +353,6 @@ private fun ViewerControls(
     onMoveToTrash: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
-    onToggleMetadata: () -> Unit,
-    onOpenDetails: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -347,6 +373,9 @@ private fun ViewerControls(
             Text("$position / $total", color = Color.White)
         }
 
+        // "Info" and "Details" are gone: both opened a surface describing this file, and that
+        // surface is the top room now. A button that duplicates a gesture teaches people to
+        // ignore the gesture.
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -356,8 +385,6 @@ private fun ViewerControls(
             ViewerAction("Previous", onPrevious, hasPrevious)
             ViewerAction(if (slideshowActive) "Pause slideshow" else "Slideshow", onToggleSlideshow)
             ViewerAction("Next", onNext, hasNext || slideshowActive)
-            ViewerAction(if (metadataVisible) "Hide info" else "Info", onToggleMetadata)
-            ViewerAction("Details", onOpenDetails)
             ViewerAction("Share", onShare)
             ViewerAction("Edit", onEdit)
             ViewerAction("Open with", onOpenWith)
@@ -384,57 +411,6 @@ private fun ViewerAction(
             color = if (enabled) Color.White else Color.White.copy(alpha = 0.45f),
         )
     }
-}
-
-@Composable
-private fun MetadataPanel(asset: MediaAsset, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.86f))
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        MetadataRow("Name", asset.displayName)
-        MetadataRow("Type", asset.mimeType.ifBlank { "Unknown" })
-        MetadataRow("Dimensions", "${asset.width} × ${asset.height}")
-        MetadataRow("Size", formatBytes(asset.sizeBytes))
-        if (asset.isVideo) MetadataRow("Duration", formatDuration(asset.durationMillis))
-        asset.bucketName?.let { MetadataRow("Album", it) }
-        asset.relativePath?.let { MetadataRow("Path", it) }
-        MetadataRow("Taken", formatDate(asset.dateTakenMillis))
-    }
-}
-
-@Composable
-private fun MetadataRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(label, color = Color.White.copy(alpha = 0.68f), modifier = Modifier.weight(0.3f))
-        Text(value, color = Color.White, modifier = Modifier.weight(0.7f))
-    }
-}
-
-private fun formatDate(epochMillis: Long): String {
-    if (epochMillis <= 0L) return "Unknown"
-    return DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(epochMillis))
-}
-
-private fun formatBytes(bytes: Long): String {
-    if (bytes <= 0L) return "Unknown"
-    val units = listOf("B", "KB", "MB", "GB")
-    var value = bytes.toDouble()
-    var unitIndex = 0
-    while (value >= 1024.0 && unitIndex < units.lastIndex) {
-        value /= 1024.0
-        unitIndex += 1
-    }
-    return if (unitIndex == 0) "${value.roundToInt()} ${units[unitIndex]}" else "%.1f %s".format(value, units[unitIndex])
-}
-
-private fun formatDuration(durationMillis: Long): String {
-    if (durationMillis <= 0L) return "Unknown"
-    val totalSeconds = durationMillis / 1_000L
-    return "%d:%02d".format(totalSeconds / 60L, totalSeconds % 60L)
 }
 
 private const val SWIPE_THRESHOLD_PX = 180f

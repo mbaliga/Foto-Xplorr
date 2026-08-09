@@ -1,7 +1,9 @@
 package com.fotoxplorr.app.hyle
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -36,6 +38,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.ScanState
@@ -76,10 +79,25 @@ fun ScanActivityAlertBanner(
         scanState is ScanState.Scanning ||
         scanState is ScanState.Error ||
         showCompletionPulse
+    // Asymmetric easing, which `tween`'s default (FastOutSlowIn, eased at BOTH ends) is not.
+    // Measured off the owner's notification reference at 60fps, the band opens at its maximum
+    // velocity on the very first frame and then decelerates into place -- 13-15px in each of
+    // the opening frames, tailing to 2px by the end. Easing in as well made the band appear to
+    // hesitate before committing, which is the one thing a status band must never do.
+    //
+    // The same measurement puts the travel at ~220ms rather than [HyleTokens.Duration.durationCalm]'s
+    // 300ms. The token is kept: 300ms is Hyle's considered default for a state change ("280-320ms"
+    // in its own token description), and 80ms is not worth either overriding the design system
+    // app-side or minting a fourth duration token that every consumer would then have to reason
+    // about. If the band still reads slow on device, that is a Hyle conversation, not a local one.
+    val enterSpec = tween<Float>(HyleTokens.Duration.durationCalm, easing = LinearOutSlowInEasing)
+    val enterSize = tween<IntSize>(HyleTokens.Duration.durationCalm, easing = LinearOutSlowInEasing)
+    val exitSpec = tween<Float>(HyleTokens.Duration.durationCalm, easing = FastOutLinearInEasing)
+    val exitSize = tween<IntSize>(HyleTokens.Duration.durationCalm, easing = FastOutLinearInEasing)
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(HyleTokens.Duration.durationCalm)) + expandVertically(tween(HyleTokens.Duration.durationCalm)),
-        exit = fadeOut(tween(HyleTokens.Duration.durationCalm)) + shrinkVertically(tween(HyleTokens.Duration.durationCalm)),
+        enter = fadeIn(enterSpec) + expandVertically(enterSize),
+        exit = fadeOut(exitSpec) + shrinkVertically(exitSize),
         modifier = modifier,
     ) {
         AlertBannerRow(
