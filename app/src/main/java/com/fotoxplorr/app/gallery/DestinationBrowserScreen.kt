@@ -23,8 +23,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Badge
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
+import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.Pets
+import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.Place
+import androidx.compose.material.icons.outlined.Smartphone
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -34,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -49,20 +58,25 @@ import com.fotoxplorr.app.spatial.PlacesScreen
 
 /**
  * The nine primary destinations from the owner's mockups. These are the app's top-level
- * information architecture -- reached from the slide-in rail, not from a route -- and have
+ * information architecture -- reached from the rail room, not from a route -- and have
  * replaced the retired four-tab bottom navigation (Photos / Albums / Discover / Library) as
  * the default IA.
+ *
+ * Each carries the word it is called and the [icon] that rides the rail's gutter while it is
+ * the selected one. The icon shows for the **selected destination only** — see `WordWheelRail`'s
+ * marker slot. The rail is a run of words, and nine glyphs down its side would turn it into a
+ * menu.
  */
-enum class HyleDestination(val label: String) {
-    PETS("Pets"),
-    PEOPLE("People"),
-    IDENTITY("Identity"),
-    SCREENSHOTS("Screenshots"),
-    PHOTOS("Photos"),
-    VIDEOS("Videos"),
-    FAVOURITES("Favourites"),
-    PLACES("Places"),
-    PROTECTED("Protected"),
+enum class HyleDestination(val label: String, val icon: ImageVector) {
+    PETS("Pets", Icons.Outlined.Pets),
+    PEOPLE("People", Icons.Outlined.People),
+    IDENTITY("Identity", Icons.Outlined.Badge),
+    SCREENSHOTS("Screenshots", Icons.Outlined.Smartphone),
+    PHOTOS("Photos", Icons.Outlined.PhotoLibrary),
+    VIDEOS("Videos", Icons.Outlined.Videocam),
+    FAVOURITES("Favourites", Icons.Outlined.FavoriteBorder),
+    PLACES("Places", Icons.Outlined.Place),
+    PROTECTED("Protected", Icons.Outlined.Lock),
 }
 
 /** Which assets a destination shows. Kept separate from the UI so it is testable. */
@@ -166,6 +180,16 @@ fun DestinationRailPanel(
             .background(Color.Black)
             .statusBarsPadding()
             .padding(start = 24.dp, end = 16.dp, top = 40.dp, bottom = 40.dp),
+        marker = { item ->
+            Icon(
+                imageVector = HyleDestination.valueOf(item.id).icon,
+                // The word beside it already names the destination; repeating it here would make
+                // every rail row announce itself twice to a screen reader.
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(20.dp),
+            )
+        },
         trailing = { item ->
             RailThumbnailCascade(
                 destinationAssets(HyleDestination.valueOf(item.id), state).take(3),

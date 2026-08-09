@@ -1,23 +1,20 @@
 package com.fotoxplorr.app.hyle
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -35,36 +32,53 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.ScanState
 import dev.aarso.hyle.Pulse
+import dev.aarso.cellshell.SpatialMotion
 import dev.aarso.hyle.tokens.HyleTokens
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 /**
- * The "Notifications & Alerts" band from the mockups: a warning glyph beside a single line
- * of status copy, centred on black above the grid.
+ * The notification layer: a warning glyph beside a single line of status copy, lying on the
+ * black *behind* the surface it belongs to.
  *
- * This file previously rendered an icon and a bare progress bar with no sentence at all,
- * on a reading of Hyle's law that a literal status line was forbidden. The mockups draw the
- * sentence explicitly, so it is here; the icon, motion and Hyle hues stay alongside it.
+ * **This is a room, not a banner.** It used to be a sibling above the grid in a `Column`,
+ * expanding vertically to shove the content down — which is the popup shape the constellation's
+ * navigation exists to avoid (owner, 2026-08-09: *"instead of giving a popup, shrinks the
+ * viewpane to show the notification, which is a layer deeper and stays in the back"*). So the
+ * notification borrows the room language wholesale: it is drawn first and never moves, and what
+ * animates is [content] — the pane's frame recedes from the top, rounding its corners as it
+ * goes, exactly as the spatial shell's home card does when it parks. The notification was
+ * always there; the pane simply stopped covering it.
  *
- * The band is wired to the app's real [ScanState] (MediaIndexer's background scan), which is
- * the one genuine background-activity signal Foto Xplorr has -- so its text is factual
- * rather than a mock string. When there is nothing to report it shows the mockups' resting
- * line, [IDLE_MESSAGE], only if [showWhenIdle] is set by the caller; otherwise it collapses
- * so the grid can run edge to edge.
+ * Two consequences worth stating, because both are easy to undo by accident:
+ * - The layer is drawn **before** the pane and is never raised above it. A notification that
+ *   comes forward is a popup again, whatever it is called.
+ * - The pane's contents do **not** scale. Its frame shrinks; the photos inside keep their size,
+ *   which is what the owner's reference shows (the grid's column seams do not move — measured).
+ *
+ * The copy is wired to the app's real [ScanState] (MediaIndexer's background scan), which is the
+ * one genuine background-activity signal Foto Xplorr has, so its text is factual rather than a
+ * mock string. The reference clip's own wording is a generic stand-in for the interaction
+ * (owner, same note) and is deliberately not reproduced.
+ *
+ * @param showWhenIdle keep the layer revealed even with nothing to report. Off by default, so
+ *   the pane runs edge to edge and the notification costs no screen.
  */
 @Composable
-fun ScanActivityAlertBanner(
+fun NotificationRoom(
     scanState: ScanState,
     modifier: Modifier = Modifier,
     showWhenIdle: Boolean = false,
+    content: @Composable () -> Unit,
 ) {
     var showCompletionPulse by remember { mutableStateOf(false) }
     LaunchedEffect(scanState) {
@@ -75,35 +89,45 @@ fun ScanActivityAlertBanner(
         }
     }
 
-    val visible = showWhenIdle ||
+    val revealed = showWhenIdle ||
         scanState is ScanState.Scanning ||
         scanState is ScanState.Error ||
         showCompletionPulse
-    // Asymmetric easing, which `tween`'s default (FastOutSlowIn, eased at BOTH ends) is not.
-    // Measured off the owner's notification reference at 60fps, the band opens at its maximum
-    // velocity on the very first frame and then decelerates into place -- 13-15px in each of
-    // the opening frames, tailing to 2px by the end. Easing in as well made the band appear to
-    // hesitate before committing, which is the one thing a status band must never do.
-    //
-    // The same measurement puts the travel at ~220ms rather than [HyleTokens.Duration.durationCalm]'s
-    // 300ms. The token is kept: 300ms is Hyle's considered default for a state change ("280-320ms"
-    // in its own token description), and 80ms is not worth either overriding the design system
-    // app-side or minting a fourth duration token that every consumer would then have to reason
-    // about. If the band still reads slow on device, that is a Hyle conversation, not a local one.
-    val enterSpec = tween<Float>(HyleTokens.Duration.durationCalm, easing = LinearOutSlowInEasing)
-    val enterSize = tween<IntSize>(HyleTokens.Duration.durationCalm, easing = LinearOutSlowInEasing)
-    val exitSpec = tween<Float>(HyleTokens.Duration.durationCalm, easing = FastOutLinearInEasing)
-    val exitSize = tween<IntSize>(HyleTokens.Duration.durationCalm, easing = FastOutLinearInEasing)
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(enterSpec) + expandVertically(enterSize),
-        exit = fadeOut(exitSpec) + shrinkVertically(exitSize),
-        modifier = modifier,
-    ) {
+
+    // The shell's own settle, not a local curve. "Borrows the room navigation" is a claim about
+    // feel, and a pane that receded on a different timing to every other pane in the app would
+    // break it -- SpatialMotion documents these as a contract precisely so this stays true.
+    val reveal = animateFloatAsState(
+        targetValue = if (revealed) 1f else 0f,
+        animationSpec = SpatialMotion.settleSpec,
+        label = "notification-reveal",
+    )
+
+    val density = LocalDensity.current
+    val bandPx = with(density) { BAND_HEIGHT.dp.toPx() }
+
+    Box(modifier = modifier.fillMaxWidth()) {
+        // Deeper layer, drawn first. It does not animate: it is uncovered, not introduced.
         AlertBannerRow(
             scanState = scanState,
             completed = showCompletionPulse && scanState !is ScanState.Scanning,
+            modifier = Modifier.align(Alignment.TopCenter),
         )
+
+        Box(
+            modifier = Modifier
+                // A PLACEMENT offset, not a layer translation: the pane still has to answer
+                // touches where it is drawn. The spatial shell learned this the same way.
+                .offset { IntOffset(0, (bandPx * reveal.value).roundToInt()) }
+                // Read on the draw pass, so a reveal costs no recomposition of the grid inside.
+                .graphicsLayer {
+                    val radius = SpatialMotion.PARK_CORNER_DP * reveal.value
+                    shape = RoundedCornerShape(topStart = radius.dp, topEnd = radius.dp)
+                    clip = radius > 0.01f
+                },
+        ) {
+            content()
+        }
     }
 }
 
@@ -142,7 +166,11 @@ internal fun alertBannerMessage(scanState: ScanState, completed: Boolean): Strin
 }
 
 @Composable
-private fun AlertBannerRow(scanState: ScanState, completed: Boolean) {
+private fun AlertBannerRow(
+    scanState: ScanState,
+    completed: Boolean,
+    modifier: Modifier = Modifier,
+) {
     val isScanning = scanState is ScanState.Scanning
     val isError = scanState is ScanState.Error
     val idle = !isScanning && !isError && !completed
@@ -170,9 +198,10 @@ private fun AlertBannerRow(scanState: ScanState, completed: Boolean) {
     val message = alertBannerMessage(scanState, completed)
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .height(BAND_HEIGHT.dp)
+            .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
     ) {
@@ -207,3 +236,13 @@ private fun AlertBannerRow(scanState: ScanState, completed: Boolean) {
 }
 
 private const val COMPLETION_HOLD_MILLIS = 1_800L
+
+/**
+ * How much of the pane the notification layer takes when revealed, in dp.
+ *
+ * One number doing two jobs, and they must agree: it is the height the layer draws itself at,
+ * and it is how far the pane's frame recedes to uncover it. Drifting them apart either clips
+ * the sentence or opens a gap of nothing under it -- the same reason the shell keeps a single
+ * BAND_DP for its parked card.
+ */
+private const val BAND_HEIGHT = 44

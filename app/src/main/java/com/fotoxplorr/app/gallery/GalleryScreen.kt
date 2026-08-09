@@ -69,7 +69,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.hyle.FloatingPillControl
-import com.fotoxplorr.app.hyle.ScanActivityAlertBanner
+import com.fotoxplorr.app.hyle.NotificationRoom
 import dev.aarso.cellshell.EdgeTimelineScrubber
 import dev.aarso.cellshell.RoomEdge
 import dev.aarso.cellshell.ShakeToRefresh
@@ -575,33 +575,38 @@ private fun GalleryBrowser(
                                     shell.open(RoomEdge.RIGHT)
                                 },
                             )
-                            route == BrowserRoute.Root -> Column {
-                                // Pull-to-backup is retired (owner direction, 2026-08-05): the
-                                // pull-down space at a room's top belongs to the fonebrew
-                                // top-room reveal, so no other gesture may claim it — and the
-                                // static "PULL TO CREATE BACKUP" copy went with it. Refresh is
-                                // now physical (ShakeToRefresh below); backup is an explicit,
-                                // named item in the header overflow menu instead of a gesture.
-                                ScanActivityAlertBanner(
-                                    scanState = state.scanState,
-                                    showWhenIdle = state.recognitionProgress.running ||
-                                        state.recognitionProgress.message != null,
-                                )
-                                ShakeToRefresh(onShake = actions.onRefresh)
-                                DestinationContent(
-                                    destination = destination,
-                                    assets = destinationAssets,
-                                    state = state,
-                                    actions = actions,
-                                    selection = selection,
-                                    onSelectionChange = { selection = it },
-                                    gridState = gridState,
-                                    onRequestUnlock = { key, name ->
-                                        passwordRequest = PasswordRequest(
-                                            PasswordAction.UNLOCK, key, name,
-                                        )
-                                    },
-                                )
+                            // Pull-to-backup is retired (owner direction, 2026-08-05): the
+                            // pull-down space at a room's top belongs to the fonebrew
+                            // top-room reveal, so no other gesture may claim it — and the
+                            // static "PULL TO CREATE BACKUP" copy went with it. Refresh is
+                            // now physical (ShakeToRefresh below); backup is an explicit,
+                            // named item in the header overflow menu instead of a gesture.
+                            //
+                            // The notification is no longer a sibling in this Column. It is a
+                            // layer *behind* the grid, and the grid's frame recedes to uncover
+                            // it — see NotificationRoom.
+                            route == BrowserRoute.Root -> NotificationRoom(
+                                scanState = state.scanState,
+                                showWhenIdle = state.recognitionProgress.running ||
+                                    state.recognitionProgress.message != null,
+                            ) {
+                                Column {
+                                    ShakeToRefresh(onShake = actions.onRefresh)
+                                    DestinationContent(
+                                        destination = destination,
+                                        assets = destinationAssets,
+                                        state = state,
+                                        actions = actions,
+                                        selection = selection,
+                                        onSelectionChange = { selection = it },
+                                        gridState = gridState,
+                                        onRequestUnlock = { key, name ->
+                                            passwordRequest = PasswordRequest(
+                                                PasswordAction.UNLOCK, key, name,
+                                            )
+                                        },
+                                    )
+                                }
                             }
                             else -> MediaGridScreen(
                                 assets = currentAssets,
