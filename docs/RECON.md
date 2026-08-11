@@ -16,6 +16,21 @@ icons; submodule `shared-libraries` @ `938ed28` carrying the marker-slot change)
    offline-compatible (FX-012: "Keep local similarity … in offline-compatible modules") —
    it is not, as shipped. The offline build keeps embeddings only via the existing
    side-load path (`installFromUri`, SAF, no network). FX-012's scope grows to cover this.
+
+   *Addendum, found by the WP1 manifest gate on its first run:* even the **bundled** ML
+   Kit artifacts merge `INTERNET` + `ACCESS_NETWORK_STATE` into the app manifest, via
+   `com.google.mlkit:vision-internal-vkp` and Google's `com.google.android.datatransport`
+   telemetry uploader riding inside them. The models are on-device; the plumbing phones
+   home. The offline flavor strips both permissions with `tools:node="remove"`
+   (`app/src/offline/AndroidManifest.xml`), so the OS refuses any network attempt by any
+   code in that APK — the strongest available form of the offline promise.
+
+   The classpath gate then caught the same stack smuggling **okhttp 3.0.0** (via
+   `vision-internal-vkp` ← `image-labeling`). It is allowlisted by exact coordinate with
+   the reasoning at the gate (`app/build.gradle.kts`, `VerifyOfflineClasspathTask`): the
+   stripped permission makes it inert, and excluding the artifact outright risks a
+   `NoClassDefFoundError` inside ML Kit that only a device would reveal — an `[OWNER]`
+   experiment, not a blind change from a deviceless session.
 2. **WP4 is an extension, not a redesign.** `cell-shell`'s `SpatialShell` already exposes
    all four room slots (`left/right/top/bottom` nullable params), both axes in the
    controller, four-way gating in `spatialEdgeDrag`/`returnDrag`, and `RoomEdge.TOP/BOTTOM`

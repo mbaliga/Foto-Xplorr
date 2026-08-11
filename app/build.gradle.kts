@@ -1,3 +1,6 @@
+import com.android.build.api.artifact.SingleArtifact
+import org.gradle.api.artifacts.result.ResolvedComponentResult
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -27,6 +30,26 @@ android {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+
+    // WP1 (FX-010): one dimension, two flavors. `offline` is the app's identity — the
+    // local-first gallery with no network capability at all, enforced by the verifyOffline*
+    // gates below, and it keeps the existing applicationIds so the normal device-test path
+    // is undisturbed. `connect` carries every network feature (BYOK remote AI, the model
+    // download, the street map) and takes a `.connect` suffix so BOTH flavors install
+    // side by side — this project's top priority is device testing, and a tester comparing
+    // the two builds must not have to uninstall one to see the other.
+    flavorDimensions += "connectivity"
+    productFlavors {
+        create("offline") {
+            dimension = "connectivity"
+            buildConfigField("boolean", "NETWORK_FEATURES", "false")
+        }
+        create("connect") {
+            dimension = "connectivity"
+            applicationIdSuffix = ".connect"
+            buildConfigField("boolean", "NETWORK_FEATURES", "true")
         }
     }
 
@@ -142,12 +165,16 @@ dependencies {
     implementation("com.google.mlkit:image-labeling:17.0.9")
     implementation("com.google.mlkit:text-recognition:16.0.1")
 
-    // Native vector maps with clustering, pitch/bearing, hillshade and 3D building extrusions.
-    implementation("org.maplibre.gl:android-sdk:13.0.2")
+    // Native vector maps with clustering, pitch/bearing, hillshade and 3D building
+    // extrusions. CONNECT ONLY (WP1): the map fetches its style and tiles from
+    // OpenFreeMap/AWS at pan time, and MapLibre carries its own HTTP stack — either fact
+    // alone disqualifies it from the offline flavor, whose runtime-classpath gate bans it.
+    "connectImplementation"("org.maplibre.gl:android-sdk:13.0.2")
 
-    // Provider-key connections. No logging interceptor is included so secrets cannot be logged.
-    implementation(platform("com.squareup.okhttp3:okhttp-bom:5.3.0"))
-    implementation("com.squareup.okhttp3:okhttp")
+    // The network engine for BYOK providers and the embedder-model download. CONNECT
+    // ONLY: this project module is the sole owner of OkHttp; the offline flavor's
+    // classpath gate fails the build if either ever reaches it.
+    "connectImplementation"(project(":feature:ai-remote"))
 
     // Hyle Design System, via git submodule + Gradle includeBuild dependency substitution
     // (settings.gradle.kts) -- the constellation's one sanctioned sharing mechanism (D-A).
@@ -166,7 +193,6 @@ dependencies {
     implementation("dev.aarso:cell-shell:0.1.0")
 
     testImplementation("junit:junit:4.13.2")
-    testImplementation("com.squareup.okhttp3:mockwebserver3:5.3.0")
     // FX-005 JVM perf baseline only: times the catalogue read against a real SQLite file
     // without a device. android.database.* cannot run on the JVM, so the harness replicates
     // the media-table schema/queries over JDBC. Never shipped — test classpath only.
@@ -176,4 +202,164 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+// ─── WP1 (FX-011): the offline flavor's enforcement gates ────────────────────────────
+//
+// Three gates, in order of how hard they are to fake. The FIRST two are the real ones:
+// the merged manifest is the thing the OS enforces, and the resolved runtime classpath is
+// the thing that actually ships. The source scan is a fast-feedback convenience on top.
+// This is deliberately NOT an import ban on java.net/android.net — android.net.Uri and
+// java.net.URI perform no I/O, and a package-level ban would break every MediaStore and
+// SAF call in the app (docs/TRAPS.md #12).
+
+/** Gate 1: no network permission may reach the offline flavor's MERGED manifest — from
+ * our own sources or from any library AAR's manifest. */
+abstract class VerifyOfflineManifestTask : DefaultTask() {
+    @get:InputFile
+    abstract val mergedManifest: RegularFileProperty
+
+    @TaskAction
+    fun verify() {
+        val text = mergedManifest.get().asFile.readText()
+        val banned = listOf(
+            "android.permission.INTERNET",
+            "android.permission.ACCESS_NETWORK_STATE",
+            "android.permission.ACCESS_LOCAL_NETWORK",
+            "android.permission.NEARBY_WIFI_DEVICES",
+        )
+        val hits = banned.filter { text.contains(it) }
+        if (hits.isNotEmpty()) {
+            throw GradleException(
+                "Offline flavor's merged manifest declares network permission(s): $hits.\n" +
+                    "Something (a library manifest?) merged them in — inspect " +
+                    mergedManifest.get().asFile.path,
+            )
+        }
+    }
+}
+
+/** Gate 2: no network library may appear on the offline flavor's RESOLVED runtime
+ * classpath. Asserted on resolved component ids, not declared dependencies, so a
+ * transitive pull fails the same as a declared one. */
+abstract class VerifyOfflineClasspathTask : DefaultTask() {
+    @get:Input
+    abstract val componentIds: ListProperty<String>
+
+    @TaskAction
+    fun verify() {
+        val bannedPrefixes = listOf(
+            "com.squareup.okhttp3:",
+            "io.ktor:",
+            "io.grpc:",
+            "org.maplibre",
+            "project :feature:ai-remote",
+        )
+        // The ONE documented exception, caught by this gate's own first run: the bundled
+        // ML Kit stack (com.google.mlkit:vision-internal-vkp, via image-labeling) carries
+        // okhttp 3.0.0 internally. Its models run on-device; the client is plumbing it
+        // ships regardless. It cannot transmit: the offline flavor's manifest strips
+        // INTERNET (src/offline/AndroidManifest.xml), so the OS denies any socket that
+        // code could ever open — the permission is the wall, this gate is the tripwire.
+        // The allowlist is EXACT (group:name:version): our own OkHttp is 5.x via
+        // :feature:ai-remote and still fails this gate if it ever leaks into offline, and
+        // an ML Kit bump that changes the smuggled version fails too, forcing a re-read
+        // of what changed. Removing the artifact outright (dependency exclude) risks
+        // NoClassDefFoundError inside ML Kit on a code path only a device would reveal —
+        // worth an [OWNER] experiment, not a blind change from a deviceless session.
+        val allowedExact = setOf(
+            "com.squareup.okhttp3:okhttp:3.0.0",
+        )
+        val hits = componentIds.get().filter { id ->
+            id !in allowedExact && bannedPrefixes.any { id.startsWith(it) }
+        }
+        if (hits.isNotEmpty()) {
+            throw GradleException(
+                "Offline flavor's runtime classpath resolved network artifacts:\n" +
+                    hits.joinToString("\n") { "  $it" },
+            )
+        }
+    }
+}
+
+/** Gate 3: fast feedback — the offline-visible source sets must not reference the
+ * network APIs by name. Precisely targeted FQCNs; android.net.Uri, java.net.URI and the
+ * URL codecs are deliberately NOT banned (they do no I/O). */
+abstract class VerifyOfflineSourcesTask : DefaultTask() {
+    @get:InputFiles
+    abstract val sources: ConfigurableFileCollection
+
+    @TaskAction
+    fun verify() {
+        val banned = listOf(
+            "okhttp3.",
+            "io.ktor.client",
+            "java.net.Socket",
+            "java.net.ServerSocket",
+            "java.net.HttpURLConnection",
+            "javax.net.ssl.",
+            "android.net.ConnectivityManager",
+            "android.net.NetworkRequest",
+            ".openConnection(",
+            ".openStream(",
+        )
+        val hits = mutableListOf<String>()
+        sources.asFileTree.matching { include("**/*.kt") }.forEach { file ->
+            file.readLines().forEachIndexed { index, line ->
+                banned.forEach { token ->
+                    if (line.contains(token)) hits += "${file.path}:${index + 1}: $token"
+                }
+            }
+        }
+        if (hits.isNotEmpty()) {
+            throw GradleException(
+                "Offline-visible sources reference network APIs:\n" +
+                    hits.joinToString("\n") { "  $it" },
+            )
+        }
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        if (variant.flavorName != "offline") return@onVariants
+        val cap = variant.name.replaceFirstChar { it.uppercase() }
+
+        tasks.register<VerifyOfflineManifestTask>("verifyOfflineManifest$cap") {
+            group = "verification"
+            mergedManifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
+        }
+
+        tasks.register<VerifyOfflineClasspathTask>("verifyOfflineRuntimeClasspath$cap") {
+            group = "verification"
+            componentIds.set(
+                variant.runtimeConfiguration.incoming.resolutionResult.rootComponent.map { root ->
+                    val seen = linkedSetOf<String>()
+                    fun walk(component: ResolvedComponentResult) {
+                        if (!seen.add(component.id.displayName)) return
+                        component.dependencies.forEach { dep ->
+                            (dep as? ResolvedDependencyResult)?.let { walk(it.selected) }
+                        }
+                    }
+                    walk(root)
+                    seen.toList().sorted()
+                },
+            )
+        }
+    }
+}
+
+tasks.register<VerifyOfflineSourcesTask>("verifyOfflineSourceReferences") {
+    group = "verification"
+    sources.from("src/main/java", "src/offline/java")
+}
+
+// Umbrellas, so verify.sh and CI name one task per gate regardless of variant count.
+tasks.register("verifyOfflineManifest") {
+    group = "verification"
+    dependsOn(tasks.matching { it.name.startsWith("verifyOfflineManifestOffline") })
+}
+tasks.register("verifyOfflineRuntimeClasspath") {
+    group = "verification"
+    dependsOn(tasks.matching { it.name.startsWith("verifyOfflineRuntimeClasspathOffline") })
 }

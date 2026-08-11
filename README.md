@@ -70,8 +70,18 @@ git clone --recurse-submodules https://github.com/mbaliga/foto-xplorr
 # or, if already cloned without --recurse-submodules:
 git submodule update --init
 
-./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug
+./scripts/verify.sh
 ```
+
+`scripts/verify.sh` is the one definition of "builds clean" — CI runs the same script.
+It builds, tests and lints **both flavors** and runs the offline enforcement gates.
+
+The app ships in two flavors on one `connectivity` dimension: **`offline`** (the app's
+identity — no network permission, no network library on the classpath, enforced by
+`verifyOfflineManifest` / `verifyOfflineRuntimeClasspath` at build time; installs as the
+historical `com.fotoxplorr.app[.debug]`) and **`connect`** (adds BYOK remote AI, the
+similarity-model download, and the OpenFreeMap street map; installs alongside as
+`….connect`). For a single quick build: `./gradlew :app:assembleOfflineDebug`.
 
 Local builds require JDK 17, Android SDK 36, and the checked-in Gradle wrapper (8.14.3, matching
 `hyle-design-system`'s own wrapper — avoid running a system-installed `gradle` of a different

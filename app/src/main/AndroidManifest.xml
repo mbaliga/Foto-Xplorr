@@ -15,8 +15,11 @@
     -->
     <uses-sdk tools:overrideLibrary="dev.aarso.hyle" />
 
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- No network permissions here. INTERNET lives in src/connect/AndroidManifest.xml:
+         the offline flavor is the app's local-first identity, and the verifyOfflineManifest
+         gate fails the build if any network permission reaches its merged manifest — from
+         this file OR from a library AAR's manifest. ACCESS_NETWORK_STATE was dropped
+         entirely: nothing in the app reads ConnectivityManager. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />

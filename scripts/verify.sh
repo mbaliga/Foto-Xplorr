@@ -15,11 +15,12 @@ for d in . hyle-design-system shared-libraries; do
   [ -f "$d/local.properties" ] || echo "sdk.dir=${ANDROID_HOME:?ANDROID_HOME not set}" > "$d/local.properties"
 done
 
-# Pre-WP1 task list. WP1 replaces this block with the two-flavor matrix plus the
-# offline gates — see FX-IMP-002 §7.
+# The post-WP1 matrix: both flavors build, test and lint, and the offline flavor passes
+# its three enforcement gates — merged manifest, resolved runtime classpath, and the
+# targeted source scan. The gates are the offline claim; the rest is the build.
 ./gradlew --no-daemon \
-  :app:testDebugUnitTest \
-  :app:lintDebug \
-  :app:assembleDebug
+  :app:testOfflineDebugUnitTest :app:lintOfflineDebug :app:assembleOfflineDebug \
+  :app:testConnectDebugUnitTest :app:lintConnectDebug :app:assembleConnectDebug \
+  :app:verifyOfflineManifest :app:verifyOfflineRuntimeClasspath :app:verifyOfflineSourceReferences
 
 echo "VERIFY OK  $(git rev-parse --short HEAD)"

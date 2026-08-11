@@ -124,7 +124,8 @@ fun PlacesScreen(
             onOpenAsset = onOpenAsset,
             onClose = { experience = null },
         )
-        ExploreExperience.PHOTO_MAP -> RichPhotoMapScreen(
+        // Flavor seam: connect renders the MapLibre map, offline an honest absence.
+        ExploreExperience.PHOTO_MAP -> PhotoMapExperience(
             assets = assets,
             geoState = geoState,
             onIndexLocations = onIndexLocations,

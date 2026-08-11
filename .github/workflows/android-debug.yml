@@ -50,23 +50,27 @@ jobs:
           name: foto-xplorr-build-log
           path: build.log
           if-no-files-found: error
-      - name: Upload lint report
+      - name: Upload lint reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: foto-xplorr-lint
-          path: app/build/reports/lint-results-debug.html
+          path: app/build/reports/lint-results-*.html
           if-no-files-found: warn
-      - name: Upload unit test report
+      - name: Upload unit test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: foto-xplorr-unit-tests
-          path: app/build/reports/tests/testDebugUnitTest
+          path: app/build/reports/tests/
           if-no-files-found: warn
-      - name: Upload debug APK
+      - name: Upload debug APKs
         uses: actions/upload-artifact@v4
         with:
+          # Both flavors: offline is the app's identity (and keeps the historical
+          # com.fotoxplorr.app.debug id); connect installs beside it as .connect.
           name: foto-xplorr-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            app/build/outputs/apk/offline/debug/app-offline-debug.apk
+            app/build/outputs/apk/connect/debug/app-connect-debug.apk
           if-no-files-found: error

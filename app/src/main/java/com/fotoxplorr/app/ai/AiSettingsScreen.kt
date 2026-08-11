@@ -53,9 +53,11 @@ import kotlinx.coroutines.launch
 @Composable
 fun AiSettingsScreen(onClose: () -> Unit) {
     val context = LocalContext.current
-    val modelManager = remember(context) { LocalModelManager(context.applicationContext) }
+    // The flavor picks the implementation: offline's bindings refuse every network call
+    // with a typed failure, connect's are backed by :feature:ai-remote. No BuildConfig.
+    val bindings = remember { AppConnectivityBindings() }
+    val modelManager = remember(context) { LocalModelManager(context.applicationContext, bindings.remoteAi) }
     val providerStore = remember(context) { AiProviderStore(context.applicationContext) }
-    val providerClient = remember { AiProviderClient() }
     val modelState by modelManager.observe().collectAsStateWithLifecycle()
     val providers by providerStore.observe().collectAsStateWithLifecycle()
     val capability = remember { modelManager.capability() }
@@ -97,6 +99,7 @@ fun AiSettingsScreen(onClose: () -> Unit) {
             item {
                 LocalModelCard(
                     state = modelState,
+                    downloadAvailable = bindings.remoteAi.available,
                     onInstall = { scope.launch { modelManager.installRecommendedModel() } },
                     onImport = { modelPicker.launch(arrayOf("application/octet-stream", "*/*")) },
                     onDelete = modelManager::deleteModel,
@@ -125,7 +128,7 @@ fun AiSettingsScreen(onClose: () -> Unit) {
                         } else {
                             testingId = provider.id
                             scope.launch {
-                                val result = providerClient.testConnection(provider, secret)
+                                val result = bindings.remoteAi.testConnection(provider, secret)
                                 testResult = result.fold(
                                     onSuccess = { "${provider.label}: ${it.take(240)}" },
                                     onFailure = { "${provider.label}: ${it.message ?: "connection failed"}" },
@@ -219,6 +222,7 @@ private fun CapabilityCard(capability: DeviceAiCapability) {
 @Composable
 private fun LocalModelCard(
     state: LocalModelState,
+    downloadAvailable: Boolean,
     onInstall: () -> Unit,
     onImport: () -> Unit,
     onDelete: () -> Unit,
@@ -231,9 +235,18 @@ private fun LocalModelCard(
             }
             when (state) {
                 LocalModelState.NotInstalled -> {
-                    Text("Not installed. The recommended model is downloaded only after you choose to install it.")
+                    // The offline build has no download path at all, so it says so instead
+                    // of showing a button that can only fail (the honest degraded mode the
+                    // partial-access doc describes, applied to models).
+                    if (downloadAvailable) {
+                        Text("Not installed. The recommended model is downloaded only after you choose to install it.")
+                    } else {
+                        Text("Not installed. This offline build downloads nothing — import a .tflite embedding model instead.")
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onInstall) { Text("Install") }
+                        if (downloadAvailable) {
+                            Button(onClick = onInstall) { Text("Install") }
+                        }
                         OutlinedButton(onClick = onImport) { Text("Import .tflite") }
                     }
                 }
@@ -262,7 +275,11 @@ private fun LocalModelCard(
                 is LocalModelState.Failed -> {
                     Text(state.message, color = MaterialTheme.colorScheme.error)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onInstall) { Text("Retry") }
+                        // Retrying a download the build cannot perform would loop the same
+                        // failure; offline offers only the path that can succeed.
+                        if (downloadAvailable) {
+                            Button(onClick = onInstall) { Text("Retry") }
+                        }
                         OutlinedButton(onClick = onImport) { Text("Import model") }
                     }
                 }
