@@ -36,13 +36,13 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          chmod +x ./gradlew
-          # lintDebug was previously absent from CI, which is how an
-          # UnusedBoxWithConstraintsScope error in app/src/main/.../ai was able to sit on the
-          # branch unnoticed -- `lintDebug` only ever got run by hand, so "lint passes" was a
-          # claim rather than a gate. It is part of the build now so it stays true.
-          ./gradlew --no-daemon --stacktrace \
-            :app:testDebugUnitTest :app:lintDebug :app:assembleDebug 2>&1 | tee build.log
+          chmod +x ./gradlew scripts/verify.sh
+          # CI runs the SAME script as local development (FX-002): scripts/verify.sh is
+          # the one definition of "builds clean", so the two gates cannot drift apart.
+          # (lintDebug lives in that script for the same reason it was added here: it was
+          # once absent from CI, a lint error sat on a branch unnoticed, and "lint passes"
+          # became a claim rather than a gate.)
+          ./scripts/verify.sh 2>&1 | tee build.log
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
