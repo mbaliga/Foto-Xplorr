@@ -20,14 +20,22 @@ class PrefsScanWatermark(context: Context) : ScanWatermark {
     override fun lastCompletedSeconds(): Long = prefs.getLong(KEY_LAST_MODIFIED, 0L)
 
     override fun record(seconds: Long) {
-        if (seconds <= 0L) return
-        // Monotonic: a delta pass that happens to see only older rows must never move the
-        // mark backwards, which would make the next pass redo work it already did.
-        if (seconds <= lastCompletedSeconds()) return
-        prefs.edit().putLong(KEY_LAST_MODIFIED, seconds).apply()
+        val advanced = watermarkAdvance(lastCompletedSeconds(), seconds) ?: return
+        prefs.edit().putLong(KEY_LAST_MODIFIED, advanced).apply()
     }
 
     private companion object {
         const val KEY_LAST_MODIFIED = "last_modified_seconds"
     }
 }
+
+/**
+ * The watermark's monotonic advance rule, pulled out of the `SharedPreferences` wrapper so
+ * it is testable without a Context (FX-003): a delta pass that happens to see only older
+ * rows must never move the mark backwards — that would make the next pass redo work it
+ * already did — and a non-positive candidate is MediaStore telling us nothing, not zero.
+ *
+ * @return the value to persist, or null when the mark must not move.
+ */
+internal fun watermarkAdvance(current: Long, candidate: Long): Long? =
+    candidate.takeIf { it > 0L && it > current }
