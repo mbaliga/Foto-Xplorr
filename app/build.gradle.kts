@@ -49,6 +49,20 @@ android {
         // numeric-only; the app has no translations, so this is noise rather than a defect.
         disable += "DefaultLocale"
     }
+
+    testOptions {
+        unitTests.all {
+            // The FX-005 perf baseline materialises a 500k-asset synthetic catalogue plus
+            // its projection copies; the default 512 MB test heap OOMs before the timing
+            // starts. Normal tests never approach this ceiling.
+            it.maxHeapSize = "4g"
+            // The characterisation goldens and perf baseline are switched by environment
+            // variable (a -D on the Gradle CLI stays in the daemon, not the forked test
+            // JVM); forward only the two switches so the test environment stays hermetic.
+            System.getenv("FX_GOLDENS_PRINT")?.let { v -> it.environment("FX_GOLDENS_PRINT", v) }
+            System.getenv("FX_PERF")?.let { v -> it.environment("FX_PERF", v) }
+        }
+    }
 }
 
 // Without this, Kotlin infers its jvmTarget from the JDK running Gradle (21 on the current
@@ -153,6 +167,10 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver3:5.3.0")
+    // FX-005 JVM perf baseline only: times the catalogue read against a real SQLite file
+    // without a device. android.database.* cannot run on the JVM, so the harness replicates
+    // the media-table schema/queries over JDBC. Never shipped — test classpath only.
+    testImplementation("org.xerial:sqlite-jdbc:3.45.1.0")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
