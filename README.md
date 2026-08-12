@@ -1,32 +1,23 @@
 # Foto Xplorr — test build (branch claude/fotoz-ui-interactions-bxvgbw)
 
 Debug builds, arm64-v8a only, stripped + 16 KB-page aligned + debug-signed.
-Built 12 Aug 2026 from commit fdcd693 (fixes the top-edge/status-bar gesture
-conflict and the missing inset padding found in the first test round).
+Built 12 Aug 2026 from commit 344c506.
 
 | File | Flavor | Installs as | What it is |
 |---|---|---|---|
-| `foto-xplorr.apk` | offline | `com.fotoxplorr.app.debug` | No INTERNET permission, no network library. Airplane-mode smoke test belongs here. |
+| `foto-xplorr.apk` | offline | `com.fotoxplorr.app.debug` | No INTERNET permission, no network library. |
 | `foto-xplorr-connect.apk` | connect | `com.fotoxplorr.app.connect.debug` | Adds BYOK remote AI, the embedder-model download, and the OpenFreeMap street map. Installs alongside offline. |
 
 ## What changed since the last build
 
-- **Pull-down for the viewer's top room no longer fights the OS notification
-  shade.** The top-edge gesture zone now starts below the status bar instead
-  of overlapping it, so it stops being a coin flip between the two.
-- **The viewer's control bar and filmstrip clear both system bars.** The top
-  row no longer renders partially behind the status bar; the bottom filmstrip
-  no longer sits inside the swipe-up-for-home gesture zone (this was the
-  "buggy strip scrolling").
+- **The app now has a launcher icon.** It had none before — no `android:icon`
+  in the manifest, every install used the bare OS default. Now it's the
+  stack-of-photos artwork on solid black, adaptive-icon format (this app's
+  minSdk is 26, exactly where that format was introduced, so there's no
+  legacy fallback icon to keep in sync).
+- Carries the top-edge gesture fix and the viewer inset fixes from the
+  previous round (pull-down for the top room, filmstrip scrubbing).
 
-Both were found from the crash report + screen recording from the first
-round. Please re-run the same interactions: opening the viewer, pulling down
-for the top room, scrubbing the filmstrip, and the trash-confirmation flow.
-
-**Not addressed:** the native crash. The crash-recovery report's "Source"
-field is the app's *install* source (Files by Google, from sideloading), not
-a clue about the crash cause — Android's ApplicationExitInfo doesn't expose
-a real native backtrace to the app. If it recurs, a logcat captured around
-the crash (`adb logcat -b crash` or a full logcat spanning the crash
-timestamp) would actually let this get debugged; the on-device report alone
-has nothing more to give.
+Reinstalling over the previous debug build should just update the icon in
+place. If your launcher caches the old (default) icon, a long-press →
+app info → or a reinstall clears it.
