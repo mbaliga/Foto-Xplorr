@@ -16,8 +16,10 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -237,7 +239,12 @@ fun ViewerScreen(
                     onPrevious = onPrevious,
                     onNext = onNext,
                     onClose = onClose,
-                    modifier = Modifier.align(Alignment.TopCenter),
+                    // The shell fills the full edge-to-edge canvas and consumes no insets
+                    // (deliberately -- see SpatialShell's KDoc), so this Box draws under the
+                    // status bar too. Without this padding the Close/filename/position row
+                    // renders partially behind the status bar icons -- visible on-device as
+                    // clipped top-row text.
+                    modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
                 )
             }
 
@@ -249,7 +256,11 @@ fun ViewerScreen(
                     assets = relatedAssets,
                     currentIndex = position - 1,
                     onSelect = onSelectAsset,
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                    // Same reasoning as the padding above, mirrored to the bottom: without
+                    // it the strip's touchable band sits inside the system gesture-navigation
+                    // zone (swipe-up-for-home), where scroll gestures intermittently lose to
+                    // the OS home/quick-switch gesture instead of scrubbing the strip.
+                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding(),
                 )
             }
 
@@ -263,6 +274,7 @@ fun ViewerScreen(
                     containerSize = containerSize,
                     modifier = Modifier
                         .align(Alignment.BottomStart)
+                        .navigationBarsPadding()
                         .padding(16.dp),
                 )
             }
