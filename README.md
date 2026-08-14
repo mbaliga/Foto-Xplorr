@@ -1,46 +1,40 @@
 # Foto Xplorr — test build (branch claude/fotoz-ui-interactions-bxvgbw)
 
 Debug builds, arm64-v8a only, stripped + 16 KB-page aligned + debug-signed.
-Built 14 Aug 2026 from commit c3fde05.
+Built 14 Aug 2026 from commit b900516.
 
 | File | Flavor | Installs as |
 |---|---|---|
 | `foto-xplorr-offline.apk` | offline | `com.fotoxplorr.app.debug` |
 | `foto-xplorr-connect.apk` | connect | `com.fotoxplorr.app.connect.debug` |
 
-## What to look for in this build
+## New since the last build
 
-**The stutter (your #5).** Three separate feedback loops were making the app
-re-derive your entire 22,110-photo catalogue over and over for reasons that
-had nothing to do with scrolling:
+**#9 — the swivel.** Open the left rail (or the viewer's top room) and the
+centre pane now turns about its hinge edge as well as shrinking, instead of
+only sliding. It is a *option* in the shared library, not a new hardcoded
+motion: apps pick `ParkStyle.SLIDE` or `ParkStyle.SWIVEL`, both with the
+shrink, so nothing else in the constellation changed.
 
-1. Face/object recognition published progress **once per photo**, and progress
-   is part of the gallery's state — so every photo recognised re-filtered and
-   re-sorted all 22,110. Now throttled to 4 updates/second.
-2. The gallery re-derived the whole catalogue on **every** recomposition,
-   including from those progress ticks. Now memoised on only the inputs it
-   actually reads.
-3. Recognition was keyed on the photo *count*, so every scan batch cancelled
-   and restarted it — it could never finish during a scan, and threw away its
-   work each time. Now starts once the scan settles.
+**#8 — the rail.** The selection-marker icon is gone. The three destination
+covers moved from the right of the word to the **left gutter**, and because
+the marker slot is pinned to its row and animates on a longer curve than the
+wheel, they now *travel* across the intervening rows and dip in scale
+mid-flight when you change destination — the movement dance from the
+reference video. `HyleDestination` no longer carries an icon at all.
 
-Plus: the catalogue was rebuilt and fully re-sorted on every scan batch
-(quadratic across a scan) — now a linear merge; the app had **no image-loader
-configuration at all**, so thumbnails were re-decoded from scratch constantly
-— now a 30% memory cache and a 256 MB thumbnail disk cache; and scan batches
-went 64 → 512, cutting scan-time interruptions 8x.
+**Also fixed along the way:** the grab-pill on the parked card was aligned to
+the wrong edge on the vertical axis — with the top room open it was being
+drawn about 2000px off screen, so the affordance was simply never there. Both
+vertical cases were inverted.
 
-The first launch after installing will still do a full scan and recognition
-pass. **Judge it on the second launch**, and on scrolling once the library
-has settled.
+## Still from the previous build (worth re-checking)
 
-**The warning triangle (your #6).** It should now be gone entirely when
-nothing is wrong. It was literally the resting state: idle returned an empty
-message but drew the red triangle anyway. When there IS something to report
-you get a sentence, and tapping it expands a cut-off message.
+The three stutter feedback loops and the image-loader configuration. Judge
+performance on the **second** launch — the first still runs a full scan and
+recognition pass.
 
 ## Not in this build yet
 
-Items 2, 3, 4, 7, 8, 9, 10, 11, 12 — the immersive chrome, viewer rooms,
-timeline overlap, filmstrip, gestures, nav, settings tabs, swivel and photo
-editing. Those are sequenced next.
+Items 2, 3, 4, 7, 10, 11, 12 — viewer rooms, timeline overlap, immersive
+chrome, settings tabs, photo editing, gestures, filmstrip.
