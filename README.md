@@ -1,32 +1,46 @@
 # Foto Xplorr — test build (branch claude/fotoz-ui-interactions-bxvgbw)
 
 Debug builds, arm64-v8a only, stripped + 16 KB-page aligned + debug-signed.
-Built 14 Aug 2026 from commit f8a0991 plus one uncommitted-until-now fix (see below).
+Built 14 Aug 2026 from commit c3fde05.
 
-| File | Flavor | Installs as | What it is |
-|---|---|---|---|
-| `foto-xplorr-offline.apk` | offline | `com.fotoxplorr.app.debug` | No INTERNET permission, no network library. |
-| `foto-xplorr-connect.apk` | connect | `com.fotoxplorr.app.connect.debug` | Adds BYOK remote AI, the embedder-model download, and the OpenFreeMap street map. Installs alongside offline. |
+| File | Flavor | Installs as |
+|---|---|---|
+| `foto-xplorr-offline.apk` | offline | `com.fotoxplorr.app.debug` |
+| `foto-xplorr-connect.apk` | connect | `com.fotoxplorr.app.connect.debug` |
 
-## What changed since the last build
+## What to look for in this build
 
-- **Likely fix for the native crash loop.** Both "3D photo wall" and "Spatial
-  compass" (Places tab) upload photo thumbnails to the GPU at a non-square
-  size, then asked the driver to build mipmaps for them. Generating mipmaps
-  for a non-power-of-two texture is undefined behaviour in OpenGL ES 2.0
-  without an extension most devices don't advertise — some GPU drivers cope,
-  some crash natively with no Java stack trace at all, which matches your
-  report exactly (native crash, no trace, "Continue" leads straight back into
-  it). Removed the mipmap request entirely; those two screens draw with plain
-  linear filtering now, which costs a little smoothing at a distance and
-  nothing else.
+**The stutter (your #5).** Three separate feedback loops were making the app
+re-derive your entire 22,110-photo catalogue over and over for reasons that
+had nothing to do with scrolling:
 
-  I can't fully confirm this is *the* cause without a logcat spanning the
-  crash — but it's the only genuinely native, GPU-driver-dependent code in
-  the app, and this exact bug pattern is a well-known source of driver-level
-  native crashes on Android. If it still crashes on this build, please try
-  to note what you were doing right before it happened (especially whether
-  you were in Places → "3D photo wall" or "Spatial compass") — that detail
-  would narrow it down a lot further.
+1. Face/object recognition published progress **once per photo**, and progress
+   is part of the gallery's state — so every photo recognised re-filtered and
+   re-sorted all 22,110. Now throttled to 4 updates/second.
+2. The gallery re-derived the whole catalogue on **every** recomposition,
+   including from those progress ticks. Now memoised on only the inputs it
+   actually reads.
+3. Recognition was keyed on the photo *count*, so every scan batch cancelled
+   and restarted it — it could never finish during a scan, and threw away its
+   work each time. Now starts once the scan settles.
 
-Reinstalling over the previous debug build should update in place.
+Plus: the catalogue was rebuilt and fully re-sorted on every scan batch
+(quadratic across a scan) — now a linear merge; the app had **no image-loader
+configuration at all**, so thumbnails were re-decoded from scratch constantly
+— now a 30% memory cache and a 256 MB thumbnail disk cache; and scan batches
+went 64 → 512, cutting scan-time interruptions 8x.
+
+The first launch after installing will still do a full scan and recognition
+pass. **Judge it on the second launch**, and on scrolling once the library
+has settled.
+
+**The warning triangle (your #6).** It should now be gone entirely when
+nothing is wrong. It was literally the resting state: idle returned an empty
+message but drew the red triangle anyway. When there IS something to report
+you get a sentence, and tapping it expands a cut-off message.
+
+## Not in this build yet
+
+Items 2, 3, 4, 7, 8, 9, 10, 11, 12 — the immersive chrome, viewer rooms,
+timeline overlap, filmstrip, gestures, nav, settings tabs, swivel and photo
+editing. Those are sequenced next.
