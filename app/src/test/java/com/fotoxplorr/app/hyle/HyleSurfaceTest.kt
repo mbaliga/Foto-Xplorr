@@ -1,7 +1,9 @@
 package com.fotoxplorr.app.hyle
 
 import com.fotoxplorr.app.ScanState
+import com.fotoxplorr.app.recognition.RecognitionProgress
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -19,8 +21,51 @@ class AlertBannerTextTest {
         // Was "Notifications & Alerts appear here" — a label describing a container rather
         // than reporting state, which is the placeholder chrome the fonebrew pattern bans.
         // The banner collapses when idle so the grid runs edge to edge.
-        assertEquals("", IDLE_MESSAGE)
-        assertEquals(IDLE_MESSAGE, alertBannerMessage(ScanState.Idle, completed = false))
+        //
+        // Now NULL rather than "". This assertion changed deliberately: returning an empty
+        // string let the row render anyway, so the app's resting state was a red warning
+        // triangle with no text beside it. "Nothing to say" has to be unrepresentable as a
+        // String for a caller to be unable to draw it.
+        assertNull(alertBannerMessage(ScanState.Idle, completed = false))
+    }
+
+    @Test
+    fun `a recognition failure is reported instead of a bare glyph`() {
+        // The notification layer is opened by recognition state, so recognition state has to be
+        // able to write the copy. Before, it could not, and the layer opened onto an empty line.
+        assertEquals(
+            "On-device recognition failed",
+            alertBannerMessage(
+                ScanState.Idle,
+                completed = false,
+                recognition = RecognitionProgress(message = "On-device recognition failed"),
+            ),
+        )
+    }
+
+    @Test
+    fun `a running recognition pass reports its progress`() {
+        assertEquals(
+            "Recognising 40 of 100",
+            alertBannerMessage(
+                ScanState.Idle,
+                completed = false,
+                recognition = RecognitionProgress(running = true, completed = 40, total = 100),
+            ),
+        )
+    }
+
+    @Test
+    fun `a scan error outranks recognition copy`() {
+        // Two things wrong at once: the one that stopped the library being read wins.
+        assertEquals(
+            "Disk unreadable",
+            alertBannerMessage(
+                ScanState.Error("Disk unreadable"),
+                completed = false,
+                recognition = RecognitionProgress(message = "On-device recognition failed"),
+            ),
+        )
     }
 
     @Test
@@ -76,6 +121,6 @@ class AlertBannerTextTest {
             "Library up to date · 12 items",
             alertBannerMessage(ScanState.Complete(12), completed = true),
         )
-        assertEquals(IDLE_MESSAGE, alertBannerMessage(ScanState.Complete(12), completed = false))
+        assertNull(alertBannerMessage(ScanState.Complete(12), completed = false))
     }
 }

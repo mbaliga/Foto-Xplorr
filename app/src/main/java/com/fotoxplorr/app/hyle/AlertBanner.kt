@@ -7,11 +7,13 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,9 +39,11 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.ScanState
+import com.fotoxplorr.app.recognition.RecognitionProgress
 import dev.aarso.hyle.Pulse
 import dev.aarso.cellshell.SpatialMotion
 import dev.aarso.hyle.tokens.HyleTokens
@@ -77,6 +81,7 @@ import kotlin.math.roundToInt
 fun NotificationRoom(
     scanState: ScanState,
     modifier: Modifier = Modifier,
+    recognition: RecognitionProgress = RecognitionProgress(),
     showWhenIdle: Boolean = false,
     content: @Composable () -> Unit,
 ) {
@@ -89,10 +94,20 @@ fun NotificationRoom(
         }
     }
 
-    val revealed = showWhenIdle ||
-        scanState is ScanState.Scanning ||
-        scanState is ScanState.Error ||
-        showCompletionPulse
+    // Reveal only when the banner actually has something to say. Previously these two conditions
+    // were independent, so the layer could open on a state the copy had no wording for -- which
+    // is how an empty red triangle ended up on screen.
+    val hasMessage = alertBannerMessage(
+        scanState,
+        showCompletionPulse && scanState !is ScanState.Scanning,
+        recognition,
+    ) != null
+    val revealed = hasMessage && (
+        showWhenIdle ||
+            scanState is ScanState.Scanning ||
+            scanState is ScanState.Error ||
+            showCompletionPulse
+        )
 
     // The shell's own settle, not a local curve. "Borrows the room navigation" is a claim about
     // feel, and a pane that receded on a different timing to every other pane in the app would
@@ -111,6 +126,7 @@ fun NotificationRoom(
         AlertBannerRow(
             scanState = scanState,
             completed = showCompletionPulse && scanState !is ScanState.Scanning,
+            recognition = recognition,
             modifier = Modifier.align(Alignment.TopCenter),
         )
 
@@ -132,27 +148,32 @@ fun NotificationRoom(
 }
 
 /**
- * Empty by design.
+ * The one line of copy the banner shows for a given state, or **null when there is nothing to
+ * say**. Pure, so the wording is unit-testable without composing anything.
  *
- * This used to read "Notifications & Alerts appear here" — a label describing a container
- * rather than saying anything true about the app's state, which is exactly the kind of
- * placeholder chrome the fonebrew pattern bans (docs/fonebrew-navigation.md). The banner now
- * collapses entirely when there is nothing to report, so the grid runs edge to edge.
+ * Null rather than an empty string, deliberately. This used to return `""` for the idle case,
+ * and the row rendered anyway — so the resting state of the app was a red warning triangle with
+ * no text beside it, on a screen where nothing was actually wrong. A caller cannot accidentally
+ * render nothing-as-something if "nothing" is not a String.
  *
- * Kept as a constant rather than deleted because [alertBannerMessage] is a total function and
- * its callers still need a defined "nothing to say" result.
+ * [recognition] is a parameter because the notification layer is revealed by recognition state
+ * (see the `showWhenIdle` argument at the call site) while the copy was written only from
+ * [scanState]. The input that opens the banner has to be the input that writes it, or the banner
+ * opens with nothing to report — which is precisely how the bare triangle appeared.
  */
-const val IDLE_MESSAGE = ""
-
-/**
- * The one line of copy the banner shows for a given state. Pure, so the wording is
- * unit-testable without composing anything.
- */
-internal fun alertBannerMessage(scanState: ScanState, completed: Boolean): String = when {
+internal fun alertBannerMessage(
+    scanState: ScanState,
+    completed: Boolean,
+    recognition: RecognitionProgress = RecognitionProgress(),
+): String? = when {
     scanState is ScanState.Error -> scanState.message
+    recognition.message != null -> recognition.message
     scanState is ScanState.Scanning && scanState.discovered > 0 ->
         "Indexing ${scanState.scanned} of ${scanState.discovered}"
     scanState is ScanState.Scanning -> "Indexing your library"
+    recognition.running && recognition.total > 0 ->
+        "Recognising ${recognition.completed} of ${recognition.total}"
+    recognition.running -> "Recognising your photos"
     // An incremental pass found a handful of changed items, so reporting the library total
     // would be a lie dressed as progress — the very thing that made a single screenshot look
     // like a full re-index. Say what actually happened instead.
@@ -162,18 +183,24 @@ internal fun alertBannerMessage(scanState: ScanState, completed: Boolean): Strin
         else -> "Added ${scanState.total} new items"
     }
     completed && scanState is ScanState.Complete -> "Library up to date · ${scanState.total} items"
-    else -> IDLE_MESSAGE
+    else -> null
 }
 
 @Composable
 private fun AlertBannerRow(
     scanState: ScanState,
     completed: Boolean,
+    recognition: RecognitionProgress,
     modifier: Modifier = Modifier,
 ) {
-    val isScanning = scanState is ScanState.Scanning
-    val isError = scanState is ScanState.Error
-    val idle = !isScanning && !isError && !completed
+    val message = alertBannerMessage(scanState, completed, recognition) ?: return
+    val isError = scanState is ScanState.Error || recognition.message != null
+    val isWorking = scanState is ScanState.Scanning || recognition.running
+    // Tapping expands the line rather than opening anything: a status line that can be read is
+    // the whole of what was missing, and an ellipsised sentence is the one case where a tap has
+    // something to give. A truncated message is the only reason to offer the affordance, so the
+    // row is only clickable when there is genuinely more text than fits.
+    var expanded by remember(message) { mutableStateOf(false) }
     val pulseAlpha by rememberPulseAlpha(Pulse.WATCHED)
     val spinTransition = rememberInfiniteTransition(label = "hyle-alert-spin")
     val rotationDegrees by spinTransition.animateFloat(
@@ -183,45 +210,55 @@ private fun AlertBannerRow(
         label = "hyle-alert-rotation",
     )
 
+    // The warning glyph now means only one thing: something is actually wrong. It used to be the
+    // resting icon too, so a perfectly healthy app wore an error mark permanently.
     val icon = when {
-        isScanning -> Icons.Outlined.Refresh
-        completed && !isError -> Icons.Outlined.CheckCircle
-        // The mockups draw a red warning triangle on the resting banner, so idle and error
-        // share the glyph and differ only in what the sentence says.
-        else -> Icons.Filled.Warning
+        isError -> Icons.Filled.Warning
+        isWorking -> Icons.Outlined.Refresh
+        else -> Icons.Outlined.CheckCircle
     }
     val tint = when {
-        isError || idle -> HyleTokens.Color.colorFeedbackDanger.toComposeColor()
-        completed -> HyleTokens.Color.colorFeedbackSuccess.toComposeColor()
-        else -> HyleTokens.Color.colorPaletteAccentViolet.toComposeColor().copy(alpha = pulseAlpha)
+        isError -> HyleTokens.Color.colorFeedbackDanger.toComposeColor()
+        isWorking -> HyleTokens.Color.colorPaletteAccentViolet.toComposeColor().copy(alpha = pulseAlpha)
+        else -> HyleTokens.Color.colorFeedbackSuccess.toComposeColor()
     }
-    val message = alertBannerMessage(scanState, completed)
 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(BAND_HEIGHT.dp)
-            .padding(horizontal = 16.dp),
+            .heightIn(min = BAND_HEIGHT.dp)
+            .clickable(
+                onClickLabel = if (expanded) "Collapse the status message" else "Show the full status message",
+                role = Role.Button,
+            ) { expanded = !expanded }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
     ) {
         Icon(
             imageVector = icon,
-            contentDescription = null,
+            // Was null, so the one piece of status the app surfaces was invisible to TalkBack.
+            contentDescription = when {
+                isError -> "Warning"
+                isWorking -> "Working"
+                else -> "Up to date"
+            },
             tint = tint,
             modifier = Modifier
                 .size(16.dp)
-                .graphicsLayer { rotationZ = if (isScanning) rotationDegrees else 0f },
+                .graphicsLayer { rotationZ = if (isWorking) rotationDegrees else 0f },
         )
         Text(
             text = message,
             style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium),
             color = Color.White,
-            maxLines = 1,
+            // A scan error is a full sentence and was being cut off at one line with no way to
+            // read the rest. Tapping the row gives it the room to finish.
+            maxLines = if (expanded) MAX_EXPANDED_LINES else 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (isScanning) {
-            val scanning = scanState as ScanState.Scanning
+        if (isWorking && scanState is ScanState.Scanning) {
+            val scanning = scanState
             if (scanning.discovered > 0) {
                 LinearProgressIndicator(
                     progress = { (scanning.scanned.toFloat() / scanning.discovered).coerceIn(0f, 1f) },
@@ -236,6 +273,12 @@ private fun AlertBannerRow(
 }
 
 private const val COMPLETION_HOLD_MILLIS = 1_800L
+
+/**
+ * How far the status line may grow when tapped open. Enough for a scan error to finish its
+ * sentence; short of becoming a panel, which is what the rooms are for.
+ */
+private const val MAX_EXPANDED_LINES = 4
 
 /**
  * How much of the pane the notification layer takes when revealed, in dp.

@@ -623,8 +623,13 @@ private fun GalleryBrowser(
                             // The notification is no longer a sibling in this Column. It is a
                             // layer *behind* the grid, and the grid's frame recedes to uncover
                             // it — see NotificationRoom.
+                            // recognitionProgress is passed, not just consulted for showWhenIdle:
+                            // it used to decide whether to OPEN the layer while the copy was
+                            // written from scanState alone, so the banner could open with nothing
+                            // to say and render a bare warning glyph.
                             route == BrowserRoute.Root -> NotificationRoom(
                                 scanState = state.scanState,
+                                recognition = state.recognitionProgress,
                                 showWhenIdle = state.recognitionProgress.running ||
                                     state.recognitionProgress.message != null,
                             ) {
