@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
+import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.SpatialShell
 import dev.aarso.cellshell.rememberSpatialController
 import kotlinx.coroutines.delay
@@ -145,6 +146,11 @@ fun ViewerScreen(
         scrimColor = Color.Black,
         cardColor = Color.Black,
         modifier = Modifier.fillMaxSize(),
+        // Shrink AND swivel (owner, 2026-08-14). The card turns about the hinge edge that
+        // stays on screen, so opening a room reads as a panel swinging away rather than a
+        // rectangle sliding off -- the Magic Portal shape. The shrink is kept; the swivel is
+        // added to it.
+        parkStyle = ParkStyle.SWIVEL,
         top = {
             PhotoDetailRoom(
                 asset = asset,

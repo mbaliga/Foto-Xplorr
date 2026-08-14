@@ -73,6 +73,7 @@ import com.fotoxplorr.app.hyle.NotificationRoom
 import dev.aarso.cellshell.EdgeTimelineScrubber
 import dev.aarso.cellshell.RoomEdge
 import dev.aarso.cellshell.ShakeToRefresh
+import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.SpatialShell
 import dev.aarso.cellshell.rememberSpatialController
 import com.fotoxplorr.app.media.MediaAsset
@@ -409,6 +410,11 @@ private fun GalleryBrowser(
         scrimColor = Color.Black,
         cardColor = Color.Black,
         modifier = Modifier.fillMaxSize(),
+        // Shrink AND swivel (owner, 2026-08-14). The card turns about the hinge edge that
+        // stays on screen, so opening a room reads as a panel swinging away rather than a
+        // rectangle sliding off -- the Magic Portal shape. The shrink is kept; the swivel is
+        // added to it.
+        parkStyle = ParkStyle.SWIVEL,
         left = {
             DestinationRailPanel(
                 items = railItems,

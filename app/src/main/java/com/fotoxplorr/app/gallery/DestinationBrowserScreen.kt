@@ -23,16 +23,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Badge
-import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
-import androidx.compose.material.icons.outlined.People
-import androidx.compose.material.icons.outlined.Pets
-import androidx.compose.material.icons.outlined.PhotoLibrary
-import androidx.compose.material.icons.outlined.Place
-import androidx.compose.material.icons.outlined.Smartphone
-import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -42,7 +34,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -62,21 +53,23 @@ import com.fotoxplorr.app.spatial.PlacesScreen
  * replaced the retired four-tab bottom navigation (Photos / Albums / Discover / Library) as
  * the default IA.
  *
- * Each carries the word it is called and the [icon] that rides the rail's gutter while it is
- * the selected one. The icon shows for the **selected destination only** — see `WordWheelRail`'s
- * marker slot. The rail is a run of words, and nine glyphs down its side would turn it into a
- * menu.
+ * A destination is a WORD, not a word and an icon.
+ *
+ * Each carried an [androidx.compose.ui.graphics.vector.ImageVector] until the rail's marker
+ * became the destination's own covers (owner, 2026-08-14). That icon had exactly one reader --
+ * the rail marker -- so once the covers took the gutter, every one of these was dead weight
+ * whose only effect would have been to tempt a future surface into drawing a menu.
  */
-enum class HyleDestination(val label: String, val icon: ImageVector) {
-    PETS("Pets", Icons.Outlined.Pets),
-    PEOPLE("People", Icons.Outlined.People),
-    IDENTITY("Identity", Icons.Outlined.Badge),
-    SCREENSHOTS("Screenshots", Icons.Outlined.Smartphone),
-    PHOTOS("Photos", Icons.Outlined.PhotoLibrary),
-    VIDEOS("Videos", Icons.Outlined.Videocam),
-    FAVOURITES("Favourites", Icons.Outlined.FavoriteBorder),
-    PLACES("Places", Icons.Outlined.Place),
-    PROTECTED("Protected", Icons.Outlined.Lock),
+enum class HyleDestination(val label: String) {
+    PETS("Pets"),
+    PEOPLE("People"),
+    IDENTITY("Identity"),
+    SCREENSHOTS("Screenshots"),
+    PHOTOS("Photos"),
+    VIDEOS("Videos"),
+    FAVOURITES("Favourites"),
+    PLACES("Places"),
+    PROTECTED("Protected"),
 }
 
 /** Which assets a destination shows. Kept separate from the UI so it is testable. */
@@ -179,22 +172,26 @@ fun DestinationRailPanel(
             .fillMaxSize()
             .background(Color.Black)
             .statusBarsPadding()
-            .padding(start = 24.dp, end = 16.dp, top = 40.dp, bottom = 40.dp),
+            // Tighter than the old 24dp because the marker gutter grew: the covers are wider than
+            // the icon they replaced, and the words must not march away from the screen edge.
+            .padding(start = 12.dp, end = 16.dp, top = 40.dp, bottom = 40.dp),
+        // The covers ARE the marker now, and they ride the left gutter (owner, 2026-08-14: the
+        // icon goes, "the few images are indication enough... I would rather have them on the
+        // left and for them to do the movement dance").
+        //
+        // Putting them in the marker slot rather than the trailing one is what buys the dance for
+        // free: the marker is pinned to its row and animates on a longer curve than the wheel, so
+        // a selection change makes the covers travel across the intervening rows and dip in scale
+        // mid-flight, exactly as the reference video's morphing bullet did. In the trailing slot
+        // they simply appeared beside whichever row was selected.
         marker = { item ->
-            Icon(
-                imageVector = HyleDestination.valueOf(item.id).icon,
-                // The word beside it already names the destination; repeating it here would make
-                // every rail row announce itself twice to a screen reader.
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(20.dp),
-            )
-        },
-        trailing = { item ->
             RailThumbnailCascade(
                 destinationAssets(HyleDestination.valueOf(item.id), state).take(3),
             )
         },
+        // Nothing trails the word any more: the one indicator should not be shown twice.
+        markerWidth = RAIL_MARKER_WIDTH.dp,
+        markerHeight = RAIL_MARKER_HEIGHT.dp,
     )
 }
 
@@ -531,3 +528,13 @@ fun SettingsPanel(
         }
     }
 }
+
+/**
+ * The rail's marker gutter, sized for a three-cover cascade (28dp + 10dp per extra cover = 48dp)
+ * with a little air. Handed to the rail so every row reserves it and the words keep one optical
+ * left edge whether or not the covers are beside them.
+ */
+private const val RAIL_MARKER_WIDTH = 52
+
+/** Cover height, matching [RailThumbnailCascade]'s own 28dp box. */
+private const val RAIL_MARKER_HEIGHT = 28
