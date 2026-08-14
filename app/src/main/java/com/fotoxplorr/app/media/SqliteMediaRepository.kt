@@ -40,11 +40,7 @@ class SqliteMediaRepository(context: Context) : MediaRepository {
         if (items.isEmpty()) return@withContext
         mutex.withLock {
             helper.upsert(items)
-            state.value = normalize(
-                state.value.associateByTo(linkedMapOf()) { it.id }
-                    .apply { items.forEach { put(it.id, it) } }
-                    .values,
-            )
+            state.value = mergeIntoSortedCatalogue(state.value, items)
         }
     }
 
@@ -60,13 +56,89 @@ class SqliteMediaRepository(context: Context) : MediaRepository {
     // construction and kept in step by every mutation above, so it is authoritative and free.
     override suspend fun count(): Int = state.value.size
 
-    private fun normalize(items: Collection<MediaAsset>): List<MediaAsset> = items
-        .distinctBy { it.id }
-        .sortedWith(
-            compareByDescending<MediaAsset> { it.dateTakenMillis }
-                .thenByDescending { it.dateModifiedSeconds }
-                .thenByDescending { it.id.value },
-        )
+    private fun normalize(items: Collection<MediaAsset>): List<MediaAsset> =
+        normalizeCatalogue(items)
+}
+
+/**
+ * The catalogue's one ordering.
+ *
+ * Hoisted to a single constant because [mergeIntoSortedCatalogue] must compare against exactly
+ * the order the list it is merging into is already in. A second, separately written comparator
+ * that drifted from this one would corrupt the catalogue silently -- no crash, just photos in
+ * the wrong places.
+ *
+ * Total, not merely consistent: ids are unique, so the final tiebreak admits no equal pairs and
+ * the sorted result is therefore unique. That uniqueness is what lets the merge below claim it
+ * produces the same list a full re-sort would.
+ */
+internal val CATALOGUE_ORDER: Comparator<MediaAsset> =
+    compareByDescending<MediaAsset> { it.dateTakenMillis }
+        .thenByDescending { it.dateModifiedSeconds }
+        .thenByDescending { it.id.value }
+
+internal fun normalizeCatalogue(items: Collection<MediaAsset>): List<MediaAsset> = items
+    .distinctBy { it.id }
+    .sortedWith(CATALOGUE_ORDER)
+
+/**
+ * Fold a small batch into the already-sorted catalogue in one linear pass.
+ *
+ * This replaces a full rebuild-and-re-sort of the whole catalogue per batch. A scan arrives in
+ * batches, so on a large library that ran hundreds of times, each run allocating a map of every
+ * asset and then re-sorting every asset -- work quadratic in the library size across a single
+ * scan, on the IO thread, feeding a StateFlow the UI is actively collecting. That is a direct
+ * contributor to a scan making the whole app stutter.
+ *
+ * [current] is already in [CATALOGUE_ORDER] and a batch is a few dozen items, so merging is
+ * linear. The result is identical to re-sorting: [CATALOGUE_ORDER] is total, so exactly one
+ * correct output exists and both routes produce it.
+ *
+ * Top-level and internal rather than a private method purely so it can be unit-tested without a
+ * Context -- it is the kind of index arithmetic that is easy to get subtly wrong and impossible
+ * to notice by eye.
+ */
+internal fun mergeIntoSortedCatalogue(
+    current: List<MediaAsset>,
+    incoming: List<MediaAsset>,
+): List<MediaAsset> {
+    if (incoming.isEmpty()) return current
+    // Within a single batch the LAST entry for an id wins, matching the map-put semantics of the
+    // rebuild this replaced -- a later row in the same batch is the fresher read of that file.
+    // `distinctBy` would keep the FIRST and silently disagree; the equivalence tests catch it.
+    val batch = normalizeCatalogue(
+        incoming.associateByTo(LinkedHashMap(incoming.size * 2)) { it.id }.values,
+    )
+    // Anything the batch carries supersedes the copy already held, so stale entries are dropped
+    // as the merge walks past them rather than in a separate filtering pass.
+    val superseded = incoming.mapTo(HashSet(incoming.size * 2)) { it.id }
+    val merged = ArrayList<MediaAsset>(current.size + batch.size)
+    var i = 0
+    var j = 0
+    while (i < current.size && j < batch.size) {
+        val held = current[i]
+        if (held.id in superseded) {
+            i += 1
+            continue
+        }
+        if (CATALOGUE_ORDER.compare(held, batch[j]) <= 0) {
+            merged += held
+            i += 1
+        } else {
+            merged += batch[j]
+            j += 1
+        }
+    }
+    while (i < current.size) {
+        val held = current[i]
+        if (held.id !in superseded) merged += held
+        i += 1
+    }
+    while (j < batch.size) {
+        merged += batch[j]
+        j += 1
+    }
+    return merged
 }
 
 private class CatalogueOpenHelper(context: Context) : SQLiteOpenHelper(

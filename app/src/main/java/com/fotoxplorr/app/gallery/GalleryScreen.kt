@@ -267,14 +267,42 @@ private fun GalleryBrowser(
     val gridState = rememberLazyGridState()
     val gridScope = rememberCoroutineScope()
 
-    // Recognition runs once per library state change, on demand rather than at every
-    // recomposition, so opening the app does not restart a completed pass.
-    LaunchedEffect(state.assets.size) {
-        if (state.assets.isNotEmpty()) actions.onIndexRecognition()
+    // Recognition starts when a scan SETTLES, not on every change to the asset count.
+    //
+    // This used to be keyed on `state.assets.size`. The indexer publishes a batch at a time, so
+    // during a first scan of a large library that count changes hundreds of times -- and each
+    // change re-keyed this effect, which CANCELS the running recognition pass and starts a fresh
+    // one. The pass could therefore never finish while a scan was in flight, and the work done so
+    // far was thrown away every batch. Keying on the completed scan's total means it fires once,
+    // when there is actually a settled library to recognise.
+    val settledLibrarySize = (state.scanState as? ScanState.Complete)?.total
+    LaunchedEffect(settledLibrarySize) {
+        if (settledLibrarySize != null && state.assets.isNotEmpty()) actions.onIndexRecognition()
     }
 
-    val destinationAssets = destinationAssets(destination, state, query)
-    val currentAssets = when (val current = route) {
+    // The catalogue projection is MEMOISED on exactly the inputs it reads.
+    //
+    // This filters and sorts the whole library, so on a real device it is far and away the most
+    // expensive thing a recomposition can do -- and it used to run on every single one. What made
+    // that catastrophic is that RecognitionProgress is a field of GalleryUiState: a progress tick
+    // recomposed this function, so the entire catalogue was re-derived even though the projection
+    // never reads progress. Keying on the individual fields it actually consumes is what breaks
+    // the loop -- a progress tick now redraws the status line and nothing else.
+    //
+    // Deliberately NOT keyed on `state` as a whole. That would reintroduce exactly the bug being
+    // fixed, because `state` takes a new identity on every progress tick and every scan event.
+    val destinationAssets = remember(
+        destination, query, state.assets, state.favoriteIds, state.sensitiveIds,
+        state.library, state.lockedFolders, state.unlockedFolders, state.preferences,
+        state.recognition,
+    ) {
+        destinationAssets(destination, state, query)
+    }
+    val currentAssets = remember(
+        route, destinationAssets, query, state.assets, state.favoriteIds, state.sensitiveIds,
+        state.library, state.lockedFolders, state.unlockedFolders, state.preferences,
+    ) {
+        when (val current = route) {
         BrowserRoute.Root -> destinationAssets
         is BrowserRoute.DeviceAlbum -> assetsForAlbum(
             assets = state.assets,
@@ -313,17 +341,27 @@ private fun GalleryBrowser(
             },
             state.preferences.sort,
         )
+        }
     }
-    val selectedAssets = currentAssets.filter { it.id in selection.selectedIds }
-    val currentIds = currentAssets.mapTo(linkedSetOf()) { it.id }
+    // Both of these walk the full projection, and both are only ever read while a selection is
+    // active (the selection top bar). Building a 22k-entry set on every recomposition to answer a
+    // question nobody is asking is pure waste, so they collapse to a constant when idle.
+    val selectedAssets = remember(currentAssets, selection) {
+        if (selection.isActive) currentAssets.filter { it.id in selection.selectedIds } else emptyList()
+    }
+    val currentIds = remember(currentAssets, selection.isActive) {
+        if (selection.isActive) currentAssets.mapTo(linkedSetOf()) { it.id } else emptySet()
+    }
     val inTrash = (route as? BrowserRoute.Smart)?.album == SmartAlbum.TRASH
     val inArchive = (route as? BrowserRoute.Smart)?.album == SmartAlbum.ARCHIVED
     val collectionRoute = route as? BrowserRoute.Collection
     val albumRoute = route as? BrowserRoute.DeviceAlbum
     val tagRoute = route as? BrowserRoute.Tag
 
+    // Guarded on isActive because currentIds is deliberately emptySet() while idle (above);
+    // retaining against an empty set unguarded would clear a selection the moment one began.
     LaunchedEffect(currentIds) {
-        selection = selection.retainAvailable(currentIds)
+        if (selection.isActive) selection = selection.retainAvailable(currentIds)
     }
     LaunchedEffect(destination, route) {
         selection = selection.clear()

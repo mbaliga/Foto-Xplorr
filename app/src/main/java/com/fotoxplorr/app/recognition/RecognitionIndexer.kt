@@ -84,6 +84,15 @@ class RecognitionIndexer(
             var completed = 0
             var failed = 0
             val batch = ArrayList<AssetRecognition>(BATCH_SIZE)
+            // Progress is THROTTLED, not published per photo.
+            //
+            // RecognitionProgress is a field of GalleryUiState, so every emission recomposes the
+            // whole gallery, which re-derives the entire catalogue. Publishing once per asset
+            // therefore cost one full re-derivation per photo -- tens of thousands of them on a
+            // real library, on the main thread, while the user is trying to scroll. The progress
+            // line is a human-readable count; it cannot be read faster than a few times a second,
+            // so nothing is lost by rate-limiting it and a great deal is gained.
+            var lastPublishAtMs = 0L
             try {
                 for (asset in pending) {
                     currentCoroutineContext().ensureActive()
@@ -101,14 +110,18 @@ class RecognitionIndexer(
                         }
                     }
                     completed += 1
-                    store.publishProgress(
-                        RecognitionProgress(
-                            running = true,
-                            completed = completed,
-                            total = pending.size,
-                            failed = failed,
-                        ),
-                    )
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs - lastPublishAtMs >= PROGRESS_INTERVAL_MS) {
+                        lastPublishAtMs = nowMs
+                        store.publishProgress(
+                            RecognitionProgress(
+                                running = true,
+                                completed = completed,
+                                total = pending.size,
+                                failed = failed,
+                            ),
+                        )
+                    }
                 }
             } finally {
                 if (batch.isNotEmpty()) store.upsert(batch.toList())
@@ -277,6 +290,16 @@ class RecognitionIndexer(
         const val PATCH_SIDE = 32
 
         const val BATCH_SIZE = 24
+
+        /**
+         * Floor on the gap between two progress publications, in milliseconds.
+         *
+         * Each publication recomposes the gallery and re-derives the catalogue (see the call
+         * site), so this is a frame-budget decision rather than a cosmetic one: four updates a
+         * second is faster than anyone can read a changing number, and leaves the remaining
+         * ~240 ms of every quarter-second free for scrolling.
+         */
+        const val PROGRESS_INTERVAL_MS = 250L
         const val MIN_FACE_SIZE = 0.06f
         const val LABEL_CONFIDENCE_FLOOR = 0.45f
         const val MAX_FACES_FOR_DOCUMENT = 2
