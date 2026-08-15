@@ -50,6 +50,12 @@ data class GalleryPreferencesState(
      * equivalent of the old TIMELINE default.
      */
     val defaultDestination: HyleDestination = HyleDestination.PHOTOS,
+    /** Hold the screen awake while a photo is open. Off by default: it costs battery. */
+    val keepScreenOn: Boolean = false,
+    /** Play a slideshow in a random order rather than in the current sort order. */
+    val slideshowShuffle: Boolean = false,
+    /** Start a video as soon as it is opened, rather than waiting for a tap on play. */
+    val autoplayVideos: Boolean = false,
 )
 
 class GalleryPreferences(context: Context) {
@@ -97,6 +103,18 @@ class GalleryPreferences(context: Context) {
         state.value.copy(defaultDestination = destination),
     ) { putString(KEY_DEFAULT_DESTINATION, destination.name) }
 
+    fun setKeepScreenOn(enabled: Boolean) = update(
+        state.value.copy(keepScreenOn = enabled),
+    ) { putBoolean(KEY_KEEP_SCREEN_ON, enabled) }
+
+    fun setSlideshowShuffle(enabled: Boolean) = update(
+        state.value.copy(slideshowShuffle = enabled),
+    ) { putBoolean(KEY_SLIDESHOW_SHUFFLE, enabled) }
+
+    fun setAutoplayVideos(enabled: Boolean) = update(
+        state.value.copy(autoplayVideos = enabled),
+    ) { putBoolean(KEY_AUTOPLAY_VIDEOS, enabled) }
+
     fun setSlideshowInterval(seconds: Int) {
         val safeSeconds = seconds.coerceIn(MIN_SLIDESHOW_INTERVAL_SECONDS, MAX_SLIDESHOW_INTERVAL_SECONDS)
         update(state.value.copy(slideshowIntervalSeconds = safeSeconds)) {
@@ -127,6 +145,13 @@ class GalleryPreferences(context: Context) {
             .getInt(KEY_SLIDESHOW_INTERVAL, DEFAULT_SLIDESHOW_INTERVAL_SECONDS)
             .coerceIn(MIN_SLIDESHOW_INTERVAL_SECONDS, MAX_SLIDESHOW_INTERVAL_SECONDS),
         defaultDestination = enumValue(KEY_DEFAULT_DESTINATION, HyleDestination.PHOTOS),
+        // Every one of these defaults to the behaviour the app already had, which is not a
+        // stylistic choice: CatalogueCharacterisationTest pins the projections by fingerprint,
+        // so a new preference whose default changed what a destination contains would move a
+        // golden -- and a golden that needs editing means the refactor changed behaviour.
+        keepScreenOn = preferences.getBoolean(KEY_KEEP_SCREEN_ON, false),
+        slideshowShuffle = preferences.getBoolean(KEY_SLIDESHOW_SHUFFLE, false),
+        autoplayVideos = preferences.getBoolean(KEY_AUTOPLAY_VIDEOS, false),
     )
 
     private inline fun <reified T : Enum<T>> enumValue(key: String, fallback: T): T =
@@ -146,6 +171,9 @@ class GalleryPreferences(context: Context) {
         const val KEY_ACCENT_PALETTE = "accent_palette"
         const val KEY_SLIDESHOW_INTERVAL = "slideshow_interval"
         const val KEY_DEFAULT_DESTINATION = "default_destination"
+        const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
+        const val KEY_SLIDESHOW_SHUFFLE = "slideshow_shuffle"
+        const val KEY_AUTOPLAY_VIDEOS = "autoplay_videos"
     }
 }
 

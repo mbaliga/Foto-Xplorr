@@ -49,6 +49,8 @@ import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -98,6 +100,8 @@ fun ViewerScreen(
     onClose: () -> Unit,
     /** Blur-sensitive preference, surfaced in the top room so it is adjustable where it bites. */
     blurSensitive: Boolean = true,
+    /** Hold the screen awake while this screen is up. */
+    keepScreenOn: Boolean = false,
     onSetSlideshowInterval: (Int) -> Unit = {},
     onSetBlurSensitive: (Boolean) -> Unit = {},
     /**
@@ -135,6 +139,14 @@ fun ViewerScreen(
     // A room is not a back-stack entry, but Back is the gesture people reach for to leave one.
     // Disabled at home so the activity's own handler still closes the viewer.
     BackHandler(enabled = !shell.atHome) { shell.closeAll() }
+
+    // Cleared on dispose, not just toggled off: leaving FLAG_KEEP_SCREEN_ON set behind a closed
+    // viewer would hold the whole app awake for as long as it stayed in the foreground.
+    val view = LocalView.current
+    DisposableEffect(keepScreenOn, view) {
+        view.keepScreenOn = keepScreenOn
+        onDispose { view.keepScreenOn = false }
+    }
 
     LaunchedEffect(asset.id, slideshowActive, slideshowIntervalSeconds, shell.anyRoomVisible) {
         if (slideshowActive && total > 1 && !shell.anyRoomVisible) {

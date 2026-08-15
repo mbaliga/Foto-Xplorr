@@ -117,6 +117,9 @@ data class GalleryActions(
     val onSetAccentPalette: (AccentPalette) -> Unit,
     val onSetSlideshowInterval: (Int) -> Unit,
     val onSetDefaultDestination: (HyleDestination) -> Unit,
+    val onSetKeepScreenOn: (Boolean) -> Unit,
+    val onSetSlideshowShuffle: (Boolean) -> Unit,
+    val onSetAutoplayVideos: (Boolean) -> Unit,
     /** Kick off (or resume) the on-device recognition pass. */
     val onIndexRecognition: () -> Unit,
     val onProtectFolder: suspend (String, CharArray) -> Result<Unit>,
@@ -259,7 +262,6 @@ private fun GalleryBrowser(
     // The two rooms are the shell's state, not booleans here: a room is fractionally open for
     // most of its life (the finger is mid-drag), which a Boolean cannot express.
     val shell = rememberSpatialController()
-    var allSettingsOpen by remember { mutableStateOf(false) }
     var createCollectionVisible by remember { mutableStateOf(false) }
     var renameCollection by remember { mutableStateOf<BrowserRoute.Collection?>(null) }
     var renameAsset by remember { mutableStateOf<MediaAsset?>(null) }
@@ -452,8 +454,6 @@ private fun GalleryBrowser(
             SettingsRoom(
                 state = state,
                 actions = actions,
-                allSettingsOpen = allSettingsOpen,
-                onAllSettingsOpenChange = { allSettingsOpen = it },
                 onOpenLegacyScreen = {
                     shell.closeAll()
                     legacyScreen = it
@@ -542,17 +542,15 @@ private fun GalleryBrowser(
                                 onRequestUnlock = { key, name ->
                                     passwordRequest = PasswordRequest(PasswordAction.UNLOCK, key, name)
                                 },
-                                onOpenSettings = {
-                                    allSettingsOpen = true
-                                    shell.open(RoomEdge.RIGHT)
-                                },
+                                // One depth now, so opening settings is just opening the room.
+                                onOpenSettings = { shell.open(RoomEdge.RIGHT) },
                             )
                             // Pull-to-backup is retired (owner direction, 2026-08-05): the
                             // pull-down space at a room's top belongs to the fonebrew
                             // top-room reveal, so no other gesture may claim it — and the
                             // static "PULL TO CREATE BACKUP" copy went with it. Refresh is
                             // now physical (ShakeToRefresh below); backup is an explicit,
-                            // named item in the header overflow menu instead of a gesture.
+                            // named item in the settings room's Data tab instead of a gesture.
                             //
                             // The notification is no longer a sibling in this Column. It is a
                             // layer *behind* the grid, and the grid's frame recedes to uncover
@@ -1063,61 +1061,18 @@ private fun BrowserHeader(
 /**
  * The settings room — the surface parked off the right edge.
  *
- * Two depths on one surface rather than a panel plus a dialog: the compact panel from the
- * mockups, and every setting behind "All settings…". Both render inside the app's own theme,
- * which is the fix for the light-coloured settings screen the owner found in an otherwise black
- * app: an `AlertDialog` paints on the platform's dialog surface, and no amount of theming the
- * app changes that.
+ * One depth, six tabs. It used to be two depths: a compact panel plus everything else behind an
+ * "All settings…" button, which is what made that second depth feel strange (owner, 2026-08-14)
+ * -- it was not a category, it was an overflow, and an overflow is what a surface grows when it
+ * has no structure to put things in.
  */
 @Composable
 private fun SettingsRoom(
     state: GalleryUiState,
     actions: GalleryActions,
-    allSettingsOpen: Boolean,
-    onAllSettingsOpenChange: (Boolean) -> Unit,
     onOpenLegacyScreen: (LegacyScreen) -> Unit,
 ) {
-    // Back inside the room steps out of the full list before it closes the room, so "all
-    // settings" is not a one-way door.
-    BackHandler(enabled = allSettingsOpen) { onAllSettingsOpenChange(false) }
-
-    if (!allSettingsOpen) {
-        SettingsPanel(
-            preferences = state.preferences,
-            onOpenAllSettings = { onAllSettingsOpenChange(true) },
-            onSetDefaultDestination = actions.onSetDefaultDestination,
-            onOpenLegacyScreen = onOpenLegacyScreen,
-        )
-        return
-    }
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .statusBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { onAllSettingsOpenChange(false) }) {
-                Icon(
-                    Icons.AutoMirrored.Outlined.ArrowBack,
-                    contentDescription = "Back to settings",
-                    tint = Color.White,
-                )
-            }
-            Text(
-                "All settings",
-                style = MaterialTheme.typography.titleMedium,
-                color = Color.White,
-            )
-        }
-        GallerySettingsList(
-            preferences = state.preferences,
-            actions = actions,
-            modifier = Modifier.weight(1f),
-        )
-    }
+    SettingsTabsRoom(state = state, actions = actions, onOpenLegacyScreen = onOpenLegacyScreen)
 }
 
 /**

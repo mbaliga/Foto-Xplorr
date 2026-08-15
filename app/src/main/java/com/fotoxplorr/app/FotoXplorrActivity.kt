@@ -561,6 +561,11 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             },
             onNext = {
                 val nextIndex = when {
+                    // Shuffle only applies to a running slideshow: a manual swipe means "the
+                    // next photo", and answering it with a random one would be a bug, not a
+                    // setting.
+                    slideshowActive && preferences.slideshowShuffle && viewerAssets.size > 1 ->
+                        randomOtherIndex(viewerAssets.size, selectedIndex)
                     selectedIndex < viewerAssets.lastIndex -> selectedIndex + 1
                     slideshowActive && viewerAssets.size > 1 -> 0
                     else -> -1
@@ -574,6 +579,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             },
             // The viewer's own settings room edits these, so it needs the value and the setter.
             blurSensitive = preferences.blurSensitive,
+            keepScreenOn = preferences.keepScreenOn,
             onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
             onSetBlurSensitive = galleryPreferences::setBlurSensitive,
             relatedAssets = viewerAssets,
@@ -612,6 +618,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onSetAccentPalette = galleryPreferences::setAccentPalette,
                 onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
                 onSetDefaultDestination = galleryPreferences::setDefaultDestination,
+                onSetKeepScreenOn = galleryPreferences::setKeepScreenOn,
+                onSetSlideshowShuffle = galleryPreferences::setSlideshowShuffle,
+                onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
                 onIndexRecognition = { recognitionGeneration += 1 },
                 onProtectFolder = privateFolderStore::protect,
                 onUnlockFolder = privateFolderStore::unlock,
@@ -709,4 +718,17 @@ sealed interface ScanState {
     /** @param incremental true when this was a delta pass (a few changed items), not a full library scan. */
     data class Complete(val total: Int, val incremental: Boolean = false) : ScanState
     data class Error(val message: String) : ScanState
+}
+
+/**
+ * A random index other than [current], for a shuffled slideshow.
+ *
+ * Drawing from the other [size] - 1 positions and stepping over [current] rather than retrying a
+ * uniform draw: a retry loop is unbounded in the worst case, and at size 2 it would spin on the
+ * one index it must not pick roughly half the time.
+ */
+internal fun randomOtherIndex(size: Int, current: Int): Int {
+    if (size <= 1) return 0
+    val drawn = kotlin.random.Random.nextInt(size - 1)
+    return if (drawn >= current) drawn + 1 else drawn
 }
