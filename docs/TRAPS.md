@@ -55,3 +55,15 @@ change that needs saying out loud. Source: the 6 Aug 2026 handoff plus plan FX-I
 16. **`zipalign -P 16`, never `-p`.** At target 36 the app must support 16 KB page
     sizes; `-p` silently downgrades correct 16 KB alignment to 4 KB and native libraries
     stop loading on 16 KB devices. Verify with `zipalign -c -P 16 -v 4`.
+
+## 17. An editor must never open the original for writing
+
+`EditedCopyWriter` writes a NEW MediaStore row and nothing else; there is no code path in it that
+opens the source for writing, and there must never be one. A photo library is frequently the only
+copy of an irreplaceable image, and an editor that can overwrite one eventually will. "Save" means
+"save a copy" — see `docs/adr/ADR-007-photo-editing.md`.
+
+Related: do not reach for uCrop to "just add crop". It declares `com.squareup.okhttp3:okhttp` and
+hard-fails `verifyOfflineRuntimeClasspath`, whose allowlist holds one exact coordinate and has no
+escape hatch. And do not copy from Fossify/Simple-Gallery: GPL-3.0 with no "or later", which would
+make this whole app GPL.

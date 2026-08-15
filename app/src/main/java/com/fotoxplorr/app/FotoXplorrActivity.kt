@@ -36,6 +36,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.fotoxplorr.app.editor.EditorScreen
 import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.fileops.CleanShareExporter
 import com.fotoxplorr.app.fileops.MediaFileOperations
@@ -176,6 +177,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     var pendingRenameAsset by remember { mutableStateOf<MediaAsset?>(null) }
     var pendingRenameName by remember { mutableStateOf<String?>(null) }
     var userMessage by remember { mutableStateOf<String?>(null) }
+    var editingAsset by remember { mutableStateOf<MediaAsset?>(null) }
     var recognitionGeneration by remember { mutableStateOf(0) }
 
     val selectedIndex = selectedAssetId?.let { id -> viewerAssets.indexOfFirst { it.id == id } } ?: -1
@@ -532,7 +534,20 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         )
     }
 
-    if (activeAsset != null) {
+    val editing = editingAsset
+    if (editing != null) {
+        BackHandler { editingAsset = null }
+        EditorScreen(
+            asset = editing,
+            onClose = { editingAsset = null },
+            onSaved = { message ->
+                editingAsset = null
+                userMessage = message
+                // The copy is a new file, so the library has to learn about it.
+                scanRequests.trySend(false)
+            },
+        )
+    } else if (activeAsset != null) {
         BackHandler {
             selectedAssetId = null
             viewerAssets = emptyList()
@@ -553,7 +568,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
             onToggleSensitive = { sensitiveStore.toggle(activeAsset.id) },
             onShare = { share(listOf(activeAsset)) },
-            onEdit = { openExternally(activeAsset, Intent.ACTION_EDIT) },
+            onEdit = { editingAsset = activeAsset },
             onOpenWith = { openExternally(activeAsset, Intent.ACTION_VIEW) },
             onMoveToTrash = { requestMediaOperation(listOf(activeAsset), PendingMediaOperation.TRASH) },
             onPrevious = {
