@@ -63,6 +63,9 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import dev.aarso.cellshell.SpatialMotion
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -393,6 +396,23 @@ private fun GalleryBrowser(
     val firstVisibleIndex by remember(gridState) {
         derivedStateOf { gridState.firstVisibleItemIndex }
     }
+    // The edge scrubber is visible only while the grid is actually moving, plus a short hold so
+    // it does not blink out from under a finger between two flings.
+    val gridScrolling by remember(gridState) { derivedStateOf { gridState.isScrollInProgress } }
+    var scrubberWanted by remember { mutableStateOf(false) }
+    LaunchedEffect(gridScrolling) {
+        if (gridScrolling) {
+            scrubberWanted = true
+        } else {
+            kotlinx.coroutines.delay(SCRUBBER_HOLD_MILLIS)
+            scrubberWanted = false
+        }
+    }
+    val scrubberAlpha = animateFloatAsState(
+        targetValue = if (scrubberWanted) 1f else 0f,
+        animationSpec = SpatialMotion.settleSpec,
+        label = "scrubber-reveal",
+    )
     // The scrubber's stops, in the grid's index space. Both surfaces that show it render
     // headerless grids, so grid item n is asset n — see timelineStops.
     val scrubberAssets = if (route == BrowserRoute.Root) destinationAssets else currentAssets
@@ -463,110 +483,18 @@ private fun GalleryBrowser(
                             tagRoute = tagRoute,
                             collectionRoute = collectionRoute,
                         )
-                    } else {
-                        // A plain header row, not a CenterAlignedTopAppBar. The app bar existed
-                        // mostly to hold the hamburger, and the hamburger existed to open a rail
-                        // that is now one edge-drag away — so both go, and the header keeps only
-                        // what is genuinely per-view: where you are, and the two actions for it.
-                        BrowserHeader(
-                            title = route.title(destination),
-                            onBack = if (route != BrowserRoute.Root) {
-                                { route = BrowserRoute.Root }
-                            } else {
-                                null
-                            },
-                            actions = {
-                                if (currentAssets.isNotEmpty()) {
-                                    IconButton(onClick = { actions.onStartSlideshow(currentAssets) }) {
-                                        Icon(Icons.Outlined.PlayArrow, contentDescription = "Start slideshow")
-                                    }
-                                }
-                                IconButton(onClick = { topMenuVisible = true }) {
-                                    Icon(Icons.Outlined.MoreVert, contentDescription = "More")
-                                }
-                                DropdownMenu(
-                                    expanded = topMenuVisible,
-                                    onDismissRequest = { topMenuVisible = false },
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("Refresh library") },
-                                        onClick = {
-                                            topMenuVisible = false
-                                            actions.onRefresh()
-                                        },
-                                    )
-                                    // Backup's explicit home since the pull gesture retired —
-                                    // the same local metadata export the pull used to fire.
-                                    DropdownMenuItem(
-                                        text = { Text("Create backup") },
-                                        onClick = {
-                                            topMenuVisible = false
-                                            actions.onExportMetadata()
-                                        },
-                                    )
-                                    albumRoute?.let { album ->
-                                        val protected = album.key in state.lockedFolders
-                                        val unlocked = album.key in state.unlockedFolders
-                                        when {
-                                            !protected -> DropdownMenuItem(
-                                                text = { Text("Make folder private") },
-                                                onClick = {
-                                                    topMenuVisible = false
-                                                    passwordRequest = PasswordRequest(
-                                                        PasswordAction.PROTECT, album.key, album.name,
-                                                    )
-                                                },
-                                            )
-                                            unlocked -> {
-                                                DropdownMenuItem(
-                                                    text = { Text("Lock now") },
-                                                    onClick = {
-                                                        topMenuVisible = false
-                                                        actions.onLockFolder(album.key)
-                                                        route = BrowserRoute.Root
-                                                    },
-                                                )
-                                                DropdownMenuItem(
-                                                    text = { Text("Remove protection") },
-                                                    onClick = {
-                                                        topMenuVisible = false
-                                                        passwordRequest = PasswordRequest(
-                                                            PasswordAction.REMOVE, album.key, album.name,
-                                                        )
-                                                    },
-                                                )
-                                            }
-                                        }
-                                    }
-                                    collectionRoute?.let { collection ->
-                                        DropdownMenuItem(
-                                            text = { Text("Rename collection") },
-                                            onClick = {
-                                                topMenuVisible = false
-                                                renameCollection = collection
-                                            },
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("Delete collection") },
-                                            onClick = {
-                                                topMenuVisible = false
-                                                actions.onDeleteCollection(collection.id)
-                                                route = BrowserRoute.Root
-                                            },
-                                        )
-                                    }
-                                    DropdownMenuItem(
-                                        text = { Text("Settings") },
-                                        leadingIcon = { Icon(Icons.Outlined.Settings, null) },
-                                        onClick = {
-                                            topMenuVisible = false
-                                            shell.open(RoomEdge.RIGHT)
-                                        },
-                                    )
-                                }
-                            },
-                        )
                     }
+                    // No header on the browsing surface at all. BrowserHeader used to be
+                    // composed unconditionally into this slot, so the Scaffold reserved ~84dp of
+                    // mosaic permanently for a title that repeated the word the rail already
+                    // shows selected and the pill already says, plus a 3-dot menu whose last item
+                    // merely opened a room that is one edge-drag away (owner, 2026-08-14: "I
+                    // don't want to see Places and 3 dots at the top. Immersive!").
+                    //
+                    // The route-scoped actions that lived in that menu are NOT lost -- they move
+                    // to RouteOverlayBar below, which appears only when you are actually inside
+                    // an album, a collection or a tag. Refresh stays a shake, backup stays in the
+                    // Library screen, and Settings is the right-hand room.
                 },
                 floatingActionButton = {
                     if (!selection.isActive && legacyScreen == LegacyScreen.ALBUMS) {
@@ -691,7 +619,44 @@ private fun GalleryBrowser(
                             inkColor = Color.White,
                             accentColor = MaterialTheme.colorScheme.primary,
                             bubbleTextColor = Color.Black,
+                            // The strip stops sitting ON the photos (owner, 2026-08-14: "the
+                            // timeline thing is overlapping with the pictures"): it is invisible
+                            // while the mosaic is still, fades in with the scroll it describes,
+                            // and fades back out once the grid settles.
+                            //
+                            // Transient rather than a reserved 44dp gutter, deliberately -- a
+                            // permanent black stripe down the side of an edge-to-edge mosaic
+                            // would answer "overlapping" with "cluttered".
+                            //
+                            // Passed as restAlpha rather than applied as a graphicsLayer out
+                            // here, because an outer alpha would hide the pixels while leaving
+                            // the 44dp touch target live: a drag down the right edge would scrub
+                            // a strip that never appeared, since an outer fade cannot know the
+                            // strip has been pressed. The library takes it to full opacity on
+                            // touch, so the strip is still grabbable from a standstill.
+                            restAlpha = EDGE_SCRUBBER_REST_ALPHA * scrubberAlpha.value,
                             modifier = Modifier.align(Alignment.CenterEnd),
+                        )
+                    }
+
+                    // The only header left, and only when you are somewhere you must be able to
+                    // get back OUT of: inside an album, a collection or a tag. Drawn OVER the
+                    // mosaic rather than in the Scaffold's topBar slot, so it costs the grid no
+                    // height and the root browsing surface stays completely bare.
+                    if (!selection.isActive && route != BrowserRoute.Root) {
+                        RouteOverlayBar(
+                            title = route.title(destination),
+                            onBack = { route = BrowserRoute.Root },
+                            albumRoute = albumRoute,
+                            collectionRoute = collectionRoute,
+                            state = state,
+                            actions = actions,
+                            menuVisible = topMenuVisible,
+                            onMenuVisibleChange = { topMenuVisible = it },
+                            onPasswordRequest = { passwordRequest = it },
+                            onRenameCollection = { renameCollection = it },
+                            onLeaveRoute = { route = BrowserRoute.Root },
+                            modifier = Modifier.align(Alignment.TopStart),
                         )
                     }
 
@@ -1169,3 +1134,138 @@ private fun pillCaption(assets: List<MediaAsset>, firstVisibleIndex: Int): Strin
     val month = monthLabel(assets[index])
     return "$month · ${index + 1} of ${assets.size}"
 }
+
+/**
+ * The one piece of header this app still draws while browsing, and it appears only inside a
+ * drill-down route (an album, a collection, a tag).
+ *
+ * The root surface has none: its title repeated the word the rail shows selected and the pill
+ * already says, and its 3-dot menu's last item merely opened a room one edge-drag away (owner,
+ * 2026-08-14). A drill-down route is different in kind — `BackHandler` is otherwise the only way
+ * out of one, and a surface you can enter but not visibly leave is a trap.
+ *
+ * It draws OVER the mosaic rather than living in the Scaffold's `topBar` slot, so it costs the
+ * grid no height, and it carries only what is genuinely scoped to the route it is showing. The
+ * items that were merely global (refresh, backup, settings) did not move here: refresh is the
+ * shake, backup is in the Library screen, settings is the right-hand room.
+ */
+@Composable
+private fun RouteOverlayBar(
+    title: String,
+    onBack: () -> Unit,
+    albumRoute: BrowserRoute.DeviceAlbum?,
+    collectionRoute: BrowserRoute.Collection?,
+    state: GalleryUiState,
+    actions: GalleryActions,
+    menuVisible: Boolean,
+    onMenuVisibleChange: (Boolean) -> Unit,
+    onPasswordRequest: (PasswordRequest) -> Unit,
+    onRenameCollection: (BrowserRoute.Collection) -> Unit,
+    onLeaveRoute: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val hasRouteActions = albumRoute != null || collectionRoute != null
+    Row(
+        modifier = modifier
+            .statusBarsPadding()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(
+            onClick = onBack,
+            modifier = Modifier.background(SCRIM_PILL, androidx.compose.foundation.shape.CircleShape),
+        ) {
+            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back", tint = Color.White)
+        }
+        Text(
+            text = title,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier
+                .padding(start = 8.dp)
+                .background(SCRIM_PILL, androidx.compose.foundation.shape.CircleShape)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+        if (hasRouteActions) {
+            IconButton(
+                onClick = { onMenuVisibleChange(true) },
+                modifier = Modifier
+                    .padding(start = 8.dp)
+                    .background(SCRIM_PILL, androidx.compose.foundation.shape.CircleShape),
+            ) {
+                Icon(Icons.Outlined.MoreVert, contentDescription = "Actions for this ${'$'}title", tint = Color.White)
+            }
+            DropdownMenu(expanded = menuVisible, onDismissRequest = { onMenuVisibleChange(false) }) {
+                albumRoute?.let { album ->
+                    val protected = album.key in state.lockedFolders
+                    val unlocked = album.key in state.unlockedFolders
+                    when {
+                        !protected -> DropdownMenuItem(
+                            text = { Text("Make folder private") },
+                            onClick = {
+                                onMenuVisibleChange(false)
+                                onPasswordRequest(
+                                    PasswordRequest(PasswordAction.PROTECT, album.key, album.name),
+                                )
+                            },
+                        )
+                        unlocked -> {
+                            DropdownMenuItem(
+                                text = { Text("Lock now") },
+                                onClick = {
+                                    onMenuVisibleChange(false)
+                                    actions.onLockFolder(album.key)
+                                    onLeaveRoute()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Remove protection") },
+                                onClick = {
+                                    onMenuVisibleChange(false)
+                                    onPasswordRequest(
+                                        PasswordRequest(PasswordAction.REMOVE, album.key, album.name),
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+                collectionRoute?.let { collection ->
+                    DropdownMenuItem(
+                        text = { Text("Rename collection") },
+                        onClick = {
+                            onMenuVisibleChange(false)
+                            onRenameCollection(collection)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete collection") },
+                        onClick = {
+                            onMenuVisibleChange(false)
+                            actions.onDeleteCollection(collection.id)
+                            onLeaveRoute()
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Ground under the drill-down bar's controls, so they stay legible over any photo beneath. */
+private val SCRIM_PILL = Color.Black.copy(alpha = 0.55f)
+
+/**
+ * How long the edge scrubber stays up after the grid stops. Long enough to survive the gap
+ * between two flings, short enough that it is gone before the mosaic reads as settled.
+ */
+private const val SCRUBBER_HOLD_MILLIS = 1_200L
+
+/**
+ * How visible the edge scrubber is while the grid is moving. The constellation's shared
+ * edge-affordance alpha; multiplied by the reveal so it lands on exactly that value mid-scroll
+ * and on zero at rest.
+ */
+private const val EDGE_SCRUBBER_REST_ALPHA = 0.35f
