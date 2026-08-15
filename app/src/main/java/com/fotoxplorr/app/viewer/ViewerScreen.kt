@@ -64,17 +64,16 @@ import kotlin.math.abs
 import kotlinx.coroutines.delay
 
 /**
- * The full-screen viewer, as a spatial shell with one room above it.
+ * The full-screen viewer, as a spatial shell with three rooms around it: settings at the top,
+ * the nine photo actions at the right, and what this photo is (and where it was taken) at the
+ * bottom, in [PhotoDetailRoom] -- with the photo itself still alive on the parked card behind
+ * whichever one is open. The bottom room replaces two separate surfaces that used to say
+ * overlapping things about the same file: a bottom `MetadataPanel` behind an "Info" button, and a
+ * full-screen Material details screen behind a "Details" button. Two buttons, two layouts and two
+ * half-answers about one photo is exactly the drift `docs/fonebrew-navigation.md` describes; the
+ * room is the single answer.
  *
- * Pulling down from the top reveals [PhotoDetailRoom] — what this photo is and where it was
- * taken — with the photo itself still alive on the parked card behind it. That replaces two
- * separate surfaces that used to say overlapping things about the same file: a bottom
- * `MetadataPanel` behind an "Info" button, and a full-screen Material details screen behind a
- * "Details" button. Two buttons, two layouts and two half-answers about one photo is exactly
- * the drift `docs/fonebrew-navigation.md` describes; the room is the single answer.
- *
- * The top edge is the only edge with a room here, so the shell refuses drags from the other
- * three and draws no peek on them.
+ * The left edge has no room, so the shell refuses drags from it and draws no peek there.
  */
 @Composable
 fun ViewerScreen(
@@ -204,17 +203,6 @@ fun ViewerScreen(
                 // at zero and render the plate and its text at alpha 0. The room would be
                 // *invisible*, with nothing thrown and PlaceMorphTest still green.
                 reveal = { -shell.vProgress },
-                filmstrip = if (relatedAssets.size > 1) {
-                    {
-                        FilmstripScrubber(
-                            assets = relatedAssets,
-                            currentIndex = position - 1,
-                            onSelect = onSelectAsset,
-                        )
-                    }
-                } else {
-                    null
-                },
             )
         },
     ) {
@@ -329,6 +317,22 @@ fun ViewerScreen(
                         .align(Alignment.BottomStart)
                         .navigationBarsPadding()
                         .padding(16.dp),
+                )
+            }
+
+            // Back on the photo itself, not in the details room (owner, second round,
+            // 2026-08-14: "The filmstrip has to appear not in the details view but in the view
+            // where the photo is selected"). Gated on the same chrome flag as everything else
+            // drawn over the photo, for the same reason: immersive means immersive by default,
+            // and the strip is unambiguously chrome.
+            if (chromeVisible && relatedAssets.size > 1) {
+                FilmstripScrubber(
+                    assets = relatedAssets,
+                    currentIndex = position - 1,
+                    onSelect = onSelectAsset,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding(),
                 )
             }
         }

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -153,6 +154,14 @@ fun destinationEmptyMessage(
  * No scroll wrapper: the wheel measures its own rows against the height it is given and takes
  * care of overflow itself. Wrapping it in a `verticalScroll` would hand it an infinite height to
  * measure against, which is the fastest way to make a distance-weighted list stop weighting.
+ *
+ * Below the wheel, not inside a separate room, sits Settings (owner, 2026-08-14, reference
+ * screenshot of a rail with a dimmer "Settings / Help" pair under the primary nav: *"The
+ * settings should come below the menu nav itself"*). It used to be reachable only by already
+ * knowing to swipe in from the right edge -- true, but not discoverable, especially now that
+ * removing the header (item 4, previous round) took away the last visible entry point.
+ * [WordWheelRail] is handed a bounded height via `Modifier.weight(1f)` so it keeps working
+ * exactly as documented above; the settings row is the `Column`'s other, unweighted child.
  */
 @Composable
 fun DestinationRailPanel(
@@ -160,38 +169,71 @@ fun DestinationRailPanel(
     selectedId: String,
     onSelect: (String) -> Unit,
     state: GalleryUiState,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    WordWheelRail(
-        items = items,
-        selectedId = selectedId,
-        onSelect = onSelect,
-        inkColor = Color.White,
-        accentColor = MaterialTheme.colorScheme.primary,
+    Column(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
-            .statusBarsPadding()
-            // Tighter than the old 24dp because the marker gutter grew: the covers are wider than
-            // the icon they replaced, and the words must not march away from the screen edge.
-            .padding(start = 12.dp, end = 16.dp, top = 40.dp, bottom = 40.dp),
-        // The covers ARE the marker now, and they ride the left gutter (owner, 2026-08-14: the
-        // icon goes, "the few images are indication enough... I would rather have them on the
-        // left and for them to do the movement dance").
-        //
-        // Putting them in the marker slot rather than the trailing one is what buys the dance for
-        // free: the marker is pinned to its row and animates on a longer curve than the wheel, so
-        // a selection change makes the covers travel across the intervening rows and dip in scale
-        // mid-flight, exactly as the reference video's morphing bullet did. In the trailing slot
-        // they simply appeared beside whichever row was selected.
-        marker = { item ->
-            RailThumbnailCascade(
-                destinationAssets(HyleDestination.valueOf(item.id), state).take(3),
-            )
-        },
-        // Nothing trails the word any more: the one indicator should not be shown twice.
-        markerWidth = RAIL_MARKER_WIDTH.dp,
-        markerHeight = RAIL_MARKER_HEIGHT.dp,
+            .statusBarsPadding(),
+    ) {
+        WordWheelRail(
+            items = items,
+            selectedId = selectedId,
+            onSelect = onSelect,
+            inkColor = Color.White,
+            accentColor = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                // Tighter than the old 24dp because the marker gutter grew: the covers are wider
+                // than the icon they replaced, and the words must not march away from the edge.
+                .padding(start = 12.dp, end = 16.dp, top = 40.dp),
+            // The covers ARE the marker now, and they ride the left gutter (owner, 2026-08-14: the
+            // icon goes, "the few images are indication enough... I would rather have them on the
+            // left and for them to do the movement dance").
+            //
+            // Putting them in the marker slot rather than the trailing one is what buys the dance
+            // for free: the marker is pinned to its row and animates on a longer curve than the
+            // wheel, so a selection change makes the covers travel across the intervening rows
+            // and dip in scale mid-flight, exactly as the reference video's morphing bullet did.
+            // In the trailing slot they simply appeared beside whichever row was selected.
+            marker = { item ->
+                RailThumbnailCascade(
+                    destinationAssets(HyleDestination.valueOf(item.id), state).take(3),
+                )
+            },
+            // Nothing trails the word any more: the one indicator should not be shown twice.
+            markerWidth = RAIL_MARKER_WIDTH.dp,
+            markerHeight = RAIL_MARKER_HEIGHT.dp,
+        )
+        RailSettingsRow(onClick = onOpenSettings)
+    }
+}
+
+/**
+ * The one row under the wheel. Visually a step down from the primary destinations -- smaller,
+ * lighter weight, dimmer -- so the eye reads it as secondary without needing a divider line to
+ * say so, matching the reference screenshot's own "Settings / Help" treatment.
+ *
+ * A plain [Text], not a [WordWheelRail] row: this list is never scrolled, is never the wheel's
+ * subject, and does not participate in its distance-weighted fade -- giving it one would be
+ * pretending it is a tenth destination, which is exactly the confusion a fixed row avoids.
+ */
+@Composable
+private fun RailSettingsRow(onClick: () -> Unit) {
+    Text(
+        text = "Settings",
+        color = Color.White.copy(alpha = 0.55f),
+        style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Normal, letterSpacing = (-0.3).sp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            // This is now the panel's bottom-most element, so it -- not a hardcoded inset --
+            // is what has to clear the gesture-navigation bar.
+            .navigationBarsPadding()
+            .padding(start = 12.dp, end = 16.dp, top = 14.dp, bottom = 28.dp),
     )
 }
 

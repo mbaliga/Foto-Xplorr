@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -30,31 +30,41 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import kotlin.math.abs
+import kotlin.math.cos
 
 /**
- * The filmstrip from the viewer mockup: a horizontal strip of thumbnails for scrubbing between
- * shots without leaving the viewer.
+ * The filmstrip: a horizontal strip of thumbnails for scrubbing between shots, drawn **over the
+ * open photo** rather than inside any room (owner, second round, 2026-08-14: *"The filmstrip has
+ * to appear not in the details view but in the view where the photo is selected"* -- reversing
+ * the first round's placement inside [PhotoDetailRoom], which had put it at the bottom room
+ * instead).
  *
- * **The current shot is always in the middle of the strip, and dragging the strip navigates.**
- * Both halves of that were previously claimed and neither was true (owner, 2026-08-14: *"The
- * current photo must be centre always, and dragging/swiping on the strip should navigate"*):
+ * Three properties, all from the same round of direction:
  *
- * - Centring was `animateScrollToItem(target - 2)`, which places the target flush against the
- *   viewport's *start* with two thumbnails of lead-in — near the left edge, not the middle — and
- *   pins hard left for the first two photos. Real centring needs half a viewport of padding on
- *   both ends, so the first and last items can reach the middle at all; with that padding,
- *   scrolling to the item *is* centring it.
- * - Navigation was a `clickable` per thumbnail and nothing else. Dragging scrolled a decorative
- *   ribbon that reported nothing, so the strip and the photo could disagree.
+ * - **The centre stays put; the strip moves through it.** A fixed viewfinder frame is drawn at
+ *   the container's horizontal centre and never itself animates. What changes is which thumbnail
+ *   sits behind it, via [sidePadding] making the ends reachable and the release handler snapping
+ *   to whichever one lands there.
+ * - **A loupe.** Thumbnails scale up continuously as they near the centre and ease back down as
+ *   they leave it -- the macOS Dock's magnification, not a binary current/not-current switch.
+ *   [filmstripMagnification] is the falloff curve, read at draw time per item from the list's own
+ *   [androidx.compose.foundation.lazy.LazyListState.layoutInfo] so a drag repaints it every frame
+ *   without recomposing anything.
+ * - **Inertia.** [rememberSnapFlingBehavior] is not a fixed-duration animation -- it runs the
+ *   platform's velocity-based decay first (a fast flick travels further and keeps moving longer
+ *   than a slow one) and only adjusts the very end of that motion to land on a thumbnail, which
+ *   is exactly "if I pull fast ... it keeps scrolling, if I do it slow it keeps scrolling but for
+ *   a shorter duration."
  *
- * Every thumbnail is laid out at the same width, and the current one is enlarged by a draw-time
- * scale rather than a larger box. A wider current item would shift the strip's geometry as the
- * selection moved, which makes the centre drift by a few pixels per photo — visible as the strip
- * creeping sideways over a long scrub.
+ * Every thumbnail is laid out at the same width; magnification and the "this one is selected"
+ * treatment are both draw-time effects on top of it, never a change to the box itself. A wider
+ * current item would shift the strip's own geometry as selection moved, which is what made the
+ * centre drift in the very first version of this file.
  */
 @Composable
 fun FilmstripScrubber(
@@ -67,6 +77,8 @@ fun FilmstripScrubber(
     val listState = rememberLazyListState()
     val currentOnSelect by rememberUpdatedState(onSelect)
     val currentAssets by rememberUpdatedState(assets)
+    val density = LocalDensity.current
+    val magnifyRadiusPx = with(density) { MAGNIFY_RADIUS_DP.dp.toPx() }
 
     // The last index this strip itself reported. Without it the two effects below fight: a drag
     // reports index N, the host feeds N back as currentIndex, and the auto-centre effect then
@@ -76,7 +88,6 @@ fun FilmstripScrubber(
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.72f))
             .height(STRIP_HEIGHT.dp),
     ) {
         // Half a viewport either side, so item 0 and the last item can both reach the centre.
@@ -113,26 +124,47 @@ fun FilmstripScrubber(
         }
 
         LazyRow(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                // A dark bed under the strip only, not the whole band -- the fixed frame drawn
+                // after it needs to read as sitting ABOVE this surface, not as a hole in it.
+                .background(Color.Black.copy(alpha = 0.55f)),
             state = listState,
             contentPadding = PaddingValues(horizontal = sidePadding),
             horizontalArrangement = Arrangement.spacedBy(THUMB_GAP.dp),
             verticalAlignment = Alignment.CenterVertically,
             // A strip that stops between thumbnails has no "current" shot, and the release
-            // handler above would then pick one the user did not aim at.
+            // handler above would then pick one the user did not aim at. The deceleration
+            // leading up to that snap is still the ordinary velocity-based fling -- snapping
+            // only adjusts where the motion that fling already produced comes to rest.
             flingBehavior = rememberSnapFlingBehavior(listState),
         ) {
-            items(assets, key = { it.id.value }) { asset ->
+            itemsIndexed(assets, key = { _, asset -> asset.id.value }) { index, asset ->
                 val isCurrent = assets.getOrNull(currentIndex)?.id == asset.id
                 Box(
                     modifier = Modifier
                         .size(THUMB.dp)
-                        // Draw-time only: the box stays THUMB wide whatever is selected, so the
-                        // centre never drifts as the selection moves along the strip.
+                        // Draw-time only, and read from the list's OWN layout info rather than
+                        // captured state: this block re-runs on every frame layoutInfo changes
+                        // (every scroll frame), with no recomposition, which is what lets every
+                        // visible thumbnail's scale track the drag continuously instead of only
+                        // the current item snapping in and out.
                         .graphicsLayer {
-                            val s = if (isCurrent) CURRENT_SCALE else 1f
-                            scaleX = s
-                            scaleY = s
+                            val info = listState.layoutInfo
+                            val itemInfo = info.visibleItemsInfo.firstOrNull { it.index == index }
+                            val scale = if (itemInfo != null) {
+                                val viewportCentre = (info.viewportStartOffset + info.viewportEndOffset) / 2f
+                                val itemCentre = itemInfo.offset + itemInfo.size / 2f
+                                filmstripMagnification(
+                                    distancePx = (itemCentre - viewportCentre).toFloat(),
+                                    radiusPx = magnifyRadiusPx,
+                                    peakScale = PEAK_SCALE,
+                                )
+                            } else {
+                                1f
+                            }
+                            scaleX = scale
+                            scaleY = scale
                         }
                         .clip(RoundedCornerShape(3.dp))
                         .background(Color(0xFF1A1A1A))
@@ -153,21 +185,79 @@ fun FilmstripScrubber(
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
                     )
+                    // The dim is the SELECTION cue, not a magnification one -- it stays keyed to
+                    // isCurrent (which only updates on release) rather than to the continuous
+                    // scale above, so there is one stable answer to "which photo is this" even
+                    // while the loupe is sweeping across several thumbnails mid-drag.
                     if (!isCurrent) {
                         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)))
                     }
                 }
             }
         }
+
+        // The fixed viewfinder. It never moves and it answers no touches -- a plain decorative
+        // Box with no pointerInput of its own is simply transparent to the LazyRow's gestures
+        // beneath it. This is the "centre frame stays in focus" half of the request: the frame is
+        // always exactly here, and it is the strip's content that travels past it.
+        Box(
+            Modifier
+                .align(Alignment.Center)
+                .size(FRAME_SIZE.dp)
+                .border(1.5.dp, Color.White.copy(alpha = 0.85f), RoundedCornerShape(6.dp)),
+        )
     }
 }
 
-private const val STRIP_HEIGHT = 72
+/**
+ * The loupe curve: how much a thumbnail scales up, given its pixel distance from the strip's
+ * fixed centre.
+ *
+ * A raised cosine (a Hann window), not linear or a hard cutoff: it starts and ends with ZERO
+ * slope, so a thumbnail eases into and back out of magnification instead of visibly switching on
+ * the instant it crosses [radiusPx] -- a kink there reads as a seam under a slow drag, which a
+ * smooth falloff does not have.
+ *
+ * Pure and top-level so the curve's actual shape can be asserted without composing anything --
+ * see [FilmstripMagnificationTest]. [radiusPx] and [peakScale] are parameters rather than
+ * constants baked into the body precisely so those tests can probe values a real screen density
+ * would never produce.
+ */
+internal fun filmstripMagnification(distancePx: Float, radiusPx: Float, peakScale: Float): Float {
+    if (radiusPx <= 0f) return if (distancePx == 0f) peakScale else 1f
+    val t = (abs(distancePx) / radiusPx).coerceIn(0f, 1f)
+    val falloff = (cos(t * Math.PI.toFloat()) + 1f) / 2f
+    return 1f + (peakScale - 1f) * falloff
+}
+
+private const val STRIP_HEIGHT = 84
 
 /** One width for every thumbnail — see the KDoc on why the current one is not laid out larger. */
 private const val THUMB = 48
-private const val THUMB_GAP = 6
+private const val THUMB_GAP = 8
 
-/** How much the current thumbnail grows at draw time. Enough to read as selected, small enough
- *  that it does not collide with its neighbours across the [THUMB_GAP]. */
-private const val CURRENT_SCALE = 1.18f
+/** Scale applied to a thumbnail sitting exactly at the centre. */
+private const val PEAK_SCALE = 1.4f
+
+/**
+ * Distance from centre at which magnification has fully eased back to 1x, in dp. Roughly one
+ * thumbnail pitch either side of centre, so the effect reads as "the one under the frame, and a
+ * hint of its immediate neighbours" rather than rippling down the whole visible strip.
+ *
+ * Deliberately not accompanied by any z-index management: at [PEAK_SCALE], neighbouring
+ * thumbnails can touch or lightly overlap at the moment of a fast scrub, and later items simply
+ * draw over earlier ones when that happens (LazyRow's ordinary child order). A dynamic z-index
+ * keyed to a value that changes every scroll frame would mean re-evaluating draw order every
+ * frame too, for a seam that is only visible for an instant during a fast fling -- not a trade
+ * worth making for how briefly it shows.
+ */
+private const val MAGNIFY_RADIUS_DP = 60f
+
+/**
+ * The fixed viewfinder's own size -- a little larger than a peak-scaled thumbnail so its border
+ * reads as containing the photo rather than clipping it.
+ *
+ * Not a `const val`: Kotlin's compile-time-constant rule permits the arithmetic here but not the
+ * trailing `.toInt()`, so this is a plain top-level `val` instead, computed once at class load.
+ */
+private val FRAME_SIZE = (THUMB * PEAK_SCALE + 10f).toInt()

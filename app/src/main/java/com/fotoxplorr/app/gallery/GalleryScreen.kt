@@ -448,6 +448,7 @@ private fun GalleryBrowser(
                     gridScope.launch { gridState.scrollToItem(0) }
                 },
                 state = state,
+                onOpenSettings = { shell.open(RoomEdge.RIGHT) },
             )
         },
         right = {

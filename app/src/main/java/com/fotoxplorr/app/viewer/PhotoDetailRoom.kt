@@ -88,7 +88,6 @@ fun PhotoDetailRoom(
     exif: ImageExifDetails,
     reveal: () -> Float,
     modifier: Modifier = Modifier,
-    filmstrip: (@Composable () -> Unit)? = null,
 ) {
     // The shell deliberately consumes no insets — it says so in its own KDoc, because doing so
     // would lift its drag-sensitive edges off the physical screen edge. So a room pads for the
@@ -99,41 +98,34 @@ fun PhotoDetailRoom(
             .background(PANEL_BACKGROUND)
             // The room is at the BOTTOM edge now, so the shell parks the card upward and insets
             // this room at its top. The system bar to clear is therefore the navigation bar.
-            .navigationBarsPadding(),
+            .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(top = 16.dp, bottom = 24.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(top = 16.dp),
-        ) {
-            RoomHeader(asset = asset, reveal = reveal)
-            Box(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
-                ExifCard(asset = asset, exif = exif)
-            }
-            Text(
-                text = "Add a Caption",
-                color = MUTED_TEXT,
-                style = TextStyle(fontSize = 16.sp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = false) {}
-                    .padding(horizontal = 20.dp, vertical = 18.dp),
-            )
-            InformationBlock(asset = asset, exif = exif, reveal = reveal)
-            // The place plate goes LAST and gets the room's remaining height, because it is the
-            // thing this room exists to show. It used to sit third of six, above a 3-column grid
-            // of up to thirty related photos -- so the bottom half of the room was a gallery, and
-            // for an un-geotagged file (most of a real library) the plate collapsed to a single
-            // line and the gallery took the screen (owner, 2026-08-14: "the details screen is
-            // showing the gallery view at the bottom half instead of the map").
-            PlaceBlock(asset = asset, exif = exif, reveal = reveal)
+        RoomHeader(asset = asset, reveal = reveal)
+        Box(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+            ExifCard(asset = asset, exif = exif)
         }
-        // The related-photos grid is gone; the filmstrip is what "jump to another photo" means
-        // in this viewer, and it lives here rather than over the photo. That also settles a
-        // collision: the strip was a 72dp opaque band sitting exactly where this room's own
-        // drag origin is.
-        filmstrip?.invoke()
+        Text(
+            text = "Add a Caption",
+            color = MUTED_TEXT,
+            style = TextStyle(fontSize = 16.sp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = false) {}
+                .padding(horizontal = 20.dp, vertical = 18.dp),
+        )
+        InformationBlock(asset = asset, exif = exif, reveal = reveal)
+        // The place plate goes LAST, because it is the thing this room exists to show. It used
+        // to sit third of six, above a 3-column grid of up to thirty related photos -- so the
+        // bottom half of the room was a gallery, and for an un-geotagged file (most of a real
+        // library) the plate collapsed to a single line and the gallery took the screen (owner,
+        // 2026-08-14: "the details screen is showing the gallery view at the bottom half instead
+        // of the map"). "Jump to another photo" is not this room's job any more either: the
+        // filmstrip that used to close this Column lives over the photo itself now, where it was
+        // before -- see ViewerScreen (owner, second round: "The filmstrip has to appear not in
+        // the details view but in the view where the photo is selected").
+        PlaceBlock(asset = asset, exif = exif, reveal = reveal)
     }
 }
 
