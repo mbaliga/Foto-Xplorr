@@ -1,40 +1,65 @@
 # Foto Xplorr — test build (branch claude/fotoz-ui-interactions-bxvgbw)
 
 Debug builds, arm64-v8a only, stripped + 16 KB-page aligned + debug-signed.
-Built 14 Aug 2026 from commit b900516.
+Built 15 Aug 2026 from commit 96e59b6. **All twelve items are in this build.**
 
 | File | Flavor | Installs as |
 |---|---|---|
 | `foto-xplorr-offline.apk` | offline | `com.fotoxplorr.app.debug` |
 | `foto-xplorr-connect.apk` | connect | `com.fotoxplorr.app.connect.debug` |
 
-## New since the last build
+Judge performance on the **second** launch — the first still runs a full scan
+and recognition pass.
 
-**#9 — the swivel.** Open the left rail (or the viewer's top room) and the
-centre pane now turns about its hinge edge as well as shrinking, instead of
-only sliding. It is a *option* in the shared library, not a new hardcoded
-motion: apps pick `ParkStyle.SLIDE` or `ParkStyle.SWIVEL`, both with the
-shrink, so nothing else in the constellation changed.
+## What changed, by your numbering
 
-**#8 — the rail.** The selection-marker icon is gone. The three destination
-covers moved from the right of the word to the **left gutter**, and because
-the marker slot is pinned to its row and animates on a longer curve than the
-wheel, they now *travel* across the intervening rows and dip in scale
-mid-flight when you change destination — the movement dance from the
-reference video. `HyleDestination` no longer carries an icon at all.
+1 & 5 — **Stutter.** Three feedback loops were making the app re-derive the
+whole 22,110-photo catalogue for reasons unrelated to scrolling: recognition
+published progress once per photo (and progress is part of gallery state), the
+gallery re-derived the catalogue on every recomposition, and recognition was
+keyed on the photo count so every scan batch cancelled and restarted it. Also:
+the catalogue was fully re-sorted on every scan batch, and the app had no
+image-loader configuration at all.
 
-**Also fixed along the way:** the grab-pill on the parked card was aligned to
-the wrong edge on the vertical axis — with the top room open it was being
-drawn about 2000px off screen, so the affordance was simply never there. Both
-vertical cases were inverted.
+2 — **Viewer.** The text overlay is gone. Actions are icons in the RIGHT room,
+settings in the TOP room, details in the BOTTOM room. The details room no
+longer ends in a gallery grid; the place plate is last and takes the height.
 
-## Still from the previous build (worth re-checking)
+3 — **Timeline.** Invisible at rest, fades in while you scroll, out when the
+grid settles. Still grabbable from a standstill.
 
-The three stutter feedback loops and the image-loader configuration. Judge
-performance on the **second** launch — the first still runs a full scan and
-recognition pass.
+4 — **Immersive.** No title, no 3-dot menu. The root grid draws photos and the
+floating pill, nothing else. A back bar appears only inside an album.
 
-## Not in this build yet
+6 — **Warning triangle.** Gone unless something is actually wrong. It was
+literally the resting state before. Tapping a message expands it.
 
-Items 2, 3, 4, 7, 10, 11, 12 — viewer rooms, timeline overlap, immersive
-chrome, settings tabs, photo editing, gestures, filmstrip.
+7 — **Settings.** Six tabs, one depth. "All settings…" is gone. Three new
+preferences: keep screen on, shuffle slideshows, autoplay videos.
+
+8 — **Rail.** Icon dropped. The three covers moved to the left gutter and now
+travel between rows with the marker's lag and scale-dip.
+
+9 — **Swivel.** The parked card turns about its hinge edge as well as
+shrinking. It is an option in the shared library (SLIDE / SWIVEL), so other
+apps are unaffected.
+
+10 — **Editing.** Snapseed is NOT open source (proprietary Google). uCrop
+would fail your offline build gate; Fossify is GPL-3. So: a small
+non-destructive editor written in-house, zero new dependencies. Crop presets,
+rotate, flip, brightness/contrast/saturation/warmth. Always saves a COPY.
+
+11 — **Gestures.** Swipe-to-page could not fire before — it was unreachable
+code. Now: one finger pages, one finger zoomed pans, two fingers zoom and
+rotate. Two-finger rotate is new.
+
+12 — **Filmstrip.** Current photo is genuinely centred now, and dragging the
+strip navigates.
+
+## Known limits (deliberate, not oversights)
+
+- The editor saves at **preview resolution**, not full resolution. Next step.
+- The crop tool offers presets only; no draggable crop box yet.
+- "Autoplay videos" is stored and shown but not yet wired to the player.
+- A right-edge swipe now opens the actions room instead of paging — the shell
+  claims edge bands first. Tell me if that feels wrong in the hand.
