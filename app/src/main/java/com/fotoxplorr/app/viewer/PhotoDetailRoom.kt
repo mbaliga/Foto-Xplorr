@@ -2,6 +2,9 @@ package com.fotoxplorr.app.viewer
 
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -83,34 +86,31 @@ private val MUTED_TEXT = Color(0xFF6A6A6A)
 fun PhotoDetailRoom(
     asset: MediaAsset,
     exif: ImageExifDetails,
-    relatedAssets: List<MediaAsset>,
-    onOpenRelated: (MediaAsset) -> Unit,
     reveal: () -> Float,
     modifier: Modifier = Modifier,
+    filmstrip: (@Composable () -> Unit)? = null,
 ) {
     // The shell deliberately consumes no insets — it says so in its own KDoc, because doing so
     // would lift its drag-sensitive edges off the physical screen edge. So a room pads for the
     // status bar itself, exactly as the rail and settings rooms already do.
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(3),
+    Column(
         modifier = modifier
             .fillMaxSize()
             .background(PANEL_BACKGROUND)
-            .statusBarsPadding(),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+            // The room is at the BOTTOM edge now, so the shell parks the card upward and insets
+            // this room at its top. The system bar to clear is therefore the navigation bar.
+            .navigationBarsPadding(),
     ) {
-        item(span = { GridItemSpan(maxLineSpan) }) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(top = 16.dp),
+        ) {
             RoomHeader(asset = asset, reveal = reveal)
-        }
-        item(span = { GridItemSpan(maxLineSpan) }) {
             Box(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
                 ExifCard(asset = asset, exif = exif)
             }
-        }
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            PlaceBlock(asset = asset, exif = exif, reveal = reveal)
-        }
-        item(span = { GridItemSpan(maxLineSpan) }) {
             Text(
                 text = "Add a Caption",
                 color = MUTED_TEXT,
@@ -120,27 +120,20 @@ fun PhotoDetailRoom(
                     .clickable(enabled = false) {}
                     .padding(horizontal = 20.dp, vertical = 18.dp),
             )
-        }
-        item(span = { GridItemSpan(maxLineSpan) }) {
             InformationBlock(asset = asset, exif = exif, reveal = reveal)
+            // The place plate goes LAST and gets the room's remaining height, because it is the
+            // thing this room exists to show. It used to sit third of six, above a 3-column grid
+            // of up to thirty related photos -- so the bottom half of the room was a gallery, and
+            // for an un-geotagged file (most of a real library) the plate collapsed to a single
+            // line and the gallery took the screen (owner, 2026-08-14: "the details screen is
+            // showing the gallery view at the bottom half instead of the map").
+            PlaceBlock(asset = asset, exif = exif, reveal = reveal)
         }
-        if (relatedAssets.isNotEmpty()) {
-            items(relatedAssets, key = { it.id.value }) { related ->
-                Box(
-                    modifier = Modifier
-                        .aspectRatio(1f)
-                        .padding(1.dp)
-                        .background(Color.Black)
-                        .clickable { onOpenRelated(related) },
-                ) {
-                    MediaImage(
-                        asset = related,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                    )
-                }
-            }
-        }
+        // The related-photos grid is gone; the filmstrip is what "jump to another photo" means
+        // in this viewer, and it lives here rather than over the photo. That also settles a
+        // collision: the strip was a 72dp opaque band sitting exactly where this room's own
+        // drag origin is.
+        filmstrip?.invoke()
     }
 }
 

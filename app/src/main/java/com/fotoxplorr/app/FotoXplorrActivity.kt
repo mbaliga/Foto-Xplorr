@@ -572,12 +572,11 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 viewerAssets = emptyList()
                 slideshowActive = false
             },
+            // The viewer's own settings room edits these, so it needs the value and the setter.
+            blurSensitive = preferences.blurSensitive,
+            onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
+            onSetBlurSensitive = galleryPreferences::setBlurSensitive,
             relatedAssets = viewerAssets,
-            onOpenRelated = { related ->
-                if (viewerAssets.any { it.id == related.id }) {
-                    selectedAssetId = related.id
-                }
-            },
             onSelectAsset = { picked ->
                 if (viewerAssets.any { it.id == picked.id }) {
                     selectedAssetId = picked.id

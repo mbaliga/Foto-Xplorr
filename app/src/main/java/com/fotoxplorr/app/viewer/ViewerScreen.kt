@@ -5,14 +5,10 @@ package com.fotoxplorr.app.viewer
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,7 +18,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,6 +33,19 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroidSize
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateRotation
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -49,6 +57,8 @@ import com.fotoxplorr.app.media.MediaImage
 import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.SpatialShell
 import dev.aarso.cellshell.rememberSpatialController
+import kotlin.math.PI
+import kotlin.math.abs
 import kotlinx.coroutines.delay
 
 /**
@@ -86,21 +96,30 @@ fun ViewerScreen(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onClose: () -> Unit,
+    /** Blur-sensitive preference, surfaced in the top room so it is adjustable where it bites. */
+    blurSensitive: Boolean = true,
+    onSetSlideshowInterval: (Int) -> Unit = {},
+    onSetBlurSensitive: (Boolean) -> Unit = {},
     /**
-     * The assets being paged through. Feeds both the top room's related-photos
-     * grid and the bottom filmstrip scrubber; empty is a safe fallback (the strip hides
-     * itself below two items).
+     * The assets being paged through, feeding the filmstrip in the bottom room. Empty is a safe
+     * fallback -- the strip hides itself below two items.
      */
     relatedAssets: List<MediaAsset> = emptyList(),
-    onOpenRelated: (MediaAsset) -> Unit = {},
     /** Jump straight to an asset in [relatedAssets], from the filmstrip. */
-    onSelectAsset: (MediaAsset) -> Unit = onOpenRelated,
+    onSelectAsset: (MediaAsset) -> Unit = {},
 ) {
-    var controlsVisible by remember(asset.id) { mutableStateOf(true) }
+    // Chrome starts HIDDEN and stays hidden across a swipe.
+    //
+    // It used to default to visible AND be keyed on asset.id, so it reset to visible on every
+    // photo change -- immersive was unreachable for more than one photo at a time. Not keyed on
+    // the asset any more: a preference to see the position counter is a preference about the
+    // viewer, not about a file (owner, 2026-08-14: "Immersive! Immersive! Immersive!").
+    var chromeVisible by remember { mutableStateOf(false) }
+
     var scale by remember(asset.id) { mutableFloatStateOf(1f) }
     var offsetX by remember(asset.id) { mutableFloatStateOf(0f) }
     var offsetY by remember(asset.id) { mutableFloatStateOf(0f) }
-    var dragDistance by remember(asset.id) { mutableFloatStateOf(0f) }
+    var rotation by remember(asset.id) { mutableFloatStateOf(0f) }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     val shell = rememberSpatialController()
 
@@ -124,24 +143,10 @@ fun ViewerScreen(
         }
     }
 
-    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
-        if (!asset.isVideo) {
-            val nextScale = (scale * zoomChange).coerceIn(1f, 6f)
-            if (nextScale == 1f) {
-                offsetX = 0f
-                offsetY = 0f
-            } else {
-                offsetX += panChange.x
-                offsetY += panChange.y
-            }
-            scale = nextScale
-        }
-    }
-
     SpatialShell(
         controller = shell,
         accentColor = MaterialTheme.colorScheme.primary,
-        // The room sits on the same black the photo does, so opening it reads as the surface
+        // The rooms sit on the same black the photo does, so opening one reads as the surface
         // moving rather than as a different screen appearing behind it.
         scrimColor = Color.Black,
         cardColor = Color.Black,
@@ -152,15 +157,52 @@ fun ViewerScreen(
         // added to it.
         parkStyle = ParkStyle.SWIVEL,
         top = {
+            ViewerSettingsRoom(
+                slideshowIntervalSeconds = slideshowIntervalSeconds,
+                blurSensitive = blurSensitive,
+                onSetSlideshowInterval = onSetSlideshowInterval,
+                onSetBlurSensitive = onSetBlurSensitive,
+            )
+        },
+        right = {
+            ViewerActionsRoom(
+                isFavorite = isFavorite,
+                isSensitive = isSensitive,
+                canMoveToTrash = canMoveToTrash,
+                slideshowActive = slideshowActive,
+                // Every action closes the room on its way out. Leaving it open would mean the
+                // result of the action -- a favourite mark, a trash confirmation -- landing
+                // behind the panel that triggered it.
+                onToggleSlideshow = { shell.closeAll(); onToggleSlideshow() },
+                onToggleFavorite = onToggleFavorite,
+                onToggleSensitive = onToggleSensitive,
+                onShare = { shell.closeAll(); onShare() },
+                onEdit = { shell.closeAll(); onEdit() },
+                onOpenWith = { shell.closeAll(); onOpenWith() },
+                onMoveToTrash = { shell.closeAll(); onMoveToTrash() },
+            )
+        },
+        bottom = {
             PhotoDetailRoom(
                 asset = asset,
                 exif = exif,
-                relatedAssets = relatedAssets.filter { it.id != asset.id }.take(30),
-                onOpenRelated = { related ->
-                    shell.closeAll()
-                    onOpenRelated(related)
+                // NEGATED, and this is not cosmetic. The bottom room opens with vProgress
+                // running NEGATIVE (SpatialMotion's sign convention), while PlaceMorph.stagger
+                // clamps its input to 0..1 -- so feeding the raw value would hold every stagger
+                // at zero and render the plate and its text at alpha 0. The room would be
+                // *invisible*, with nothing thrown and PlaceMorphTest still green.
+                reveal = { -shell.vProgress },
+                filmstrip = if (relatedAssets.size > 1) {
+                    {
+                        FilmstripScrubber(
+                            assets = relatedAssets,
+                            currentIndex = position - 1,
+                            onSelect = onSelectAsset,
+                        )
+                    }
+                } else {
+                    null
                 },
-                reveal = { shell.vProgress },
             )
         },
     ) {
@@ -169,42 +211,66 @@ fun ViewerScreen(
                 .fillMaxSize()
                 .background(Color.Black)
                 .onSizeChanged { containerSize = it }
-                .pointerInput(asset.id, scale) {
-                    detectHorizontalDragGestures(
-                        onDragStart = { dragDistance = 0f },
-                        onHorizontalDrag = { change, amount ->
-                            if (scale == 1f) {
-                                change.consume()
-                                dragDistance += amount
+                // ONE gesture handler, not three stacked ones.
+                //
+                // This screen used to layer detectHorizontalDragGestures, detectTapGestures and
+                // transformable as three separate pointerInput nodes. `transformable` was last,
+                // so it was innermost and saw events first; its detector computes pan from the
+                // CENTROID, which for a single finger is that finger, so a one-finger drag was
+                // read as a pan and consumed before the swipe detector ever ran. Swipe-to-page
+                // was therefore unreachable code. And because pan was discarded at scale 1, the
+                // photo did not move either -- which is why the screen read as having no
+                // gestures at all rather than as having a broken one.
+                //
+                // Arbitrating zoom, rotate, pan and page in a single loop is the only way to
+                // decide between them with the whole picture: pointer count and current scale
+                // both matter, and neither is visible to a detector that has already consumed.
+                .pointerInput(asset.id) {
+                    detectViewerGestures(
+                        scaleProvider = { scale },
+                        onTransform = { zoomChange, panChange, rotationChange ->
+                            val next = (scale * zoomChange).coerceIn(MIN_SCALE, MAX_SCALE)
+                            rotation += rotationChange
+                            if (next <= 1.001f && rotation == 0f) {
+                                offsetX = 0f
+                                offsetY = 0f
+                            } else {
+                                offsetX += panChange.x
+                                offsetY += panChange.y
+                            }
+                            scale = next
+                        },
+                        onPage = { forward ->
+                            if (forward && hasNext) onNext() else if (!forward && hasPrevious) onPrevious()
+                        },
+                        onGestureEnd = {
+                            // Free rotation while the fingers are down, squared up on release:
+                            // a photo resting at 7 degrees reads as a bug, not as a choice.
+                            rotation = snapRotation(rotation)
+                            if (scale <= 1.001f) {
+                                offsetX = 0f
+                                offsetY = 0f
                             }
                         },
-                        onDragEnd = {
-                            when {
-                                dragDistance <= -SWIPE_THRESHOLD_PX && hasNext -> onNext()
-                                dragDistance >= SWIPE_THRESHOLD_PX && hasPrevious -> onPrevious()
-                            }
-                            dragDistance = 0f
-                        },
-                        onDragCancel = { dragDistance = 0f },
                     )
                 }
                 .pointerInput(asset.id) {
                     detectTapGestures(
-                        onTap = { controlsVisible = !controlsVisible },
+                        onTap = { chromeVisible = !chromeVisible },
                         onDoubleTap = {
                             if (!asset.isVideo) {
-                                if (scale > 1f) {
+                                if (scale > 1.05f || rotation != 0f) {
                                     scale = 1f
+                                    rotation = 0f
                                     offsetX = 0f
                                     offsetY = 0f
                                 } else {
-                                    scale = 2.5f
+                                    scale = DOUBLE_TAP_SCALE
                                 }
                             }
                         },
                     )
-                }
-                .then(if (asset.isVideo) Modifier else Modifier.transformable(transformState)),
+                },
             contentAlignment = Alignment.Center,
         ) {
             if (asset.isVideo) {
@@ -217,61 +283,30 @@ fun ViewerScreen(
                         .graphicsLayer {
                             scaleX = scale
                             scaleY = scale
-                            translationX = offsetX + if (scale == 1f) dragDistance else 0f
+                            rotationZ = rotation
+                            translationX = offsetX
                             translationY = offsetY
                         },
                     contentScale = ContentScale.Fit,
                 )
             }
 
-            if (controlsVisible) {
-                ViewerControls(
+            // All that is left over the photo, and only when asked for: where you are in the
+            // run. The nine actions are the right room, the facts are the bottom room, and the
+            // settings are the top room -- none of them costs the photo a pixel until pulled.
+            if (chromeVisible) {
+                ViewerPositionChip(
                     asset = asset,
                     position = position,
                     total = total,
-                    isFavorite = isFavorite,
-                    isSensitive = isSensitive,
-                    canMoveToTrash = canMoveToTrash,
-                    slideshowActive = slideshowActive,
-                    hasPrevious = hasPrevious,
-                    hasNext = hasNext,
-                    onToggleSlideshow = onToggleSlideshow,
-                    onToggleFavorite = onToggleFavorite,
-                    onToggleSensitive = onToggleSensitive,
-                    onShare = onShare,
-                    onEdit = onEdit,
-                    onOpenWith = onOpenWith,
-                    onMoveToTrash = onMoveToTrash,
-                    onPrevious = onPrevious,
-                    onNext = onNext,
                     onClose = onClose,
-                    // The shell fills the full edge-to-edge canvas and consumes no insets
-                    // (deliberately -- see SpatialShell's KDoc), so this Box draws under the
-                    // status bar too. Without this padding the Close/filename/position row
-                    // renders partially behind the status bar icons -- visible on-device as
-                    // clipped top-row text.
                     modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
                 )
             }
 
-            // The filmstrip from the viewer mockup. It used to share the bottom edge with a
-            // metadata panel and hide whenever that was up; the panel is the top room now, so
-            // the strip simply owns the bottom edge.
-            if (controlsVisible && relatedAssets.size > 1) {
-                FilmstripScrubber(
-                    assets = relatedAssets,
-                    currentIndex = position - 1,
-                    onSelect = onSelectAsset,
-                    // Same reasoning as the padding above, mirrored to the bottom: without
-                    // it the strip's touchable band sits inside the system gesture-navigation
-                    // zone (swipe-up-for-home), where scroll gestures intermittently lose to
-                    // the OS home/quick-switch gesture instead of scrubbing the strip.
-                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding(),
-                )
-            }
-
-            // Zoomed-image minimap: only meaningful once the user has actually zoomed in.
-            if (!asset.isVideo && scale > 1.05f) {
+            // Only meaningful once the user has actually zoomed in, and now also gated on the
+            // chrome: it was the one piece of UI that drew over the photo regardless.
+            if (chromeVisible && !asset.isVideo && scale > 1.05f) {
                 ZoomMinimap(
                     asset = asset,
                     scale = scale,
@@ -285,6 +320,139 @@ fun ViewerScreen(
                 )
             }
         }
+    }
+}
+
+/**
+ * Zoom, rotate, pan and page, arbitrated in one pass.
+ *
+ * Compose ships `detectTransformGestures`, but it cannot express this screen's rule: a
+ * **one-finger** drag at rest pages to the next photo, while the same drag once zoomed pans the
+ * image, and two fingers always transform. That decision needs the pointer count and the current
+ * scale together, and any detector that consumes first has already thrown the choice away.
+ *
+ * Nothing is consumed until the gesture passes touch slop, which is what leaves single taps and
+ * double taps to the tap detector layered beside this one.
+ *
+ * @param scaleProvider read live rather than captured: the scale changes during the gesture this
+ *   very function is driving, and a captured copy would decide "is it zoomed?" using a value from
+ *   before the pinch.
+ * @param onPage forward = true means "next photo".
+ */
+private suspend fun PointerInputScope.detectViewerGestures(
+    scaleProvider: () -> Float,
+    onTransform: (zoomChange: Float, panChange: Offset, rotationChange: Float) -> Unit,
+    onPage: (forward: Boolean) -> Unit,
+    onGestureEnd: () -> Unit,
+) {
+    awaitEachGesture {
+        var zoom = 1f
+        var pan = Offset.Zero
+        var rotation = 0f
+        var pastSlop = false
+        var maxPointers = 1
+        var pagingTravel = 0f
+        val slop = viewConfiguration.touchSlop
+
+        // requireUnconsumed = false, and the down is deliberately NOT consumed: the tap detector
+        // beside this one has to see the same down or taps stop working entirely.
+        awaitFirstDown(requireUnconsumed = false)
+        do {
+            val event = awaitPointerEvent()
+            if (event.changes.any { it.isConsumed }) break
+            maxPointers = maxOf(maxPointers, event.changes.count { it.pressed })
+
+            val zoomChange = event.calculateZoom()
+            val rotationChange = event.calculateRotation()
+            val panChange = event.calculatePan()
+
+            if (!pastSlop) {
+                zoom *= zoomChange
+                rotation += rotationChange
+                pan += panChange
+                val centroidSize = event.calculateCentroidSize(useCurrent = false)
+                val zoomMotion = abs(1f - zoom) * centroidSize
+                val rotationMotion = abs(rotation * PI.toFloat() / 180f) * centroidSize
+                if (zoomMotion > slop || rotationMotion > slop || pan.getDistance() > slop) {
+                    pastSlop = true
+                }
+            }
+
+            if (pastSlop) {
+                val zoomed = scaleProvider() > 1.001f
+                // One finger, not zoomed: this is a page turn, and the image must not move with
+                // it -- the photo slides only when there is something to slide within.
+                if (maxPointers == 1 && !zoomed) {
+                    pagingTravel += panChange.x
+                } else {
+                    onTransform(zoomChange, panChange, rotationChange)
+                }
+                event.changes.forEach { if (it.positionChanged()) it.consume() }
+            }
+        } while (event.changes.any { it.pressed })
+
+        if (pastSlop && maxPointers == 1 && abs(pagingTravel) >= SWIPE_THRESHOLD_PX) {
+            // Drag left => the next photo comes in from the right.
+            onPage(pagingTravel < 0f)
+        }
+        onGestureEnd()
+    }
+}
+
+/**
+ * Squares a free rotation up to the nearest quarter turn, normalised to 0/90/180/270.
+ *
+ * Pure so the wrap-around cases can be asserted: the interesting ones are negative angles and
+ * anything past a full turn, where a naive round-to-90 leaves 350 degrees sitting at 360 rather
+ * than at 0 and the photo then animates the long way round on the next gesture.
+ */
+internal fun snapRotation(degrees: Float): Float {
+    val snapped = (Math.round(degrees / 90f) * 90).toFloat()
+    val wrapped = snapped % 360f
+    val positive = if (wrapped < 0f) wrapped + 360f else wrapped
+    // `%` returns -0.0 for exact negative multiples of 360, and -0.0 is NOT equal to 0.0 once
+    // boxed (Float.equals compares bit patterns), so an unnormalised result can silently fail a
+    // set-membership or map-key check even though it draws identically. Adding zero canonicalises
+    // it: -0.0 + 0.0 is +0.0.
+    return positive + 0f
+}
+
+/**
+ * The only thing that draws over the photo, and only when the chrome is asked for: which shot
+ * this is, and the way out.
+ *
+ * What it replaces was a full-width 78%-opaque plate carrying a filename, a counter and nine
+ * text buttons, present by default.
+ */
+@Composable
+private fun ViewerPositionChip(
+    asset: MediaAsset,
+    position: Int,
+    total: Int,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier
+                .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                .size(36.dp),
+        ) {
+            Icon(Icons.Outlined.Close, contentDescription = "Close", tint = Color.White)
+        }
+        Text(
+            text = "$position / $total",
+            color = Color.White,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier
+                .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        )
     }
 }
 
@@ -351,84 +519,8 @@ private fun ZoomMinimap(
     }
 }
 
-@Composable
-private fun ViewerControls(
-    asset: MediaAsset,
-    position: Int,
-    total: Int,
-    isFavorite: Boolean,
-    isSensitive: Boolean,
-    canMoveToTrash: Boolean,
-    slideshowActive: Boolean,
-    hasPrevious: Boolean,
-    hasNext: Boolean,
-    onToggleSlideshow: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onToggleSensitive: () -> Unit,
-    onShare: () -> Unit,
-    onEdit: () -> Unit,
-    onOpenWith: () -> Unit,
-    onMoveToTrash: () -> Unit,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
-    onClose: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.78f))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ViewerAction("Close", onClose)
-            Text(asset.displayName, color = Color.White, modifier = Modifier.weight(1f), maxLines = 1)
-            Text("$position / $total", color = Color.White)
-        }
-
-        // "Info" and "Details" are gone: both opened a surface describing this file, and that
-        // surface is the top room now. A button that duplicates a gesture teaches people to
-        // ignore the gesture.
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-            maxItemsInEachRow = 3,
-        ) {
-            ViewerAction("Previous", onPrevious, hasPrevious)
-            ViewerAction(if (slideshowActive) "Pause slideshow" else "Slideshow", onToggleSlideshow)
-            ViewerAction("Next", onNext, hasNext || slideshowActive)
-            ViewerAction("Share", onShare)
-            ViewerAction("Edit", onEdit)
-            ViewerAction("Open with", onOpenWith)
-            ViewerAction(if (isSensitive) "Sensitive ✓" else "Sensitive", onToggleSensitive)
-            ViewerAction(if (isFavorite) "★ Favourite" else "☆ Favourite", onToggleFavorite)
-            ViewerAction(
-                label = if (canMoveToTrash) "Move to trash" else "Trash unavailable",
-                onClick = onMoveToTrash,
-                enabled = canMoveToTrash,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ViewerAction(
-    label: String,
-    onClick: () -> Unit,
-    enabled: Boolean = true,
-) {
-    TextButton(enabled = enabled, onClick = onClick) {
-        Text(
-            text = label,
-            color = if (enabled) Color.White else Color.White.copy(alpha = 0.45f),
-        )
-    }
-}
-
 private const val SWIPE_THRESHOLD_PX = 180f
+
+private const val MIN_SCALE = 1f
+private const val MAX_SCALE = 6f
+private const val DOUBLE_TAP_SCALE = 2.5f
