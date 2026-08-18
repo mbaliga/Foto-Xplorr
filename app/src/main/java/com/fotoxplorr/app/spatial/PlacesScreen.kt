@@ -25,6 +25,7 @@ import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.PermMedia
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.ViewInAr
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -72,10 +73,15 @@ private enum class ExploreExperience(
         "Focused central preview with adjacent images in depth",
         Icons.Outlined.PermMedia,
     ),
-    PHOTO_MAP(
-        "Rich photo map",
-        "Clustered geotagged media, pitch, hillshade and 3D buildings",
+    STAMP_MAP(
+        "Photo map",
+        "Your located photos pinned as stamps on a stylized field. No tiles, no network.",
         Icons.Outlined.Map,
+    ),
+    PHOTO_MAP(
+        "Street map",
+        "Clustered geotagged media, pitch, hillshade and 3D buildings. Connect build only.",
+        Icons.Outlined.Public,
     ),
     SPATIAL_COMPASS(
         "Spatial compass",
@@ -99,11 +105,12 @@ fun PlacesScreen(
     var experience by remember { mutableStateOf<ExploreExperience?>(null) }
 
     LaunchedEffect(experience, geoState.scannedCount, geoState.isIndexing) {
-        if (
-            experience in setOf(ExploreExperience.PHOTO_MAP, ExploreExperience.SPATIAL_COMPASS) &&
-            geoState.scannedCount == 0 &&
-            !geoState.isIndexing
-        ) {
+        val needsCoordinates = setOf(
+            ExploreExperience.STAMP_MAP,
+            ExploreExperience.PHOTO_MAP,
+            ExploreExperience.SPATIAL_COMPASS,
+        )
+        if (experience in needsCoordinates && geoState.scannedCount == 0 && !geoState.isIndexing) {
             onIndexLocations()
         }
     }
@@ -121,6 +128,15 @@ fun PlacesScreen(
         )
         ExploreExperience.GALLERY_PREVIEW -> GalleryPreviewScreen(
             assets = assets,
+            onOpenAsset = onOpenAsset,
+            onClose = { experience = null },
+        )
+        // The stylized map: pure arithmetic on the coordinates already in the photos, so it is
+        // the same screen in both flavors and needs nothing from the network.
+        ExploreExperience.STAMP_MAP -> StampMapScreen(
+            assets = assets,
+            geoState = geoState,
+            onIndexLocations = onIndexLocations,
             onOpenAsset = onOpenAsset,
             onClose = { experience = null },
         )
@@ -169,7 +185,7 @@ private fun ExploreHub(
             Column {
                 Text("Immersive and AI", style = MaterialTheme.typography.headlineSmall)
                 Text(
-                    "Six optional ways to explore the same local library. The ordinary gallery continues to work with AI, network and location disabled.",
+                    "Optional ways to explore the same local library. The ordinary gallery continues to work with AI, network and location disabled.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -194,6 +210,7 @@ private fun ExploreHub(
                     feature = feature,
                     cover = cover,
                     badge = when (feature) {
+                        ExploreExperience.STAMP_MAP,
                         ExploreExperience.PHOTO_MAP,
                         ExploreExperience.SPATIAL_COMPASS,
                         -> if (locationIndexing) "Indexing…" else "$locatedCount located"
@@ -209,7 +226,7 @@ private fun ExploreHub(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Privacy boundaries", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Similarity indexing is local. Map tiles are requested only while the map is open. Current location is requested only inside Spatial compass. Remote AI stays disabled until a user adds and enables a provider key.",
+                        "Similarity indexing is local. Photo map draws only the coordinates already inside your photos, so it needs no network at all. Street-map tiles are requested only while that map is open, and only in the Connect build. Current location is requested only inside Spatial compass. Remote AI stays disabled until a user adds and enables a provider key.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Spacer(Modifier.size(72.dp))

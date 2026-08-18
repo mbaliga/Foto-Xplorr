@@ -36,6 +36,14 @@ internal class SpatialSceneSurfaceView(
     cards: List<PhotoSceneCard>,
     onAssetSelected: (MediaAsset) -> Unit,
     onAccuracyChanged: (Int) -> Unit,
+    /**
+     * A tap that hit no photo. The scene is immersive -- it has no visible chrome until asked --
+     * so this is how the screen's controls are summoned, and the reason [SpatialSceneRenderer.pick]
+     * reports whether it hit anything rather than swallowing the miss.
+     */
+    onEmptyTap: () -> Unit = {},
+    /** Compass bearing in degrees from north, so the overlay can show where the phone is pointing. */
+    onHeadingChanged: (Float) -> Unit = {},
 ) : GLSurfaceView(context) {
     private val renderer = SpatialSceneRenderer(
         context.applicationContext,
@@ -46,14 +54,17 @@ internal class SpatialSceneSurfaceView(
     private val orientation = SceneOrientationController(
         context = context,
         mode = SceneOrientationMode.ABSOLUTE_NORTH,
-        onOrientation = renderer::setOrientation,
+        onOrientation = { yaw, pitch ->
+            renderer.setOrientation(yaw, pitch)
+            onHeadingChanged(yaw)
+        },
         onAccuracy = onAccuracyChanged,
     )
     private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(e: MotionEvent): Boolean = true
 
         override fun onSingleTapUp(e: MotionEvent): Boolean {
-            renderer.pick(e.x, e.y)
+            if (!renderer.pick(e.x, e.y)) onEmptyTap()
             return true
         }
 
@@ -210,13 +221,14 @@ private class SpatialSceneRenderer(
         touchPitch = 0f
     }
 
-    fun pick(x: Float, y: Float) {
+    /** Opens the nearest photo under [x], [y]; returns whether one was actually hit. */
+    fun pick(x: Float, y: Float): Boolean {
         val target = pickTargets.minByOrNull {
             hypot((it.x - x).toDouble(), (it.y - y).toDouble())
-        } ?: return
-        if (hypot((target.x - x).toDouble(), (target.y - y).toDouble()) <= target.radius) {
-            handler.post { onAssetSelected(target.asset) }
-        }
+        } ?: return false
+        if (hypot((target.x - x).toDouble(), (target.y - y).toDouble()) > target.radius) return false
+        handler.post { onAssetSelected(target.asset) }
+        return true
     }
 
     fun release() {
