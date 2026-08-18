@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.gallery
 
 import android.content.Context
+import com.fotoxplorr.app.editor.EditorSaveMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -68,6 +69,11 @@ data class GalleryPreferencesState(
     val loopAnimations: Boolean = false,
     /** Crop grid thumbnails to fill their tile; off keeps each photo's own aspect ratio. */
     val fitToTile: Boolean = true,
+    /**
+     * What the editor's Save does. ASK by default, which is the owner's choice and also the only
+     * default that cannot destroy a photograph before the user has understood the control.
+     */
+    val editorSaveMode: EditorSaveMode = EditorSaveMode.ASK,
     // ---- share defaults, edited in the advanced share sheet ----
     /**
      * Strip GPS/camera/timestamp EXIF from shared copies. TRUE by default on owner direction:
@@ -154,6 +160,10 @@ class GalleryPreferences(context: Context) {
         state.value.copy(fitToTile = enabled),
     ) { putBoolean(KEY_FIT_TO_TILE, enabled) }
 
+    fun setEditorSaveMode(mode: EditorSaveMode) = update(
+        state.value.copy(editorSaveMode = mode),
+    ) { putString(KEY_EDITOR_SAVE_MODE, mode.name) }
+
     fun setShareStripMetadata(enabled: Boolean) = update(
         state.value.copy(shareStripMetadata = enabled),
     ) { putBoolean(KEY_SHARE_STRIP, enabled) }
@@ -212,6 +222,7 @@ class GalleryPreferences(context: Context) {
         longPressPreview = preferences.getBoolean(KEY_LONG_PRESS_PREVIEW, true),
         loopAnimations = preferences.getBoolean(KEY_LOOP_ANIMATIONS, false),
         fitToTile = preferences.getBoolean(KEY_FIT_TO_TILE, true),
+        editorSaveMode = enumValue(KEY_EDITOR_SAVE_MODE, EditorSaveMode.ASK),
         shareStripMetadata = preferences.getBoolean(KEY_SHARE_STRIP, true),
         shareWatermark = preferences.getBoolean(KEY_SHARE_WATERMARK, false),
         shareFrame = preferences.getString(KEY_SHARE_FRAME, null) ?: "NONE",
@@ -241,6 +252,7 @@ class GalleryPreferences(context: Context) {
         const val KEY_SHOW_FILMSTRIP = "show_filmstrip"
         const val KEY_LONG_PRESS_PREVIEW = "long_press_preview"
         const val KEY_LOOP_ANIMATIONS = "loop_animations"
+        const val KEY_EDITOR_SAVE_MODE = "editor_save_mode"
         const val KEY_FIT_TO_TILE = "fit_to_tile"
         const val KEY_SHARE_STRIP = "share_strip_metadata"
         const val KEY_SHARE_WATERMARK = "share_watermark"
