@@ -1,56 +1,48 @@
 # Foto Xplorr — test build (branch claude/fotoz-ui-interactions-bxvgbw)
 
 Debug builds, arm64-v8a only, stripped + 16 KB-page aligned + debug-signed.
-Built 18 Aug 2026 from commit d84b38c.
+Built 18 Aug 2026 from commit cb5b081.
 
 | File | Flavor | Installs as |
 |---|---|---|
 | `foto-xplorr-offline.apk` | offline | `com.fotoxplorr.app.debug` |
 | `foto-xplorr-connect.apk` | connect | `com.fotoxplorr.app.connect.debug` |
 
-## The activity shade
+## Hyle Grotesk, everywhere
 
-**The content no longer moves.** That was the real bug in the old one: it
-translated the grid downwards by the banner's height, so every scan starting
-or finishing nudged 22,000 photographs down the screen and back. The shade is
-now drawn *over* the content — growing it covers more of the grid, nothing is
-displaced, and the top row of tiles ends up half-hidden behind it exactly as
-your mockups show.
+Space Grotesk is out. **Hyle Grotesk Classic** is in — and the two are closer
+than the swap sounds: its own licence note says it's built on Space Grotesk
+with Archivo letterforms substituted, so the metrics your mockups were drawn
+against still hold. Classic rather than Plus, because Plus has the Deco sweep
+N and R, and a swept N inside `4,822 of 12,366` is a flourish in a progress
+readout.
 
-Three states, drag down to open and up to close (tap cycles too):
+Four weights, OFL 1.1, licence note shipped in the APK. Set on the whole
+Material type scale, not just the styles in use today — a partly-overridden
+typography leaks, and you find out when one stray component renders in Roboto.
 
-- **Collapsed** — a 14dp sliver, one coloured bar per running job, no words.
-- **Notification** — a 50dp row per job: turning glyph, name, `4,822 of
-  12,366` with the count solid and the total muted.
-- **Expanded** — a 250dp hero for the first job (fanned plates, name, count,
-  full-width bar), with any others listed compactly beneath.
+## Your icons, and a zip that zips
 
-**Several jobs at once.** The old model literally could not represent this —
-it described "what the app is doing" as one string, so a move running during
-a rescan during a recognition pass showed one and hid two. Colour is per
-*kind*, which is what makes the collapsed strip readable: three slivers tell
-you which three things are running only if green always means the same thing.
+The action bar carries your four SVGs, converted verbatim. **Three glyphs, no
+fourth** — the bar is 209dp because it holds three, and the set you sent is
+the set.
 
-Today the app registers two real jobs (library scan, recognition). Moves,
-copies, backups and exports slot into the same list — the type is ready, the
-call sites aren't wired yet.
+That left the overflow menu with nowhere to hang, which turned out better:
+share, favourite, sensitive, archive, collections, tags, rename, restore,
+delete and trash all moved into the **actions room** on the right edge, under
+a `N SELECTED` heading. Rows in a room beat items in a dropdown — they carry
+a line of explanation, they're reachable one-handed, and they don't vanish
+when a finger slips.
 
-## Selection chrome, to your mockup
+**The zip glyph now zips.** It was pointing at share, which made the icon a
+lie. Selected photos pack into one archive and go to the share sheet.
+`java.util.zip` is in the JDK, so the offline build gains nothing to object
+to. Entry names are deduplicated — a real library has `IMG_0001.jpg` in
+several folders, and without that the archive throws partway through.
 
-Top-left bar 209×51 square-cornered with your shadow and 46dp glyph pitch;
-bottom-left pill with the count at 28sp and `SELECTED` at 20sp/50%; the trash
-square-cornered and flush into the bottom-right corner, separated by a gap.
+## Also in this build
 
-Two deviations, both recorded in code: the trash is 96dp not 134 (at 134 it
-would overlap the pill, and your screenshot shows a gap), and Space Grotesk
-isn't bundled so the sizes are yours and the face is the platform's.
-
-Your bar shows zip / move / copy. There's no zip action in the app, so the
-slots are copy / move / share plus an overflow. Ask and I'll build a real
-export-as-zip.
-
-## Everything else from this round
-
-The editor (14 adjustments, full-resolution saves, save-mode choice), the
-swivel facing the room, the share fix, hold-to-peek, the four-edge room
-model, complete photo headers, and the placeable pin on a spinning map.
+The activity shade (three states, several simultaneous jobs, content that
+never moves), the editor (14 adjustments, full-resolution saves), the swivel
+facing the room, the share fix, hold-to-peek, the four-edge room model,
+complete photo headers, and the placeable pin on a spinning map.
