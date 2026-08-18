@@ -552,8 +552,15 @@ private fun GalleryBrowser(
                             route == BrowserRoute.Root -> NotificationRoom(
                                 scanState = state.scanState,
                                 recognition = state.recognitionProgress,
-                                showWhenIdle = state.recognitionProgress.running ||
-                                    state.recognitionProgress.message != null,
+                                // Never while selecting. Recognition runs for many minutes on a
+                                // large library, and a background progress line sharing the top
+                                // of the screen with the selection's action cluster reads as two
+                                // unrelated toolbars fighting for the same strip. The selection
+                                // is what the user is doing; the indexer can wait its turn.
+                                showWhenIdle = !selection.isActive && (
+                                    state.recognitionProgress.running ||
+                                        state.recognitionProgress.message != null
+                                    ),
                             ) {
                                 Column {
                                     ShakeToRefresh(onShake = actions.onRefresh)
@@ -836,7 +843,7 @@ private fun BoxScope.SelectionOverlay(
         modifier = Modifier
             .align(Alignment.TopStart)
             .statusBarsPadding()
-            .padding(12.dp)
+            .padding(SELECTION_EDGE_DP.dp)
             .background(SELECTION_CLUSTER, RoundedCornerShape(16.dp))
             .padding(horizontal = 4.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -995,11 +1002,16 @@ private fun BoxScope.SelectionOverlay(
     }
 
     // ---- bottom-left: how many, and the way out ----
+    // On the same cluster ground as the other two. It used to be bare white text laid straight
+    // over the mosaic, which on a grid of bright photos left the count genuinely unreadable and
+    // made the whole row look like a rendering fault rather than a control.
     Row(
         modifier = Modifier
             .align(Alignment.BottomStart)
             .navigationBarsPadding()
-            .padding(12.dp),
+            .padding(SELECTION_EDGE_DP.dp)
+            .background(SELECTION_CLUSTER, RoundedCornerShape(16.dp))
+            .padding(start = 14.dp, end = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -1025,7 +1037,7 @@ private fun BoxScope.SelectionOverlay(
         modifier = Modifier
             .align(Alignment.BottomEnd)
             .navigationBarsPadding()
-            .padding(12.dp)
+            .padding(SELECTION_EDGE_DP.dp)
             .background(SELECTION_CLUSTER, RoundedCornerShape(16.dp)),
     ) {
         IconButton(
@@ -1046,6 +1058,15 @@ private fun BoxScope.SelectionOverlay(
 
 /** Ground under a floating selection cluster, so its icons stay legible over any photo. */
 private val SELECTION_CLUSTER = Color.Black.copy(alpha = 0.72f)
+
+/**
+ * How far the selection's floating clusters sit off the screen edge.
+ *
+ * One constant for all three, so they cannot drift apart, and wider than the 12dp they started
+ * at — at 12dp on a gesture-navigation phone (where the navigation bar inset is a few pixels)
+ * the bottom pair sat all but flush against the display edge and read as clipped.
+ */
+private const val SELECTION_EDGE_DP = 16
 
 fun BrowserRoute.title(destination: HyleDestination): String = when (this) {
     BrowserRoute.Root -> destination.label
