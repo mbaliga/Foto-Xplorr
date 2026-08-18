@@ -1,66 +1,57 @@
 # Foto Xplorr — test build (branch claude/fotoz-ui-interactions-bxvgbw)
 
 Debug builds, arm64-v8a only, stripped + 16 KB-page aligned + debug-signed.
-Built 18 Aug 2026 from commit 08c5039.
+Built 18 Aug 2026 from commit a988518.
 
 | File | Flavor | Installs as |
 |---|---|---|
 | `foto-xplorr-offline.apk` | offline | `com.fotoxplorr.app.debug` |
 | `foto-xplorr-connect.apk` | connect | `com.fotoxplorr.app.connect.debug` |
 
-## Fixed
+## The editor is real now
 
-**Sharing worked at all.** It threw on every attempt. The share pipeline was
-rewritten and its cache folder renamed while the FileProvider config still
-declared the old name, so Android refused to hand out the URI. Nothing failed
-to compile and no test covered it, because the coupling is a Kotlin string
-against an XML string — there is now a test that reads both files.
+Fourteen adjustments in three groups, ordered the way you'd actually work:
 
-**The swivel faces the room.** It was turning the pane away from the content
-it had just revealed. "The free edge recedes" was my aesthetic call, not
-something you asked for; both rotation signs are flipped.
+- **Light** — exposure (in stops, ±2), contrast, highlights, shadows,
+  whites, blacks
+- **Colour** — temperature, tint, vibrance, saturation
+- **Detail** — sharpen, clarity, vignette
 
-## New
+Every slider has a one-tap reset next to its name.
 
-1. **Peek is a hold.** Press and hold a tile to see it large; let go and it
-   goes. Its buttons are gone — a control you must release to reach is not a
-   control. Selection therefore has an explicit way in: **Select photos**, in
-   the gallery's actions room. Un-picking your last photo now keeps you in
-   selection rather than dropping you out; the X leaves.
+**Saving is full-resolution.** It previously saved the *preview* bitmap,
+capped at 2048px — so every edit you'd saved was a downscaled copy. Fixed.
 
-2. **The four edges mean the same thing everywhere.**
+**Save asks you**, and remembers if you tick "do this every time". One
+honest caveat: *Replace the original* is offered but not wired up — it needs
+a per-file write grant this build doesn't request. Choosing it saves a copy
+and says so, rather than claiming a replacement that didn't happen.
 
-   | | |
-   |---|---|
-   | **LEFT** where you can go | **RIGHT** what you can do here |
-   | **TOP** settings | **BOTTOM** what this is |
+The engine underneath is 40 JVM tests, and several found real bugs while
+being written. What they pin is the class of error you only see as a
+photograph that came out subtly wrong: exposure applied in gamma space
+instead of linear light (a stop would clip mid-grey to white), contrast as a
+linear scale (flattens both ends of the histogram), tone regions with a hard
+cutoff (a visible seam across every sky), desaturation by flat average
+instead of luma (green goes near-black), and tone curves on a natural spline
+(overshoots between control points — haloed edges and inverted patches).
 
-   Settings used to be the gallery's RIGHT room and the viewer's TOP one. The
-   gallery now has all four: a new actions room (select, new collection,
-   rescan, columns, sort, what to show) and a new info room (photos, videos,
-   size, span, folders — counted for whichever view you are actually in).
+## Also fixed
 
-3. **The notification opens.** Pull down on the status strip for the expanded
-   view; pull up to close. Tapping does the same. (The shell had to hand that
-   strip back — its own top-room gesture lived in the same pixels.)
+**The swivel faces the room** instead of turning away from it.
 
-4. **Every header on a photo, always.** Dashes where the file has nothing,
-   rather than the row disappearing. FILE: name, kind, size, dimensions,
-   megapixels, aspect, duration, album, path, taken, modified, colour space.
-   CAPTURE: camera, lens, focal length, aperture, shutter, ISO, exposure
-   bias, flash, latitude, longitude.
+**Sharing worked at all** — it threw on every attempt. The share folder was
+renamed while the FileProvider config still declared the old name.
 
-5. **A photo with no location gets a map, not a sentence.** The stylized
-   field, turning slowly to say "nothing found yet", with a pin you drag and
-   coordinate fields you can type into — both editing one value, so they
-   cannot disagree. The spin stops when a coordinate exists. Saved in Foto
-   Xplorr's index, **not written into your photo file**: rewriting your
-   original to add a GPS tag is a destructive change to your data and needs a
-   per-file grant, and neither belongs behind a pin drag.
+## Still to come on the editor
 
-## Still open
+- Curve editor UI (the engine has per-channel curves; nothing draws them yet)
+- Draggable crop box (presets only for now)
+- Layers, on top of this engine
+- Replace-the-original write grant
 
-- **The editor is not GIMP-grade.** It is presets and preview-resolution
-  saves. See the notes in chat — that is a large piece of work and I have not
-  started it.
-- I have not identified which mockup you meant. Asking in chat.
+## Known limits
+
+- Both map and compass read GPS from inside your photos; most of this
+  library is Pinterest/Reddit saves with GPS stripped. A photo with none now
+  gets a spinning map and a pin you can place by hand.
