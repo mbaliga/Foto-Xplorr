@@ -7,8 +7,11 @@ package com.fotoxplorr.app.gallery
 
 import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -17,6 +20,10 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
@@ -27,6 +34,11 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.filled.CopyAll
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.OpenWith
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Favorite
@@ -64,6 +76,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
 import dev.aarso.cellshell.SpatialMotion
 import androidx.compose.ui.graphics.graphicsLayer
@@ -878,19 +894,28 @@ private fun GalleryBrowser(
 }
 
 /**
- * Selection chrome, as two clusters floating over the mosaic (owner screenshots, 2026-08-15).
+ * Selection chrome, built to the owner's mockup (2026-08-18, with its CSS and Android export).
  *
  * It was a `CenterAlignedTopAppBar`, which meant that choosing photos shoved the whole grid down
  * by an app bar's height -- on the one screen whose entire job is showing photos, and at the exact
- * moment the user is looking hardest at them. Floating it costs the grid nothing and keeps the
- * mosaic edge to edge while selecting.
+ * moment the user is looking hardest at them. Floating it costs the grid nothing.
  *
- * The split follows the screenshots and is not arbitrary: the ACTIONS cluster sits top-left, and
- * the destructive one is alone in the opposite corner, bottom-right, as far from the others as
- * the screen allows. Count and dismiss anchor the bottom-left. Nothing that deletes sits next to
- * anything that does not.
+ * Three pieces, and the mockup is specific about all three:
  *
- * Every control is a [BoxScope] child, so this must be called from inside the content `Box`.
+ * - **Top left**, a black bar bled to the top and left edges, 209dp wide, square-cornered, with a
+ *   soft shadow under it. Three 30dp white glyphs on a 46dp pitch, starting 44dp in — that leading
+ *   run of bare black is in the mockup and is what makes the bar read as a cut-out rather than as
+ *   a toolbar.
+ * - **Bottom left**, a 44dp rounded pill from the screen edge across about three quarters of the
+ *   width: the count at 28sp, `SELECTED` at 20sp uppercase and half opacity, then a long empty run
+ *   of black, then the dismiss ✕ near its right end.
+ * - **Bottom right**, the trash: black, **square-cornered**, flush into the corner, separated from
+ *   the pill by a gap of bare photograph. The one destructive control, as far from everything else
+ *   as the screen allows and shaped differently from everything else so the hand knows it.
+ *
+ * The shapes differ on purpose. The pill is rounded and the trash is not; that is the only
+ * signal in the design that distinguishes "how many" from "destroy them", and it survives being
+ * glanced at.
  */
 @Composable
 private fun BoxScope.SelectionOverlay(
@@ -911,34 +936,34 @@ private fun BoxScope.SelectionOverlay(
     collectionRoute: BrowserRoute.Collection?,
 ) {
     // ---- top-left: what you can DO with the selection ----
+    // Bled into the top-left corner, square-cornered, with the mockup's own shadow. The bar's
+    // background runs under the status bar because the mockup draws it from y=0; its CONTENT is
+    // inset by the status bar so the glyphs are not sitting behind the clock, which a literal
+    // reading of the mockup would have done.
     Row(
         modifier = Modifier
             .align(Alignment.TopStart)
+            .padding(start = SELECTION_BAR_INSET.dp)
+            .shadow(SELECTION_BAR_SHADOW.dp, clip = false)
+            .background(Color.Black)
             .statusBarsPadding()
-            .padding(SELECTION_EDGE_DP.dp)
-            .background(SELECTION_CLUSTER, RoundedCornerShape(16.dp))
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .height(SELECTION_BAR_HEIGHT.dp)
+            .width(SELECTION_BAR_WIDTH.dp)
+            .padding(start = SELECTION_GLYPH_INSET.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(SELECTION_GLYPH_GAP.dp),
     ) {
-        IconButton(onClick = { onSelectionChange(selection.selectAll(currentIds)) }) {
-            Icon(Icons.Outlined.SelectAll, contentDescription = "Select all", tint = Color.White)
-        }
         if (!inTrash) {
-            IconButton(onClick = { actions.onShare(selectedAssets) }) {
-                Icon(Icons.Outlined.Share, contentDescription = "Share", tint = Color.White)
+            SelectionGlyph(Icons.Filled.CopyAll, "Copy to folder") {
+                actions.onCopyToFolder(selectedAssets)
             }
-            IconButton(onClick = {
-                val mark = bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK
-                actions.onSetFavorite(selection.selectedIds, mark)
-                onSelectionChange(selection.clear())
-            }) {
-                Icon(Icons.Outlined.Favorite, contentDescription = "Toggle favourite", tint = Color.White)
+            SelectionGlyph(Icons.Filled.OpenWith, "Move to folder") {
+                actions.onMoveToFolder(selectedAssets)
             }
+            SelectionGlyph(Icons.Filled.Share, "Share") { actions.onShare(selectedAssets) }
         }
         Box {
-            IconButton(onClick = { onMenuVisibleChange(true) }) {
-                Icon(Icons.Outlined.MoreVert, contentDescription = "More actions", tint = Color.White)
-            }
+            SelectionGlyph(Icons.Filled.MoreVert, "More actions") { onMenuVisibleChange(true) }
             DropdownMenu(expanded = menuVisible, onDismissRequest = { onMenuVisibleChange(false) }) {
                 if (inTrash) {
                     DropdownMenuItem(
@@ -1074,71 +1099,144 @@ private fun BoxScope.SelectionOverlay(
     }
 
     // ---- bottom-left: how many, and the way out ----
-    // On the same cluster ground as the other two. It used to be bare white text laid straight
-    // over the mosaic, which on a grid of bright photos left the count genuinely unreadable and
-    // made the whole row look like a rendering fault rather than a control.
+    // A rounded pill from the screen edge across about three quarters of the width. The long run
+    // of empty black between the label and the ✕ is in the mockup, not an accident of layout: it
+    // is what puts the dismiss under a right thumb instead of beside the count, where it would be
+    // a mis-tap away from nothing in particular.
     Row(
         modifier = Modifier
             .align(Alignment.BottomStart)
             .navigationBarsPadding()
-            .padding(SELECTION_EDGE_DP.dp)
-            .background(SELECTION_CLUSTER, RoundedCornerShape(16.dp))
-            .padding(start = 14.dp, end = 2.dp),
+            .padding(start = SELECTION_BAR_INSET.dp, bottom = SELECTION_BAR_INSET.dp)
+            .fillMaxWidth(SELECTION_PILL_FRACTION)
+            .height(SELECTION_PILL_HEIGHT.dp)
+            .background(Color.Black, RoundedCornerShape(SELECTION_PILL_RADIUS.dp))
+            .padding(start = 9.dp, end = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = "${selection.count}",
             color = Color.White,
-            style = MaterialTheme.typography.headlineSmall,
+            style = TextStyle(fontSize = 28.sp, lineHeight = 36.sp),
         )
         Text(
-            text = "  SELECTED",
-            color = Color.White.copy(alpha = 0.6f),
-            style = MaterialTheme.typography.labelMedium,
+            text = "SELECTED",
+            color = Color.White.copy(alpha = 0.5f),
+            // Uppercase in the string rather than via textTransform, and at half opacity: the
+            // count is the number you read and this is the unit beside it.
+            style = TextStyle(fontSize = 20.sp, lineHeight = 26.sp),
+            modifier = Modifier.padding(start = 4.dp),
         )
-        IconButton(onClick = { onSelectionChange(selection.clear()) }) {
-            Icon(Icons.Outlined.Close, contentDescription = "Clear selection", tint = Color.White)
+        Spacer(Modifier.weight(1f))
+        // Drawn rather than an icon: the mockup's ✕ is two 3dp strokes, which no Material glyph
+        // matches at this weight.
+        Canvas(
+            Modifier
+                .size(SELECTION_DISMISS_TARGET.dp)
+                .clickable(
+                    onClickLabel = "Clear selection",
+                    onClick = { onSelectionChange(selection.clear()) },
+                ),
+        ) {
+            val inset = (size.minDimension - SELECTION_DISMISS_ARM_PX) / 2f
+            val far = size.minDimension - inset
+            drawLine(Color.White, Offset(inset, inset), Offset(far, far), strokeWidth = 3.1f * density)
+            drawLine(Color.White, Offset(far, inset), Offset(inset, far), strokeWidth = 3.1f * density)
         }
     }
 
-    // ---- bottom-right: the destructive one, alone ----
-    // Deliberately the full width of the screen away from the action cluster. A trash button
-    // beside a share button is a mis-tap that cannot be undone once Android's own confirmation
-    // is dismissed out of habit.
+    // ---- bottom-right: the destructive one, alone and shaped differently ----
+    // SQUARE-cornered against the pill's rounded one, flush into the corner, and separated from
+    // everything else by a gap of bare photograph. Three signals saying the same thing, because
+    // the one control here cannot be undone once Android's own confirmation is waved through.
     Box(
         modifier = Modifier
             .align(Alignment.BottomEnd)
+            .shadow(SELECTION_BAR_SHADOW.dp, clip = false)
+            .background(Color.Black)
             .navigationBarsPadding()
-            .padding(SELECTION_EDGE_DP.dp)
-            .background(SELECTION_CLUSTER, RoundedCornerShape(16.dp)),
+            .size(width = SELECTION_TRASH_WIDTH.dp, height = SELECTION_TRASH_HEIGHT.dp)
+            .clickable(
+                enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                onClickLabel = if (inTrash) "Delete permanently" else "Move to trash",
+                onClick = {
+                    if (inTrash) actions.onDeletePermanently(selectedAssets) else actions.onMoveToTrash(selectedAssets)
+                    onSelectionChange(selection.clear())
+                },
+            ),
+        contentAlignment = Alignment.Center,
     ) {
-        IconButton(
-            enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
-            onClick = {
-                if (inTrash) actions.onDeletePermanently(selectedAssets) else actions.onMoveToTrash(selectedAssets)
-                onSelectionChange(selection.clear())
-            },
-        ) {
-            Icon(
-                Icons.Outlined.Delete,
-                contentDescription = if (inTrash) "Delete permanently" else "Move to trash",
-                tint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Color.White else Color.White.copy(alpha = 0.35f),
-            )
-        }
+        Icon(
+            Icons.Outlined.DeleteOutline,
+            contentDescription = if (inTrash) "Delete permanently" else "Move to trash",
+            tint = Color.White,
+            modifier = Modifier.size(SELECTION_TRASH_GLYPH.dp),
+        )
     }
 }
 
-/** Ground under a floating selection cluster, so its icons stay legible over any photo. */
-private val SELECTION_CLUSTER = Color.Black.copy(alpha = 0.72f)
+/**
+ * One 30dp white glyph in the top bar.
+ *
+ * A bare `Icon` with a click, not an `IconButton`: Material's button carries a 48dp box and a
+ * ripple, and three of them would space themselves rather than sitting on the mockup's 46dp pitch.
+ * The touch target is recovered by the padding, which lands at 46dp square.
+ */
+@Composable
+private fun SelectionGlyph(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Icon(
+        imageVector = icon,
+        contentDescription = description,
+        tint = Color.White,
+        modifier = Modifier
+            .clickable(onClickLabel = description, onClick = onClick)
+            .padding(vertical = 8.dp)
+            .size(SELECTION_GLYPH.dp),
+    )
+}
+
+// ---- selection chrome geometry, taken from the owner's mockup (440 x 956 dp) ----
+// Named rather than inlined because they are a spec someone handed over, not values that were
+// tuned here — a later "tidy these up" pass should have to notice that.
+
+/** The mockup insets the top bar and the pill by 8dp and 4dp; one value reads as deliberate. */
+private const val SELECTION_BAR_INSET = 6
+
+/** Top bar: 209.08 x 50.79 in the mockup. */
+private const val SELECTION_BAR_WIDTH = 209
+private const val SELECTION_BAR_HEIGHT = 51
+
+/** `box-shadow: 0 4px 8px rgba(0,0,0,0.25)` under the bar, and `0 -4px 4px` above the trash. */
+private const val SELECTION_BAR_SHADOW = 8
+
+/** Glyphs sit 52dp into a bar that starts at 8dp, so 44dp of bare black leads them. */
+private const val SELECTION_GLYPH_INSET = 44
+
+/** 30dp glyphs on a 46dp pitch leaves 16dp between them. */
+private const val SELECTION_GLYPH = 30
+private const val SELECTION_GLYPH_GAP = 16
+
+/** Pill: 4dp from the edge, 332dp of a 440dp screen, 44dp tall, 16dp radius. */
+private const val SELECTION_PILL_FRACTION = 0.755f
+private const val SELECTION_PILL_HEIGHT = 44
+private const val SELECTION_PILL_RADIUS = 16
+
+/** The ✕ is 15.27 x 14 in the mockup; the target around it is a real 44dp. */
+private const val SELECTION_DISMISS_TARGET = 44
+private const val SELECTION_DISMISS_ARM_PX = 40f
 
 /**
- * How far the selection's floating clusters sit off the screen edge.
- *
- * One constant for all three, so they cannot drift apart, and wider than the 12dp they started
- * at — at 12dp on a gesture-navigation phone (where the navigation bar inset is a few pixels)
- * the bottom pair sat all but flush against the display edge and read as clipped.
+ * Trash: 134 x 47 in the mockup at left 301, which would overlap the pill. The screenshot shows a
+ * clear gap of photograph between them, so the width follows the screenshot and the height follows
+ * the CSS — 96dp leaves that gap on a 440dp screen and keeps a comfortable target.
  */
-private const val SELECTION_EDGE_DP = 16
+private const val SELECTION_TRASH_WIDTH = 96
+private const val SELECTION_TRASH_HEIGHT = 47
+private const val SELECTION_TRASH_GLYPH = 34
 
 fun BrowserRoute.title(destination: HyleDestination): String = when (this) {
     BrowserRoute.Root -> destination.label
