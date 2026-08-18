@@ -1,68 +1,66 @@
 # Foto Xplorr — test build (branch claude/fotoz-ui-interactions-bxvgbw)
 
 Debug builds, arm64-v8a only, stripped + 16 KB-page aligned + debug-signed.
-Built 18 Aug 2026 from commit d895063.
+Built 18 Aug 2026 from commit 08c5039.
 
 | File | Flavor | Installs as |
 |---|---|---|
 | `foto-xplorr-offline.apk` | offline | `com.fotoxplorr.app.debug` |
 | `foto-xplorr-connect.apk` | connect | `com.fotoxplorr.app.connect.debug` |
 
-## The one that matters: the pane no longer vanishes
+## Fixed
 
-The centre pane was supposed to park with a strip of itself still on
-screen, and instead disappeared completely. It was a real bug in the shared
-shell, not a tuning problem.
+**Sharing worked at all.** It threw on every attempt. The share pipeline was
+rewritten and its cache folder renamed while the FileProvider config still
+declared the old name, so Android refused to hand out the URI. Nothing failed
+to compile and no test covered it, because the coupling is a Kotlin string
+against an XML string — there is now a test that reads both files.
 
-The card was hinging its swivel on its **far** edge — the one already off
-screen — while the grip pill was drawn on the **near** one. Two places
-encoding the same fact, disagreeing. So the card swung its only visible
-sliver out through the perspective divide, and the rotation signs were
-inverted with it, swinging the free edge toward you instead of away.
+**The swivel faces the room.** It was turning the pane away from the content
+it had just revealed. "The free edge recedes" was my aesthetic call, not
+something you asked for; both rotation signs are flipped.
 
-This was invisible at 10° and unmissable at 22°, which is why raising the
-tilt looked like it broke the swivel when it only exposed it.
+## New
 
-All three consumers now read one `bandEdge()`. That also caught a smaller
-error: a plain 0/1 transform origin hinges on the *box* edge, half a shrink
-outside the card it is turning. And with the hinge correctly on the band
-edge, that edge sits still through the whole rotation — so the band is a
-full 72dp at any angle, and the slide and swivel styles park to identical
-depth. It applies to all four edges, so the top and bottom rooms park
-correctly too.
+1. **Peek is a hold.** Press and hold a tile to see it large; let go and it
+   goes. Its buttons are gone — a control you must release to reach is not a
+   control. Selection therefore has an explicit way in: **Select photos**, in
+   the gallery's actions room. Un-picking your last photo now keeps you in
+   selection rather than dropping you out; the X leaves.
 
-## Also in this build
+2. **The four edges mean the same thing everywhere.**
 
-1. **Top room (drag down from the top of a photo): two controls → seven.**
-   Four of them — keep the screen awake, slideshow shuffle, loop
-   animations, autoplay videos — were preferences that already existed and
-   were already honoured, but had no control anywhere in the app to reach
-   them. Filmstrip on/off is new. The room scrolls now.
+   | | |
+   |---|---|
+   | **LEFT** where you can go | **RIGHT** what you can do here |
+   | **TOP** settings | **BOTTOM** what this is |
 
-2. **Bottom room (drag up): a new "In your library" block** — favourite,
-   sensitive, in the trash, and which album it lives in. Everything else in
-   that room is read off the file; this is what the library itself knows.
-   "No location in this file" now says *why*, instead of leaving a bare
-   negative that reads as a failure.
+   Settings used to be the gallery's RIGHT room and the viewer's TOP one. The
+   gallery now has all four: a new actions room (select, new collection,
+   rescan, columns, sort, what to show) and a new info room (photos, videos,
+   size, span, folders — counted for whichever view you are actually in).
 
-3. **One room language.** The left rail, the top room and the detail room
-   were each using their own type sizes, and the top room used Material's
-   switch — a rounded, elevated, rippling control in the middle of a black
-   brutalist room. They now share one set of styles and a drawn toggle.
+3. **The notification opens.** Pull down on the status strip for the expanded
+   view; pull up to close. Tapping does the same. (The shell had to hand that
+   strip back — its own top-room gesture lived in the same pixels.)
 
-4. **Selection screen.** "N SELECTED" was bare white text over the mosaic
-   and genuinely unreadable on bright photos; it now sits on the same
-   ground as the other two clusters. All three moved 12dp → 16dp off the
-   screen edge, because on gesture navigation the inset is a few pixels and
-   they were reading as clipped. And the "Recognising…" banner no longer
-   shares the top strip with the action cluster — on a 22k library those two
-   were colliding for many minutes at a time.
+4. **Every header on a photo, always.** Dashes where the file has nothing,
+   rather than the row disappearing. FILE: name, kind, size, dimensions,
+   megapixels, aspect, duration, album, path, taken, modified, colour space.
+   CAPTURE: camera, lens, focal length, aperture, shutter, ISO, exposure
+   bias, flash, latitude, longitude.
 
-## Known limits
+5. **A photo with no location gets a map, not a sentence.** The stylized
+   field, turning slowly to say "nothing found yet", with a pin you drag and
+   coordinate fields you can type into — both editing one value, so they
+   cannot disagree. The spin stops when a coordinate exists. Saved in Foto
+   Xplorr's index, **not written into your photo file**: rewriting your
+   original to add a GPS tag is a destructive change to your data and needs a
+   per-file grant, and neither belongs behind a pin drag.
 
-- The photo editor saves at preview resolution, not full resolution.
-- Crop is presets-only, no draggable box yet.
-- Backup/restore covers settings, not the photos themselves.
-- Both the map and the compass read GPS from inside your photos, and most
-  of this library is Pinterest/Reddit saves with GPS already stripped — so
-  expect few or no pins. Both screens say so rather than looking broken.
+## Still open
+
+- **The editor is not GIMP-grade.** It is presets and preview-resolution
+  saves. See the notes in chat — that is a large piece of work and I have not
+  started it.
+- I have not identified which mockup you meant. Asking in chat.
