@@ -1,90 +1,68 @@
 # Foto Xplorr — test build (branch claude/fotoz-ui-interactions-bxvgbw)
 
 Debug builds, arm64-v8a only, stripped + 16 KB-page aligned + debug-signed.
-Built 18 Aug 2026 from commit b2ee549.
+Built 18 Aug 2026 from commit d895063.
 
 | File | Flavor | Installs as |
 |---|---|---|
 | `foto-xplorr-offline.apk` | offline | `com.fotoxplorr.app.debug` |
 | `foto-xplorr-connect.apk` | connect | `com.fotoxplorr.app.connect.debug` |
 
-## What's new in this build
+## The one that matters: the pane no longer vanishes
 
-1. **Sharing is Fotoz-branded, and stylized by default.** Sharing a photo now
-   goes through a Foto Xplorr sheet that sits *above* the system share sheet
-   rather than replacing it. Three frames: none, Polaroid (deep bottom lip,
-   the way a real print has), and the postage stamp — the same silhouette the
-   app uses everywhere else, with real punched-out perforations rather than
-   notches painted on. The stamp can carry a **seal**: your own short
-   signature, set once in Settings, printed as a rotated postmark. Optional
-   watermark. Live preview of the actual render, not a mock-up.
+The centre pane was supposed to park with a strip of itself still on
+screen, and instead disappeared completely. It was a real bug in the shared
+shell, not a tuning problem.
 
-   **Metadata is stripped by default.** A shared photo leaves without its GPS
-   coordinates, camera serial, or any other EXIF tag — only orientation and
-   the capture date are kept, because dropping orientation turns photos
-   sideways. "Advanced" on the sheet is where you turn stripping off, not
-   where you turn it on.
+The card was hinging its swivel on its **far** edge — the one already off
+screen — while the grip pill was drawn on the **near** one. Two places
+encoding the same fact, disagreeing. So the card swung its only visible
+sliver out through the perspective divide, and the rotation signs were
+inverted with it, swinging the free edge toward you instead of away.
 
-2. **Selection looks like the reference.** The app bar is gone. Selecting
-   photos now floats two clusters over the grid: actions at the top left,
-   and at the bottom, "N SELECTED" with a dismiss next to it — with the
-   trash deliberately isolated in the opposite corner, so the destructive
-   action is never adjacent to the one you tap to leave.
+This was invisible at 10° and unmissable at 22°, which is why raising the
+tilt looked like it broke the swivel when it only exposed it.
 
-3. **Long-press peek.** Press and hold any tile to see the photo large
-   without leaving the grid; release to dismiss. Share / edit / open are on
-   the peek itself.
+All three consumers now read one `bandEdge()`. That also caught a smaller
+error: a plain 0/1 transform origin hinges on the *box* edge, half a shrink
+outside the card it is turning. And with the hinge correctly on the band
+edge, that edge sits still through the whole rotation — so the band is a
+full 72dp at any angle, and the slide and swivel styles park to identical
+depth. It applies to all four edges, so the top and bottom rooms park
+correctly too.
 
-4. **Settings, much richer and visual.** New **Media** tab with live WYSIWYG
-   tiles — you see the actual effect of "fit to tile vs. original aspect
-   ratio" on your own photos as you toggle it, not a description of it.
-   Also: auto-preview on long press, loop animations (GIFs play in the
-   grid), share defaults (frame, seal, watermark, stripping). **Data** tab
-   restructured around backup and restore. New **About** with support at
-   fotoz@asystemofcells.com and a link to more apps from asystemofcells.
+## Also in this build
 
-5. **Album stacks and a calendar view.** Albums are drawn as fanned stacks of
-   prints — depth tells you there is more inside — with a stable lean per
-   album rather than a random one that twitches as you scroll. The new
-   Calendar destination lays the library out month by month, one stamp per
-   day. The layout references you sent were skeuomorphic; these are not.
-   Same information, brutalist.
+1. **Top room (drag down from the top of a photo): two controls → seven.**
+   Four of them — keep the screen awake, slideshow shuffle, loop
+   animations, autoplay videos — were preferences that already existed and
+   were already honoured, but had no control anywhere in the app to reach
+   them. Filmstrip on/off is new. The room scrolls now.
 
-6. **The photo map now works offline.** This was the open question, and the
-   answer turned out to be the one you already picked: since a photo's
-   location is only a latitude and a longitude, drawing it needs arithmetic,
-   not map tiles. So the stylized map — your photos as stamps on a plain
-   field, tap one to open it as a poster with the rest beneath — is in
-   **both** builds and performs no network requests at all. The offline
-   build's three enforcement gates pass with it in. The MapLibre street map
-   is still Connect-only and is now labelled "Street map" so the difference
-   is visible on the hub.
+2. **Bottom room (drag up): a new "In your library" block** — favourite,
+   sensitive, in the trash, and which album it lives in. Everything else in
+   that room is read off the file; this is what the library itself knows.
+   "No location in this file" now says *why*, instead of leaving a bare
+   negative that reads as a failure.
 
-   Dense libraries are thinned to one stamp per grid cell, so it stays a
-   readable scattering rather than an opaque pile.
+3. **One room language.** The left rail, the top room and the detail room
+   were each using their own type sizes, and the top room used Material's
+   switch — a rounded, elevated, rippling control in the middle of a black
+   brutalist room. They now share one set of styles and a drawn toggle.
 
-7. **The compass is immersive.** It was a title bar, two rows of chips and a
-   status line above a small scene. It is now the scene, full bleed. Tap
-   empty sky to summon the controls, tap again to dismiss. The bearing stays
-   on screen as a compass rose whose bezel counter-rotates with the phone —
-   the card holds north while you turn under it, like a real one.
-
-8. **Swivel is more pronounced** — the centre pane sits at 22° at rest
-   instead of the previous shallower angle.
-
-## About locations on this device
-
-Both the map and the compass read GPS from inside your photos. On the
-library you've been testing with, most of it is saved from Pinterest and
-Reddit — and images from messaging apps and websites arrive with their GPS
-already stripped, before they ever reach the phone. So both screens will
-likely show few or no pins here, and both now say so explicitly rather than
-appearing broken. Photos taken with this phone's camera, with location on,
-will appear.
+4. **Selection screen.** "N SELECTED" was bare white text over the mosaic
+   and genuinely unreadable on bright photos; it now sits on the same
+   ground as the other two clusters. All three moved 12dp → 16dp off the
+   screen edge, because on gesture navigation the inset is a few pixels and
+   they were reading as clipped. And the "Recognising…" banner no longer
+   shares the top strip with the action cluster — on a 22k library those two
+   were colliding for many minutes at a time.
 
 ## Known limits
 
 - The photo editor saves at preview resolution, not full resolution.
 - Crop is presets-only, no draggable box yet.
-- "Autoplay videos" is stored but not yet wired to the player.
 - Backup/restore covers settings, not the photos themselves.
+- Both the map and the compass read GPS from inside your photos, and most
+  of this library is Pinterest/Reddit saves with GPS already stripped — so
+  expect few or no pins. Both screens say so rather than looking broken.
