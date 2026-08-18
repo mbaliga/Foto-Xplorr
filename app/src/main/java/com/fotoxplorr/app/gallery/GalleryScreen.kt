@@ -8,7 +8,9 @@ package com.fotoxplorr.app.gallery
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -466,25 +468,9 @@ private fun GalleryBrowser(
                 modifier = Modifier.fillMaxSize(),
                 containerColor = Color.Black,
                 topBar = {
-                    if (selection.isActive) {
-                        SelectionTopBar(
-                            selection = selection,
-                            selectedAssets = selectedAssets,
-                            currentIds = currentIds,
-                            inTrash = inTrash,
-                            inArchive = inArchive,
-                            state = state,
-                            actions = actions,
-                            menuVisible = selectionMenuVisible,
-                            onMenuVisibleChange = { selectionMenuVisible = it },
-                            onSelectionChange = { selection = it },
-                            onRenameAsset = { renameAsset = it },
-                            onAddToCollection = { addToCollectionIds = it },
-                            onAddTag = { addTagIds = it },
-                            tagRoute = tagRoute,
-                            collectionRoute = collectionRoute,
-                        )
-                    }
+                    // Nothing. Selection chrome is no longer an app bar either -- it floats over
+                    // the mosaic as two clusters (owner screenshots, 2026-08-15), so it costs the
+                    // grid no layout height and the photos stay edge to edge even while choosing.
                     // No header on the browsing surface at all. BrowserHeader used to be
                     // composed unconditionally into this slot, so the Scaffold reserved ~84dp of
                     // mosaic permanently for a title that repeated the word the rail already
@@ -638,6 +624,26 @@ private fun GalleryBrowser(
                         )
                     }
 
+                    if (selection.isActive) {
+                        SelectionOverlay(
+                            selection = selection,
+                            selectedAssets = selectedAssets,
+                            currentIds = currentIds,
+                            inTrash = inTrash,
+                            inArchive = inArchive,
+                            state = state,
+                            actions = actions,
+                            menuVisible = selectionMenuVisible,
+                            onMenuVisibleChange = { selectionMenuVisible = it },
+                            onSelectionChange = { selection = it },
+                            onRenameAsset = { renameAsset = it },
+                            onAddToCollection = { addToCollectionIds = it },
+                            onAddTag = { addTagIds = it },
+                            tagRoute = tagRoute,
+                            collectionRoute = collectionRoute,
+                        )
+                    }
+
                     // The only header left, and only when you are somewhere you must be able to
                     // get back OUT of: inside an album, a collection or a tag. Drawn OVER the
                     // mosaic rather than in the Scaffold's topBar slot, so it costs the grid no
@@ -786,8 +792,23 @@ private fun GalleryBrowser(
     }
 }
 
+/**
+ * Selection chrome, as two clusters floating over the mosaic (owner screenshots, 2026-08-15).
+ *
+ * It was a `CenterAlignedTopAppBar`, which meant that choosing photos shoved the whole grid down
+ * by an app bar's height -- on the one screen whose entire job is showing photos, and at the exact
+ * moment the user is looking hardest at them. Floating it costs the grid nothing and keeps the
+ * mosaic edge to edge while selecting.
+ *
+ * The split follows the screenshots and is not arbitrary: the ACTIONS cluster sits top-left, and
+ * the destructive one is alone in the opposite corner, bottom-right, as far from the others as
+ * the screen allows. Count and dismiss anchor the bottom-left. Nothing that deletes sits next to
+ * anything that does not.
+ *
+ * Every control is a [BoxScope] child, so this must be called from inside the content `Box`.
+ */
 @Composable
-private fun SelectionTopBar(
+private fun BoxScope.SelectionOverlay(
     selection: GallerySelection,
     selectedAssets: List<MediaAsset>,
     currentIds: Set<MediaId>,
@@ -804,37 +825,34 @@ private fun SelectionTopBar(
     tagRoute: BrowserRoute.Tag?,
     collectionRoute: BrowserRoute.Collection?,
 ) {
-    CenterAlignedTopAppBar(
-        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-            containerColor = Color.Black,
-            titleContentColor = Color.White,
-            navigationIconContentColor = Color.White,
-            actionIconContentColor = Color.White,
-        ),
-        title = { Text("${selection.count} selected") },
-        navigationIcon = {
-            IconButton(onClick = { onSelectionChange(selection.clear()) }) {
-                Icon(Icons.Outlined.Close, contentDescription = "Clear selection")
+    // ---- top-left: what you can DO with the selection ----
+    Row(
+        modifier = Modifier
+            .align(Alignment.TopStart)
+            .statusBarsPadding()
+            .padding(12.dp)
+            .background(SELECTION_CLUSTER, RoundedCornerShape(16.dp))
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = { onSelectionChange(selection.selectAll(currentIds)) }) {
+            Icon(Icons.Outlined.SelectAll, contentDescription = "Select all", tint = Color.White)
+        }
+        if (!inTrash) {
+            IconButton(onClick = { actions.onShare(selectedAssets) }) {
+                Icon(Icons.Outlined.Share, contentDescription = "Share", tint = Color.White)
             }
-        },
-        actions = {
-            IconButton(onClick = { onSelectionChange(selection.selectAll(currentIds)) }) {
-                Icon(Icons.Outlined.SelectAll, contentDescription = "Select all")
+            IconButton(onClick = {
+                val mark = bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK
+                actions.onSetFavorite(selection.selectedIds, mark)
+                onSelectionChange(selection.clear())
+            }) {
+                Icon(Icons.Outlined.Favorite, contentDescription = "Toggle favourite", tint = Color.White)
             }
-            if (!inTrash) {
-                IconButton(onClick = { actions.onShare(selectedAssets) }) {
-                    Icon(Icons.Outlined.Share, contentDescription = "Share")
-                }
-                IconButton(onClick = {
-                    val mark = bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK
-                    actions.onSetFavorite(selection.selectedIds, mark)
-                    onSelectionChange(selection.clear())
-                }) {
-                    Icon(Icons.Outlined.Favorite, contentDescription = "Toggle favourite")
-                }
-            }
+        }
+        Box {
             IconButton(onClick = { onMenuVisibleChange(true) }) {
-                Icon(Icons.Outlined.MoreVert, contentDescription = "More actions")
+                Icon(Icons.Outlined.MoreVert, contentDescription = "More actions", tint = Color.White)
             }
             DropdownMenu(expanded = menuVisible, onDismissRequest = { onMenuVisibleChange(false) }) {
                 if (inTrash) {
@@ -967,9 +985,61 @@ private fun SelectionTopBar(
                     )
                 }
             }
-        },
-    )
+        }
+    }
+
+    // ---- bottom-left: how many, and the way out ----
+    Row(
+        modifier = Modifier
+            .align(Alignment.BottomStart)
+            .navigationBarsPadding()
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "${selection.count}",
+            color = Color.White,
+            style = MaterialTheme.typography.headlineSmall,
+        )
+        Text(
+            text = "  SELECTED",
+            color = Color.White.copy(alpha = 0.6f),
+            style = MaterialTheme.typography.labelMedium,
+        )
+        IconButton(onClick = { onSelectionChange(selection.clear()) }) {
+            Icon(Icons.Outlined.Close, contentDescription = "Clear selection", tint = Color.White)
+        }
+    }
+
+    // ---- bottom-right: the destructive one, alone ----
+    // Deliberately the full width of the screen away from the action cluster. A trash button
+    // beside a share button is a mis-tap that cannot be undone once Android's own confirmation
+    // is dismissed out of habit.
+    Box(
+        modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .navigationBarsPadding()
+            .padding(12.dp)
+            .background(SELECTION_CLUSTER, RoundedCornerShape(16.dp)),
+    ) {
+        IconButton(
+            enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+            onClick = {
+                if (inTrash) actions.onDeletePermanently(selectedAssets) else actions.onMoveToTrash(selectedAssets)
+                onSelectionChange(selection.clear())
+            },
+        ) {
+            Icon(
+                Icons.Outlined.Delete,
+                contentDescription = if (inTrash) "Delete permanently" else "Move to trash",
+                tint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Color.White else Color.White.copy(alpha = 0.35f),
+            )
+        }
+    }
 }
+
+/** Ground under a floating selection cluster, so its icons stay legible over any photo. */
+private val SELECTION_CLUSTER = Color.Black.copy(alpha = 0.72f)
 
 fun BrowserRoute.title(destination: HyleDestination): String = when (this) {
     BrowserRoute.Root -> destination.label
