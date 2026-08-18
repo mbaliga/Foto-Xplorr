@@ -6,7 +6,12 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
@@ -74,8 +79,17 @@ import kotlin.math.roundToInt
  * mock string. The reference clip's own wording is a generic stand-in for the interaction
  * (owner, same note) and is deliberately not reproduced.
  *
+ * The layer has two sizes (owner, 2026-08-18: *"the top notification needs a compact view, and an
+ * expanded view (when a user pulls down on it)"*). Compact is one line -- glyph, sentence,
+ * progress -- and is what a background scan is worth on its own. Pulling down on it opens the
+ * expanded view: the same status with its numbers spelled out and somewhere to act on them. It is
+ * the room gesture applied to the notification itself, which is the point: the pane recedes
+ * further and the layer that was always behind it is simply uncovered more.
+ *
  * @param showWhenIdle keep the layer revealed even with nothing to report. Off by default, so
  *   the pane runs edge to edge and the notification costs no screen.
+ * @param expanded whether the expanded view is showing. Hoisted, because the host has to reserve
+ *   the same strip from the spatial shell's own top-edge gesture -- see [notificationBandHeight].
  */
 @Composable
 fun NotificationRoom(
@@ -83,6 +97,9 @@ fun NotificationRoom(
     modifier: Modifier = Modifier,
     recognition: RecognitionProgress = RecognitionProgress(),
     showWhenIdle: Boolean = false,
+    expanded: Boolean = false,
+    onExpandedChange: (Boolean) -> Unit = {},
+    onRescan: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     var showCompletionPulse by remember { mutableStateOf(false) }
@@ -119,7 +136,15 @@ fun NotificationRoom(
     )
 
     val density = LocalDensity.current
-    val bandPx = with(density) { BAND_HEIGHT.dp.toPx() }
+    // The pane recedes by exactly the height the layer is drawing at, compact or expanded, so the
+    // two can never disagree about how much of the notification is uncovered.
+    val bandHeight = if (expanded) EXPANDED_HEIGHT.dp else BAND_HEIGHT.dp
+    val animatedBand by animateFloatAsState(
+        targetValue = with(density) { bandHeight.toPx() },
+        animationSpec = SpatialMotion.settleSpec,
+        label = "notification-band",
+    )
+    val bandPx = animatedBand
 
     Box(modifier = modifier.fillMaxWidth()) {
         // Deeper layer, drawn first. It does not animate: it is uncovered, not introduced.
@@ -127,6 +152,9 @@ fun NotificationRoom(
             scanState = scanState,
             completed = showCompletionPulse && scanState !is ScanState.Scanning,
             recognition = recognition,
+            expanded = expanded,
+            onExpandedChange = onExpandedChange,
+            onRescan = onRescan,
             modifier = Modifier.align(Alignment.TopCenter),
         )
 
@@ -191,16 +219,14 @@ private fun AlertBannerRow(
     scanState: ScanState,
     completed: Boolean,
     recognition: RecognitionProgress,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onRescan: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val message = alertBannerMessage(scanState, completed, recognition) ?: return
     val isError = scanState is ScanState.Error || recognition.message != null
     val isWorking = scanState is ScanState.Scanning || recognition.running
-    // Tapping expands the line rather than opening anything: a status line that can be read is
-    // the whole of what was missing, and an ellipsised sentence is the one case where a tap has
-    // something to give. A truncated message is the only reason to offer the affordance, so the
-    // row is only clickable when there is genuinely more text than fits.
-    var expanded by remember(message) { mutableStateOf(false) }
     val pulseAlpha by rememberPulseAlpha(Pulse.WATCHED)
     val spinTransition = rememberInfiniteTransition(label = "hyle-alert-spin")
     val rotationDegrees by spinTransition.animateFloat(
@@ -223,14 +249,32 @@ private fun AlertBannerRow(
         else -> HyleTokens.Color.colorFeedbackSuccess.toComposeColor()
     }
 
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = BAND_HEIGHT.dp)
+            // Pull down to open, up to close (owner: *"an expanded view (when a user pulls down
+            // on it)"*). A tap does the same thing, because a one-line strip is a small target
+            // to start a drag in and discovering the gesture should not be the only way through.
+            //
+            // The host reserves this strip from the spatial shell's top-edge gesture -- see
+            // SpatialShell's topReserve -- or the shell would claim these pointers on the Initial
+            // pass and every pull here would open the settings room instead.
+            .draggable(
+                orientation = Orientation.Vertical,
+                state = rememberDraggableState { delta ->
+                    if (delta > PULL_THRESHOLD_PX) onExpandedChange(true)
+                    if (delta < -PULL_THRESHOLD_PX) onExpandedChange(false)
+                },
+            )
             .clickable(
                 onClickLabel = if (expanded) "Collapse the status message" else "Show the full status message",
                 role = Role.Button,
-            ) { expanded = !expanded }
+            ) { onExpandedChange(!expanded) },
+    ) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = BAND_HEIGHT.dp)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
@@ -270,6 +314,123 @@ private fun AlertBannerRow(
             }
         }
     }
+
+        if (expanded) {
+            NotificationDetail(
+                scanState = scanState,
+                recognition = recognition,
+                message = message,
+                onRescan = onRescan,
+            )
+        }
+
+        // The grab handle, at the bottom edge of whatever height the layer is at, because that is
+        // the edge the finger is pulling from. Doubles as the only thing on screen saying the
+        // strip can be pulled at all.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(bottom = 5.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                Modifier
+                    .size(width = 28.dp, height = 3.dp)
+                    .background(Color.White.copy(alpha = 0.28f), RoundedCornerShape(2.dp)),
+            )
+        }
+    }
+}
+
+/**
+ * The expanded half: the same status with its numbers spelled out.
+ *
+ * Deliberately not a second, richer notification -- it is the compact line with the detail the
+ * compact line had to drop. A status surface that says *different* things depending on its size
+ * makes the small one look like it was hiding something.
+ */
+@Composable
+private fun NotificationDetail(
+    scanState: ScanState,
+    recognition: RecognitionProgress,
+    message: String,
+    onRescan: (() -> Unit)?,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        // The full sentence, no ellipsis. A scan error is the case that needs this -- it is a
+        // whole sentence from the OS and the compact line can only ever show its first clause.
+        Text(
+            text = message,
+            style = TextStyle(fontSize = 13.sp),
+            color = Color.White.copy(alpha = 0.75f),
+        )
+        when (val scan = scanState) {
+            is ScanState.Scanning -> DetailLine("Reading", "${scan.scanned} of ${scan.discovered}")
+            is ScanState.Complete -> DetailLine("In the library", "${scan.total}")
+            is ScanState.Error -> DetailLine("Scan", "stopped")
+            ScanState.Idle -> Unit
+        }
+        if (recognition.total > 0) {
+            DetailLine("Recognising", "${recognition.completed} of ${recognition.total}")
+        }
+        recognition.message?.let { DetailLine("Recognition", it) }
+        if (onRescan != null) {
+            Text(
+                text = "Rescan now",
+                style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium),
+                color = HyleTokens.Color.colorPaletteAccentViolet.toComposeColor(),
+                modifier = Modifier
+                    .clickable(onClick = onRescan)
+                    .padding(top = 2.dp, bottom = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun DetailLine(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = label,
+            style = TextStyle(fontSize = 12.sp),
+            color = Color.White.copy(alpha = 0.45f),
+            modifier = Modifier.weight(0.42f),
+        )
+        Text(
+            text = value,
+            style = TextStyle(fontSize = 12.sp),
+            color = Color.White.copy(alpha = 0.8f),
+            modifier = Modifier.weight(0.58f),
+        )
+    }
+}
+
+/**
+ * How tall the notification layer is right now, or zero when it has nothing to say.
+ *
+ * The host needs this to reserve the same strip from [dev.aarso.cellshell.SpatialShell]'s
+ * top-edge gesture, so one function answers it for both. Getting these out of step means either
+ * the notification cannot be pulled or the top room cannot be opened.
+ */
+internal fun notificationBandHeight(
+    scanState: ScanState,
+    recognition: RecognitionProgress,
+    revealed: Boolean,
+    expanded: Boolean,
+): androidx.compose.ui.unit.Dp = when {
+    !revealed -> 0.dp
+    alertBannerMessage(scanState, false, recognition) == null &&
+        alertBannerMessage(scanState, true, recognition) == null -> 0.dp
+    expanded -> EXPANDED_HEIGHT.dp
+    else -> BAND_HEIGHT.dp
 }
 
 private const val COMPLETION_HOLD_MILLIS = 1_800L
@@ -279,6 +440,21 @@ private const val COMPLETION_HOLD_MILLIS = 1_800L
  * sentence; short of becoming a panel, which is what the rooms are for.
  */
 private const val MAX_EXPANDED_LINES = 4
+
+/**
+ * How tall the layer stands when pulled open. Enough for the counts and an action, and short of
+ * becoming a panel -- panels are what the four rooms are for.
+ */
+private const val EXPANDED_HEIGHT = 168
+
+/**
+ * Drag past this many pixels in one frame to change the layer's size.
+ *
+ * A frame threshold rather than an accumulated distance, deliberately: the strip is 44dp tall and
+ * a user pulling it open moves fast, so what identifies the gesture is speed rather than travel.
+ * A slow graze across the row while scrolling the grid never reaches it.
+ */
+private const val PULL_THRESHOLD_PX = 6f
 
 /**
  * How much of the pane the notification layer takes when revealed, in dp.

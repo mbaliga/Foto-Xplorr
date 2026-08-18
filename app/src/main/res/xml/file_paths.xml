@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Every directory FileProvider is allowed to hand out a content:// URI for.
+
+  This file and SharePreparer.SHARE_DIRECTORY are one fact in two places, and nothing in the
+  compiler connects them: getUriForFile throws IllegalArgumentException ("Failed to find configured
+  root that contains ...") at the moment of sharing, not at build time. Renaming the share
+  directory without editing here broke sharing outright. ShareDirectoryTest now asserts the two
+  agree, because a build cannot.
+-->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path
-        name="clean_share"
-        path="clean-share/" />
+        name="outgoing_share"
+        path="outgoing-share/" />
 </paths>

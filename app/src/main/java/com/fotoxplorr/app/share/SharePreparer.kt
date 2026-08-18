@@ -170,7 +170,15 @@ class SharePreparer(context: Context) {
         }
     }
 
-    private companion object {
+    internal companion object {
+        /**
+         * The cache sub-directory shared copies are written to.
+         *
+         * Must match a `<cache-path>` in `res/xml/file_paths.xml`, or `getUriForFile` throws
+         * "Failed to find configured root that contains ..." on every share. Nothing in the build
+         * checks that; [com.fotoxplorr.app.share.ShareDirectoryTest] does, which is why this is
+         * internal rather than private.
+         */
         const val SHARE_DIRECTORY = "outgoing-share"
         const val COPY_BUFFER_SIZE = 128 * 1024
         const val JPEG_QUALITY = 92

@@ -75,6 +75,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.hyle.FloatingPillControl
 import com.fotoxplorr.app.hyle.NotificationRoom
+import com.fotoxplorr.app.hyle.notificationBandHeight
 import dev.aarso.cellshell.EdgeTimelineScrubber
 import dev.aarso.cellshell.RoomEdge
 import dev.aarso.cellshell.ShakeToRefresh
@@ -274,6 +275,24 @@ private fun GalleryBrowser(
     var addTagIds by remember { mutableStateOf<Set<MediaId>?>(null) }
     var passwordRequest by remember { mutableStateOf<PasswordRequest?>(null) }
     var legacyScreen by remember { mutableStateOf<LegacyScreen?>(null) }
+    // Hoisted out of NotificationRoom because the shell has to reserve the same strip its pull
+    // gesture lives in -- see topReserve below. One state, so the layer and the gesture zone can
+    // never be different sizes.
+    var notificationExpanded by remember { mutableStateOf(false) }
+    // Never while selecting: recognition runs for many minutes on a large library, and a
+    // background progress line sharing the top strip with the selection's action cluster reads as
+    // two unrelated toolbars fighting over it.
+    val notificationRevealed = !selection.isActive && (
+        state.recognitionProgress.running || state.recognitionProgress.message != null
+        )
+    // Collapse when the layer goes away, so it does not reappear expanded next time.
+    LaunchedEffect(notificationRevealed) { if (!notificationRevealed) notificationExpanded = false }
+    val notificationReserve = notificationBandHeight(
+        scanState = state.scanState,
+        recognition = state.recognitionProgress,
+        revealed = notificationRevealed,
+        expanded = notificationExpanded,
+    )
 
     val gridState = rememberLazyGridState()
     val gridScope = rememberCoroutineScope()
@@ -442,6 +461,20 @@ private fun GalleryBrowser(
         // rectangle sliding off -- the Magic Portal shape. The shrink is kept; the swivel is
         // added to it.
         parkStyle = ParkStyle.SWIVEL,
+        // Hand the notification's own strip back to it. Without this the shell claims the top
+        // 56dp on the Initial pass and every pull on the status line opens the settings room
+        // instead of expanding the line -- the two gestures live in the same pixels.
+        topReserve = notificationReserve,
+        // One geography for the whole app (owner, 2026-08-18: *"the model needs to remain the
+        // same"*). Wherever you are, the same edge holds the same KIND of thing:
+        //
+        //   LEFT   where you can go        RIGHT   what you can do here
+        //   TOP    settings                BOTTOM  what this is
+        //
+        // The viewer set that arrangement, the gallery now matches it, and only the contents
+        // differ -- a grid and one open photo can be done different things to, but the user only
+        // has to learn the four edges once. Settings used to be the gallery's RIGHT room, which
+        // put settings and actions on the same edge depending on which screen you were on.
         left = {
             DestinationRailPanel(
                 items = railItems,
@@ -453,10 +486,10 @@ private fun GalleryBrowser(
                     gridScope.launch { gridState.scrollToItem(0) }
                 },
                 state = state,
-                onOpenSettings = { shell.open(RoomEdge.RIGHT) },
+                onOpenSettings = { shell.open(RoomEdge.TOP) },
             )
         },
-        right = {
+        top = {
             SettingsRoom(
                 state = state,
                 actions = actions,
@@ -464,6 +497,32 @@ private fun GalleryBrowser(
                     shell.closeAll()
                     legacyScreen = it
                 },
+            )
+        },
+        right = {
+            GalleryActionsRoom(
+                state = state,
+                actions = actions,
+                selectionActive = selection.isActive,
+                onStartSelection = {
+                    // Entering selection with nothing selected: the overlay appears, the grid
+                    // switches to tap-to-add, and the count reads zero until the user picks one.
+                    // This is the entry point long press used to be, before long press became a
+                    // preview that ends when the finger lifts.
+                    shell.closeAll()
+                    selection = selection.beginSelecting()
+                },
+                onNewCollection = {
+                    shell.closeAll()
+                    createCollectionVisible = true
+                },
+            )
+        },
+        bottom = {
+            GalleryInfoRoom(
+                title = route.title(destination),
+                assets = currentAssets,
+                state = state,
             )
         },
     ) {
@@ -557,10 +616,10 @@ private fun GalleryBrowser(
                                 // of the screen with the selection's action cluster reads as two
                                 // unrelated toolbars fighting for the same strip. The selection
                                 // is what the user is doing; the indexer can wait its turn.
-                                showWhenIdle = !selection.isActive && (
-                                    state.recognitionProgress.running ||
-                                        state.recognitionProgress.message != null
-                                    ),
+                                showWhenIdle = notificationRevealed,
+                                expanded = notificationExpanded,
+                                onExpandedChange = { notificationExpanded = it },
+                                onRescan = actions.onRefresh,
                             ) {
                                 Column {
                                     ShakeToRefresh(onShake = actions.onRefresh)
@@ -587,6 +646,7 @@ private fun GalleryBrowser(
                                 sensitiveIds = state.sensitiveIds,
                                 blurSensitive = state.preferences.blurSensitive,
                                 selectedIds = selection.selectedIds,
+                                selectionActive = selection.isActive,
                                 emptyMessage = if (query.isBlank()) "Nothing here yet" else "No matching media",
                                 onOpen = { asset -> actions.onOpenAsset(asset, currentAssets) },
                                 onToggleSelection = { id -> selection = selection.toggle(id) },

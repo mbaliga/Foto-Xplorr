@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,7 +55,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
@@ -90,6 +93,12 @@ fun TimelineScreen(
     sensitiveIds: Set<MediaId>,
     blurSensitive: Boolean,
     selectedIds: Set<MediaId>,
+    /**
+     * Whether the selection chrome is up. Defaults to the old rule -- something is picked -- so
+     * the several grids that do not participate in selection keep working unchanged. The main
+     * gallery passes the real flag, because selection can now be entered with nothing picked yet.
+     */
+    selectionActive: Boolean = selectedIds.isNotEmpty(),
     onOpen: (MediaAsset) -> Unit,
     onToggleSelection: (MediaId) -> Unit,
     /**
@@ -118,6 +127,7 @@ fun TimelineScreen(
             blurSensitive = blurSensitive,
             selectedIds = selectedIds,
             emptyMessage = "No media matches the current filters",
+            selectionActive = selectionActive,
             onOpen = onOpen,
             onToggleSelection = onToggleSelection,
             gridState = gridState,
@@ -167,34 +177,21 @@ fun TimelineScreen(
                     sensitive = asset.id in sensitiveIds,
                     blurSensitive = blurSensitive,
                     selected = asset.id in selectedIds,
-                    selectionActive = selectedIds.isNotEmpty(),
+                    selectionActive = selectionActive,
                     fitToTile = fitToTile,
                     loopAnimations = loopAnimations,
                     longPressPreview = longPressPreview,
                     onOpen = { onOpen(asset) },
                     onToggleSelection = { onToggleSelection(asset.id) },
                     onPeek = { onPeek(asset) },
+                    onPeekEnd = { peeked = null },
                 )
             }
         }
         item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(88.dp)) }
     }
 
-    peeked?.let { asset ->
-        MediaPeek(
-            asset = asset,
-            loopAnimations = loopAnimations,
-            onDismiss = { peeked = null },
-            onOpen = {
-                peeked = null
-                onOpen(asset)
-            },
-            onSelect = {
-                peeked = null
-                onToggleSelection(asset.id)
-            },
-        )
-    }
+    peeked?.let { asset -> MediaPeek(asset = asset, loopAnimations = loopAnimations) }
 }
 
 @Composable
@@ -206,6 +203,8 @@ fun MediaGridScreen(
     blurSensitive: Boolean,
     selectedIds: Set<MediaId>,
     emptyMessage: String,
+    /** See TimelineScreen's own parameter of this name. */
+    selectionActive: Boolean = selectedIds.isNotEmpty(),
     onOpen: (MediaAsset) -> Unit,
     onToggleSelection: (MediaId) -> Unit,
     gridState: LazyGridState = rememberLazyGridState(),
@@ -238,110 +237,74 @@ fun MediaGridScreen(
                     sensitive = asset.id in sensitiveIds,
                     blurSensitive = blurSensitive,
                     selected = asset.id in selectedIds,
-                    selectionActive = selectedIds.isNotEmpty(),
+                    selectionActive = selectionActive,
                     fitToTile = fitToTile,
                     loopAnimations = loopAnimations,
                     longPressPreview = longPressPreview,
                     onOpen = { onOpen(asset) },
                     onToggleSelection = { onToggleSelection(asset.id) },
                     onPeek = { peeked = asset },
+                    onPeekEnd = { peeked = null },
                 )
             }
             item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(88.dp)) }
         }
 
-        peeked?.let { asset ->
-            MediaPeek(
-                asset = asset,
-                loopAnimations = loopAnimations,
-                onDismiss = { peeked = null },
-                onOpen = {
-                    peeked = null
-                    onOpen(asset)
-                },
-                onSelect = {
-                    peeked = null
-                    onToggleSelection(asset.id)
-                },
-            )
-        }
+        peeked?.let { asset -> MediaPeek(asset = asset, loopAnimations = loopAnimations) }
     }
 }
 
 /**
- * The long-press peek: the photo, large, without leaving the grid.
+ * The peek: the photo, large, for exactly as long as the finger is held on it.
  *
- * It also carries the way INTO selection mode, which is not decoration -- long press used to be
- * how a selection started, and handing that gesture to the preview would otherwise have removed
- * the only way to select anything. So the peek offers it explicitly, and the preference that
- * turns peeking off restores long-press-to-select exactly as it was.
+ * Held, not opened (owner, 2026-08-18: *"the quick preview must disappear when the long press is
+ * released"*). It is a glance at a thumbnail too small to read, so the gesture that asks for it is
+ * the gesture that holds it open, and letting go puts it back. That is why it carries no buttons:
+ * a control you cannot reach without releasing -- which closes the thing the control is on -- is
+ * not a control.
+ *
+ * Drawn in the composition rather than in a `Dialog`, which matters here. A dialog is a new
+ * window, and raising one mid-gesture cancels the pointer stream on the window underneath -- the
+ * hold would end the instant the preview appeared, so the preview would flash and vanish.
+ *
+ * Long press used to be how a selection started. That entry point moves to the gallery's own
+ * actions room ("Select photos"), and the `longPressPreview` preference still restores
+ * long-press-to-select exactly as it was for anyone who prefers it.
  */
 @Composable
-private fun MediaPeek(
-    asset: MediaAsset,
-    loopAnimations: Boolean,
-    onDismiss: () -> Unit,
-    onOpen: () -> Unit,
-    onSelect: () -> Unit,
-) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                // Tapping anywhere off the controls closes it: a peek is a glance, and making
-                // someone hunt for a close button turns a glance into a task.
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onDismiss,
-                )
-                .background(Color.Black.copy(alpha = 0.92f))
-                .padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            MediaImage(
-                asset = asset,
-                modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
-                contentScale = ContentScale.Fit,
-                animate = loopAnimations,
-            )
-            Text(
-                asset.displayName,
-                color = Color.White.copy(alpha = 0.7f),
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 1,
-                modifier = Modifier.padding(top = 16.dp),
-            )
-            Row(
-                modifier = Modifier.padding(top = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                PeekAction("Open", onOpen, filled = true)
-                PeekAction("Select", onSelect)
-            }
-        }
-    }
-}
-
-@Composable
-private fun PeekAction(label: String, onClick: () -> Unit, filled: Boolean = false) {
-    Text(
-        text = label,
-        color = if (filled) MaterialTheme.colorScheme.primary else Color.White,
-        style = MaterialTheme.typography.labelLarge,
+private fun MediaPeek(asset: MediaAsset, loopAnimations: Boolean) {
+    Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(
-                if (filled) {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                } else {
-                    Color.White.copy(alpha = 0.12f)
-                },
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 10.dp),
-    )
+            .fillMaxSize()
+            .zIndex(20f)
+            // Swallows pointer events so nothing behind the peek can be scrolled or tapped by
+            // the same finger that is holding it open.
+            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
+            .background(Color.Black.copy(alpha = 0.92f))
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        MediaImage(
+            asset = asset,
+            modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
+            contentScale = ContentScale.Fit,
+            animate = loopAnimations,
+        )
+        Text(
+            asset.displayName,
+            color = Color.White.copy(alpha = 0.7f),
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Text(
+            "Release to go back",
+            color = Color.White.copy(alpha = 0.35f),
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+    }
 }
 
 @Composable
@@ -358,6 +321,7 @@ private fun MediaTile(
     onOpen: () -> Unit,
     onToggleSelection: () -> Unit,
     onPeek: () -> Unit,
+    onPeekEnd: () -> Unit,
 ) {
     Box(
         modifier = Modifier
@@ -365,15 +329,30 @@ private fun MediaTile(
             // Black rather than surfaceVariant: an unloaded tile should read as a gap in the
             // mosaic, not as a light grey block punched through it.
             .background(GRID_BACKGROUND)
-            .combinedClickable(
-                onClick = { if (selected) onToggleSelection() else onOpen() },
-                // Long press peeks -- EXCEPT while a selection is already running, where
-                // extending that selection is obviously what the gesture means, and except when
-                // the user has turned peeking off, which restores the old behaviour exactly.
-                onLongClick = {
-                    if (selectionActive || !longPressPreview) onToggleSelection() else onPeek()
-                },
-            ),
+            // Hand-rolled rather than combinedClickable, because the peek needs the one thing
+            // that API does not report: the RELEASE. onLongClick tells you the hold began and
+            // nothing tells you it ended, so a peek built on it can only be a modal that outlives
+            // the gesture -- which is exactly what this replaces.
+            //
+            // detectTapGestures gives all three: onPress suspends until the finger lifts or the
+            // gesture is cancelled, onLongPress fires at the timeout, onTap only when it did not.
+            .pointerInput(selected, selectionActive, longPressPreview) {
+                detectTapGestures(
+                    onPress = {
+                        // Returns on release AND on cancellation -- so a peek cannot be stranded
+                        // on screen by the grid scrolling out from under the finger.
+                        tryAwaitRelease()
+                        onPeekEnd()
+                    },
+                    // Long press peeks -- EXCEPT while a selection is already running, where
+                    // extending that selection is obviously what the gesture means, and except
+                    // when the user has turned peeking off, which restores the old behaviour.
+                    onLongPress = {
+                        if (selectionActive || !longPressPreview) onToggleSelection() else onPeek()
+                    },
+                    onTap = { if (selectionActive) onToggleSelection() else onOpen() },
+                )
+            },
     ) {
         MediaImage(
             asset = asset,

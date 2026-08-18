@@ -294,6 +294,7 @@ fun DestinationContent(
                     sensitiveIds = state.sensitiveIds,
                     blurSensitive = state.preferences.blurSensitive,
                     selectedIds = selection.selectedIds,
+                    selectionActive = selection.isActive,
                     onOpen = { asset -> actions.onOpenAsset(asset, assets) },
                     onToggleSelection = { id -> onSelectionChange(selection.toggle(id)) },
                     // The mockups' main grid is one continuous mosaic with no date headers.
