@@ -56,6 +56,24 @@ data class GalleryPreferencesState(
     val slideshowShuffle: Boolean = false,
     /** Start a video as soon as it is opened, rather than waiting for a tap on play. */
     val autoplayVideos: Boolean = false,
+    // ---- media behaviour ----
+    /** Peek a photo large on long press, without leaving the grid. */
+    val longPressPreview: Boolean = true,
+    /** Play GIFs and animated images in the grid rather than showing a still frame. */
+    val loopAnimations: Boolean = false,
+    /** Crop grid thumbnails to fill their tile; off keeps each photo's own aspect ratio. */
+    val fitToTile: Boolean = true,
+    // ---- share defaults, edited in the advanced share sheet ----
+    /**
+     * Strip GPS/camera/timestamp EXIF from shared copies. TRUE by default on owner direction:
+     * the safe thing should be what happens when nobody thinks about it.
+     */
+    val shareStripMetadata: Boolean = true,
+    val shareWatermark: Boolean = false,
+    /** Last frame chosen in the share sheet, remembered so a habit does not need re-picking. */
+    val shareFrame: String = "NONE",
+    /** The user's postmark, drawn on stamp-framed shares. */
+    val shareSeal: String = "",
 )
 
 class GalleryPreferences(context: Context) {
@@ -115,6 +133,35 @@ class GalleryPreferences(context: Context) {
         state.value.copy(autoplayVideos = enabled),
     ) { putBoolean(KEY_AUTOPLAY_VIDEOS, enabled) }
 
+    fun setLongPressPreview(enabled: Boolean) = update(
+        state.value.copy(longPressPreview = enabled),
+    ) { putBoolean(KEY_LONG_PRESS_PREVIEW, enabled) }
+
+    fun setLoopAnimations(enabled: Boolean) = update(
+        state.value.copy(loopAnimations = enabled),
+    ) { putBoolean(KEY_LOOP_ANIMATIONS, enabled) }
+
+    fun setFitToTile(enabled: Boolean) = update(
+        state.value.copy(fitToTile = enabled),
+    ) { putBoolean(KEY_FIT_TO_TILE, enabled) }
+
+    fun setShareStripMetadata(enabled: Boolean) = update(
+        state.value.copy(shareStripMetadata = enabled),
+    ) { putBoolean(KEY_SHARE_STRIP, enabled) }
+
+    fun setShareWatermark(enabled: Boolean) = update(
+        state.value.copy(shareWatermark = enabled),
+    ) { putBoolean(KEY_SHARE_WATERMARK, enabled) }
+
+    fun setShareFrame(frame: String) = update(
+        state.value.copy(shareFrame = frame),
+    ) { putString(KEY_SHARE_FRAME, frame) }
+
+    fun setShareSeal(seal: String) {
+        val trimmed = seal.trim().take(MAX_SEAL_CHARS)
+        update(state.value.copy(shareSeal = trimmed)) { putString(KEY_SHARE_SEAL, trimmed) }
+    }
+
     fun setSlideshowInterval(seconds: Int) {
         val safeSeconds = seconds.coerceIn(MIN_SLIDESHOW_INTERVAL_SECONDS, MAX_SLIDESHOW_INTERVAL_SECONDS)
         update(state.value.copy(slideshowIntervalSeconds = safeSeconds)) {
@@ -152,6 +199,13 @@ class GalleryPreferences(context: Context) {
         keepScreenOn = preferences.getBoolean(KEY_KEEP_SCREEN_ON, false),
         slideshowShuffle = preferences.getBoolean(KEY_SLIDESHOW_SHUFFLE, false),
         autoplayVideos = preferences.getBoolean(KEY_AUTOPLAY_VIDEOS, false),
+        longPressPreview = preferences.getBoolean(KEY_LONG_PRESS_PREVIEW, true),
+        loopAnimations = preferences.getBoolean(KEY_LOOP_ANIMATIONS, false),
+        fitToTile = preferences.getBoolean(KEY_FIT_TO_TILE, true),
+        shareStripMetadata = preferences.getBoolean(KEY_SHARE_STRIP, true),
+        shareWatermark = preferences.getBoolean(KEY_SHARE_WATERMARK, false),
+        shareFrame = preferences.getString(KEY_SHARE_FRAME, null) ?: "NONE",
+        shareSeal = preferences.getString(KEY_SHARE_SEAL, null).orEmpty(),
     )
 
     private inline fun <reified T : Enum<T>> enumValue(key: String, fallback: T): T =
@@ -174,6 +228,14 @@ class GalleryPreferences(context: Context) {
         const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         const val KEY_SLIDESHOW_SHUFFLE = "slideshow_shuffle"
         const val KEY_AUTOPLAY_VIDEOS = "autoplay_videos"
+        const val KEY_LONG_PRESS_PREVIEW = "long_press_preview"
+        const val KEY_LOOP_ANIMATIONS = "loop_animations"
+        const val KEY_FIT_TO_TILE = "fit_to_tile"
+        const val KEY_SHARE_STRIP = "share_strip_metadata"
+        const val KEY_SHARE_WATERMARK = "share_watermark"
+        const val KEY_SHARE_FRAME = "share_frame"
+        const val KEY_SHARE_SEAL = "share_seal"
+        const val MAX_SEAL_CHARS = 12
     }
 }
 

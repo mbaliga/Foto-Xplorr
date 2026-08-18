@@ -38,7 +38,10 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.editor.EditorScreen
 import com.fotoxplorr.app.favorites.FavoriteStore
-import com.fotoxplorr.app.fileops.CleanShareExporter
+import com.fotoxplorr.app.share.SharePreparer
+import com.fotoxplorr.app.share.ShareOptionsSheet
+import com.fotoxplorr.app.share.ShareOptions
+import com.fotoxplorr.app.share.ShareFrame
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.gallery.GalleryActions
 import com.fotoxplorr.app.gallery.GalleryPreferences
@@ -129,7 +132,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val privateFolderStore = remember { PrivateFolderStore(applicationContext) }
     val libraryStore = remember { LibraryStore(applicationContext) }
     val fileOperations = remember { MediaFileOperations(applicationContext) }
-    val cleanShareExporter = remember { CleanShareExporter(applicationContext) }
+    val sharePreparer = remember { SharePreparer(applicationContext) }
     val changeObserver = remember { MediaStoreChangeObserver(contentResolver) }
     // On-device recognition backing the Pets / People / Identity destinations. Bundled ML
     // Kit models only -- nothing here can reach the network, so personal photos never leave
@@ -178,6 +181,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     var pendingRenameName by remember { mutableStateOf<String?>(null) }
     var userMessage by remember { mutableStateOf<String?>(null) }
     var editingAsset by remember { mutableStateOf<MediaAsset?>(null) }
+    // Non-null while the advanced share sheet is up; holds what is being shared.
+    var pendingShare by remember { mutableStateOf<List<MediaAsset>?>(null) }
     var recognitionGeneration by remember { mutableStateOf(0) }
 
     val selectedIndex = selectedAssetId?.let { id -> viewerAssets.indexOfFirst { it.id == id } } ?: -1
@@ -428,28 +433,45 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             .onFailure { userMessage = "No compatible sharing app was found." }
     }
 
-    fun share(items: List<MediaAsset>) {
+    /**
+     * Prepare and hand off to the system share sheet.
+     *
+     * EVERY share goes through SharePreparer now, not just the one behind an opt-in menu item.
+     * Metadata stripping is the default (owner, 2026-08-15), so the ordinary path is the private
+     * one and the advanced sheet is where somebody deliberately chooses otherwise.
+     */
+    fun shareWith(items: List<MediaAsset>, options: ShareOptions) {
         if (items.isEmpty()) return
-        shareUris(
-            uris = items.map { it.contentUri },
-            mimeType = commonShareType(items),
-            title = "Share ${items.size} item${if (items.size == 1) "" else "s"}",
-        )
-    }
-
-    fun shareClean(items: List<MediaAsset>) {
         scope.launch {
-            userMessage = "Preparing metadata-clean ${if (items.size == 1) "copy" else "copies"}…"
-            cleanShareExporter.createCopies(items).fold(
+            userMessage = "Preparing ${if (items.size == 1) "your photo" else "your photos"}…"
+            sharePreparer.prepare(items, options).fold(
                 onSuccess = { uris ->
                     userMessage = null
-                    shareUris(uris, "image/*", "Share without common EXIF metadata")
+                    shareUris(
+                        uris = uris,
+                        // A stamp frame is a PNG (it has real transparency at the perforations),
+                        // so a blanket image/jpeg would misdescribe it to the receiving app.
+                        mimeType = if (options.requiresRender) "image/*" else commonShareType(items),
+                        title = "Share ${items.size} item${if (items.size == 1) "" else "s"}",
+                    )
                 },
                 onFailure = { error ->
-                    userMessage = error.message ?: "Could not prepare metadata-clean copies."
+                    userMessage = error.message ?: "Could not prepare the photos to share."
                 },
             )
         }
+    }
+
+    /** The plain Share action: uses the saved defaults, no sheet, one tap. */
+    fun share(items: List<MediaAsset>) {
+        if (items.isEmpty()) return
+        shareWith(items, preferences.toShareOptions())
+    }
+
+    /** The advanced trigger: opens the options sheet above the system share sheet. */
+    fun shareAdvanced(items: List<MediaAsset>) {
+        if (items.isEmpty()) return
+        pendingShare = items
     }
 
     fun openExternally(asset: MediaAsset, action: String) {
@@ -531,6 +553,25 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             onDismissRequest = { userMessage = null },
             text = { Text(message) },
             confirmButton = { TextButton(onClick = { userMessage = null }) { Text("OK") } },
+        )
+    }
+
+    pendingShare?.let { items ->
+        ShareOptionsSheet(
+            // The first selected photo stands in for the batch: the preview is about the FRAME,
+            // and the frame is identical across every photo in one share.
+            sample = items.firstOrNull { !it.isVideo },
+            initial = preferences.toShareOptions(),
+            onDismiss = { pendingShare = null },
+            onShare = { chosen ->
+                pendingShare = null
+                // Remember the choices, so a habit does not have to be re-picked every time.
+                galleryPreferences.setShareFrame(chosen.frame.name)
+                galleryPreferences.setShareStripMetadata(chosen.stripMetadata)
+                galleryPreferences.setShareWatermark(chosen.watermark)
+                chosen.seal?.let(galleryPreferences::setShareSeal)
+                shareWith(items, chosen)
+            },
         )
     }
 
@@ -645,7 +686,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onSetSensitive = sensitiveStore::setSensitive,
                 onSetArchived = libraryStore::setArchived,
                 onShare = ::share,
-                onShareClean = ::shareClean,
+                onShareClean = ::shareAdvanced,
                 onCopyToFolder = { items ->
                     pendingTreeOperation = PendingTreeOperation.COPY
                     pendingTreeItems = items
@@ -747,3 +788,21 @@ internal fun randomOtherIndex(size: Int, current: Int): Int {
     val drawn = kotlin.random.Random.nextInt(size - 1)
     return if (drawn >= current) drawn + 1 else drawn
 }
+
+/**
+ * The saved share defaults, as the value the share pipeline actually consumes.
+ *
+ * Kept as an extension rather than a field on the preferences data class so that
+ * `GalleryPreferencesState` stays a plain record of what is stored, and the mapping from stored
+ * strings to the share package's own types lives next to the code that needs it.
+ *
+ * An unrecognised stored frame name falls back to NONE rather than throwing: the value comes from
+ * SharedPreferences, which can outlive a rename of the enum, and a crash on start because someone
+ * once picked a frame that no longer exists would be an absurd way to lose a library.
+ */
+private fun GalleryPreferencesState.toShareOptions(): ShareOptions = ShareOptions(
+    frame = ShareFrame.entries.firstOrNull { it.name == shareFrame } ?: ShareFrame.NONE,
+    stripMetadata = shareStripMetadata,
+    watermark = shareWatermark,
+    seal = shareSeal.takeIf { it.isNotBlank() },
+)
