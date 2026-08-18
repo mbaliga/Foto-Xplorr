@@ -299,6 +299,9 @@ fun DestinationContent(
                     // The mockups' main grid is one continuous mosaic with no date headers.
                     showDateHeaders = false,
                     gridState = gridState,
+                    fitToTile = state.preferences.fitToTile,
+                    loopAnimations = state.preferences.loopAnimations,
+                    longPressPreview = state.preferences.longPressPreview,
                 )
             }
         }

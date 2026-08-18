@@ -3,6 +3,9 @@
 package com.fotoxplorr.app.gallery
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -48,11 +51,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Dialog
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
@@ -95,6 +101,9 @@ fun TimelineScreen(
      */
     showDateHeaders: Boolean = true,
     gridState: LazyGridState = rememberLazyGridState(),
+    fitToTile: Boolean = true,
+    loopAnimations: Boolean = false,
+    longPressPreview: Boolean = true,
 ) {
     if (assets.isEmpty()) {
         GalleryMessage("No media matches the current filters")
@@ -112,9 +121,16 @@ fun TimelineScreen(
             onOpen = onOpen,
             onToggleSelection = onToggleSelection,
             gridState = gridState,
+            fitToTile = fitToTile,
+            loopAnimations = loopAnimations,
+            longPressPreview = longPressPreview,
         )
         return
     }
+    // Its own peek state: this is the date-grouped variant and does not delegate to
+    // MediaGridScreen, so it cannot inherit that one's overlay.
+    var peeked by remember { mutableStateOf<MediaAsset?>(null) }
+    val onPeek: (MediaAsset) -> Unit = { peeked = it }
     val groups = timelineGroups(assets, grouping)
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
@@ -151,12 +167,33 @@ fun TimelineScreen(
                     sensitive = asset.id in sensitiveIds,
                     blurSensitive = blurSensitive,
                     selected = asset.id in selectedIds,
+                    selectionActive = selectedIds.isNotEmpty(),
+                    fitToTile = fitToTile,
+                    loopAnimations = loopAnimations,
+                    longPressPreview = longPressPreview,
                     onOpen = { onOpen(asset) },
                     onToggleSelection = { onToggleSelection(asset.id) },
+                    onPeek = { onPeek(asset) },
                 )
             }
         }
         item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(88.dp)) }
+    }
+
+    peeked?.let { asset ->
+        MediaPeek(
+            asset = asset,
+            loopAnimations = loopAnimations,
+            onDismiss = { peeked = null },
+            onOpen = {
+                peeked = null
+                onOpen(asset)
+            },
+            onSelect = {
+                peeked = null
+                onToggleSelection(asset.id)
+            },
+        )
     }
 }
 
@@ -172,31 +209,139 @@ fun MediaGridScreen(
     onOpen: (MediaAsset) -> Unit,
     onToggleSelection: (MediaId) -> Unit,
     gridState: LazyGridState = rememberLazyGridState(),
+    // Media-behaviour preferences. Defaulted so the several other call sites that render a grid
+    // (albums, collections, search results) keep working without each having to thread them.
+    fitToTile: Boolean = true,
+    loopAnimations: Boolean = false,
+    longPressPreview: Boolean = true,
 ) {
     if (assets.isEmpty()) {
         GalleryMessage(emptyMessage)
         return
     }
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(columns),
-        state = gridState,
-        modifier = Modifier.fillMaxSize().background(GRID_BACKGROUND),
-        verticalArrangement = Arrangement.spacedBy(GRID_GUTTER),
-        horizontalArrangement = Arrangement.spacedBy(GRID_GUTTER),
-    ) {
-        items(assets, key = { it.id.value }) { asset ->
-            MediaTile(
+    // The peeked photo, if any. Hoisted here rather than held per tile so only one can ever be
+    // open, and so the overlay draws above the whole grid instead of inside one cell's bounds.
+    var peeked by remember { mutableStateOf<MediaAsset?>(null) }
+
+    Box(Modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(columns),
+            state = gridState,
+            modifier = Modifier.fillMaxSize().background(GRID_BACKGROUND),
+            verticalArrangement = Arrangement.spacedBy(GRID_GUTTER),
+            horizontalArrangement = Arrangement.spacedBy(GRID_GUTTER),
+        ) {
+            items(assets, key = { it.id.value }) { asset ->
+                MediaTile(
+                    asset = asset,
+                    favorite = asset.id in favoriteIds,
+                    sensitive = asset.id in sensitiveIds,
+                    blurSensitive = blurSensitive,
+                    selected = asset.id in selectedIds,
+                    selectionActive = selectedIds.isNotEmpty(),
+                    fitToTile = fitToTile,
+                    loopAnimations = loopAnimations,
+                    longPressPreview = longPressPreview,
+                    onOpen = { onOpen(asset) },
+                    onToggleSelection = { onToggleSelection(asset.id) },
+                    onPeek = { peeked = asset },
+                )
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(88.dp)) }
+        }
+
+        peeked?.let { asset ->
+            MediaPeek(
                 asset = asset,
-                favorite = asset.id in favoriteIds,
-                sensitive = asset.id in sensitiveIds,
-                blurSensitive = blurSensitive,
-                selected = asset.id in selectedIds,
-                onOpen = { onOpen(asset) },
-                onToggleSelection = { onToggleSelection(asset.id) },
+                loopAnimations = loopAnimations,
+                onDismiss = { peeked = null },
+                onOpen = {
+                    peeked = null
+                    onOpen(asset)
+                },
+                onSelect = {
+                    peeked = null
+                    onToggleSelection(asset.id)
+                },
             )
         }
-        item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(88.dp)) }
     }
+}
+
+/**
+ * The long-press peek: the photo, large, without leaving the grid.
+ *
+ * It also carries the way INTO selection mode, which is not decoration -- long press used to be
+ * how a selection started, and handing that gesture to the preview would otherwise have removed
+ * the only way to select anything. So the peek offers it explicitly, and the preference that
+ * turns peeking off restores long-press-to-select exactly as it was.
+ */
+@Composable
+private fun MediaPeek(
+    asset: MediaAsset,
+    loopAnimations: Boolean,
+    onDismiss: () -> Unit,
+    onOpen: () -> Unit,
+    onSelect: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                // Tapping anywhere off the controls closes it: a peek is a glance, and making
+                // someone hunt for a close button turns a glance into a task.
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss,
+                )
+                .background(Color.Black.copy(alpha = 0.92f))
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            MediaImage(
+                asset = asset,
+                modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
+                contentScale = ContentScale.Fit,
+                animate = loopAnimations,
+            )
+            Text(
+                asset.displayName,
+                color = Color.White.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 16.dp),
+            )
+            Row(
+                modifier = Modifier.padding(top = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                PeekAction("Open", onOpen, filled = true)
+                PeekAction("Select", onSelect)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PeekAction(label: String, onClick: () -> Unit, filled: Boolean = false) {
+    Text(
+        text = label,
+        color = if (filled) MaterialTheme.colorScheme.primary else Color.White,
+        style = MaterialTheme.typography.labelLarge,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(
+                if (filled) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                } else {
+                    Color.White.copy(alpha = 0.12f)
+                },
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+    )
 }
 
 @Composable
@@ -206,8 +351,13 @@ private fun MediaTile(
     sensitive: Boolean,
     blurSensitive: Boolean,
     selected: Boolean,
+    selectionActive: Boolean,
+    fitToTile: Boolean,
+    loopAnimations: Boolean,
+    longPressPreview: Boolean,
     onOpen: () -> Unit,
     onToggleSelection: () -> Unit,
+    onPeek: () -> Unit,
 ) {
     Box(
         modifier = Modifier
@@ -217,7 +367,12 @@ private fun MediaTile(
             .background(GRID_BACKGROUND)
             .combinedClickable(
                 onClick = { if (selected) onToggleSelection() else onOpen() },
-                onLongClick = onToggleSelection,
+                // Long press peeks -- EXCEPT while a selection is already running, where
+                // extending that selection is obviously what the gesture means, and except when
+                // the user has turned peeking off, which restores the old behaviour exactly.
+                onLongClick = {
+                    if (selectionActive || !longPressPreview) onToggleSelection() else onPeek()
+                },
             ),
     ) {
         MediaImage(
@@ -225,7 +380,12 @@ private fun MediaTile(
             modifier = Modifier
                 .fillMaxSize()
                 .then(if (sensitive && blurSensitive) Modifier.blur(22.dp) else Modifier),
-            contentScale = ContentScale.Crop,
+            // Crop fills the square and trims the edges off; Fit letterboxes so the whole frame
+            // and its true proportions survive. The tile itself stays square either way -- the
+            // grid's column geometry, and the scrubber index mapping that rides on it, both
+            // assume a uniform cell.
+            contentScale = if (fitToTile) ContentScale.Crop else ContentScale.Fit,
+            animate = loopAnimations,
         )
         if (sensitive && blurSensitive) {
             Text(

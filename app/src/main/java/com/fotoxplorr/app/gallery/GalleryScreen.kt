@@ -122,6 +122,9 @@ data class GalleryActions(
     val onSetKeepScreenOn: (Boolean) -> Unit,
     val onSetSlideshowShuffle: (Boolean) -> Unit,
     val onSetAutoplayVideos: (Boolean) -> Unit,
+    val onSetFitToTile: (Boolean) -> Unit,
+    val onSetLoopAnimations: (Boolean) -> Unit,
+    val onSetLongPressPreview: (Boolean) -> Unit,
     /** Kick off (or resume) the on-device recognition pass. */
     val onIndexRecognition: () -> Unit,
     val onProtectFolder: suspend (String, CharArray) -> Result<Unit>,
@@ -581,6 +584,9 @@ private fun GalleryBrowser(
                                 onOpen = { asset -> actions.onOpenAsset(asset, currentAssets) },
                                 onToggleSelection = { id -> selection = selection.toggle(id) },
                                 gridState = gridState,
+                                fitToTile = state.preferences.fitToTile,
+                                loopAnimations = state.preferences.loopAnimations,
+                                longPressPreview = state.preferences.longPressPreview,
                             )
                         }
                     }
@@ -1143,7 +1149,35 @@ private fun SettingsRoom(
     actions: GalleryActions,
     onOpenLegacyScreen: (LegacyScreen) -> Unit,
 ) {
-    SettingsTabsRoom(state = state, actions = actions, onOpenLegacyScreen = onOpenLegacyScreen)
+    val context = LocalContext.current
+    SettingsTabsRoom(
+        state = state,
+        actions = actions,
+        onOpenLegacyScreen = onOpenLegacyScreen,
+        // Both leave the app, so both are ordinary implicit intents rather than anything this
+        // app handles itself -- and both are runCatching-guarded, because a device with no mail
+        // client or no browser is a real device and must not crash for asking.
+        onOpenSupport = {
+            runCatching {
+                context.startActivity(
+                    android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
+                        data = android.net.Uri.parse("mailto:$SUPPORT_EMAIL")
+                        putExtra(android.content.Intent.EXTRA_SUBJECT, "Foto Xplorr")
+                    },
+                )
+            }
+        },
+        onOpenMoreApps = {
+            runCatching {
+                context.startActivity(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse("https://asystemofcells.com"),
+                    ),
+                )
+            }
+        },
+    )
 }
 
 /**

@@ -3,6 +3,7 @@ package com.fotoxplorr.app.gallery
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,8 +32,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.media.MediaAsset
 
 /**
  * The settings room's tabs (owner, 2026-08-14: *"The settings are pathetically few. And 'more
@@ -50,6 +53,7 @@ import androidx.compose.ui.unit.dp
  */
 enum class SettingsTab(val label: String) {
     APPEARANCE("Appearance"),
+    MEDIA("Media"),
     LIBRARY("Library"),
     PRIVACY("Privacy"),
     VIEWER("Viewer"),
@@ -62,10 +66,17 @@ fun SettingsTabsRoom(
     state: GalleryUiState,
     actions: GalleryActions,
     onOpenLegacyScreen: (LegacyScreen) -> Unit,
+    onOpenSupport: () -> Unit,
+    onOpenMoreApps: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var tab by remember { mutableStateOf(SettingsTab.APPEARANCE) }
     val preferences = state.preferences
+    // One stable sample for the whole session: a preview that reshuffled on every toggle would
+    // make it impossible to see what the toggle actually changed.
+    val sampleAsset = remember(state.assets.firstOrNull()?.id) {
+        state.assets.firstOrNull { !it.isVideo }
+    }
 
     Column(
         modifier
@@ -128,6 +139,37 @@ fun SettingsTabsRoom(
                         onIncrease = { actions.onSetGridColumns(preferences.gridColumns + 1) },
                         canDecrease = preferences.gridColumns > MIN_GRID_COLUMNS,
                         canIncrease = preferences.gridColumns < MAX_GRID_COLUMNS,
+                    )
+                }
+
+                SettingsTab.MEDIA -> {
+                    // WYSIWYG (owner, 2026-08-15: "I'd want settings to be as visual as
+                    // possible"). The sample is drawn from the user's OWN library and rendered by
+                    // the same MediaImage the grid uses, so "fit to tile" is demonstrated rather
+                    // than described -- a switch labelled "fit to tile" tells you nothing about
+                    // what your mosaic will look like afterwards.
+                    TilePreview(
+                        sample = sampleAsset,
+                        fitToTile = preferences.fitToTile,
+                        loopAnimations = preferences.loopAnimations,
+                    )
+                    SwitchRow(
+                        "Fill the tile",
+                        "Crops each photo to fill its square. Off shows the whole frame, letterboxed.",
+                        preferences.fitToTile,
+                        actions.onSetFitToTile,
+                    )
+                    SwitchRow(
+                        "Play animations",
+                        "GIFs and animated images move in the grid instead of showing a still frame.",
+                        preferences.loopAnimations,
+                        actions.onSetLoopAnimations,
+                    )
+                    SwitchRow(
+                        "Peek on long press",
+                        "Hold a photo to see it large without opening it. Off makes a long press start a selection instead.",
+                        preferences.longPressPreview,
+                        actions.onSetLongPressPreview,
                     )
                 }
 
@@ -223,13 +265,24 @@ fun SettingsTabsRoom(
                 }
 
                 SettingsTab.DATA -> {
-                    ActionText("Refresh library now", actions.onRefresh)
-                    ActionText("Export metadata backup", actions.onExportMetadata)
-                    ActionText("Import metadata backup", actions.onImportMetadata)
+                    SectionLabel("BACKUP")
                     Text(
-                        "A backup holds your collections, tags, favourites and sensitive marks — " +
-                            "the things Foto Xplorr knows that the files themselves do not. It " +
-                            "never contains photos.",
+                        "A backup holds your collections, tags, favourites and sensitive marks -- " +
+                            "everything Foto Xplorr knows that the files themselves do not. It " +
+                            "never contains your photos: those are already on your device, and " +
+                            "copying them into a backup would only make a second place to lose " +
+                            "them from.",
+                        color = Color.White.copy(alpha = 0.65f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    ActionText("Back up now", actions.onExportMetadata)
+                    ActionText("Restore from a backup", actions.onImportMetadata)
+
+                    SectionLabel("LIBRARY")
+                    ActionText("Rescan for new photos", actions.onRefresh)
+                    Text(
+                        "Foto Xplorr watches for new photos on its own; this is for when you " +
+                            "want to be certain.",
                         color = Color.White.copy(alpha = 0.5f),
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -241,6 +294,24 @@ fun SettingsTabsRoom(
                         "Build",
                         if (com.fotoxplorr.app.BuildConfig.DEBUG) "Debug" else "Release",
                     )
+
+                    SectionLabel("SUPPORT")
+                    Text(
+                        "Something wrong, or an idea? Write to us -- a real person reads it.",
+                        color = Color.White.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    ActionText(SUPPORT_EMAIL, onOpenSupport)
+
+                    SectionLabel("MORE FROM A SYSTEM OF CELLS")
+                    Text(
+                        "Foto Xplorr is one of a family of apps that share the same navigation " +
+                            "and the same refusal to phone home.",
+                        color = Color.White.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    ActionText("asystemofcells.com", onOpenMoreApps)
+
                     SectionLabel("WHAT THIS BUILD CAN REACH")
                     Text(
                         text = OFFLINE_STATEMENT,
@@ -269,6 +340,9 @@ fun SettingsTabsRoom(
  * genuinely carries no INTERNET permission -- the OS refuses it a socket -- and that is a
  * stronger statement than any promise about intent.
  */
+/** Where support mail goes (owner, 2026-08-15). */
+const val SUPPORT_EMAIL = "fotoz@asystemofcells.com"
+
 private val OFFLINE_STATEMENT: String
     get() = "This build holds no INTERNET permission at all: Android itself will refuse it a " +
         "network connection, so nothing here can leave the device even by accident."
@@ -409,6 +483,42 @@ private fun StepperRow(
                     contentDescription = "More",
                     tint = Color.White.copy(alpha = if (canIncrease) 1f else 0.3f),
                     modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A live sample tile, rendered exactly as the grid would render it.
+ *
+ * The whole point of a visual setting: this is not a picture OF the feature, it is the feature,
+ * drawn by the same [com.fotoxplorr.app.media.MediaImage] the mosaic uses with the same flags.
+ * If it looks right here it will look right there, because it is the same code path.
+ */
+@Composable
+private fun TilePreview(sample: MediaAsset?, fitToTile: Boolean, loopAnimations: Boolean) {
+    Column {
+        Text("PREVIEW", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        Box(
+            Modifier
+                .padding(top = 8.dp)
+                .size(140.dp)
+                .background(Color.Black, RoundedCornerShape(6.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (sample == null) {
+                Text(
+                    "No photos yet",
+                    color = Color.White.copy(alpha = 0.4f),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else {
+                com.fotoxplorr.app.media.MediaImage(
+                    asset = sample,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = if (fitToTile) ContentScale.Crop else ContentScale.Fit,
+                    animate = loopAnimations,
                 )
             }
         }
