@@ -1,7 +1,5 @@
 package com.fotoxplorr.app.editor
 
-import android.graphics.ColorMatrix
-
 /**
  * What has been done to a photo, as data rather than as pixels.
  *
@@ -21,14 +19,17 @@ data class EditRecipe(
     val quarterTurns: Int = 0,
     /** Mirror horizontally, applied after rotation. */
     val flipHorizontal: Boolean = false,
-    /** -1f..1f, 0f is untouched. */
-    val brightness: Float = 0f,
-    /** -1f..1f, 0f is untouched. */
-    val contrast: Float = 0f,
-    /** -1f..1f, 0f is untouched; -1f is fully greyscale. */
-    val saturation: Float = 0f,
-    /** -1f..1f, 0f is untouched. Warms towards amber, cools towards blue. */
-    val warmth: Float = 0f,
+    /**
+     * Everything done to colour, as a non-destructive stack.
+     *
+     * This replaced four fields (brightness, contrast, saturation, warmth) and a `ColorMatrix`.
+     * That model was a strictly worse duplicate of what [Adjustments] does: its brightness was an
+     * offset applied to the gamma-encoded value rather than exposure in linear light, and its
+     * contrast was a linear scale that clipped both ends of the histogram at the end of the
+     * slider. Keeping both would have meant two colour pipelines that disagreed about the same
+     * photograph.
+     */
+    val adjustments: Adjustments = Adjustments.NONE,
     /** The crop, in normalised 0..1 coordinates of the *rotated* image. */
     val crop: CropRect = CropRect.FULL,
 ) {
@@ -36,92 +37,11 @@ data class EditRecipe(
     val isIdentity: Boolean
         get() = quarterTurns % 4 == 0 &&
             !flipHorizontal &&
-            brightness == 0f &&
-            contrast == 0f &&
-            saturation == 0f &&
-            warmth == 0f &&
+            adjustments.isIdentity &&
             crop.isFull
 
     fun rotatedClockwise(): EditRecipe = copy(quarterTurns = (quarterTurns + 1) % 4)
 
-    /**
-     * The colour adjustments as a single [ColorMatrix].
-     *
-     * One matrix rather than four chained filters: composing them here means the whole colour
-     * pipeline is a single multiply per pixel at draw time, and — more importantly — that the
-     * order of operations is fixed and stated rather than depending on the order a caller happens
-     * to apply things in.
-     *
-     * Order is brightness, then contrast, then saturation, then warmth. Contrast pivots around
-     * mid-grey rather than black, which is what stops "more contrast" from also meaning "darker".
-     */
-    fun toColorMatrix(): ColorMatrix {
-        val result = ColorMatrix()
-
-        if (brightness != 0f) {
-            // A translation, not a scale: scaling would crush highlights to white long before the
-            // slider reached its end, and leave true black stubbornly black.
-            val shift = brightness * BRIGHTNESS_RANGE
-            result.postConcat(
-                ColorMatrix(
-                    floatArrayOf(
-                        1f, 0f, 0f, 0f, shift,
-                        0f, 1f, 0f, 0f, shift,
-                        0f, 0f, 1f, 0f, shift,
-                        0f, 0f, 0f, 1f, 0f,
-                    ),
-                ),
-            )
-        }
-
-        if (contrast != 0f) {
-            val scale = 1f + contrast
-            // Pivot about mid-grey: without this term the image darkens as contrast rises.
-            val translate = MID_GREY * (1f - scale)
-            result.postConcat(
-                ColorMatrix(
-                    floatArrayOf(
-                        scale, 0f, 0f, 0f, translate,
-                        0f, scale, 0f, 0f, translate,
-                        0f, 0f, scale, 0f, translate,
-                        0f, 0f, 0f, 1f, 0f,
-                    ),
-                ),
-            )
-        }
-
-        if (saturation != 0f) {
-            result.postConcat(ColorMatrix().apply { setSaturation(1f + saturation) })
-        }
-
-        if (warmth != 0f) {
-            // Push red and pull blue (or the reverse), leaving green alone: green carries most of
-            // perceived luminance, so touching it would change exposure while claiming to change
-            // only colour temperature.
-            val shift = warmth * WARMTH_RANGE
-            result.postConcat(
-                ColorMatrix(
-                    floatArrayOf(
-                        1f, 0f, 0f, 0f, shift,
-                        0f, 1f, 0f, 0f, 0f,
-                        0f, 0f, 1f, 0f, -shift,
-                        0f, 0f, 0f, 1f, 0f,
-                    ),
-                ),
-            )
-        }
-        return result
-    }
-
-    companion object {
-        /** How far a full brightness slider shifts each channel, in 0..255 units. */
-        const val BRIGHTNESS_RANGE = 96f
-
-        /** How far a full warmth slider shifts red against blue, in 0..255 units. */
-        const val WARMTH_RANGE = 40f
-
-        const val MID_GREY = 127.5f
-    }
 }
 
 /**

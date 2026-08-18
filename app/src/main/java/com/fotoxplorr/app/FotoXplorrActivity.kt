@@ -586,6 +586,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         BackHandler { editingAsset = null }
         EditorScreen(
             asset = editing,
+            saveMode = preferences.editorSaveMode,
+            onSetSaveMode = galleryPreferences::setEditorSaveMode,
             onClose = { editingAsset = null },
             onSaved = { message ->
                 editingAsset = null

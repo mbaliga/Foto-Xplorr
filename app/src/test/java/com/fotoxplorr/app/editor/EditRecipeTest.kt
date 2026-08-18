@@ -25,10 +25,13 @@ class EditRecipeTest {
     fun `any single adjustment breaks the identity`() {
         assertFalse(EditRecipe(quarterTurns = 1).isIdentity)
         assertFalse(EditRecipe(flipHorizontal = true).isIdentity)
-        assertFalse(EditRecipe(brightness = 0.1f).isIdentity)
-        assertFalse(EditRecipe(contrast = -0.1f).isIdentity)
-        assertFalse(EditRecipe(saturation = 0.5f).isIdentity)
-        assertFalse(EditRecipe(warmth = -0.3f).isIdentity)
+        // Colour now lives in Adjustments, which replaced four fields and a ColorMatrix here.
+        // The recipe must still notice a colour edit, or Save would stay disabled after one.
+        assertFalse(EditRecipe(adjustments = Adjustments(exposure = 0.1f)).isIdentity)
+        assertFalse(EditRecipe(adjustments = Adjustments(contrast = -0.1f)).isIdentity)
+        assertFalse(EditRecipe(adjustments = Adjustments(saturation = 0.5f)).isIdentity)
+        assertFalse(EditRecipe(adjustments = Adjustments(temperature = -0.3f)).isIdentity)
+        assertFalse(EditRecipe(adjustments = Adjustments(sharpen = 0.4f)).isIdentity)
         assertFalse(EditRecipe(crop = CropRect(0.1f, 0.1f, 0.9f, 0.9f)).isIdentity)
     }
 

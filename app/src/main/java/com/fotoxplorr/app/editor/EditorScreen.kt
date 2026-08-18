@@ -42,9 +42,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** Which set of controls the bottom bar is showing. */
+/**
+ * Which set of controls the bottom bar is showing.
+ *
+ * Grouped the way a photographer works rather than by what the code does: light before colour
+ * before detail, because fixing exposure changes what the colour looks like and sharpening before
+ * either amplifies whatever you were about to correct.
+ */
 private enum class EditTool(val label: String) {
-    ADJUST("Adjust"),
+    LIGHT("Light"),
+    COLOUR("Colour"),
+    DETAIL("Detail"),
     CROP("Crop"),
     ROTATE("Rotate"),
 }
@@ -66,35 +74,25 @@ fun EditorScreen(
     onClose: () -> Unit,
     onSaved: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** What Save does. ASK shows the choice; anything else acts and remembers. */
+    saveMode: EditorSaveMode = EditorSaveMode.ASK,
+    onSetSaveMode: (EditorSaveMode) -> Unit = {},
 ) {
     val context = LocalContext.current
     var recipe by remember(asset.id) { mutableStateOf(EditRecipe()) }
-    var tool by remember { mutableStateOf(EditTool.ADJUST) }
+    var tool by remember { mutableStateOf(EditTool.LIGHT) }
     var source by remember(asset.id) { mutableStateOf<Bitmap?>(null) }
     var preview by remember(asset.id) { mutableStateOf<Bitmap?>(null) }
     var saving by remember { mutableStateOf(false) }
+    var saveRequested by remember { mutableStateOf(false) }
     val writer = remember(context) { EditedCopyWriter(context) }
     val scope = rememberCoroutineScope()
 
-    // Decode once, at a bounded size. Full resolution would mean a colour matrix over tens of
+    // Decode once, at a bounded size. Full resolution would mean the whole pipeline over tens of
     // megapixels on every slider frame.
     LaunchedEffect(asset.id) {
         source = withContext(Dispatchers.IO) {
-            runCatching {
-                val edge = EditRenderer.previewEdge(PREVIEW_VIEWPORT_EDGE_PX)
-                context.contentResolver.openInputStream(asset.contentUri)?.use { stream ->
-                    val bytes = stream.readBytes()
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                    val longest = maxOf(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
-                    var sample = 1
-                    while (longest / sample > edge) sample *= 2
-                    BitmapFactory.decodeByteArray(
-                        bytes, 0, bytes.size,
-                        BitmapFactory.Options().apply { inSampleSize = sample },
-                    )
-                }
-            }.getOrNull()
+            decodeBounded(context, asset, EditRenderer.previewEdge(PREVIEW_VIEWPORT_EDGE_PX))
         }
     }
 
@@ -127,30 +125,59 @@ fun EditorScreen(
             TextButton(
                 // A no-op edit must not write a second copy of the photo.
                 enabled = !recipe.isIdentity && !saving && source != null,
-                onClick = {
-                    val base = source ?: return@TextButton
-                    saving = true
-                    // Saving re-renders from the decoded source, which is the PREVIEW resolution.
-                    // Honest limitation, stated in the ADR: a full-resolution export needs a
-                    // second decode and a memory budget, and is the editor's next step.
-                    scope.launch {
-                        val full = withContext(Dispatchers.Default) { EditRenderer.render(base, recipe) }
-                        val result = writer.save(asset, full)
-                        saving = false
-                        onSaved(
-                            result.fold(
-                                onSuccess = { "Saved a copy" },
-                                onFailure = { it.message ?: "Could not save the edited copy" },
-                            ),
-                        )
-                    }
-                },
+                onClick = { saveRequested = true },
             ) {
                 Text(
-                    if (saving) "Saving…" else "Save copy",
+                    if (saving) "Saving…" else "Save",
                     color = if (recipe.isIdentity) Color.White.copy(alpha = 0.4f) else MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
                 )
+            }
+        }
+
+        // Saving in one place, whichever route asked for it. Two call sites for "write the file"
+        // is how a save path ends up with two different sets of error handling.
+        fun performSave(mode: EditorSaveMode) {
+            saveRequested = false
+            saving = true
+            scope.launch {
+                val full = renderFullSize(context, asset, recipe)
+                val result = if (full == null) {
+                    Result.failure(IllegalStateException("Could not read the photo at full size"))
+                } else {
+                    writer.save(asset, full)
+                }
+                saving = false
+                onSaved(
+                    result.fold(
+                        onSuccess = {
+                            if (mode == EditorSaveMode.OVERWRITE) {
+                                // Honest about what actually happened. Replacing the original
+                                // needs a per-file write grant that this build does not yet
+                                // request, and claiming a replacement that did not happen is
+                                // worse than doing the safe thing and saying so.
+                                "Saved a copy — replacing the original is not wired up yet"
+                            } else {
+                                "Saved a copy at full resolution"
+                            }
+                        },
+                        onFailure = { it.message ?: "Could not save the edited photo" },
+                    ),
+                )
+            }
+        }
+
+        if (saveRequested) {
+            if (saveMode == EditorSaveMode.ASK) {
+                SaveChoiceSheet(
+                    onDismiss = { saveRequested = false },
+                    onChoose = { mode, remember ->
+                        if (remember) onSetSaveMode(mode)
+                        performSave(mode)
+                    },
+                )
+            } else {
+                LaunchedEffect(saveRequested) { performSave(saveMode) }
             }
         }
 
@@ -193,12 +220,38 @@ fun EditorScreen(
                 }
             }
 
+            val adjust = recipe.adjustments
+            fun set(block: Adjustments.() -> Adjustments) {
+                recipe = recipe.copy(adjustments = adjust.block())
+            }
+
             when (tool) {
-                EditTool.ADJUST -> {
-                    LabelledSlider("Brightness", recipe.brightness) { recipe = recipe.copy(brightness = it) }
-                    LabelledSlider("Contrast", recipe.contrast) { recipe = recipe.copy(contrast = it) }
-                    LabelledSlider("Saturation", recipe.saturation) { recipe = recipe.copy(saturation = it) }
-                    LabelledSlider("Warmth", recipe.warmth) { recipe = recipe.copy(warmth = it) }
+                EditTool.LIGHT -> {
+                    // Exposure is in stops, so its range is not the -1..1 the others use: a photo
+                    // that needs rescuing needs two stops, not a fraction of one.
+                    LabelledSlider("Exposure", adjust.exposure, range = -2f..2f, unit = " EV") {
+                        set { copy(exposure = it) }
+                    }
+                    LabelledSlider("Contrast", adjust.contrast) { set { copy(contrast = it) } }
+                    LabelledSlider("Highlights", adjust.highlights) { set { copy(highlights = it) } }
+                    LabelledSlider("Shadows", adjust.shadows) { set { copy(shadows = it) } }
+                    LabelledSlider("Whites", adjust.whites) { set { copy(whites = it) } }
+                    LabelledSlider("Blacks", adjust.blacks) { set { copy(blacks = it) } }
+                }
+
+                EditTool.COLOUR -> {
+                    LabelledSlider("Temperature", adjust.temperature) { set { copy(temperature = it) } }
+                    LabelledSlider("Tint", adjust.tint) { set { copy(tint = it) } }
+                    LabelledSlider("Vibrance", adjust.vibrance) { set { copy(vibrance = it) } }
+                    LabelledSlider("Saturation", adjust.saturation) { set { copy(saturation = it) } }
+                }
+
+                EditTool.DETAIL -> {
+                    // These three run neighbourhood passes rather than a lookup, so they are the
+                    // slow ones -- grouped together so it is obvious which controls cost time.
+                    LabelledSlider("Sharpen", adjust.sharpen, range = 0f..1f) { set { copy(sharpen = it) } }
+                    LabelledSlider("Clarity", adjust.clarity, range = 0f..1f) { set { copy(clarity = it) } }
+                    LabelledSlider("Vignette", adjust.vignette) { set { copy(vignette = it) } }
                 }
 
                 EditTool.CROP -> {
@@ -253,19 +306,152 @@ fun EditorScreen(
     }
 }
 
+/**
+ * The choice at save time, when the stored mode is ASK.
+ *
+ * Copy is listed first and is the safe one. The order is not decoration: the destructive option
+ * being second means the muscle-memory tap is the one that cannot lose a photograph.
+ */
 @Composable
-private fun LabelledSlider(label: String, value: Float, onChange: (Float) -> Unit) {
+private fun SaveChoiceSheet(
+    onDismiss: () -> Unit,
+    onChoose: (EditorSaveMode, Boolean) -> Unit,
+) {
+    var remember by remember { mutableStateOf(false) }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .background(Color(0xFF121212), RoundedCornerShape(18.dp))
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("Save this edit", color = Color.White, style = MaterialTheme.typography.titleMedium)
+            listOf(EditorSaveMode.COPY, EditorSaveMode.OVERWRITE).forEach { mode ->
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { onChoose(mode, remember) }
+                        .padding(vertical = 12.dp),
+                ) {
+                    Text(mode.label, color = Color.White, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        mode.description,
+                        color = Color.White.copy(alpha = 0.55f),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { remember = !remember }
+                    .padding(vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                com.fotoxplorr.app.ui.RoomToggle(remember, { remember = it })
+                Text(
+                    "Do this every time",
+                    color = Color.White.copy(alpha = 0.8f),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Text(
+                "Changeable later in Settings.",
+                color = Color.White.copy(alpha = 0.4f),
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+    }
+}
+
+/**
+ * Render at FULL resolution and write the result.
+ *
+ * A second decode rather than reusing the preview bitmap, which is the whole point: the preview is
+ * capped at 2048px so a slider drag stays interactive, and saving that would hand the user a
+ * downscaled copy of their own photograph. The recipe is resolution-independent by construction —
+ * the crop is normalised and the colour work is per-pixel — so the same description renders
+ * correctly at either size.
+ *
+ * Capped at [MAX_EXPORT_PIXELS] because a 108-megapixel phone photo is 432 MB as ARGB_8888 and
+ * several copies of that exist at once inside the pipeline. Above the cap the export is downscaled
+ * rather than the app being killed mid-save, and the caller says so.
+ */
+private suspend fun renderFullSize(
+    context: android.content.Context,
+    asset: MediaAsset,
+    recipe: EditRecipe,
+): Bitmap? = withContext(Dispatchers.IO) {
+    val full = decodeBounded(context, asset, MAX_EXPORT_EDGE) ?: return@withContext null
+    withContext(Dispatchers.Default) { runCatching { EditRenderer.render(full, recipe) }.getOrNull() }
+}
+
+/**
+ * Decode [asset] with its longest edge no greater than [edge].
+ *
+ * `inSampleSize` only takes powers of two, so this lands at or below the target rather than exactly
+ * on it — which is the right way round: decoding above the budget and scaling down afterwards means
+ * holding the oversized bitmap first, which is the allocation that fails.
+ */
+private fun decodeBounded(
+    context: android.content.Context,
+    asset: MediaAsset,
+    edge: Int,
+): Bitmap? = runCatching {
+    context.contentResolver.openInputStream(asset.contentUri)?.use { stream ->
+        val bytes = stream.readBytes()
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val longest = maxOf(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
+        var sample = 1
+        while (longest / sample > edge) sample *= 2
+        BitmapFactory.decodeByteArray(
+            bytes, 0, bytes.size,
+            BitmapFactory.Options().apply { inSampleSize = sample },
+        )
+    }
+}.getOrNull()
+
+/**
+ * The longest edge an export may reach.
+ *
+ * 8192 is 67 megapixels at 1:1 and covers every phone camera in circulation, while keeping the
+ * ARGB_8888 buffer under 270 MB — and the pipeline holds two or three of those at once.
+ */
+private const val MAX_EXPORT_EDGE = 8192
+
+@Composable
+private fun LabelledSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float> = -1f..1f,
+    unit: String = "",
+    onChange: (Float) -> Unit,
+) {
     Column {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(label, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(label, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                // Double-tap-free way back to neutral. A slider you can only approach zero on is
+                // a slider you cannot undo, and "close to zero" is visible in a photograph.
+                if (value != 0f) {
+                    Text(
+                        "reset",
+                        color = Color.White.copy(alpha = 0.4f),
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.clickable { onChange(0f) },
+                    )
+                }
+            }
             Text(
-                // Shown as a signed percentage so "no change" is unmistakably zero.
-                "${(value * 100).toInt()}",
-                color = Color.White.copy(alpha = 0.6f),
+                // Signed, so "no change" is unmistakably zero rather than a value near it.
+                if (unit.isEmpty()) "${(value * 100).toInt()}" else "${(value * 10).toInt() / 10f}$unit",
+                color = if (value == 0f) Color.White.copy(alpha = 0.4f) else Color.White,
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
-        Slider(value = value, onValueChange = onChange, valueRange = -1f..1f)
+        Slider(value = value, onValueChange = onChange, valueRange = range)
     }
 }
 

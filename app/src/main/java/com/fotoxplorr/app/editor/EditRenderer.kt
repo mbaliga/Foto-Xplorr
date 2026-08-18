@@ -1,10 +1,7 @@
 package com.fotoxplorr.app.editor
 
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Matrix
-import android.graphics.Paint
-import android.graphics.ColorMatrixColorFilter
 import kotlin.math.roundToInt
 
 /**
@@ -62,19 +59,12 @@ object EditRenderer {
     }
 
     private fun colour(source: Bitmap, recipe: EditRecipe): Bitmap {
-        val hasColourEdit = recipe.brightness != 0f || recipe.contrast != 0f ||
-            recipe.saturation != 0f || recipe.warmth != 0f
         // copy() rather than returning `source`: the caller owns the result and may recycle it,
         // and handing back the input would make that recycle the ORIGINAL out from under whoever
-        // else is holding it.
-        if (!hasColourEdit) return source.copy(Bitmap.Config.ARGB_8888, false)
-
-        val output = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-            colorFilter = ColorMatrixColorFilter(recipe.toColorMatrix())
-        }
-        Canvas(output).drawBitmap(source, 0f, 0f, paint)
-        return output
+        // else is holding it. AdjustmentRenderer.render already copies, so the identity case is
+        // the only one that has to do it here.
+        if (recipe.adjustments.isIdentity) return source.copy(Bitmap.Config.ARGB_8888, false)
+        return AdjustmentRenderer.render(source, recipe.adjustments)
     }
 
     /**
