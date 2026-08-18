@@ -49,6 +49,7 @@ import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.GalleryScreen
 import com.fotoxplorr.app.gallery.GalleryUiState
 import com.fotoxplorr.app.gallery.folderIdentity
+import com.fotoxplorr.app.gallery.rememberGeoRepository
 import com.fotoxplorr.app.media.AndroidMediaStoreScanner
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
@@ -147,6 +148,11 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         )
     }
     val scope = rememberCoroutineScope()
+    // One geo index for the whole app: the gallery reads it for the map and compass, the viewer
+    // writes hand-placed locations into it. Two instances over the same file would each hold
+    // their own StateFlow and a pin dropped in the viewer would not reach the map.
+    val geoRepository = rememberGeoRepository()
+    val geoState by geoRepository.observe().collectAsStateWithLifecycle()
 
     val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
@@ -633,6 +639,16 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 viewerAssets = emptyList()
                 slideshowActive = false
             },
+            // Hand-placed location for a photo whose file carries no GPS tag. Written to Foto
+            // Xplorr's own index, never into the user's file -- see setManualLocation.
+            manualLatitude = geoState.metadataById[activeAsset.id]?.latitude,
+            manualLongitude = geoState.metadataById[activeAsset.id]?.longitude,
+            onSetLocation = { latitude, longitude ->
+                scope.launch { geoRepository.setManualLocation(activeAsset.id, latitude, longitude) }
+            },
+            onClearLocation = {
+                scope.launch { geoRepository.clearManualLocation(activeAsset.id) }
+            },
             // The viewer's own settings room edits these, so it needs the value and the setter.
             blurSensitive = preferences.blurSensitive,
             keepScreenOn = preferences.keepScreenOn,
@@ -657,6 +673,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         )
     } else {
         GalleryScreen(
+            geoRepository = geoRepository,
             state = GalleryUiState(
                 assets = assets,
                 favoriteIds = favoriteIds,

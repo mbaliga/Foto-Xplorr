@@ -1,7 +1,12 @@
 package com.fotoxplorr.app.spatial
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -340,7 +345,13 @@ private fun EmptyMap(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier.fillMaxSize().background(FIELD), contentAlignment = Alignment.Center) {
+    // Still a map, still turning (owner, 2026-08-18: *"when there is no location data, you must
+    // still show me the map, but keep it slowly spinning to indicate no location yet"*). A blank
+    // panel of text where a map should be reads as a broken screen; a map with nothing on it,
+    // visibly still turning, reads as one that has looked and found nothing yet.
+    Box(modifier.fillMaxSize().background(FIELD)) {
+        SpinningField(Modifier.fillMaxSize())
+
         Text(
             "✕",
             color = Color.White.copy(alpha = 0.75f),
@@ -351,16 +362,16 @@ private fun EmptyMap(
                 .clickable(onClick = onClose)
                 .padding(16.dp),
         )
+
         Column(
-            Modifier.padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
                 when {
                     geoState.isIndexing -> "Reading locations…"
                     geoState.scannedCount == 0 -> "Locations have not been read yet"
-                    else -> "None of your photos carry a location"
+                    else -> "No photo carries a location yet"
                 },
                 color = Color.White,
                 style = MaterialTheme.typography.titleMedium,
@@ -373,12 +384,11 @@ private fun EmptyMap(
                         "Foto Xplorr reads each photo's own GPS tag on this device. Nothing is uploaded."
                     else ->
                         "Photos saved from messaging apps and websites usually have their location " +
-                            "removed before they reach your phone. Shots taken with this device's " +
-                            "camera, with location switched on, will appear here."
+                            "removed before they reach your phone. Open a photo and drag up for its " +
+                            "details to place one by hand."
                 },
                 color = Color.White.copy(alpha = 0.6f),
                 style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(horizontal = 8.dp),
             )
             if (!geoState.isIndexing) {
                 Text(
@@ -386,10 +396,29 @@ private fun EmptyMap(
                     color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clickable(onClick = onIndexLocations).padding(12.dp),
+                    modifier = Modifier.clickable(onClick = onIndexLocations).padding(vertical = 8.dp),
                 )
             }
         }
+    }
+}
+
+/** The stylized field, turning slowly on its own axis while there is nothing pinned to it. */
+@Composable
+private fun SpinningField(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "empty-map-spin")
+    val angle by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(EMPTY_SPIN_MILLIS, easing = LinearEasing)),
+        label = "empty-map-angle",
+    )
+    Box(
+        modifier
+            .graphicsLayer { rotationZ = angle }
+            .background(Brush.linearGradient(listOf(FIELD, FIELD_DEEP))),
+    ) {
+        Graticule()
     }
 }
 
@@ -405,5 +434,8 @@ private const val GRATICULE_ROWS = 8
  * pinned photographs rather than a solid sheet of them.
  */
 private const val THIN_CELLS = 12
+
+/** One turn of the empty field. Slow enough to read as "still looking", not as an animation. */
+private const val EMPTY_SPIN_MILLIS = 30_000
 private const val MIN_ZOOM = 0.6f
 private const val MAX_ZOOM = 6f

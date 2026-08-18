@@ -92,6 +92,13 @@ import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.SpatialExperience
 import kotlinx.coroutines.launch
 
+/** One geo index for the whole app; see [GalleryScreen]'s parameter of the same name. */
+@Composable
+fun rememberGeoRepository(): GeoMetadataRepository {
+    val context = LocalContext.current
+    return remember(context) { GeoMetadataRepository(context.applicationContext) }
+}
+
 data class GalleryUiState(
     val assets: List<MediaAsset>,
     val favoriteIds: Set<MediaId>,
@@ -160,9 +167,14 @@ data class GalleryActions(
 fun GalleryScreen(
     state: GalleryUiState,
     actions: GalleryActions,
+    /**
+     * Shared with the viewer, which writes hand-placed locations into it. Two instances over the
+     * same database would each hold their own StateFlow, so a pin dropped in the viewer would not
+     * appear on the map until the app was restarted.
+     */
+    geoRepository: GeoMetadataRepository = rememberGeoRepository(),
 ) {
     val context = LocalContext.current
-    val geoRepository = remember(context) { GeoMetadataRepository(context.applicationContext) }
     val geoState by geoRepository.observe().collectAsStateWithLifecycle()
     val spatialScope = rememberCoroutineScope()
     val spatialAssets = remember(state.assets) { state.assets.filterNot { it.isTrashed } }

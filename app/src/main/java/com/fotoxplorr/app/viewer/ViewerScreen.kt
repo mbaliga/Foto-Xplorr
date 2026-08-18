@@ -103,6 +103,11 @@ fun ViewerScreen(
     keepScreenOn: Boolean = false,
     /** Whether the filmstrip appears along the bottom with the rest of the chrome. */
     showFilmstrip: Boolean = true,
+    /** A location the user placed by hand, for a photo whose file carries no GPS tag. */
+    manualLatitude: Double? = null,
+    manualLongitude: Double? = null,
+    onSetLocation: ((Double, Double) -> Unit)? = null,
+    onClearLocation: (() -> Unit)? = null,
     /** Play a slideshow in a random order rather than the browsing order. */
     slideshowShuffle: Boolean = false,
     /** Let GIFs and animated images play. */
@@ -222,6 +227,10 @@ fun ViewerScreen(
                 exif = exif,
                 isFavorite = isFavorite,
                 isSensitive = isSensitive,
+                manualLatitude = manualLatitude,
+                manualLongitude = manualLongitude,
+                onSetLocation = onSetLocation,
+                onClearLocation = onClearLocation,
                 // NEGATED, and this is not cosmetic. The bottom room opens with vProgress
                 // running NEGATIVE (SpatialMotion's sign convention), while PlaceMorph.stagger
                 // clamps its input to 0..1 -- so feeding the raw value would hold every stagger

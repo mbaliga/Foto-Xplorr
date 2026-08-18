@@ -93,6 +93,12 @@ fun PhotoDetailRoom(
     /** Marks this photo carries in your library, as opposed to facts about the file itself. */
     isFavorite: Boolean = false,
     isSensitive: Boolean = false,
+    /** A location the user placed by hand, for a photo whose file carries none. */
+    manualLatitude: Double? = null,
+    manualLongitude: Double? = null,
+    /** Null leaves the room read-only, which is what the "no location" line used to be. */
+    onSetLocation: ((Double, Double) -> Unit)? = null,
+    onClearLocation: (() -> Unit)? = null,
 ) {
     // The shell deliberately consumes no insets — it says so in its own KDoc, because doing so
     // would lift its drag-sensitive edges off the physical screen edge. So a room pads for the
@@ -136,7 +142,15 @@ fun PhotoDetailRoom(
         // filmstrip that used to close this Column lives over the photo itself now, where it was
         // before -- see ViewerScreen (owner, second round: "The filmstrip has to appear not in
         // the details view but in the view where the photo is selected").
-        PlaceBlock(asset = asset, exif = exif, reveal = reveal)
+        PlaceBlock(
+            asset = asset,
+            exif = exif,
+            reveal = reveal,
+            manualLatitude = manualLatitude,
+            manualLongitude = manualLongitude,
+            onSetLocation = onSetLocation,
+            onClearLocation = onClearLocation,
+        )
     }
 }
 
@@ -242,17 +256,37 @@ private fun StatusBlock(
 }
 
 @Composable
-private fun PlaceBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: () -> Float) {
-    val latitude = exif.latitude
-    val longitude = exif.longitude
+private fun PlaceBlock(
+    asset: MediaAsset,
+    exif: ImageExifDetails,
+    reveal: () -> Float,
+    manualLatitude: Double?,
+    manualLongitude: Double?,
+    onSetLocation: ((Double, Double) -> Unit)?,
+    onClearLocation: (() -> Unit)?,
+) {
+    // A hand-placed location stands in for an absent embedded one. It never overrides a real GPS
+    // tag: what the camera recorded is a fact about the photograph, and the picker is for photos
+    // that have no such fact.
+    val latitude = exif.latitude ?: manualLatitude
+    val longitude = exif.longitude ?: manualLongitude
     Box(Modifier.padding(horizontal = 20.dp)) {
-        if (latitude != null && longitude != null) {
+        if (latitude != null && longitude != null && exif.latitude != null) {
             PlacePlate(
                 asset = asset,
                 latitude = latitude,
                 longitude = longitude,
                 reveal = reveal,
             )
+        } else if (onSetLocation != null) {
+            Box(Modifier.graphicsLayer { alpha = PlaceMorph.textAlpha(reveal()) }) {
+                com.fotoxplorr.app.spatial.LocationPicker(
+                    latitude = latitude,
+                    longitude = longitude,
+                    onSet = onSetLocation,
+                    onClear = { onClearLocation?.invoke() },
+                )
+            }
         } else {
             Column(
                 modifier = Modifier
@@ -299,22 +333,52 @@ private fun InformationBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: 
         // Section headings across every room are one component now, so the detail room, the
         // viewer's settings room and the left rail no longer each pick their own size and weight
         // (owner, 2026-08-18: the top and bottom rooms should be "restyled to match").
-        RoomEyebrow("INFORMATION", Modifier.padding(bottom = 3.dp))
+        // Every header is present whether or not the file answers it (owner, 2026-08-18: *"much
+        // of the information that the photo needs is not shown -- it's fine if the values are
+        // empty, but the headers do need to exist"*). Rows used to be dropped when their value
+        // was null, so the room silently changed shape from photo to photo and there was no way
+        // to tell "this file has no lens recorded" from "this app does not show lenses".
+        RoomEyebrow("FILE", Modifier.padding(bottom = 3.dp))
+        InformationRow("Name", asset.displayName)
         InformationRow("Kind", DetailFormatting.formatBadge(asset.mimeType) ?: asset.mimeType)
         InformationRow("Size", DetailFormatting.byteLine(asset.sizeBytes))
         InformationRow("Dimensions", "${asset.width} × ${asset.height}")
-        if (asset.isVideo && asset.durationMillis > 0L) {
-            InformationRow("Duration", DetailFormatting.durationLine(asset.durationMillis))
+        InformationRow("Megapixels", megapixels(asset.width, asset.height))
+        InformationRow("Aspect", aspectRatioLabel(asset.width, asset.height))
+        if (asset.isVideo) {
+            InformationRow(
+                "Duration",
+                asset.durationMillis.takeIf { it > 0L }?.let(DetailFormatting::durationLine),
+            )
         }
-        asset.bucketName?.takeIf(String::isNotBlank)?.let { InformationRow("Album", it) }
-        asset.relativePath?.takeIf(String::isNotBlank)?.let { InformationRow("Where", it) }
+        InformationRow("Album", asset.bucketName?.takeIf(String::isNotBlank))
+        InformationRow("Where", asset.relativePath?.takeIf(String::isNotBlank))
+        InformationRow("Taken", asset.dateTakenMillis.takeIf { it > 0L }?.let(DetailFormatting::dateLine))
         InformationRow("Modified", DetailFormatting.dateLine(asset.dateModifiedSeconds * 1_000L))
-        exif.colorSpace?.let { InformationRow("Color space", it) }
+        InformationRow("Colour space", exif.colorSpace)
+
+        RoomEyebrow("CAPTURE", Modifier.padding(top = 16.dp, bottom = 3.dp))
+        InformationRow("Camera", listOfNotNull(exif.make, exif.model).joinToString(" ").takeIf(String::isNotBlank))
+        InformationRow("Lens", exif.lensModel)
+        InformationRow("Focal length", exif.focalLengthMm?.takeIf { it > 0.0 }?.let { "${it.roundToInt()} mm" })
+        InformationRow("Aperture", exif.aperture?.takeIf { it > 0.0 }?.let(DetailFormatting::apertureText))
+        InformationRow("Shutter", exif.shutterSpeed)
+        InformationRow("ISO", exif.iso)
+        InformationRow("Exposure bias", exif.exposureBiasEv?.let { "${it.roundToInt()} ev" })
+        InformationRow("Flash", exif.flash?.let { if (DetailFormatting.flashFired(it)) "Fired" else "Did not fire" })
+        InformationRow("Latitude", exif.latitude?.let { formatCoordinate(it) })
+        InformationRow("Longitude", exif.longitude?.let { formatCoordinate(it) })
     }
 }
 
+/**
+ * One label and its value, or a dash where the file had nothing to say.
+ *
+ * The dash is the point: an absent row tells the reader nothing, while a dashed one tells them
+ * this photo does not record a lens — which for a screenshot or a download is the actual answer.
+ */
 @Composable
-private fun InformationRow(label: String, value: String) {
+private fun InformationRow(label: String, value: String?) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(
             text = label,
@@ -323,13 +387,46 @@ private fun InformationRow(label: String, value: String) {
             modifier = Modifier.weight(0.36f),
         )
         Text(
-            text = value,
-            color = SECONDARY_TEXT,
+            text = value?.takeIf(String::isNotBlank) ?: "—",
+            color = if (value.isNullOrBlank()) MUTED_TEXT else SECONDARY_TEXT,
             style = TextStyle(fontSize = 13.sp),
             modifier = Modifier.weight(0.64f),
         )
     }
 }
+
+/** `2.0 MP`, or null when the file never recorded its own size. */
+internal fun megapixels(width: Int, height: Int): String? {
+    if (width <= 0 || height <= 0) return null
+    // Long multiplication: a 24-megapixel photo is 6000 x 4000, and Int overflows past 2.1 billion
+    // — reachable by a panorama, where the count would silently go negative.
+    val mp = width.toLong() * height / 1_000_000.0
+    return "${(mp * 10).roundToInt() / 10.0} MP"
+}
+
+/**
+ * `3 : 2`, reduced. Reduced by the greatest common divisor rather than matched against a table of
+ * known ratios, so an odd crop reports its own shape instead of the nearest famous one.
+ */
+internal fun aspectRatioLabel(width: Int, height: Int): String? {
+    if (width <= 0 || height <= 0) return null
+    var a = width
+    var b = height
+    while (b != 0) {
+        val t = b
+        b = a % b
+        a = t
+    }
+    val divisor = a.coerceAtLeast(1)
+    val w = width / divisor
+    val h = height / divisor
+    // Past this the "ratio" is two large coprime numbers and says less than the pixel count did.
+    return if (w > 50 || h > 50) null else "$w : $h"
+}
+
+/** A coordinate to five decimals — roughly a metre, and past what any phone's GPS resolves. */
+internal fun formatCoordinate(value: Double): String =
+    ((value * 100_000).roundToInt() / 100_000.0).toString()
 
 @Composable
 private fun ExifCard(asset: MediaAsset, exif: ImageExifDetails) {
