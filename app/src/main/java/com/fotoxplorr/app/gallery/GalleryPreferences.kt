@@ -56,6 +56,11 @@ data class GalleryPreferencesState(
     val slideshowShuffle: Boolean = false,
     /** Start a video as soon as it is opened, rather than waiting for a tap on play. */
     val autoplayVideos: Boolean = false,
+    /**
+     * Show the filmstrip of neighbouring photos along the bottom of an open photo. On by default,
+     * which is the behaviour the viewer already had.
+     */
+    val showFilmstrip: Boolean = true,
     // ---- media behaviour ----
     /** Peek a photo large on long press, without leaving the grid. */
     val longPressPreview: Boolean = true,
@@ -133,6 +138,10 @@ class GalleryPreferences(context: Context) {
         state.value.copy(autoplayVideos = enabled),
     ) { putBoolean(KEY_AUTOPLAY_VIDEOS, enabled) }
 
+    fun setShowFilmstrip(enabled: Boolean) = update(
+        state.value.copy(showFilmstrip = enabled),
+    ) { putBoolean(KEY_SHOW_FILMSTRIP, enabled) }
+
     fun setLongPressPreview(enabled: Boolean) = update(
         state.value.copy(longPressPreview = enabled),
     ) { putBoolean(KEY_LONG_PRESS_PREVIEW, enabled) }
@@ -199,6 +208,7 @@ class GalleryPreferences(context: Context) {
         keepScreenOn = preferences.getBoolean(KEY_KEEP_SCREEN_ON, false),
         slideshowShuffle = preferences.getBoolean(KEY_SLIDESHOW_SHUFFLE, false),
         autoplayVideos = preferences.getBoolean(KEY_AUTOPLAY_VIDEOS, false),
+        showFilmstrip = preferences.getBoolean(KEY_SHOW_FILMSTRIP, true),
         longPressPreview = preferences.getBoolean(KEY_LONG_PRESS_PREVIEW, true),
         loopAnimations = preferences.getBoolean(KEY_LOOP_ANIMATIONS, false),
         fitToTile = preferences.getBoolean(KEY_FIT_TO_TILE, true),
@@ -228,6 +238,7 @@ class GalleryPreferences(context: Context) {
         const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         const val KEY_SLIDESHOW_SHUFFLE = "slideshow_shuffle"
         const val KEY_AUTOPLAY_VIDEOS = "autoplay_videos"
+        const val KEY_SHOW_FILMSTRIP = "show_filmstrip"
         const val KEY_LONG_PRESS_PREVIEW = "long_press_preview"
         const val KEY_LOOP_ANIMATIONS = "loop_animations"
         const val KEY_FIT_TO_TILE = "fit_to_tile"

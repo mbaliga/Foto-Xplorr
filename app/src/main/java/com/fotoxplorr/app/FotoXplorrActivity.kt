@@ -636,8 +636,17 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // The viewer's own settings room edits these, so it needs the value and the setter.
             blurSensitive = preferences.blurSensitive,
             keepScreenOn = preferences.keepScreenOn,
+            showFilmstrip = preferences.showFilmstrip,
+            slideshowShuffle = preferences.slideshowShuffle,
+            loopAnimations = preferences.loopAnimations,
+            autoplayVideos = preferences.autoplayVideos,
             onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
             onSetBlurSensitive = galleryPreferences::setBlurSensitive,
+            onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
+            onSetKeepScreenOn = galleryPreferences::setKeepScreenOn,
+            onSetSlideshowShuffle = galleryPreferences::setSlideshowShuffle,
+            onSetLoopAnimations = galleryPreferences::setLoopAnimations,
+            onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
             relatedAssets = viewerAssets,
             onSelectAsset = { picked ->
                 if (viewerAssets.any { it.id == picked.id }) {

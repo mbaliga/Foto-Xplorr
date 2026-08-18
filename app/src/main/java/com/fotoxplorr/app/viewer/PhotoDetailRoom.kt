@@ -36,6 +36,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import com.fotoxplorr.app.ui.RoomEyebrow
+import com.fotoxplorr.app.ui.RoomStyle
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
@@ -88,6 +90,9 @@ fun PhotoDetailRoom(
     exif: ImageExifDetails,
     reveal: () -> Float,
     modifier: Modifier = Modifier,
+    /** Marks this photo carries in your library, as opposed to facts about the file itself. */
+    isFavorite: Boolean = false,
+    isSensitive: Boolean = false,
 ) {
     // The shell deliberately consumes no insets — it says so in its own KDoc, because doing so
     // would lift its drag-sensitive edges off the physical screen edge. So a room pads for the
@@ -103,13 +108,19 @@ fun PhotoDetailRoom(
             .padding(top = 16.dp, bottom = 24.dp),
     ) {
         RoomHeader(asset = asset, reveal = reveal)
+        StatusBlock(
+            asset = asset,
+            isFavorite = isFavorite,
+            isSensitive = isSensitive,
+            reveal = reveal,
+        )
         Box(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
             ExifCard(asset = asset, exif = exif)
         }
         Text(
             text = "Add a Caption",
-            color = MUTED_TEXT,
-            style = TextStyle(fontSize = 16.sp),
+            color = RoomStyle.InkFaint,
+            style = RoomStyle.Row,
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(enabled = false) {}
@@ -178,6 +189,58 @@ private fun RoomHeader(asset: MediaAsset, reveal: () -> Float) {
  * A plate drawn at 0°,0° for those would be a confident lie, so the block says the fix is
  * missing instead, and says it quietly.
  */
+/**
+ * What this photo is to *you*, as distinct from what the file is.
+ *
+ * Everything else in this room is read off the file — its size, its camera, its coordinates. This
+ * block is the library's own knowledge: whether you marked it, whether you hid it, and where it
+ * actually lives on the device. Worth its own group because "is this one of my favourites?" is a
+ * question the room could not previously answer at all, even though the viewer already knew.
+ */
+@Composable
+private fun StatusBlock(
+    asset: MediaAsset,
+    isFavorite: Boolean,
+    isSensitive: Boolean,
+    reveal: () -> Float,
+) {
+    val marks = buildList {
+        if (isFavorite) add("Favourite")
+        if (isSensitive) add("Sensitive")
+        if (asset.isTrashed) add("In the trash")
+        if (asset.isVideo) add("Video")
+    }
+    val album = asset.bucketName?.takeIf(String::isNotBlank)
+    // Nothing to say and no album to name means no empty heading: a section that renders as a
+    // lone eyebrow over blank space is the same mistake as the bare warning triangle was.
+    if (marks.isEmpty() && album == null) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer { alpha = PlaceMorph.textAlpha(reveal()) }
+            .padding(horizontal = 20.dp, vertical = 4.dp),
+    ) {
+        RoomEyebrow("IN YOUR LIBRARY")
+        if (marks.isNotEmpty()) {
+            Text(
+                text = marks.joinToString(" · "),
+                color = RoomStyle.Ink,
+                style = RoomStyle.Row,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+        album?.let {
+            Text(
+                text = it,
+                color = RoomStyle.InkMuted,
+                style = RoomStyle.Caption,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+    }
+}
+
 @Composable
 private fun PlaceBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: () -> Float) {
     val latitude = exif.latitude
@@ -191,14 +254,30 @@ private fun PlaceBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: () -> 
                 reveal = reveal,
             )
         } else {
-            Text(
-                text = "No location in this file",
-                color = MUTED_TEXT,
-                style = TextStyle(fontSize = 14.sp),
+            Column(
                 modifier = Modifier
                     .graphicsLayer { alpha = PlaceMorph.textAlpha(reveal()) }
                     .padding(vertical = 6.dp),
-            )
+            ) {
+                RoomEyebrow("PLACE")
+                Text(
+                    text = "No location in this file",
+                    color = RoomStyle.InkMuted,
+                    style = RoomStyle.Row,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                // Says why, rather than leaving a bare negative. Photos saved from messaging apps
+                // and websites have their GPS stripped before they ever reach the device, which
+                // is the reason for most of the empty ones in a real library -- and without that
+                // sentence the line reads as the app having failed to find something.
+                Text(
+                    text = "Photos saved from messaging apps and websites usually have their " +
+                        "location removed before they arrive.",
+                    color = RoomStyle.InkFaint,
+                    style = RoomStyle.Caption,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
     }
 }
@@ -217,12 +296,10 @@ private fun InformationBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: 
             .padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
-        Text(
-            text = "Information",
-            color = PRIMARY_TEXT,
-            style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Medium),
-            modifier = Modifier.padding(bottom = 3.dp),
-        )
+        // Section headings across every room are one component now, so the detail room, the
+        // viewer's settings room and the left rail no longer each pick their own size and weight
+        // (owner, 2026-08-18: the top and bottom rooms should be "restyled to match").
+        RoomEyebrow("INFORMATION", Modifier.padding(bottom = 3.dp))
         InformationRow("Kind", DetailFormatting.formatBadge(asset.mimeType) ?: asset.mimeType)
         InformationRow("Size", DetailFormatting.byteLine(asset.sizeBytes))
         InformationRow("Dimensions", "${asset.width} × ${asset.height}")

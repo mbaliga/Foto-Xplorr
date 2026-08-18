@@ -101,8 +101,21 @@ fun ViewerScreen(
     blurSensitive: Boolean = true,
     /** Hold the screen awake while this screen is up. */
     keepScreenOn: Boolean = false,
+    /** Whether the filmstrip appears along the bottom with the rest of the chrome. */
+    showFilmstrip: Boolean = true,
+    /** Play a slideshow in a random order rather than the browsing order. */
+    slideshowShuffle: Boolean = false,
+    /** Let GIFs and animated images play. */
+    loopAnimations: Boolean = false,
+    /** Start videos without waiting for a tap on play. */
+    autoplayVideos: Boolean = false,
     onSetSlideshowInterval: (Int) -> Unit = {},
     onSetBlurSensitive: (Boolean) -> Unit = {},
+    onSetShowFilmstrip: (Boolean) -> Unit = {},
+    onSetKeepScreenOn: (Boolean) -> Unit = {},
+    onSetSlideshowShuffle: (Boolean) -> Unit = {},
+    onSetLoopAnimations: (Boolean) -> Unit = {},
+    onSetAutoplayVideos: (Boolean) -> Unit = {},
     /**
      * The assets being paged through, feeding the filmstrip in the bottom room. Empty is a safe
      * fallback -- the strip hides itself below two items.
@@ -171,8 +184,18 @@ fun ViewerScreen(
             ViewerSettingsRoom(
                 slideshowIntervalSeconds = slideshowIntervalSeconds,
                 blurSensitive = blurSensitive,
+                showFilmstrip = showFilmstrip,
+                keepScreenOn = keepScreenOn,
+                slideshowShuffle = slideshowShuffle,
+                loopAnimations = loopAnimations,
+                autoplayVideos = autoplayVideos,
                 onSetSlideshowInterval = onSetSlideshowInterval,
                 onSetBlurSensitive = onSetBlurSensitive,
+                onSetShowFilmstrip = onSetShowFilmstrip,
+                onSetKeepScreenOn = onSetKeepScreenOn,
+                onSetSlideshowShuffle = onSetSlideshowShuffle,
+                onSetLoopAnimations = onSetLoopAnimations,
+                onSetAutoplayVideos = onSetAutoplayVideos,
             )
         },
         right = {
@@ -197,6 +220,8 @@ fun ViewerScreen(
             PhotoDetailRoom(
                 asset = asset,
                 exif = exif,
+                isFavorite = isFavorite,
+                isSensitive = isSensitive,
                 // NEGATED, and this is not cosmetic. The bottom room opens with vProgress
                 // running NEGATIVE (SpatialMotion's sign convention), while PlaceMorph.stagger
                 // clamps its input to 0..1 -- so feeding the raw value would hold every stagger
@@ -325,7 +350,7 @@ fun ViewerScreen(
             // where the photo is selected"). Gated on the same chrome flag as everything else
             // drawn over the photo, for the same reason: immersive means immersive by default,
             // and the strip is unambiguously chrome.
-            if (chromeVisible && relatedAssets.size > 1) {
+            if (chromeVisible && showFilmstrip && relatedAssets.size > 1) {
                 FilmstripScrubber(
                     assets = relatedAssets,
                     currentIndex = position - 1,
