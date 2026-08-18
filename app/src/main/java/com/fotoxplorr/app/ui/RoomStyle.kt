@@ -38,17 +38,36 @@ import androidx.compose.ui.unit.sp
  */
 object RoomStyle {
 
+    // Every style names the family explicitly. These bypass MaterialTheme's typography by
+    // construction, so a family set only on the theme would leave the rooms in the platform face
+    // while everything else changed — which is the half-migrated look that is worse than either.
+
     /** The rail's own row type: large, light, very slightly tightened. */
-    val Row = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Normal, letterSpacing = (-0.3).sp)
+    val Row = TextStyle(
+        fontFamily = HyleGrotesk,
+        fontSize = 18.sp,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = (-0.3).sp,
+    )
 
     /** A section eyebrow. Small, wide-tracked, shouted — the one place capitals are allowed. */
-    val Eyebrow = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp)
+    val Eyebrow = TextStyle(
+        fontFamily = HyleGrotesk,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.6.sp,
+    )
 
     /** The explanatory line under a row. Never larger than the row it explains. */
-    val Caption = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Normal)
+    val Caption = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp, fontWeight = FontWeight.Normal)
 
     /** A room's own title, when it needs one. */
-    val Title = TextStyle(fontSize = 24.sp, fontWeight = FontWeight.Light, letterSpacing = (-0.5).sp)
+    val Title = TextStyle(
+        fontFamily = HyleGrotesk,
+        fontSize = 24.sp,
+        fontWeight = FontWeight.Light,
+        letterSpacing = (-0.5).sp,
+    )
 
     /** Full-strength ink. */
     val Ink = Color.White

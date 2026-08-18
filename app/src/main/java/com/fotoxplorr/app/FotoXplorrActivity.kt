@@ -39,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.editor.EditorScreen
 import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.share.SharePreparer
+import com.fotoxplorr.app.share.ZipExporter
 import com.fotoxplorr.app.share.ShareOptionsSheet
 import com.fotoxplorr.app.share.ShareOptions
 import com.fotoxplorr.app.share.ShareFrame
@@ -134,6 +135,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val libraryStore = remember { LibraryStore(applicationContext) }
     val fileOperations = remember { MediaFileOperations(applicationContext) }
     val sharePreparer = remember { SharePreparer(applicationContext) }
+    val zipExporter = remember { ZipExporter(applicationContext) }
     val changeObserver = remember { MediaStoreChangeObserver(contentResolver) }
     // On-device recognition backing the Pets / People / Identity destinations. Bundled ML
     // Kit models only -- nothing here can reach the network, so personal photos never leave
@@ -739,7 +741,23 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onRemoveFromCollection = libraryStore::removeFromCollection,
                 onAddTag = libraryStore::addTag,
                 onRemoveTag = libraryStore::removeTag,
-                onExportMetadata = { exportMetadataLauncher.launch("foto-xplorr-metadata.json") },
+                onExportZip = { items ->
+                scope.launch {
+                    val result = zipExporter.export(items)
+                    result.fold(
+                        onSuccess = { uri ->
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "application/zip"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            startActivity(Intent.createChooser(intent, null))
+                        },
+                        onFailure = { userMessage = it.message ?: "Could not build the archive" },
+                    )
+                }
+            },
+            onExportMetadata = { exportMetadataLauncher.launch("foto-xplorr-metadata.json") },
                 onImportMetadata = { importMetadataLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
                 onOpenAsset = { asset, visible ->
                     viewerAssets = visible

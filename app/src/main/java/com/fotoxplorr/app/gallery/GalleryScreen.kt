@@ -76,6 +76,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.annotation.DrawableRes
+import androidx.compose.ui.res.painterResource
+import com.fotoxplorr.app.R
+import com.fotoxplorr.app.ui.HyleGrotesk
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.TextStyle
@@ -219,6 +223,8 @@ data class GalleryActions(
     val onRemoveFromCollection: (String, Set<MediaId>) -> Unit,
     val onAddTag: (Set<MediaId>, String) -> Unit,
     val onRemoveTag: (Set<MediaId>, String) -> Unit,
+    /** Pack the given photos into one archive and offer it to the share sheet. */
+    val onExportZip: (List<MediaAsset>) -> Unit,
     val onExportMetadata: () -> Unit,
     val onImportMetadata: () -> Unit,
     val onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
@@ -337,7 +343,6 @@ private fun GalleryBrowser(
     var query by remember { mutableStateOf("") }
     var searchVisible by remember { mutableStateOf(false) }
     var selection by remember { mutableStateOf(GallerySelection()) }
-    var selectionMenuVisible by remember { mutableStateOf(false) }
     var topMenuVisible by remember { mutableStateOf(false) }
     // The two rooms are the shell's state, not booleans here: a room is fractionally open for
     // most of its life (the finger is mid-drag), which a Boolean cannot express.
@@ -580,7 +585,17 @@ private fun GalleryBrowser(
             GalleryActionsRoom(
                 state = state,
                 actions = actions,
-                selectionActive = selection.isActive,
+                selection = selection,
+                selectedAssets = selectedAssets,
+                currentIds = currentIds,
+                inTrash = inTrash,
+                inArchive = inArchive,
+                tagRoute = tagRoute,
+                collectionRoute = collectionRoute,
+                onSelectionChange = { selection = it },
+                onRenameAsset = { renameAsset = it },
+                onAddToCollection = { addToCollectionIds = it },
+                onAddTag = { addTagIds = it },
                 onStartSelection = {
                     // Entering selection with nothing selected: the overlay appears, the grid
                     // switches to tap-to-add, and the count reads zero until the user picks one.
@@ -589,6 +604,7 @@ private fun GalleryBrowser(
                     shell.closeAll()
                     selection = selection.beginSelecting()
                 },
+                onCloseRoom = { shell.closeAll() },
                 onNewCollection = {
                     shell.closeAll()
                     createCollectionVisible = true
@@ -765,19 +781,9 @@ private fun GalleryBrowser(
                         SelectionOverlay(
                             selection = selection,
                             selectedAssets = selectedAssets,
-                            currentIds = currentIds,
                             inTrash = inTrash,
-                            inArchive = inArchive,
-                            state = state,
                             actions = actions,
-                            menuVisible = selectionMenuVisible,
-                            onMenuVisibleChange = { selectionMenuVisible = it },
                             onSelectionChange = { selection = it },
-                            onRenameAsset = { renameAsset = it },
-                            onAddToCollection = { addToCollectionIds = it },
-                            onAddTag = { addTagIds = it },
-                            tagRoute = tagRoute,
-                            collectionRoute = collectionRoute,
                         )
                     }
 
@@ -957,19 +963,9 @@ private fun GalleryBrowser(
 private fun BoxScope.SelectionOverlay(
     selection: GallerySelection,
     selectedAssets: List<MediaAsset>,
-    currentIds: Set<MediaId>,
     inTrash: Boolean,
-    inArchive: Boolean,
-    state: GalleryUiState,
     actions: GalleryActions,
-    menuVisible: Boolean,
-    onMenuVisibleChange: (Boolean) -> Unit,
     onSelectionChange: (GallerySelection) -> Unit,
-    onRenameAsset: (MediaAsset) -> Unit,
-    onAddToCollection: (Set<MediaId>) -> Unit,
-    onAddTag: (Set<MediaId>) -> Unit,
-    tagRoute: BrowserRoute.Tag?,
-    collectionRoute: BrowserRoute.Collection?,
 ) {
     // ---- top-left: what you can DO with the selection ----
     // Bled into the top-left corner, square-cornered, with the mockup's own shadow. The bar's
@@ -992,146 +988,22 @@ private fun BoxScope.SelectionOverlay(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (!inTrash) {
-            SelectionGlyph(Icons.Filled.CopyAll, "Copy to folder") {
-                actions.onCopyToFolder(selectedAssets)
+            // The owner's own glyphs, in the mockup's own order. Its first slot is a zip, which
+            // has no action in the app yet -- there is no archive export -- so that slot carries
+            // share, which is the thing people actually reach for. The drawable is here and
+            // unused-by-name until an export exists to hang on it.
+            // Exactly the three glyphs the owner supplied, in the mockup's own slot order. No
+            // fourth: the bar is 209dp because it holds three, and everything else a selection can
+            // do lives in the actions room on the right edge, which is where the app already puts
+            // "what you can do here".
+            SelectionGlyph(R.drawable.ic_action_zip, "Export as zip") {
+                actions.onExportZip(selectedAssets)
             }
-            SelectionGlyph(Icons.Filled.OpenWith, "Move to folder") {
+            SelectionGlyph(R.drawable.ic_action_move, "Move to folder") {
                 actions.onMoveToFolder(selectedAssets)
             }
-            SelectionGlyph(Icons.Filled.Share, "Share") { actions.onShare(selectedAssets) }
-        }
-        Box {
-            SelectionGlyph(Icons.Filled.MoreVert, "More actions") { onMenuVisibleChange(true) }
-            DropdownMenu(expanded = menuVisible, onDismissRequest = { onMenuVisibleChange(false) }) {
-                if (inTrash) {
-                    DropdownMenuItem(
-                        text = { Text("Restore") },
-                        leadingIcon = { Icon(Icons.Outlined.Restore, null) },
-                        enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
-                        onClick = {
-                            onMenuVisibleChange(false)
-                            actions.onRestore(selectedAssets)
-                            onSelectionChange(selection.clear())
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Delete permanently") },
-                        leadingIcon = { Icon(Icons.Outlined.Delete, null) },
-                        enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
-                        onClick = {
-                            onMenuVisibleChange(false)
-                            actions.onDeletePermanently(selectedAssets)
-                            onSelectionChange(selection.clear())
-                        },
-                    )
-                } else {
-                    DropdownMenuItem(
-                        text = { Text(if (inArchive) "Unarchive" else "Archive") },
-                        leadingIcon = { Icon(Icons.Outlined.Archive, null) },
-                        onClick = {
-                            onMenuVisibleChange(false)
-                            actions.onSetArchived(selection.selectedIds, !inArchive)
-                            onSelectionChange(selection.clear())
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Mark sensitive") },
-                        leadingIcon = { Icon(Icons.Outlined.VisibilityOff, null) },
-                        onClick = {
-                            onMenuVisibleChange(false)
-                            val mark = bulkMarkAction(selection.selectedIds, state.sensitiveIds) == BulkMarkAction.MARK
-                            actions.onSetSensitive(selection.selectedIds, mark)
-                            onSelectionChange(selection.clear())
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Share without common EXIF metadata") },
-                        leadingIcon = { Icon(Icons.Outlined.Share, null) },
-                        enabled = selectedAssets.all { !it.isVideo && it.mimeType.startsWith("image/") },
-                        onClick = {
-                            onMenuVisibleChange(false)
-                            actions.onShareClean(selectedAssets)
-                            onSelectionChange(selection.clear())
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Copy to folder") },
-                        leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
-                        onClick = {
-                            onMenuVisibleChange(false)
-                            actions.onCopyToFolder(selectedAssets)
-                            onSelectionChange(selection.clear())
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Move to folder safely") },
-                        leadingIcon = { Icon(Icons.Outlined.DriveFileMove, null) },
-                        enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
-                        onClick = {
-                            onMenuVisibleChange(false)
-                            actions.onMoveToFolder(selectedAssets)
-                            onSelectionChange(selection.clear())
-                        },
-                    )
-                    if (selectedAssets.size == 1) {
-                        DropdownMenuItem(
-                            text = { Text("Rename file") },
-                            leadingIcon = { Icon(Icons.Outlined.Edit, null) },
-                            onClick = {
-                                onMenuVisibleChange(false)
-                                onRenameAsset(selectedAssets.first())
-                            },
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text("Add to collection") },
-                        leadingIcon = { Icon(Icons.Outlined.Collections, null) },
-                        onClick = {
-                            onMenuVisibleChange(false)
-                            onAddToCollection(selection.selectedIds)
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Add tag") },
-                        leadingIcon = { Icon(Icons.Outlined.Label, null) },
-                        onClick = {
-                            onMenuVisibleChange(false)
-                            onAddTag(selection.selectedIds)
-                        },
-                    )
-                    tagRoute?.let { tag ->
-                        DropdownMenuItem(
-                            text = { Text("Remove #${tag.tag}") },
-                            leadingIcon = { Icon(Icons.Outlined.Close, null) },
-                            onClick = {
-                                onMenuVisibleChange(false)
-                                actions.onRemoveTag(selection.selectedIds, tag.tag)
-                                onSelectionChange(selection.clear())
-                            },
-                        )
-                    }
-                    collectionRoute?.let { collection ->
-                        DropdownMenuItem(
-                            text = { Text("Remove from collection") },
-                            leadingIcon = { Icon(Icons.Outlined.Close, null) },
-                            onClick = {
-                                onMenuVisibleChange(false)
-                                actions.onRemoveFromCollection(collection.id, selection.selectedIds)
-                                onSelectionChange(selection.clear())
-                            },
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text("Move to trash") },
-                        leadingIcon = { Icon(Icons.Outlined.Delete, null) },
-                        enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
-                        onClick = {
-                            onMenuVisibleChange(false)
-                            actions.onMoveToTrash(selectedAssets)
-                            onSelectionChange(selection.clear())
-                        },
-                    )
-                }
+            SelectionGlyph(R.drawable.ic_action_copy, "Copy to folder") {
+                actions.onCopyToFolder(selectedAssets)
             }
         }
     }
@@ -1155,14 +1027,14 @@ private fun BoxScope.SelectionOverlay(
         Text(
             text = "${selection.count}",
             color = Color.White,
-            style = TextStyle(fontSize = 28.sp, lineHeight = 36.sp),
+            style = TextStyle(fontFamily = HyleGrotesk, fontSize = 28.sp, lineHeight = 36.sp),
         )
         Text(
             text = "SELECTED",
             color = Color.White.copy(alpha = 0.5f),
             // Uppercase in the string rather than via textTransform, and at half opacity: the
             // count is the number you read and this is the unit beside it.
-            style = TextStyle(fontSize = 20.sp, lineHeight = 26.sp),
+            style = TextStyle(fontFamily = HyleGrotesk, fontSize = 20.sp, lineHeight = 26.sp),
             modifier = Modifier.padding(start = 4.dp),
         )
         Spacer(Modifier.weight(1f))
@@ -1208,7 +1080,7 @@ private fun BoxScope.SelectionOverlay(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            Icons.Outlined.DeleteOutline,
+            painter = painterResource(R.drawable.ic_action_delete),
             contentDescription = if (inTrash) "Delete permanently" else "Move to trash",
             tint = Color.White,
             modifier = Modifier.size(SELECTION_TRASH_GLYPH.dp),
@@ -1225,12 +1097,12 @@ private fun BoxScope.SelectionOverlay(
  */
 @Composable
 private fun SelectionGlyph(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    @DrawableRes icon: Int,
     description: String,
     onClick: () -> Unit,
 ) {
     Icon(
-        imageVector = icon,
+        painter = painterResource(icon),
         contentDescription = description,
         tint = Color.White,
         modifier = Modifier

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Owner's own glyph: a sheet over a dashed sheet. Path data verbatim. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="30dp"
+    android:height="30dp"
+    android:viewportWidth="30"
+    android:viewportHeight="30"
+    android:tint="?attr/colorControlNormal">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M6.25 27.5H5C4.30965 27.5 3.75 26.9404 3.75 26.25V25H6.25V27.5ZM10.625 27.5H8.125V25H10.625V27.5ZM15 27.5H12.5V25H15V27.5ZM20 26.25L19.9939 26.3781C19.9298 27.0084 19.3971 27.5 18.75 27.5H17.5V25H20V26.25ZM6.25 23.125H3.75V20.625H6.25V23.125ZM23.8781 2.5061C24.5084 2.57026 25 3.1029 25 3.75V21.25C25 21.9404 24.4404 22.5 23.75 22.5H10C9.30965 22.5 8.75 21.9404 8.75 21.25V3.75L8.7561 3.62182C8.82026 2.99166 9.3529 2.5 10 2.5H23.75L23.8781 2.5061ZM6.25 18.75H3.75V16.25H6.25V18.75ZM6.25 14.375H3.75V11.875H6.25V14.375ZM6.25 10H3.75V8.75L3.7561 8.62183C3.82026 7.99166 4.3529 7.5 5 7.5H6.25V10Z" />
+</vector>
