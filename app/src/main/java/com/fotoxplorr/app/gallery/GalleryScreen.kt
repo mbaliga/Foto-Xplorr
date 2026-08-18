@@ -90,8 +90,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.hyle.FloatingPillControl
-import com.fotoxplorr.app.hyle.NotificationRoom
-import com.fotoxplorr.app.hyle.notificationBandHeight
+import com.fotoxplorr.app.hyle.ActivityShade
+import com.fotoxplorr.app.hyle.ActivityKind
+import com.fotoxplorr.app.hyle.BackgroundActivity
+import com.fotoxplorr.app.hyle.ShadeState
+import com.fotoxplorr.app.hyle.shadeHeight
 import dev.aarso.cellshell.EdgeTimelineScrubber
 import dev.aarso.cellshell.RoomEdge
 import dev.aarso.cellshell.ShakeToRefresh
@@ -107,6 +110,49 @@ import com.fotoxplorr.app.spatial.GeoMetadataRepository
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.SpatialExperience
 import kotlinx.coroutines.launch
+
+/**
+ * The app's real background jobs, as the shade's list.
+ *
+ * Pure and separate from the composable so the mapping can be asserted: which jobs appear, in what
+ * order, and — the part worth pinning — that a FINISHED job does not linger in the list. A shade
+ * showing a completed scan for ever is how a status surface becomes furniture nobody reads.
+ *
+ * Order is stable and deliberate: the scan first, because everything else depends on it having
+ * run. The shade's expanded state gives its first entry the hero panel, so this order decides
+ * which job gets the room.
+ */
+internal fun buildBackgroundActivities(state: GalleryUiState): List<BackgroundActivity> = buildList {
+    when (val scan = state.scanState) {
+        is ScanState.Scanning -> add(
+            BackgroundActivity(
+                id = "scan",
+                kind = ActivityKind.SCANNING,
+                completed = scan.scanned,
+                total = scan.discovered,
+            ),
+        )
+        is ScanState.Error -> add(
+            BackgroundActivity(id = "scan", kind = ActivityKind.SCANNING, error = scan.message),
+        )
+        // Idle and Complete are not activities. "Finished" is the absence of a row, not a row
+        // saying finished.
+        else -> Unit
+    }
+
+    val recognition = state.recognitionProgress
+    if (recognition.running || recognition.message != null) {
+        add(
+            BackgroundActivity(
+                id = "recognition",
+                kind = ActivityKind.RECOGNISING,
+                completed = recognition.completed,
+                total = recognition.total,
+                error = recognition.message,
+            ),
+        )
+    }
+}
 
 /** One geo index for the whole app; see [GalleryScreen]'s parameter of the same name. */
 @Composable
@@ -303,24 +349,27 @@ private fun GalleryBrowser(
     var addTagIds by remember { mutableStateOf<Set<MediaId>?>(null) }
     var passwordRequest by remember { mutableStateOf<PasswordRequest?>(null) }
     var legacyScreen by remember { mutableStateOf<LegacyScreen?>(null) }
-    // Hoisted out of NotificationRoom because the shell has to reserve the same strip its pull
-    // gesture lives in -- see topReserve below. One state, so the layer and the gesture zone can
-    // never be different sizes.
-    var notificationExpanded by remember { mutableStateOf(false) }
-    // Never while selecting: recognition runs for many minutes on a large library, and a
-    // background progress line sharing the top strip with the selection's action cluster reads as
-    // two unrelated toolbars fighting over it.
-    val notificationRevealed = !selection.isActive && (
-        state.recognitionProgress.running || state.recognitionProgress.message != null
-        )
-    // Collapse when the layer goes away, so it does not reappear expanded next time.
-    LaunchedEffect(notificationRevealed) { if (!notificationRevealed) notificationExpanded = false }
-    val notificationReserve = notificationBandHeight(
-        scanState = state.scanState,
-        recognition = state.recognitionProgress,
-        revealed = notificationRevealed,
-        expanded = notificationExpanded,
-    )
+    // Hoisted because the shell must reserve the same strip the shade's pull gesture lives in
+    // -- see topReserve below. One state, so the shade and the gesture zone cannot differ.
+    var shadeState by remember { mutableStateOf(ShadeState.COLLAPSED) }
+    // What the app is actually doing, as a list. Two real jobs today -- the library scan and the
+    // recognition pass -- and the type takes any number, because they genuinely overlap and the
+    // owner asked for several at once. A move or a backup registers here the same way.
+    //
+    // Never while selecting: the shade and the selection's action bar occupy the same strip, and
+    // recognition runs for many minutes on a large library, so the two would collide for most of
+    // the time the user spends choosing photos.
+    val activities = remember(state.scanState, state.recognitionProgress, selection.isActive) {
+        if (selection.isActive) emptyList() else buildBackgroundActivities(state)
+    }
+    // Collapse when the last job ends, so the shade does not reappear expanded next time one
+    // starts. Keyed on emptiness rather than on the list, which changes on every progress tick.
+    val anyActivity = activities.isNotEmpty()
+    LaunchedEffect(anyActivity) { if (!anyActivity) shadeState = ShadeState.COLLAPSED }
+    // The same number the shade draws itself at, handed to the spatial shell so its top-edge
+    // gesture starts below the shade. Two sources for this would mean either the shade cannot be
+    // pulled or the top room cannot be opened.
+    val notificationReserve = shadeHeight(shadeState, activities.size).dp
 
     val gridState = rememberLazyGridState()
     val gridScope = rememberCoroutineScope()
@@ -629,25 +678,12 @@ private fun GalleryBrowser(
                             // now physical (ShakeToRefresh below); backup is an explicit,
                             // named item in the settings room's Data tab instead of a gesture.
                             //
-                            // The notification is no longer a sibling in this Column. It is a
-                            // layer *behind* the grid, and the grid's frame recedes to uncover
-                            // it — see NotificationRoom.
-                            // recognitionProgress is passed, not just consulted for showWhenIdle:
-                            // it used to decide whether to OPEN the layer while the copy was
-                            // written from scanState alone, so the banner could open with nothing
-                            // to say and render a bare warning glyph.
-                            route == BrowserRoute.Root -> NotificationRoom(
-                                scanState = state.scanState,
-                                recognition = state.recognitionProgress,
-                                // Never while selecting. Recognition runs for many minutes on a
-                                // large library, and a background progress line sharing the top
-                                // of the screen with the selection's action cluster reads as two
-                                // unrelated toolbars fighting for the same strip. The selection
-                                // is what the user is doing; the indexer can wait its turn.
-                                showWhenIdle = notificationRevealed,
-                                expanded = notificationExpanded,
-                                onExpandedChange = { notificationExpanded = it },
-                                onRescan = actions.onRefresh,
+                            // The shade is drawn OVER this content and never displaces it, so
+                            // the grid does not move as jobs start and finish -- see ActivityShade.
+                            route == BrowserRoute.Root -> ActivityShade(
+                                activities = activities,
+                                state = shadeState,
+                                onStateChange = { shadeState = it },
                             ) {
                                 Column {
                                     ShakeToRefresh(onShake = actions.onRefresh)
@@ -948,10 +984,12 @@ private fun BoxScope.SelectionOverlay(
             .background(Color.Black)
             .statusBarsPadding()
             .height(SELECTION_BAR_HEIGHT.dp)
-            .width(SELECTION_BAR_WIDTH.dp)
-            .padding(start = SELECTION_GLYPH_INSET.dp),
+            // Sized to its contents rather than pinned to the mockup's 209dp. With the mockup's
+            // own three glyphs the arithmetic lands on exactly 209 (44 lead + 3 x 46 pitch + 27
+            // trail), so nothing is lost; with a fourth the bar grows instead of clipping the
+            // last glyph, which a fixed width did — 4 x 46 needs 184dp and 209 leaves 165.
+            .padding(start = SELECTION_GLYPH_INSET.dp, end = SELECTION_GLYPH_TRAIL.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(SELECTION_GLYPH_GAP.dp),
     ) {
         if (!inTrash) {
             SelectionGlyph(Icons.Filled.CopyAll, "Copy to folder") {
@@ -1138,7 +1176,10 @@ private fun BoxScope.SelectionOverlay(
                     onClick = { onSelectionChange(selection.clear()) },
                 ),
         ) {
-            val inset = (size.minDimension - SELECTION_DISMISS_ARM_PX) / 2f
+            // In dp, converted here. It was a raw pixel constant, which made the ✕ a different
+            // physical size on every screen density — 15dp on a 2.6x phone and 11dp on a 3.5x one.
+            val arm = SELECTION_DISMISS_ARM.dp.toPx()
+            val inset = (size.minDimension - arm) / 2f
             val far = size.minDimension - inset
             drawLine(Color.White, Offset(inset, inset), Offset(far, far), strokeWidth = 3.1f * density)
             drawLine(Color.White, Offset(far, inset), Offset(inset, far), strokeWidth = 3.1f * density)
@@ -1194,7 +1235,10 @@ private fun SelectionGlyph(
         tint = Color.White,
         modifier = Modifier
             .clickable(onClickLabel = description, onClick = onClick)
-            .padding(vertical = 8.dp)
+            // Padding OUTSIDE the size, and on both axes: this is what makes each glyph a 46dp
+            // square target sitting on the mockup's 46dp pitch. It was vertical-only, which left
+            // a 30dp-wide target and made the row space its glyphs by gaps instead of by pitch.
+            .padding(SELECTION_GLYPH_PAD.dp)
             .size(SELECTION_GLYPH.dp),
     )
 }
@@ -1206,8 +1250,7 @@ private fun SelectionGlyph(
 /** The mockup insets the top bar and the pill by 8dp and 4dp; one value reads as deliberate. */
 private const val SELECTION_BAR_INSET = 6
 
-/** Top bar: 209.08 x 50.79 in the mockup. */
-private const val SELECTION_BAR_WIDTH = 209
+/** Top bar: 209.08 x 50.79 in the mockup. The width is derived, not set — see the lead and trail. */
 private const val SELECTION_BAR_HEIGHT = 51
 
 /** `box-shadow: 0 4px 8px rgba(0,0,0,0.25)` under the bar, and `0 -4px 4px` above the trash. */
@@ -1216,9 +1259,12 @@ private const val SELECTION_BAR_SHADOW = 8
 /** Glyphs sit 52dp into a bar that starts at 8dp, so 44dp of bare black leads them. */
 private const val SELECTION_GLYPH_INSET = 44
 
-/** 30dp glyphs on a 46dp pitch leaves 16dp between them. */
+/** 30dp glyphs with 8dp all round: a 46dp square target, which IS the mockup's 46dp pitch. */
 private const val SELECTION_GLYPH = 30
-private const val SELECTION_GLYPH_GAP = 16
+private const val SELECTION_GLYPH_PAD = 8
+
+/** What follows the last glyph, so three of them land the bar on the mockup's 209dp. */
+private const val SELECTION_GLYPH_TRAIL = 27
 
 /** Pill: 4dp from the edge, 332dp of a 440dp screen, 44dp tall, 16dp radius. */
 private const val SELECTION_PILL_FRACTION = 0.755f
@@ -1227,7 +1273,7 @@ private const val SELECTION_PILL_RADIUS = 16
 
 /** The ✕ is 15.27 x 14 in the mockup; the target around it is a real 44dp. */
 private const val SELECTION_DISMISS_TARGET = 44
-private const val SELECTION_DISMISS_ARM_PX = 40f
+private const val SELECTION_DISMISS_ARM = 15
 
 /**
  * Trash: 134 x 47 in the mockup at left 301, which would overlap the pill. The screenshot shows a
