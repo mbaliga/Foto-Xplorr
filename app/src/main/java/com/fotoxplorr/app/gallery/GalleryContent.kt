@@ -485,14 +485,29 @@ fun AlbumsScreen(
         }
         items(albums, key = { "album:${it.key}" }) { album ->
             val locked = album.key in lockedFolders && album.key !in unlockedFolders
-            AlbumCard(
-                name = album.name,
-                count = album.count,
-                cover = if (locked) null else album.cover,
-                locked = locked,
-                collection = false,
-                onClick = { onOpenAlbum(album) },
-            )
+            if (locked) {
+                // A locked folder shows no photos at all, so there is nothing to stack -- and a
+                // fanned stack of blank rectangles would imply content it is deliberately hiding.
+                AlbumCard(
+                    name = album.name,
+                    count = album.count,
+                    cover = null,
+                    locked = true,
+                    collection = false,
+                    onClick = { onOpenAlbum(album) },
+                )
+            } else {
+                AlbumStack(
+                    covers = album.covers,
+                    label = album.name,
+                    count = album.count,
+                    stackKey = album.key,
+                    modifier = Modifier.combinedClickable(
+                        onClick = { onOpenAlbum(album) },
+                        onLongClick = { onOpenAlbum(album) },
+                    ),
+                )
+            }
         }
         item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(88.dp)) }
     }

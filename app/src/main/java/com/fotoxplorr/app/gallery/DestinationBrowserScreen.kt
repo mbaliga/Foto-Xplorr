@@ -422,6 +422,7 @@ private fun RailThumbnailCascade(assets: List<MediaAsset>) {
  */
 enum class LegacyScreen(val label: String) {
     ALBUMS("Albums"),
+    CALENDAR("Calendar"),
     DISCOVER("Discover"),
     LIBRARY("Library"),
 }
@@ -455,6 +456,14 @@ fun LegacyScreenHost(
                 },
                 onOpenCollection = { collection ->
                     onOpenRoute(BrowserRoute.Collection(collection.id, collection.name))
+                },
+            )
+            LegacyScreen.CALENDAR -> CalendarScreen(
+                assets = state.assets,
+                // A day opens as a route rather than a nested grid, so the calendar hands off to
+                // exactly the same browsing surface everything else uses.
+                onOpenDay = { dayAssets ->
+                    dayAssets.firstOrNull()?.let { actions.onOpenAsset(it, dayAssets) }
                 },
             )
             LegacyScreen.DISCOVER -> DiscoverScreen(

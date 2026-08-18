@@ -33,6 +33,12 @@ data class AlbumSummary(
     val name: String,
     val count: Int,
     val cover: MediaAsset,
+    /**
+     * The top few photos, newest first, for the fanned album stack. [cover] is always the first
+     * of these; it is kept as its own field because plenty of callers want exactly one photo and
+     * should not have to reach into a list to get it.
+     */
+    val covers: List<MediaAsset> = listOf(cover),
 )
 
 data class TimelineGroup(
@@ -220,11 +226,15 @@ internal fun buildAlbumSummaries(
         .filterNot { it.isTrashed }
         .groupBy { folderIdentity(it).key.value }
         .map { (key, items) ->
+            // Sorted once and reused for both fields: `maxBy` followed by a separate sort would
+            // walk the album twice, and on a folder with thousands of photos that is not free.
+            val newestFirst = items.sortedByDescending { it.dateTakenMillis }
             AlbumSummary(
                 key = key,
                 name = folderIdentity(items.first()).displayName,
                 count = items.size,
-                cover = items.maxBy { it.dateTakenMillis },
+                cover = newestFirst.first(),
+                covers = newestFirst.take(ALBUM_STACK_COVERS),
             )
         }
         .filter { normalizedQuery.isEmpty() || it.name.lowercase().contains(normalizedQuery) }
@@ -327,3 +337,6 @@ private data class DuplicateKey(
 
 private const val RECENT_WINDOW_MILLIS = 30L * 24L * 60L * 60L * 1_000L
 private const val LARGE_FILE_THRESHOLD_BYTES = 20L * 1024L * 1024L
+
+/** How many photos an album stack fans out. Matches AlbumStack's own layer cap. */
+private const val ALBUM_STACK_COVERS = 3
