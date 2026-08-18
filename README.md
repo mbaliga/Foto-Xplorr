@@ -1,57 +1,49 @@
 # Foto Xplorr — test build (branch claude/fotoz-ui-interactions-bxvgbw)
 
 Debug builds, arm64-v8a only, stripped + 16 KB-page aligned + debug-signed.
-Built 18 Aug 2026 from commit a988518.
+Built 18 Aug 2026 from commit 901cef7.
 
 | File | Flavor | Installs as |
 |---|---|---|
 | `foto-xplorr-offline.apk` | offline | `com.fotoxplorr.app.debug` |
 | `foto-xplorr-connect.apk` | connect | `com.fotoxplorr.app.connect.debug` |
 
-## The editor is real now
+## Selection chrome, built to your mockup
 
-Fourteen adjustments in three groups, ordered the way you'd actually work:
+Measured from the CSS you sent rather than interpreted.
 
-- **Light** — exposure (in stops, ±2), contrast, highlights, shadows,
-  whites, blacks
-- **Colour** — temperature, tint, vibrance, saturation
-- **Detail** — sharpen, clarity, vignette
+- **Top left** — black bar bled into the corner, 209×51, square-cornered,
+  with your 0/4/8 shadow. Three 30dp white glyphs on a 46dp pitch starting
+  44dp in. That leading run of bare black is in your design and is what makes
+  the bar read as a cut-out rather than a toolbar.
+- **Bottom left** — 44dp pill from the screen edge across three quarters of
+  the width, 16dp radius. Count at 28sp, `SELECTED` at 20sp uppercase and
+  half opacity, then the long empty run of black, then the dismiss near its
+  right end.
+- **Bottom right** — the trash: black, **square-cornered**, flush into the
+  corner, separated from the pill by a gap of bare photograph.
 
-Every slider has a one-tap reset next to its name.
+The differing shapes are load-bearing: the pill is rounded and the trash is
+not, and that is the only signal distinguishing "how many" from "destroy
+them". It survives being glanced at.
 
-**Saving is full-resolution.** It previously saved the *preview* bitmap,
-capped at 2048px — so every edit you'd saved was a downscaled copy. Fixed.
+### Two deliberate deviations, both recorded in the code
 
-**Save asks you**, and remembers if you tick "do this every time". One
-honest caveat: *Replace the original* is offered but not wired up — it needs
-a per-file write grant this build doesn't request. Choosing it saves a copy
-and says so, rather than claiming a replacement that didn't happen.
+- The trash is **96dp** wide, not the CSS's 134. At 134 starting at x=301 it
+  would overlap the pill, and your screenshot plainly shows a gap.
+- **Space Grotesk is not bundled**, so the sizes are yours and the typeface is
+  the platform's. Say the word and I'll add the font (it's OFL-licensed).
 
-The engine underneath is 40 JVM tests, and several found real bugs while
-being written. What they pin is the class of error you only see as a
-photograph that came out subtly wrong: exposure applied in gamma space
-instead of linear light (a stop would clip mid-grey to white), contrast as a
-linear scale (flattens both ends of the histogram), tone regions with a hard
-cutoff (a visible seam across every sky), desaturation by flat average
-instead of luma (green goes near-black), and tone curves on a natural spline
-(overshoots between control points — haloed edges and inverted patches).
+### One thing I had to choose
 
-## Also fixed
+Your bar shows zip / move / copy. There is no zip or archive-export action in
+the app at all, so the three slots are **copy to folder**, **move to folder**,
+**share**, plus an overflow for everything else. Tell me if you want a real
+"export as zip" action and I'll build it.
 
-**The swivel faces the room** instead of turning away from it.
+## Also in this build
 
-**Sharing worked at all** — it threw on every attempt. The share folder was
-renamed while the FileProvider config still declared the old name.
-
-## Still to come on the editor
-
-- Curve editor UI (the engine has per-channel curves; nothing draws them yet)
-- Draggable crop box (presets only for now)
-- Layers, on top of this engine
-- Replace-the-original write grant
-
-## Known limits
-
-- Both map and compass read GPS from inside your photos; most of this
-  library is Pinterest/Reddit saves with GPS stripped. A photo with none now
-  gets a spinning map and a pin you can place by hand.
+The editor from the previous build (14 adjustments, full-resolution saves,
+save-mode choice), the swivel facing the room, the share fix, hold-to-peek,
+the four-edge room model, complete photo headers, and the placeable pin on a
+spinning map.
