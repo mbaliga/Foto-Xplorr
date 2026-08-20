@@ -22,7 +22,6 @@ import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -398,7 +397,11 @@ private fun SwitchRow(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        com.fotoxplorr.app.hyle.HyleToggle(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            description = label,
+        )
     }
 }
 

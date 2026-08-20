@@ -3,12 +3,17 @@ package com.fotoxplorr.app.render
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.Icon
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.SelectionOverlay
 import com.fotoxplorr.app.hyle.ActivityKind
@@ -261,6 +266,106 @@ class SurfaceRenderTest {
             )
         }
     }
+
+    /** The Hyle control gallery on a light card, the way the owner's control-sheet draws it. */
+    @Test
+    fun `hyle toggle gallery`() {
+        compose.setContent {
+            FotoXplorrTheme(GalleryPreferencesState()) {
+                Box(Modifier.fillMaxSize().background(Color(0xFFF4F4F5))) {
+                    androidx.compose.foundation.layout.Column(
+                        modifier = Modifier
+                            .align(androidx.compose.ui.Alignment.Center)
+                            .padding(24.dp),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(28.dp),
+                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                    ) {
+                        com.fotoxplorr.app.hyle.HyleToggle(checked = false, onCheckedChange = {})
+                        com.fotoxplorr.app.hyle.HyleToggle(checked = true, onCheckedChange = {})
+                        com.fotoxplorr.app.hyle.HyleToggle(
+                            checked = false, onCheckedChange = {}, glyphs = '#' to '*',
+                        )
+                        com.fotoxplorr.app.hyle.HyleToggle(
+                            checked = true, onCheckedChange = {}, glyphs = '#' to '*',
+                        )
+                        com.fotoxplorr.app.hyle.HyleToggle(
+                            checked = false, onCheckedChange = {}, enabled = false,
+                        )
+                    }
+                }
+            }
+        }
+        compose.onRoot().captureRoboImage("build/renders/hyle-toggle.png")
+    }
+
+    /** The Hyle field states, the way the owner's control-sheet lays them out. */
+    @Test
+    fun `hyle field gallery`() {
+        compose.setContent {
+            FotoXplorrTheme(GalleryPreferencesState()) {
+                Box(Modifier.fillMaxSize().background(Color(0xFFFFFFFF))) {
+                    androidx.compose.foundation.layout.Column(
+                        modifier = Modifier
+                            .align(androidx.compose.ui.Alignment.Center)
+                            .padding(horizontal = 20.dp),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(18.dp),
+                    ) {
+                        com.fotoxplorr.app.hyle.HyleField(
+                            style = com.fotoxplorr.app.hyle.HyleFieldStyle(error = true),
+                        ) { FieldLabel("Error / Invalid Input (Not Selected)") }
+                        com.fotoxplorr.app.hyle.HyleField(
+                            style = com.fotoxplorr.app.hyle.HyleFieldStyle(error = true, focused = true, mandatory = true),
+                        ) { FieldLabel("Error / Invalid Input & Mandatory (Selected)") }
+                        com.fotoxplorr.app.hyle.HyleField(
+                            style = com.fotoxplorr.app.hyle.HyleFieldStyle(error = true, focused = true),
+                        ) { FieldLabel("Error / Invalid Input (Selected)") }
+                        com.fotoxplorr.app.hyle.HyleField(
+                            style = com.fotoxplorr.app.hyle.HyleFieldStyle(focused = true, mandatory = true),
+                        ) { FieldLabel("Selected & Mandatory") }
+                        com.fotoxplorr.app.hyle.HyleField(
+                            style = com.fotoxplorr.app.hyle.HyleFieldStyle(focused = true),
+                        ) { FieldLabel("Selected") }
+                        com.fotoxplorr.app.hyle.HyleField(
+                            style = com.fotoxplorr.app.hyle.HyleFieldStyle(),
+                        ) { FieldLabel("Not Selected") }
+                        com.fotoxplorr.app.hyle.HyleField(
+                            style = com.fotoxplorr.app.hyle.HyleFieldStyle(enabled = false),
+                        ) { FieldLabel("Disabled", faint = true) }
+                        com.fotoxplorr.app.hyle.HyleTextField(
+                            value = "sunset at the coast",
+                            onValueChange = {},
+                            leading = {
+                                Icon(Icons.Outlined.Search, contentDescription = null, tint = Color(0xFF3A3A44))
+                            },
+                        )
+                        com.fotoxplorr.app.hyle.HyleTextField(
+                            value = "",
+                            onValueChange = {},
+                            placeholder = "Search names, albums, types and tags",
+                            leading = {
+                                Icon(Icons.Outlined.Search, contentDescription = null, tint = Color(0xFF3A3A44))
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        compose.onRoot().captureRoboImage("build/renders/hyle-field.png")
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun FieldLabel(text: String, faint: Boolean = false) {
+    androidx.compose.material3.Text(
+        text = text,
+        color = if (faint) Color(0xFFB9B9BE) else Color(0xFF2A2A30),
+        style = androidx.compose.ui.text.TextStyle(
+            fontFamily = com.fotoxplorr.app.ui.HyleGrotesk,
+            fontSize = 17.sp,
+        ),
+        maxLines = 1,
+        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+    )
 }
 
 /** Every action, wired to nothing. Renders need the shape, not the behaviour. */

@@ -35,8 +35,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -362,11 +360,11 @@ private fun ProviderCard(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            Switch(
+            com.fotoxplorr.app.hyle.HyleToggle(
                 checked = provider.enabled,
                 enabled = provider.hasSecret,
                 onCheckedChange = onEnabledChange,
-                colors = darkSwitchColors(),
+                description = provider.label,
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -660,15 +658,6 @@ private fun DetailsToggle(expanded: Boolean, onToggle: () -> Unit, subject: Stri
 private fun StatusDot(color: Color) {
     Box(Modifier.size(8.dp).background(color, RoundedCornerShape(50)))
 }
-
-@Composable
-private fun darkSwitchColors() = SwitchDefaults.colors(
-    checkedThumbColor = PRIMARY_TEXT,
-    checkedTrackColor = MaterialTheme.colorScheme.primary,
-    uncheckedThumbColor = SECONDARY_TEXT,
-    uncheckedTrackColor = Color.White.copy(alpha = 0.15f),
-    uncheckedBorderColor = Color.Transparent,
-)
 
 private fun AiProviderKind.endpointPreview(baseUrl: String, model: String): String = when (this) {
     AiProviderKind.OPENAI_RESPONSES -> "${baseUrl.trimEnd('/')}/v1/responses"

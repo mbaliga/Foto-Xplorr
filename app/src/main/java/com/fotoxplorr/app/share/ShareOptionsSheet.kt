@@ -20,8 +20,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -242,16 +240,10 @@ private fun SheetSwitch(
             Text(label, color = PRIMARY_TEXT, style = MaterialTheme.typography.bodyLarge)
             Text(caption, color = SECONDARY_TEXT, style = MaterialTheme.typography.bodySmall)
         }
-        Switch(
+        com.fotoxplorr.app.hyle.HyleToggle(
             checked = checked,
             onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = PRIMARY_TEXT,
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                uncheckedThumbColor = SECONDARY_TEXT,
-                uncheckedTrackColor = Color.White.copy(alpha = 0.15f),
-                uncheckedBorderColor = Color.Transparent,
-            ),
+            description = label,
         )
     }
 }

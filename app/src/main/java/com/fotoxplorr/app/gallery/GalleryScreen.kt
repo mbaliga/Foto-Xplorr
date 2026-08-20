@@ -59,7 +59,6 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -99,6 +98,16 @@ import com.fotoxplorr.app.hyle.ActivityKind
 import com.fotoxplorr.app.hyle.BackgroundActivity
 import com.fotoxplorr.app.hyle.ShadeState
 import com.fotoxplorr.app.hyle.shadeHeight
+import com.fotoxplorr.app.hyle.SelectionToolbarShape
+import com.fotoxplorr.app.hyle.SelectionPillShape
+import com.fotoxplorr.app.hyle.SelectionTrashShape
+import com.fotoxplorr.app.hyle.TOOLBAR_DESIGN_W
+import com.fotoxplorr.app.hyle.TOOLBAR_DESIGN_H
+import com.fotoxplorr.app.hyle.PILL_DESIGN_W
+import com.fotoxplorr.app.hyle.PILL_DESIGN_H
+import com.fotoxplorr.app.hyle.TRASH_DESIGN_W
+import com.fotoxplorr.app.hyle.TRASH_DESIGN_H
+import androidx.compose.foundation.layout.offset
 import dev.aarso.cellshell.EdgeTimelineScrubber
 import dev.aarso.cellshell.RoomEdge
 import dev.aarso.cellshell.ShakeToRefresh
@@ -654,22 +663,25 @@ private fun GalleryBrowser(
                 ) {
                     Column(Modifier.fillMaxSize()) {
                         if (searchVisible) {
-                            OutlinedTextField(
+                            com.fotoxplorr.app.hyle.HyleTextField(
                                 value = query,
                                 onValueChange = { query = it },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                                singleLine = true,
-                                leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                                trailingIcon = {
+                                placeholder = "Search names, albums, types and tags",
+                                leading = { Icon(Icons.Outlined.Search, null, tint = Color(0xFF3A3A44)) },
+                                trailing = {
                                     if (query.isNotEmpty()) {
                                         IconButton(onClick = { query = "" }) {
-                                            Icon(Icons.Outlined.Close, contentDescription = "Clear search")
+                                            Icon(
+                                                Icons.Outlined.Close,
+                                                contentDescription = "Clear search",
+                                                tint = Color(0xFF3A3A44),
+                                            )
                                         }
                                     }
                                 },
-                                placeholder = { Text("Search names, albums, types and tags") },
                             )
                         }
 
@@ -968,60 +980,53 @@ internal fun BoxScope.SelectionOverlay(
     onSelectionChange: (GallerySelection) -> Unit,
 ) {
     // ---- top-left: what you can DO with the selection ----
-    // Bled into the top-left corner, square-cornered, with the mockup's own shadow. The bar's
-    // background runs under the status bar because the mockup draws it from y=0; its CONTENT is
-    // inset by the status bar so the glyphs are not sitting behind the clock, which a literal
-    // reading of the mockup would have done.
-    Row(
+    // Hangs from the top edge and coves into it — the [SelectionToolbarShape] carries the exact
+    // flare from the mockup, so it reads as cut into the edge rather than as a card laid on top.
+    // Flush to y=0 with the mockup; the glyphs sit at the mockup's own y, no status-bar inset,
+    // because the selection overlay is shown in the immersive chrome where the bar is hidden.
+    Box(
         modifier = Modifier
             .align(Alignment.TopStart)
-            .padding(start = SELECTION_BAR_INSET.dp)
-            .shadow(SELECTION_BAR_SHADOW.dp, clip = false)
-            .background(Color.Black)
-            .statusBarsPadding()
-            .height(SELECTION_BAR_HEIGHT.dp)
-            // Sized to its contents rather than pinned to the mockup's 209dp. With the mockup's
-            // own three glyphs the arithmetic lands on exactly 209 (44 lead + 3 x 46 pitch + 27
-            // trail), so nothing is lost; with a fourth the bar grows instead of clipping the
-            // last glyph, which a fixed width did — 4 x 46 needs 184dp and 209 leaves 165.
-            .padding(start = SELECTION_GLYPH_INSET.dp, end = SELECTION_GLYPH_TRAIL.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .offset(x = TOOLBAR_LEFT.dp)
+            .shadow(SELECTION_BAR_SHADOW.dp, SelectionToolbarShape, clip = false)
+            .background(Color.Black, SelectionToolbarShape)
+            .size(width = TOOLBAR_DESIGN_W.dp, height = TOOLBAR_DESIGN_H.dp),
     ) {
         if (!inTrash) {
-            // The owner's own glyphs, in the mockup's own order. Its first slot is a zip, which
-            // has no action in the app yet -- there is no archive export -- so that slot carries
-            // share, which is the thing people actually reach for. The drawable is here and
-            // unused-by-name until an export exists to hang on it.
-            // Exactly the three glyphs the owner supplied, in the mockup's own slot order. No
-            // fourth: the bar is 209dp because it holds three, and everything else a selection can
-            // do lives in the actions room on the right edge, which is where the app already puts
-            // "what you can do here".
-            SelectionGlyph(R.drawable.ic_action_zip, "Export as zip") {
-                actions.onExportZip(selectedAssets)
-            }
-            SelectionGlyph(R.drawable.ic_action_move, "Move to folder") {
-                actions.onMoveToFolder(selectedAssets)
-            }
-            SelectionGlyph(R.drawable.ic_action_copy, "Copy to folder") {
-                actions.onCopyToFolder(selectedAssets)
+            // Exactly the three glyphs the owner supplied — zip, move, copy — in the mockup's own
+            // slot order, on its 46dp pitch. Everything else a selection can do lives in the
+            // actions room on the right edge.
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = TOOLBAR_GLYPH_INSET.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SelectionGlyph(R.drawable.ic_action_zip, "Export as zip") {
+                    actions.onExportZip(selectedAssets)
+                }
+                SelectionGlyph(R.drawable.ic_action_move, "Move to folder") {
+                    actions.onMoveToFolder(selectedAssets)
+                }
+                SelectionGlyph(R.drawable.ic_action_copy, "Copy to folder") {
+                    actions.onCopyToFolder(selectedAssets)
+                }
             }
         }
     }
 
     // ---- bottom-left: how many, and the way out ----
-    // A rounded pill from the screen edge across about three quarters of the width. The long run
-    // of empty black between the label and the ✕ is in the mockup, not an accident of layout: it
-    // is what puts the dismiss under a right thumb instead of beside the count, where it would be
-    // a mis-tap away from nothing in particular.
+    // A rounded pill whose right end is a cove cap ([SelectionPillShape]) — the mate of the trash
+    // notch beside it. The long run of empty black between the label and the ✕ is in the mockup,
+    // not an accident of layout: it puts the dismiss under a right thumb instead of beside the
+    // count, where it would be a mis-tap away from nothing in particular.
     Row(
         modifier = Modifier
             .align(Alignment.BottomStart)
-            .navigationBarsPadding()
-            .padding(start = SELECTION_BAR_INSET.dp, bottom = SELECTION_BAR_INSET.dp)
-            .fillMaxWidth(SELECTION_PILL_FRACTION)
-            .height(SELECTION_PILL_HEIGHT.dp)
-            .background(Color.Black, RoundedCornerShape(SELECTION_PILL_RADIUS.dp))
-            .padding(start = 9.dp, end = 12.dp),
+            .offset(x = PILL_LEFT.dp, y = -PILL_BOTTOM_GAP.dp)
+            .background(Color.Black, SelectionPillShape)
+            .size(width = PILL_BOX_W.dp, height = PILL_DESIGN_H.dp)
+            .padding(start = PILL_TEXT_INSET.dp, end = PILL_END_INSET.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -1035,7 +1040,7 @@ internal fun BoxScope.SelectionOverlay(
             // Uppercase in the string rather than via textTransform, and at half opacity: the
             // count is the number you read and this is the unit beside it.
             style = TextStyle(fontFamily = HyleGrotesk, fontSize = 20.sp, lineHeight = 26.sp),
-            modifier = Modifier.padding(start = 4.dp),
+            modifier = Modifier.padding(start = 6.dp),
         )
         Spacer(Modifier.weight(1f))
         // Drawn rather than an icon: the mockup's ✕ is two 3dp strokes, which no Material glyph
@@ -1059,16 +1064,16 @@ internal fun BoxScope.SelectionOverlay(
     }
 
     // ---- bottom-right: the destructive one, alone and shaped differently ----
-    // SQUARE-cornered against the pill's rounded one, flush into the corner, and separated from
-    // everything else by a gap of bare photograph. Three signals saying the same thing, because
-    // the one control here cannot be undone once Android's own confirmation is waved through.
+    // Rises from the bottom edge and coves into it ([SelectionTrashShape]) — the inverse of the
+    // toolbar, and shaped unlike the pill on purpose. Separated from the pill by a gap of bare
+    // photograph. The one destructive control, shaped so the hand knows it before the eye reads it.
     Box(
         modifier = Modifier
             .align(Alignment.BottomEnd)
-            .shadow(SELECTION_BAR_SHADOW.dp, clip = false)
-            .background(Color.Black)
-            .navigationBarsPadding()
-            .size(width = SELECTION_TRASH_WIDTH.dp, height = SELECTION_TRASH_HEIGHT.dp)
+            .offset(x = -TRASH_RIGHT.dp)
+            .shadow(SELECTION_BAR_SHADOW.dp, SelectionTrashShape, clip = false)
+            .background(Color.Black, SelectionTrashShape)
+            .size(width = TRASH_BOX_W.dp, height = TRASH_DESIGN_H.dp)
             .clickable(
                 enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
                 onClickLabel = if (inTrash) "Delete permanently" else "Move to trash",
@@ -1083,7 +1088,9 @@ internal fun BoxScope.SelectionOverlay(
             painter = painterResource(R.drawable.ic_action_delete),
             contentDescription = if (inTrash) "Delete permanently" else "Move to trash",
             tint = Color.White,
-            modifier = Modifier.size(SELECTION_TRASH_GLYPH.dp),
+            modifier = Modifier
+                .offset(y = TRASH_GLYPH_DROP.dp)
+                .size(SELECTION_TRASH_GLYPH.dp),
         )
     }
 }
@@ -1117,44 +1124,47 @@ private fun SelectionGlyph(
 
 // ---- selection chrome geometry, taken from the owner's mockup (440 x 956 dp) ----
 // Named rather than inlined because they are a spec someone handed over, not values that were
-// tuned here — a later "tidy these up" pass should have to notice that.
+// tuned here. The shapes themselves live in [com.fotoxplorr.app.hyle.HyleNotch]; these are the
+// mockup's own edge offsets and content insets that position them and their glyphs.
 
-/** The mockup insets the top bar and the pill by 8dp and 4dp; one value reads as deliberate. */
-private const val SELECTION_BAR_INSET = 6
-
-/** Top bar: 209.08 x 50.79 in the mockup. The width is derived, not set — see the lead and trail. */
-private const val SELECTION_BAR_HEIGHT = 51
-
-/** `box-shadow: 0 4px 8px rgba(0,0,0,0.25)` under the bar, and `0 -4px 4px` above the trash. */
+/** `box-shadow: 0 4px 8px` under the bar, `0 -4px 4px` above the trash — one value reads as deliberate. */
 private const val SELECTION_BAR_SHADOW = 8
 
-/** Glyphs sit 52dp into a bar that starts at 8dp, so 44dp of bare black leads them. */
-private const val SELECTION_GLYPH_INSET = 44
+/** Toolbar hangs 8dp in from the left edge (mockup `left: 8px`). */
+private const val TOOLBAR_LEFT = 8
 
-/** 30dp glyphs with 8dp all round: a 46dp square target, which IS the mockup's 46dp pitch. */
+/**
+ * Glyphs: 30dp icon + 8dp all round = a 46dp target on a 46dp pitch. The first target's icon must
+ * land at the toolbar's local x=44, so the padded target starts at 44 - 8 = 36.
+ */
+private const val TOOLBAR_GLYPH_INSET = 36
 private const val SELECTION_GLYPH = 30
 private const val SELECTION_GLYPH_PAD = 8
 
-/** What follows the last glyph, so three of them land the bar on the mockup's 209dp. */
-private const val SELECTION_GLYPH_TRAIL = 27
+// Pill and trash: the vector shapes carry the designer's own curves, but the mockup PNG the owner
+// diffs against draws them a shade smaller than the SVG export. Rendering each vector into a box a
+// little narrower than its native design width lands the cap peak and the notch width on the PNG's
+// own extents, without re-fitting the curves. PILL native is 316dp, trash 134dp.
+/** Pill: left edge 4dp in, bottom 3dp up; drawn into 303dp so the cove cap peaks where the PNG's does. */
+private const val PILL_LEFT = 4
+private const val PILL_BOTTOM_GAP = 3
+private const val PILL_BOX_W = 303
 
-/** Pill: 4dp from the edge, 332dp of a 440dp screen, 44dp tall, 16dp radius. */
-private const val SELECTION_PILL_FRACTION = 0.755f
-private const val SELECTION_PILL_HEIGHT = 44
-private const val SELECTION_PILL_RADIUS = 16
+/** Count sits just inside the rounded left corner; the ✕ sits near the right, before the cove. */
+private const val PILL_TEXT_INSET = 12
+private const val PILL_END_INSET = 10
 
 /** The ✕ is 15.27 x 14 in the mockup; the target around it is a real 44dp. */
 private const val SELECTION_DISMISS_TARGET = 44
 private const val SELECTION_DISMISS_ARM = 15
 
-/**
- * Trash: 134 x 47 in the mockup at left 301, which would overlap the pill. The screenshot shows a
- * clear gap of photograph between them, so the width follows the screenshot and the height follows
- * the CSS — 96dp leaves that gap on a 440dp screen and keeps a comfortable target.
- */
-private const val SELECTION_TRASH_WIDTH = 96
-private const val SELECTION_TRASH_HEIGHT = 47
-private const val SELECTION_TRASH_GLYPH = 34
+/** Trash: right edge 15dp in; drawn into 110dp (native 134) so the notch matches the PNG's width. */
+private const val TRASH_RIGHT = 15
+private const val TRASH_BOX_W = 110
+private const val SELECTION_TRASH_GLYPH = 32
+
+/** Nudge the trash glyph up from dead centre to sit with the mockup's own placement. */
+private const val TRASH_GLYPH_DROP = -2
 
 fun BrowserRoute.title(destination: HyleDestination): String = when (this) {
     BrowserRoute.Root -> destination.label
