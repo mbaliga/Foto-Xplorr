@@ -10,6 +10,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -219,16 +220,29 @@ private fun HeroPanel(activity: BackgroundActivity) {
         ) {
             // A stack of plates standing in for the mockup's stack of photographs: three
             // rectangles, fanned. Geometry rather than an asset, same as the album stacks.
-            Box(Modifier.size(width = 116.dp, height = 96.dp), contentAlignment = Alignment.Center) {
-                // Drawn back to front, so the accented plate is the one the eye lands on.
-                listOf(10f, -6f, 0f).forEachIndexed { index, angle ->
+            Box(Modifier.size(width = 132.dp, height = 108.dp), contentAlignment = Alignment.Center) {
+                // Drawn back to front, so the accented plate is the one the eye lands on. The two
+                // behind are OUTLINED rather than filled: at 18% white on a black ground they were
+                // invisible and the stack rendered as a single card, which is the whole point of
+                // the illustration lost.
+                listOf(14f, -8f, 0f).forEachIndexed { index, angle ->
+                    val front = index == 2
                     Box(
                         Modifier
                             .size(width = 72.dp, height = 84.dp)
                             .graphicsLayer { rotationZ = angle }
                             .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                if (index == 2) activity.kind.accent else Color.White.copy(alpha = 0.18f),
+                            .background(if (front) activity.kind.accent else Color(0xFF1C1C22))
+                            .then(
+                                if (front) {
+                                    Modifier
+                                } else {
+                                    Modifier.border(
+                                        1.dp,
+                                        Color.White.copy(alpha = 0.30f),
+                                        RoundedCornerShape(8.dp),
+                                    )
+                                },
                             ),
                     )
                 }

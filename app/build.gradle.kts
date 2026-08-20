@@ -74,7 +74,13 @@ android {
     }
 
     testOptions {
+        // Roborazzi renders real composables to PNG on the JVM. Needs Android resources on the
+        // unit-test classpath, which is off by default.
+        unitTests.isIncludeAndroidResources = true
         unitTests.all {
+            // Roborazzi reads this from the TEST JVM's properties, so a Gradle -D never reaches
+            // it: the tests pass and silently write no images.
+            it.systemProperty("roborazzi.test.record", "true")
             // The FX-005 perf baseline materialises a 500k-asset synthetic catalogue plus
             // its projection copies; the default 512 MB test heap OOMs before the timing
             // starts. Normal tests never approach this ceiling.
@@ -121,6 +127,14 @@ configurations.all {
 }
 
 dependencies {
+    // Screenshot rendering of the real composables, on the JVM, no emulator. Test-only, so it
+    // never reaches the runtime classpath the offline gate guards.
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.32.2")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.32.2")
+    testImplementation("androidx.compose.ui:ui-test-junit4:1.8.2")
+    debugImplementation("androidx.compose.ui:ui-test-manifest:1.8.2")
+
     val composeBom = platform("androidx.compose:compose-bom:2025.05.01")
     implementation(composeBom)
     androidTestImplementation(composeBom)

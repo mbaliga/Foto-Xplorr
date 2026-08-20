@@ -960,7 +960,7 @@ private fun GalleryBrowser(
  * glanced at.
  */
 @Composable
-private fun BoxScope.SelectionOverlay(
+internal fun BoxScope.SelectionOverlay(
     selection: GallerySelection,
     selectedAssets: List<MediaAsset>,
     inTrash: Boolean,
