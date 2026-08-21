@@ -128,6 +128,12 @@ private val STOPWORDS = setOf(
     "show", "showing", "find", "search", "with", "that", "this", "those", "these",
     "taken", "shot", "made", "downloaded", "saved", "captured", "from", "at", "on", "to",
     "was", "were", "is", "are", "and",
+    // `of` and `in` are field aliases (`of:flower`, `in:holidays`) AND English connectors. They
+    // belong here because `readTerm` checks the colon form first, so the alias still resolves;
+    // this only catches them standing bare, where they are noise. Without this, "pictures OF
+    // flowers IN August" demands a filename containing "of" and one containing "in", and finds
+    // nothing — which was exactly the observed failure.
+    "of", "in",
 )
 
 /**
@@ -309,8 +315,12 @@ private fun boundaryDate(
     if (!isAfter && !isBefore) return null
 
     val window = absoluteWindow(value, zone, today) ?: return null
+    // Inclusive on both sides: `after:2025-06-01` includes the 1st, `before:2025` includes none of
+    // 2025. Using the window's far edge for `after` excluded the named day itself, so
+    // `after:2025-06-01` silently skipped everything shot on the 1st — the classic off-by-one that
+    // is invisible until someone's photos go missing from a result.
     return if (isAfter) {
-        Term.DateWindow(window.toMillis, Long.MAX_VALUE, "after ${window.phrase}", negated)
+        Term.DateWindow(window.fromMillis, Long.MAX_VALUE, "after ${window.phrase}", negated)
     } else {
         Term.DateWindow(Long.MIN_VALUE, window.fromMillis, "before ${window.phrase}", negated)
     }
