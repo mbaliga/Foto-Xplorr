@@ -610,6 +610,10 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             total = viewerAssets.size,
             isFavorite = activeAsset.id in favoriteIds,
             isSensitive = activeAsset.id in sensitiveIds,
+            // Text the offline pass already read out of this photo. Looked up per asset rather
+            // than passed wholesale: the index holds every photo's text, and the viewer needs
+            // exactly one photo's worth.
+            liveTextBlocks = recognition.textByMedia[activeAsset.id].orEmpty(),
             hasPrevious = selectedIndex > 0,
             hasNext = selectedIndex < viewerAssets.lastIndex,
             canMoveToTrash = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,

@@ -110,6 +110,13 @@ fun ViewerScreen(
     onClearLocation: (() -> Unit)? = null,
     /** Play a slideshow in a random order rather than the browsing order. */
     slideshowShuffle: Boolean = false,
+    /**
+     * Text the offline recognition pass read out of THIS photo, positioned.
+     *
+     * Defaulted to empty so every existing call site keeps working and a photo with no recognised
+     * text simply has no text layer, rather than an invisible one intercepting taps.
+     */
+    liveTextBlocks: List<com.fotoxplorr.app.recognition.TextBlock> = emptyList(),
     /** Let GIFs and animated images play. */
     loopAnimations: Boolean = false,
     /** Start videos without waiting for a tap on play. */
@@ -310,8 +317,12 @@ fun ViewerScreen(
             if (asset.isVideo) {
                 VideoPlayer(asset = asset, modifier = Modifier.fillMaxSize())
             } else {
-                MediaImage(
-                    asset = asset,
+                // The photo and its text layer share ONE transform box. Putting the overlay
+                // inside the same graphicsLayer is what keeps the OCR boxes glued to the words
+                // under pinch, drag and rotate without the overlay knowing anything about the
+                // current gesture state -- the only arrangement that cannot drift out of
+                // alignment as the gesture code changes.
+                Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
@@ -321,8 +332,25 @@ fun ViewerScreen(
                             translationX = offsetX
                             translationY = offsetY
                         },
-                    contentScale = ContentScale.Fit,
-                )
+                ) {
+                    MediaImage(
+                        asset = asset,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit,
+                    )
+
+                    // Text found by the offline recognition pass, selectable in place. Only while
+                    // the chrome is up: the viewer's whole premise is that a photo is unobstructed
+                    // until asked otherwise, and tap targets over the picture are an obstruction
+                    // even when they are invisible.
+                    if (chromeVisible && liveTextBlocks.isNotEmpty()) {
+                        LiveTextOverlay(
+                            blocks = liveTextBlocks,
+                            imageWidth = asset.width,
+                            imageHeight = asset.height,
+                        )
+                    }
+                }
             }
 
             // All that is left over the photo, and only when asked for: where you are in the
