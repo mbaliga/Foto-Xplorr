@@ -74,3 +74,31 @@ jobs:
             app/build/outputs/apk/offline/debug/app-offline-debug.apk
             app/build/outputs/apk/connect/debug/app-connect-debug.apk
           if-no-files-found: error
+
+      # The debug APK above is ~187 MB, and the artifact holding both flavours is a ~225 MB
+      # download. That is a genuinely bad way to hand someone a build to try on a phone, so the
+      # sideloading path gets its own minified, resource-shrunk, per-ABI build. The release
+      # workflow publishes these to a Release when a tag is cut; this makes the same files
+      # available from an ordinary PR run, which is where they are actually wanted.
+      - name: Build release APKs for sideloading
+        shell: bash
+        run: ./gradlew :app:assembleOfflineRelease
+
+      # Uploaded as SEPARATE artifacts, one per architecture, because GitHub zips an artifact
+      # whole: bundling four ABIs would put the size straight back. arm64-v8a is the only one
+      # any current phone needs — it is the file to click.
+      - name: Upload arm64 release APK (most phones want this one)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fotoxplorr-arm64-INSTALL-THIS
+          path: app/build/outputs/apk/offline/release/app-offline-arm64-v8a-release.apk
+          if-no-files-found: error
+
+      - name: Upload other release APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: fotoxplorr-release-other-abis
+          path: |
+            app/build/outputs/apk/offline/release/app-offline-armeabi-v7a-release.apk
+            app/build/outputs/apk/offline/release/app-offline-x86_64-release.apk
+          if-no-files-found: warn
