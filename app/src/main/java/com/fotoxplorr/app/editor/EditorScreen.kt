@@ -96,6 +96,23 @@ fun EditorScreen(
         }
     }
 
+    // Auto-fix offers, measured from the UNEDITED source so they describe the photograph rather
+    // than the user's work in progress. Computed once per photo on a sampled copy: analysing at
+    // preview resolution costs real milliseconds and tells you nothing a thumbnail does not.
+    var autoFixes by remember(asset.id) { mutableStateOf<List<AutoFix.Suggestion>>(emptyList()) }
+    LaunchedEffect(source) {
+        val base = source ?: return@LaunchedEffect
+        autoFixes = withContext(Dispatchers.Default) {
+            runCatching {
+                val sampled = Bitmap.createScaledBitmap(base, ANALYSIS_EDGE_PX, ANALYSIS_EDGE_PX, true)
+                val pixels = IntArray(sampled.width * sampled.height)
+                sampled.getPixels(pixels, 0, sampled.width, 0, 0, sampled.width, sampled.height)
+                if (sampled !== base) sampled.recycle()
+                AutoFix.suggestionsFor(AutoFix.analyse(pixels))
+            }.getOrDefault(emptyList())
+        }
+    }
+
     // Re-render off the main thread: the matrix runs over every previewed pixel, and doing that
     // in composition would drop frames on the very drag that requested it.
     LaunchedEffect(source, recipe) {
@@ -202,6 +219,39 @@ fun EditorScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // Offers come before the manual tools: the common case is "make this look right",
+            // and someone who wants a slider will scroll past a row of three chips without
+            // resenting it. Absent entirely when the photo needs nothing, which is the property
+            // that keeps them worth reading.
+            if (autoFixes.isNotEmpty()) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(autoFixes, key = { it.id.name }) { suggestion ->
+                        Column(
+                            modifier = Modifier
+                                .background(
+                                    Color.White.copy(alpha = 0.10f),
+                                    RoundedCornerShape(12.dp),
+                                )
+                                .clickable {
+                                    recipe = recipe.copy(adjustments = suggestion.adjustments)
+                                }
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                        ) {
+                            Text(
+                                suggestion.label,
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            Text(
+                                suggestion.reason,
+                                color = Color.White.copy(alpha = 0.55f),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
+                }
+            }
+
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(EditTool.entries.toList(), key = { it.name }) { entry ->
                     val selected = entry == tool
@@ -462,3 +512,12 @@ private fun LabelledSlider(
  * bound on a phone's long edge, and [EditRenderer.previewEdge] clamps whatever it is handed.
  */
 private const val PREVIEW_VIEWPORT_EDGE_PX = 1080
+
+/**
+ * Edge length the auto-fix analysis samples down to.
+ *
+ * 128x128 is ~16k pixels, which settles a histogram completely while costing under a millisecond.
+ * Measuring at preview resolution would be a thousand times the work for an answer accurate to the
+ * same two decimal places -- a histogram is a statistic, and statistics converge fast.
+ */
+private const val ANALYSIS_EDGE_PX = 128
