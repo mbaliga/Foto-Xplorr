@@ -80,9 +80,26 @@ jobs:
       # sideloading path gets its own minified, resource-shrunk, per-ABI build. The release
       # workflow publishes these to a Release when a tag is cut; this makes the same files
       # available from an ordinary PR run, which is where they are actually wanted.
+      # The release build signs with the debug keystore so the artifact is installable. AGP
+      # generates that keystore on demand during a debug build, and verify.sh above happens to do
+      # one — but relying on a side effect of another step's ordering is exactly the kind of
+      # dependency that breaks silently later, so it is made explicit here.
+      - name: Ensure debug keystore exists
+        shell: bash
+        run: |
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            mkdir -p "$HOME/.android"
+            keytool -genkeypair -v \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -keypass android \
+              -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
       - name: Build release APKs for sideloading
         shell: bash
-        run: ./gradlew :app:assembleOfflineRelease
+        run: ./gradlew :app:assembleOfflineRelease -PabiSplits=true
 
       # Uploaded as SEPARATE artifacts, one per architecture, because GitHub zips an artifact
       # whole: bundling four ABIs would put the size straight back. arm64-v8a is the only one

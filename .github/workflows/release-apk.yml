@@ -64,7 +64,7 @@ jobs:
           fi
 
       - name: Build release APKs
-        run: ./gradlew :app:assembleOfflineRelease :app:assembleConnectRelease --no-daemon
+        run: ./gradlew :app:assembleOfflineRelease :app:assembleConnectRelease -PabiSplits=true --no-daemon
 
       - name: Collect APKs
         id: collect

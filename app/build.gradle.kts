@@ -62,9 +62,16 @@ android {
     // device needs exactly one. `isUniversalApk = true` keeps a fat APK in the output as well,
     // because "which of these four do I want?" is a question a person sideloading should be
     // allowed to skip.
+    //
+    // OPT-IN via `-PabiSplits`, and that is load-bearing rather than tidiness: AGP's `splits`
+    // block is global, not per-build-type, so switching it on unconditionally renamed the DEBUG
+    // outputs too (`app-offline-debug.apk` -> `app-offline-arm64-v8a-debug.apk`) and broke every
+    // path that referred to them, CI's artifact upload first. Gating it keeps the ordinary
+    // debug build a single APK at its historical path, and keeps local builds from paying for
+    // four packaging passes nobody asked for.
     splits {
         abi {
-            isEnable = true
+            isEnable = providers.gradleProperty("abiSplits").isPresent
             reset()
             include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
             isUniversalApk = true
