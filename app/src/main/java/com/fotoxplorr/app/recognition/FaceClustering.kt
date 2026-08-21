@@ -149,7 +149,26 @@ data class RecognitionIndex(
     val peopleMediaIds: Set<MediaId>,
     val petMediaIds: Set<MediaId>,
     val identityMediaIds: Set<MediaId>,
+    /**
+     * What the labeller saw, per photo — the vocabulary `label:flower` searches against.
+     *
+     * Per-media rather than folded into a set of ids like the three above, because this index is
+     * the only published view of recognition data and search needs to know *which* photo has
+     * which label, not merely that some photo does.
+     */
+    val labelsByMedia: Map<MediaId, List<String>> = emptyMap(),
+    /** OCR text per photo, positioned. Feeds both text search and selecting text on a photo. */
+    val textByMedia: Map<MediaId, List<TextBlock>> = emptyMap(),
 ) {
+    /** Every distinct label in the library, for offering search alternatives that exist. */
+    val allLabels: Set<String> by lazy(LazyThreadSafetyMode.NONE) {
+        labelsByMedia.values.flatMapTo(linkedSetOf()) { it }
+    }
+
+    /** The flat text of one photo, for matching. Empty when nothing was read. */
+    fun textOf(mediaId: MediaId): String =
+        textByMedia[mediaId]?.joinToString("\n") { it.text }.orEmpty()
+
     companion object {
         val EMPTY = RecognitionIndex(emptyList(), emptySet(), emptySet(), emptySet())
 
@@ -165,6 +184,10 @@ data class RecognitionIndex(
                 petMediaIds = rows.filter { it.petVerdict.isPet }.mapTo(linkedSetOf()) { it.mediaId },
                 identityMediaIds = rows.filter { it.identityVerdict.isIdentity }
                     .mapTo(linkedSetOf()) { it.mediaId },
+                labelsByMedia = rows.filter { it.labels.isNotEmpty() }
+                    .associate { it.mediaId to it.labels },
+                textByMedia = rows.filter { it.textBlocks.isNotEmpty() }
+                    .associate { it.mediaId to it.textBlocks },
             )
         }
     }

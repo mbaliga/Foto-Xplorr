@@ -109,7 +109,7 @@ fun destinationAssets(
         HyleDestination.PLACES, HyleDestination.PROTECTED -> emptyList()
     }
     if (query.isBlank()) return base
-    return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id)) }
+    return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds) }
 }
 
 /**

@@ -118,6 +118,10 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.organize.LibraryState
 import com.fotoxplorr.app.recognition.RecognitionIndex
+import com.fotoxplorr.app.search.ParsedQuery
+import com.fotoxplorr.app.search.SearchDocument
+import com.fotoxplorr.app.search.matchesQuery
+import com.fotoxplorr.app.search.parseSearchQuery
 import com.fotoxplorr.app.recognition.RecognitionProgress
 import com.fotoxplorr.app.spatial.GeoMetadataRepository
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
@@ -439,7 +443,7 @@ private fun GalleryBrowser(
             state.assets.filter { asset ->
                 asset.id in state.library.collections.firstOrNull { it.id == current.id }?.mediaIds.orEmpty() &&
                     !asset.isTrashed &&
-                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id))
+                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id), state.recognition, state.favoriteIds)
             },
             state.preferences.sort,
         )
@@ -453,12 +457,12 @@ private fun GalleryBrowser(
             lockedFolders = state.lockedFolders,
             unlockedFolders = state.unlockedFolders,
             preferences = state.preferences,
-        ).filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id)) }
+        ).filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds) }
         is BrowserRoute.Tag -> sortAssets(
             state.assets.filter { asset ->
                 current.tag in state.library.tagsFor(asset.id) &&
                     !asset.isTrashed &&
-                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id))
+                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id), state.recognition, state.favoriteIds)
             },
             state.preferences.sort,
         )
@@ -1174,13 +1178,73 @@ fun BrowserRoute.title(destination: HyleDestination): String = when (this) {
     is BrowserRoute.Tag -> "#$tag"
 }
 
-internal fun MediaAsset.matchesGallerySearch(query: String, tags: Set<String>): Boolean {
-    val normalized = query.trim().lowercase()
-    if (normalized.isEmpty()) return true
-    return displayName.lowercase().contains(normalized) ||
-        mimeType.lowercase().contains(normalized) ||
-        folderIdentity(this).displayName.lowercase().contains(normalized) ||
-        tags.any { it.lowercase().contains(normalized) }
+/**
+ * Does this asset satisfy the search box?
+ *
+ * Was a single `contains` over filename, MIME, folder and tags, which meant the two most useful
+ * things the app had already computed -- what is IN the picture, and what it SAYS -- were invisible
+ * to the one feature that wanted them, and a phrase like "flowers in August" was looked for
+ * verbatim in a filename. It now parses into constraints and matches across every surface,
+ * including AI labels and OCR text.
+ *
+ * The parse is memoised on the raw string because this is called once per asset per keystroke:
+ * re-parsing 22k times for one query is exactly the shape that turns typing into a stutter.
+ */
+internal fun MediaAsset.matchesGallerySearch(
+    query: String,
+    tags: Set<String>,
+    recognition: RecognitionIndex = RecognitionIndex.EMPTY,
+    favouriteIds: Set<MediaId> = emptySet(),
+): Boolean {
+    val parsed = rememberParsedQuery(query)
+    if (parsed.isEmpty) return true
+    return matchesQuery(
+        parsed,
+        SearchDocument(
+            mediaId = id,
+            name = displayName,
+            folder = folderIdentity(this).displayName,
+            mimeType = mimeType,
+            takenAtMillis = dateTakenMillis,
+            tags = tags,
+            labels = recognition.labelsByMedia[id].orEmpty().toSet(),
+            text = recognition.textOf(id),
+            categories = buildSet {
+                if (isVideo) add("video") else add("photo")
+                if (isAnimated) add("animated")
+                if (isFavorite || id in favouriteIds) add("favourite")
+                if (id in recognition.petMediaIds) add("pet")
+                if (id in recognition.peopleMediaIds) add("person")
+                if (id in recognition.identityMediaIds) add("document")
+                if (tags.isEmpty()) add("untagged")
+            },
+            camera = "",
+            iso = null,
+            width = width,
+            height = height,
+            sizeBytes = sizeBytes,
+        ),
+    )
+}
+
+/**
+ * One-entry parse cache.
+ *
+ * Composition is single-threaded and every asset in a pass shares the same query string, so a
+ * one-slot memo turns 22k parses per keystroke into one. Guarded anyway, because a background
+ * projection could reach this from another thread and a torn read here would only ever cost a
+ * redundant parse -- never a wrong answer, since the value is derived purely from the key.
+ */
+@Volatile private var cachedRawQuery: String? = null
+@Volatile private var cachedParsedQuery: ParsedQuery? = null
+
+internal fun rememberParsedQuery(raw: String): ParsedQuery {
+    val hit = cachedParsedQuery
+    if (hit != null && cachedRawQuery == raw) return hit
+    val parsed = parseSearchQuery(raw)
+    cachedRawQuery = raw
+    cachedParsedQuery = parsed
+    return parsed
 }
 
 @Composable
