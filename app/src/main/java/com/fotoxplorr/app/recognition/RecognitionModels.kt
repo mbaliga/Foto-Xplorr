@@ -19,7 +19,42 @@ data class AssetRecognition(
     val faceDescriptors: List<FaceDescriptor> = emptyList(),
     val petVerdict: PetVerdict = PetVerdict.NONE,
     val identityVerdict: IdentityVerdict = IdentityVerdict.NONE,
-)
+    /**
+     * What the on-device labeller saw — "Flower", "Dog", "Beach". Previously computed, fed to
+     * [PetClassifier] and then dropped on the floor, which is why searching for `flower` could
+     * never work: the app knew, and forgot, several times a second.
+     */
+    val labels: List<String> = emptyList(),
+    /**
+     * Text found in the image by on-device OCR, as positioned blocks.
+     *
+     * Blocks rather than one string, and normalised boxes rather than pixels, because two features
+     * need the geometry: searching wants the words, but selecting text on the photo needs to know
+     * *where* each run sits, at whatever size the image is being displayed. Storing a flat string
+     * would have made the second feature impossible without a full re-scan of the library.
+     */
+    val textBlocks: List<TextBlock> = emptyList(),
+) {
+    /** Every OCR run joined, for the search index and the document heuristics. */
+    val text: String get() = textBlocks.joinToString("\n") { it.text }
+}
+
+/**
+ * One run of recognised text and where it sits in the frame.
+ *
+ * The box is normalised to 0..1 of the decoded image, so it survives the downsampling the indexer
+ * does when loading, and maps onto any display rectangle by simple multiplication.
+ */
+data class TextBlock(
+    val text: String,
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+) {
+    val width: Float get() = right - left
+    val height: Float get() = bottom - top
+}
 
 /**
  * A fixed-length, L2-normalised descriptor of one detected face, together with where in the

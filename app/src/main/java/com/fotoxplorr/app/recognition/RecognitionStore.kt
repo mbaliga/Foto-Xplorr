@@ -20,9 +20,20 @@ import java.nio.ByteOrder
 /**
  * App-private, on-device storage for recognition results.
  *
- * Face descriptors are stored as raw little-endian float32 blobs. No image data, no crop and
- * no OCR text is persisted -- OCR text is scored by [IdentityDocumentHeuristics] in memory
- * and dropped, so a stolen database yields no readable document contents.
+ * Face descriptors are stored as raw little-endian float32 blobs; no image data and no crop is
+ * ever persisted.
+ *
+ * **OCR text IS persisted, as of the searchable-text work.** It previously was not, and the
+ * change is worth stating plainly rather than leaving a comment that says the opposite of what
+ * the code does: text found in photos is now written to this database, with its position in the
+ * frame, because two features the owner asked for are impossible without it — searching for words
+ * that appear in a photograph, and selecting text off a photograph.
+ *
+ * What that costs, honestly: a phone whose app-private storage is read (a rooted or forensically
+ * imaged device) yields readable text from photographed documents, where before it yielded only a
+ * verdict. What it does not do is leave the device — this database is app-private, and in the
+ * `offline` flavour the process holds no INTERNET permission at all, so there is no path off the
+ * phone even for code that wanted one.
  */
 class RecognitionStore(context: Context) {
     private val helper = RecognitionOpenHelper(context.applicationContext)
@@ -100,7 +111,8 @@ private class RecognitionOpenHelper(context: Context) :
                 source_revision INTEGER NOT NULL,
                 face_count INTEGER NOT NULL,
                 pet_verdict TEXT NOT NULL,
-                identity_verdict TEXT NOT NULL
+                identity_verdict TEXT NOT NULL,
+                labels TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent(),
         )
@@ -115,10 +127,28 @@ private class RecognitionOpenHelper(context: Context) :
             )
             """.trimIndent(),
         )
+        db.execSQL(
+            """
+            CREATE TABLE $TABLE_TEXT (
+                media_id INTEGER NOT NULL,
+                block_index INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                left REAL NOT NULL,
+                top REAL NOT NULL,
+                right REAL NOT NULL,
+                bottom REAL NOT NULL,
+                PRIMARY KEY (media_id, block_index)
+            )
+            """.trimIndent(),
+        )
+        // Searching text across a whole library is the one query here that scans rather than
+        // looks up, so it gets the one index.
+        db.execSQL("CREATE INDEX ${TABLE_TEXT}_media ON $TABLE_TEXT (media_id)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // Recognition data is a derived cache: rebuilding is cheaper and safer than migrating.
+        db.execSQL("DROP TABLE IF EXISTS $TABLE_TEXT")
         db.execSQL("DROP TABLE IF EXISTS $TABLE_FACES")
         db.execSQL("DROP TABLE IF EXISTS $TABLE_ASSETS")
         onCreate(db)
@@ -134,6 +164,22 @@ private class RecognitionOpenHelper(context: Context) :
     }
 
     fun readAll(): List<AssetRecognition> {
+        val blocks = HashMap<Long, MutableList<TextBlock>>()
+        readableDatabase.query(
+            TABLE_TEXT, arrayOf("media_id", "text", "left", "top", "right", "bottom"),
+            null, null, null, null, "media_id ASC, block_index ASC",
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val mediaId = cursor.getLong(0)
+                blocks.getOrPut(mediaId) { mutableListOf() } += TextBlock(
+                    text = cursor.getString(1),
+                    left = cursor.getFloat(2),
+                    top = cursor.getFloat(3),
+                    right = cursor.getFloat(4),
+                    bottom = cursor.getFloat(5),
+                )
+            }
+        }
         val faces = HashMap<Long, MutableList<FaceDescriptor>>()
         readableDatabase.query(
             TABLE_FACES, arrayOf("media_id", "face_index", "relative_area", "vector"),
@@ -152,7 +198,10 @@ private class RecognitionOpenHelper(context: Context) :
         return buildList {
             readableDatabase.query(
                 TABLE_ASSETS,
-                arrayOf("media_id", "source_revision", "face_count", "pet_verdict", "identity_verdict"),
+                arrayOf(
+                    "media_id", "source_revision", "face_count", "pet_verdict", "identity_verdict",
+                    "labels",
+                ),
                 null, null, null, null, null,
             ).use { cursor ->
                 while (cursor.moveToNext()) {
@@ -167,6 +216,8 @@ private class RecognitionOpenHelper(context: Context) :
                             identityVerdict = enumOrNone(
                                 cursor.getString(4), IdentityVerdict.entries, IdentityVerdict.NONE,
                             ),
+                            labels = decodeLabels(cursor.getString(5)),
+                            textBlocks = blocks[mediaId].orEmpty(),
                         ),
                     )
                 }
@@ -185,9 +236,26 @@ private class RecognitionOpenHelper(context: Context) :
                         put("face_count", row.faceCount)
                         put("pet_verdict", row.petVerdict.name)
                         put("identity_verdict", row.identityVerdict.name)
+                        put("labels", encodeLabels(row.labels))
                     },
                     SQLiteDatabase.CONFLICT_REPLACE,
                 )
+                delete(TABLE_TEXT, "media_id = ?", arrayOf(row.mediaId.value.toString()))
+                row.textBlocks.forEachIndexed { blockIndex, block ->
+                    insertWithOnConflict(
+                        TABLE_TEXT, null,
+                        ContentValues().apply {
+                            put("media_id", row.mediaId.value)
+                            put("block_index", blockIndex)
+                            put("text", block.text)
+                            put("left", block.left)
+                            put("top", block.top)
+                            put("right", block.right)
+                            put("bottom", block.bottom)
+                        },
+                        SQLiteDatabase.CONFLICT_REPLACE,
+                    )
+                }
                 delete(TABLE_FACES, "media_id = ?", arrayOf(row.mediaId.value.toString()))
                 row.faceDescriptors.forEach { face ->
                     insertWithOnConflict(
@@ -212,6 +280,7 @@ private class RecognitionOpenHelper(context: Context) :
         writableDatabase.transaction {
             stale.forEach { id ->
                 val args = arrayOf(id.value.toString())
+                delete(TABLE_TEXT, "media_id = ?", args)
                 delete(TABLE_FACES, "media_id = ?", args)
                 delete(TABLE_ASSETS, "media_id = ?", args)
             }
@@ -220,6 +289,7 @@ private class RecognitionOpenHelper(context: Context) :
 
     fun clear() {
         writableDatabase.apply {
+            delete(TABLE_TEXT, null, null)
             delete(TABLE_FACES, null, null)
             delete(TABLE_ASSETS, null, null)
         }
@@ -227,9 +297,10 @@ private class RecognitionOpenHelper(context: Context) :
 
     private companion object {
         const val DATABASE_NAME = "foto_xplorr_recognition.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
         const val TABLE_ASSETS = "asset_recognition"
         const val TABLE_FACES = "face_descriptor"
+        const val TABLE_TEXT = "asset_text_block"
 
         fun <T : Enum<T>> enumOrNone(stored: String?, values: List<T>, fallback: T): T =
             values.firstOrNull { it.name == stored } ?: fallback
@@ -247,3 +318,19 @@ internal fun decodeVector(bytes: ByteArray?): FloatArray {
     val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
     return FloatArray(bytes.size / Float.SIZE_BYTES) { buffer.float }
 }
+
+/**
+ * AI labels as one delimited string rather than a fourth table.
+ *
+ * A label list is a handful of short words that are only ever read back whole, alongside the row
+ * they belong to — the join a separate table would buy is a join nothing needs. The delimiter is
+ * `` (unit separator) rather than a comma because label text is model-authored and may well
+ * contain punctuation; a control character cannot collide with it.
+ */
+internal fun encodeLabels(labels: List<String>): String =
+    labels.filter { it.isNotBlank() }.joinToString(LABEL_SEPARATOR)
+
+internal fun decodeLabels(stored: String?): List<String> =
+    stored?.split(LABEL_SEPARATOR)?.filter { it.isNotBlank() }.orEmpty()
+
+private const val LABEL_SEPARATOR = ""

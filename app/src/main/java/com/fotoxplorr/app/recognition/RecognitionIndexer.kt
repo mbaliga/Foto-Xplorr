@@ -165,12 +165,27 @@ class RecognitionIndexer(
             val image = InputImage.fromBitmap(bitmap, 0)
             val faces = faceDetector.process(image).await()
             val labels = labeler.process(image).await().map { ImageLabel(it.text, it.confidence) }
-            // OCR only where it can pay off: a frame dominated by faces is a portrait, not a
-            // document, and skipping it saves the most expensive of the three passes.
-            val ocrText = if (faces.size > MAX_FACES_FOR_DOCUMENT) {
-                ""
-            } else {
-                textRecognizer.process(image).await().text
+
+            // OCR now runs on EVERY image, where it used to be skipped on any frame with more than
+            // a couple of faces. That skip was correct for its original purpose — deciding whether
+            // something is an identity document — and wrong for the two purposes the text now
+            // serves: searching for words in photos, and selecting text off a photo. A group of
+            // friends in front of a shop sign has text on it, and the old rule guaranteed the app
+            // would never find it. The identity heuristic keeps the face rule for itself, below.
+            val recognisedText = textRecognizer.process(image).await()
+            val frameWidth = bitmap.width.toFloat().coerceAtLeast(1f)
+            val frameHeight = bitmap.height.toFloat().coerceAtLeast(1f)
+            val textBlocks = recognisedText.textBlocks.mapNotNull { block ->
+                val box = block.boundingBox ?: return@mapNotNull null
+                val text = block.text.trim()
+                if (text.isEmpty()) return@mapNotNull null
+                TextBlock(
+                    text = text,
+                    left = (box.left / frameWidth).coerceIn(0f, 1f),
+                    top = (box.top / frameHeight).coerceIn(0f, 1f),
+                    right = (box.right / frameWidth).coerceIn(0f, 1f),
+                    bottom = (box.bottom / frameHeight).coerceIn(0f, 1f),
+                )
             }
 
             val frameArea = (bitmap.width.toLong() * bitmap.height).coerceAtLeast(1L).toFloat()
@@ -178,13 +193,19 @@ class RecognitionIndexer(
                 describe(face, faceIndex, asset, bitmap, frameArea)
             }
 
+            // The face rule lives here now: a frame full of faces is a portrait, so its text is
+            // not evidence of a document even though the text itself is still worth keeping.
+            val documentText = if (faces.size > MAX_FACES_FOR_DOCUMENT) "" else recognisedText.text
+
             return AssetRecognition(
                 mediaId = asset.id,
                 sourceRevision = asset.recognitionRevision(),
                 faceCount = faces.size,
                 faceDescriptors = descriptors,
                 petVerdict = PetClassifier.classify(labels),
-                identityVerdict = IdentityDocumentHeuristics.classify(ocrText),
+                identityVerdict = IdentityDocumentHeuristics.classify(documentText),
+                labels = labels.filter { it.confidence >= LABEL_CONFIDENCE_FLOOR }.map { it.text },
+                textBlocks = textBlocks,
             )
         } finally {
             bitmap.recycle()

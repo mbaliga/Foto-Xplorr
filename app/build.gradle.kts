@@ -22,6 +22,22 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // The debug keystore, used to sign RELEASE too. Deliberate, and narrow: the owner installs
+    // these builds by sideloading them, and an unsigned release APK cannot be installed at all —
+    // it fails at the package installer with no useful message, which reads as "the app is
+    // broken" rather than "the build is unsigned". A debug-signed release is installable, is
+    // still minified and shrunk, and is obviously not a Play Store artifact (the upload would be
+    // rejected for exactly this reason). A real upload key belongs in CI secrets when there is a
+    // store listing to upload to; there is not one yet.
+    signingConfigs {
+        create("sideload") {
+            storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
@@ -29,7 +45,29 @@ android {
         }
         release {
             isMinifyEnabled = true
+            // Was absent, and it is half the size win: R8 strips unreachable CODE, but the
+            // drawables, layouts and translations pulled in by Compose/Material/ML Kit are
+            // RESOURCES and survive minification untouched unless this is on.
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("sideload")
+        }
+    }
+
+    // One APK per ABI instead of one fat APK carrying every native library.
+    //
+    // This is the other half of the size problem, and on this app it is the bigger half: ML Kit,
+    // MediaPipe and the OpenGL scene all ship .so files for four architectures, so a universal
+    // APK carries three sets of native code that the installing phone will never load. A real
+    // device needs exactly one. `isUniversalApk = true` keeps a fat APK in the output as well,
+    // because "which of these four do I want?" is a question a person sideloading should be
+    // allowed to skip.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            isUniversalApk = true
         }
     }
 

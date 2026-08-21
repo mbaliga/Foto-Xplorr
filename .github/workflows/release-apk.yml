@@ -1,0 +1,107 @@
+# Publishes installable APKs as a GitHub Release, so there is a plain download URL.
+#
+# The debug workflow already uploads APKs, but as a workflow ARTIFACT: a ~225 MB zip, behind a
+# login, that has to be unzipped before anything is installable. That is a bad way to hand someone
+# a build to try. This produces per-ABI minified release APKs and attaches them to a Release, where
+# each file has its own direct link and a phone can download exactly the one it needs
+# (arm64-v8a for anything modern — around a third the size of the universal APK).
+name: Release APK
+
+on:
+  # Manual: the normal path. Pick a tag, get a release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag for the release (e.g. v0.3.0)"
+        required: true
+        default: "dev-build"
+      prerelease:
+        description: "Mark as pre-release"
+        type: boolean
+        default: true
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
+
+      # The release build signs with the debug keystore (see app/build.gradle.kts for why), and
+      # on a fresh runner that keystore does not exist until something asks for it.
+      - name: Ensure debug keystore exists
+        run: |
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            mkdir -p "$HOME/.android"
+            keytool -genkeypair -v \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -keypass android \
+              -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Build release APKs
+        run: ./gradlew :app:assembleOfflineRelease :app:assembleConnectRelease --no-daemon
+
+      - name: Collect APKs
+        id: collect
+        run: |
+          mkdir -p dist
+          # Per-ABI + universal, both flavours. Renamed so the download name says what it is.
+          for f in app/build/outputs/apk/*/release/*.apk; do
+            [ -e "$f" ] || continue
+            cp "$f" "dist/$(basename "$f")"
+          done
+          ls -la dist
+          {
+            echo "### APK sizes"
+            echo ""
+            echo "| File | Size |"
+            echo "|---|---|"
+            for f in dist/*.apk; do
+              printf "| %s | %s |\n" "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+            done
+          } > dist/SIZES.md
+          cat dist/SIZES.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: Foto Xplorr ${{ github.event.inputs.tag || github.ref_name }}
+          prerelease: ${{ github.event.inputs.prerelease || false }}
+          generate_release_notes: true
+          body: |
+            Sideloadable builds. **Most phones want `app-offline-arm64-v8a-release.apk`.**
+
+            - `offline` — the app's identity: on-device AI, no network capability at all.
+            - `connect` — installs alongside as `.connect`, adds BYOK remote AI and the street map.
+            - `universal` — every architecture in one file; only needed if the per-ABI ones fail.
+
+            These are minified, resource-shrunk and **debug-signed** for sideloading. Android will
+            ask you to allow installing from whichever app you open the file with.
+          files: |
+            dist/*.apk
