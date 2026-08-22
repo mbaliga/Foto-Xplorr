@@ -238,12 +238,21 @@ object FrameRenderer {
      * Drawn with a soft shadow rather than a solid slab behind it: a watermark has to stay legible
      * over an unknown photo, and a shadow does that without putting an opaque box on someone's
      * picture.
+     *
+     * Tuned deliberately light — regular weight, well under half-opaque — because this now draws
+     * on EVERY non-Pro share by default (owner, 2026-08-21: the mark moves from an opt-in extra to
+     * the free tier's baseline; [ShareOptions.resolveWatermark] is what decides that). At the
+     * bold, near-opaque setting this used to ship at, a mark meant for the rare person who
+     * deliberately turned it on becomes a mark stamped across every photo a free user has ever
+     * sent anyone — which reads as the app defacing their photos, not as a signature. What makes
+     * unlocking Pro feel like removing a small annoyance rather than removing a scar is this
+     * staying genuinely small: a caption, not a banner.
      */
     private fun drawWatermark(canvas: Canvas, width: Int, height: Int, unit: Float, tint: Int) {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = tint
             textSize = unit * WATERMARK_SIZE
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
             textAlign = Paint.Align.RIGHT
             alpha = WATERMARK_ALPHA
             setShadowLayer(unit * 0.006f, 0f, 0f, if (tint == Color.WHITE) Color.BLACK else Color.WHITE)
@@ -280,9 +289,11 @@ object FrameRenderer {
     private const val SEAL_ROTATION = -12f
     private const val SEAL_ALPHA = 190
     private const val SEAL_MAX_CHARS = 12
-    private const val WATERMARK_SIZE = 0.032f
+    // Smaller and considerably lighter than the frame's other ink — see the KDoc on
+    // drawWatermark for why: this now draws on every free share, not just the rare opt-in one.
+    private const val WATERMARK_SIZE = 0.026f
     private const val WATERMARK_INSET = 0.035f
-    private const val WATERMARK_ALPHA = 200
+    private const val WATERMARK_ALPHA = 130
     private const val WATERMARK_TEXT = "Foto Xplorr"
 
     private val POLAROID_PAPER = Color.rgb(250, 249, 245)

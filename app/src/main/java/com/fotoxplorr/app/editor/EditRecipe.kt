@@ -15,10 +15,33 @@ package com.fotoxplorr.app.editor
  * See `docs/adr/ADR-007-photo-editing.md` for why this is written rather than pulled in.
  */
 data class EditRecipe(
-    /** Quarter turns clockwise, 0..3. Quarter turns only: free rotation is a crop problem. */
+    /**
+     * Quarter turns clockwise, 0..3.
+     *
+     * For anything finer, see [straightenDegrees] rather than reaching for an arbitrary angle
+     * here: this field stays multiples of 90 on purpose, because a quarter turn never exposes a
+     * corner and therefore never needs a crop decision, and mixing the two concerns into one
+     * float would mean every consumer of "how much is this rotated" has to re-derive whether an
+     * auto-crop applies.
+     */
     val quarterTurns: Int = 0,
     /** Mirror horizontally, applied after rotation. */
     val flipHorizontal: Boolean = false,
+    /**
+     * Small-angle rotation for levelling a horizon or a leaning wall, in degrees, roughly -15..15.
+     *
+     * 0f is the neutral value, like every other field in this codebase's persisted edit stacks --
+     * see [Adjustments]'s KDoc for why that is not a style preference but a promise: a recipe
+     * saved before this field existed decodes with `straightenDegrees = 0f` and must keep
+     * rendering exactly as it did before, which only works if 0 truly does nothing.
+     *
+     * Unlike [quarterTurns], any non-zero value here exposes triangular gaps at the four corners
+     * of the rotated image where there is no source pixel any more. [EditRenderer] does not show
+     * those gaps: it auto-crops inward to the largest same-aspect rectangle that avoids all four,
+     * using [StraightenGeometry.inscribedRect]. That crop is *derived* from this angle, not stored
+     * separately, so there is no way for the two to disagree.
+     */
+    val straightenDegrees: Float = 0f,
     /**
      * Everything done to colour, as a non-destructive stack.
      *
@@ -37,6 +60,7 @@ data class EditRecipe(
     val isIdentity: Boolean
         get() = quarterTurns % 4 == 0 &&
             !flipHorizontal &&
+            straightenDegrees == 0f &&
             adjustments.isIdentity &&
             crop.isFull
 

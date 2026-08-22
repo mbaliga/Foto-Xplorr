@@ -24,6 +24,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,9 +33,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.pro.LocalProEntitlement
 
 /**
  * The settings room's tabs (owner, 2026-08-14: *"The settings are pathetically few. And 'more
@@ -57,6 +60,7 @@ enum class SettingsTab(val label: String) {
     PRIVACY("Privacy"),
     VIEWER("Viewer"),
     DATA("Data"),
+    PRO("Pro"),
     ABOUT("About"),
 }
 
@@ -285,6 +289,53 @@ fun SettingsTabsRoom(
                         color = Color.White.copy(alpha = 0.5f),
                         style = MaterialTheme.typography.bodySmall,
                     )
+                }
+
+                SettingsTab.PRO -> {
+                    // Built the same way the share sheet's own Pro row is: read the entitlement
+                    // straight off Context rather than threading it through GalleryUiState, so
+                    // this section is a self-contained addition and does not require wiring
+                    // Pro status through every screen that hosts SettingsTabsRoom.
+                    val proContext = LocalContext.current
+                    val entitlement = remember { LocalProEntitlement(proContext.applicationContext) }
+                    val isPro by entitlement.isPro.collectAsState()
+
+                    SectionLabel(if (isPro) "YOU HAVE PRO" else "FREE PLAN")
+                    Text(
+                        if (isPro) {
+                            "Every share leaves the Foto Xplorr mark off. Thank you for " +
+                                "supporting the app."
+                        } else {
+                            "Every share carries a small Foto Xplorr mark in the corner, " +
+                                "unless you unlock Pro."
+                        },
+                        color = Color.White.copy(alpha = 0.75f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+
+                    SectionLabel("WHAT PRO REMOVES")
+                    Text(
+                        "The Foto Xplorr mark that shared and exported photos carry by default " +
+                            "-- the small signature bottom-right. Nothing else changes: Pro is " +
+                            "not a paywall on any feature, only on that one mark.",
+                        color = Color.White.copy(alpha = 0.65f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+
+                    if (!isPro) {
+                        SectionLabel("UNLOCK")
+                        ActionText("Unlock Pro", entitlement::recordUnlock)
+                        Text(
+                            // Same honest disclosure as the share sheet's unlock action -- see
+                            // ProEntitlement's KDoc for why there is no store, no charge and no
+                            // receipt behind this button yet.
+                            "This build doesn't charge anything yet -- unlocking here just " +
+                                "remembers Pro on this device, the same way it will once real " +
+                                "billing is wired in.",
+                            color = Color.White.copy(alpha = 0.5f),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
 
                 SettingsTab.ABOUT -> {

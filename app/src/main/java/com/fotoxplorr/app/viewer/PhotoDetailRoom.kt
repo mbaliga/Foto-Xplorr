@@ -1,6 +1,8 @@
 package com.fotoxplorr.app.viewer
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,14 +35,21 @@ import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomStyle
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,6 +58,8 @@ import androidx.compose.ui.unit.sp
 import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.palette.PaletteExtractor
+import com.fotoxplorr.app.palette.PaletteSwatch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -356,6 +368,9 @@ private fun InformationBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: 
         InformationRow("Taken", asset.dateTakenMillis.takeIf { it > 0L }?.let(DetailFormatting::dateLine))
         InformationRow("Modified", DetailFormatting.dateLine(asset.dateModifiedSeconds * 1_000L))
         InformationRow("Colour space", exif.colorSpace)
+        // Not a video: MediaImage never decodes a video's frames here, and readImagePalette
+        // returns nothing for one anyway — so the row is only worth adding for a still photo.
+        if (!asset.isVideo) PaletteRow(asset)
 
         RoomEyebrow("CAPTURE", Modifier.padding(top = 16.dp, bottom = 3.dp))
         InformationRow("Camera", listOfNotNull(exif.make, exif.model).joinToString(" ").takeIf(String::isNotBlank))
@@ -394,6 +409,142 @@ private fun InformationRow(label: String, value: String?) {
         )
     }
 }
+
+/**
+ * The colour palette, drawn as the segmented bar the owner asked for: one strip, each colour's
+ * width its own share of the photo, hex value printed underneath.
+ *
+ * Laid out like [InformationRow] (same label column, same weights) rather than as its own
+ * free-standing block, so it reads as one more fact about the file — which is what it is — instead
+ * of a separate feature bolted onto the bottom of the list.
+ *
+ * Loads asynchronously and starts empty (the dash every other absent row already uses): unlike
+ * every other row in this block, which is read straight off [ImageExifDetails] the caller already
+ * has in hand, a palette needs the actual pixels decoded first, which [readImagePalette] does off
+ * the main thread.
+ */
+@Composable
+private fun PaletteRow(asset: MediaAsset) {
+    val context = LocalContext.current
+    var swatches by remember(asset.id) { mutableStateOf<List<PaletteSwatch>>(emptyList()) }
+    LaunchedEffect(asset.id, asset.contentUriString) {
+        swatches = readImagePalette(context, asset)
+    }
+
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(
+            text = "Palette",
+            color = MUTED_TEXT,
+            style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp),
+            modifier = Modifier.weight(0.36f).padding(top = 2.dp),
+        )
+        if (swatches.isEmpty()) {
+            Text(
+                text = "—",
+                color = MUTED_TEXT,
+                style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp),
+                modifier = Modifier.weight(0.64f),
+            )
+        } else {
+            Column(modifier = Modifier.weight(0.64f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(14.dp)
+                        .clip(RoundedCornerShape(4.dp)),
+                ) {
+                    swatches.forEach { swatch ->
+                        Box(
+                            modifier = Modifier
+                                // Row.weight requires a positive value; the quantiser only ever
+                                // emits a proportion above zero (an empty bucket is never kept),
+                                // but the floor guards this draw call against that invariant ever
+                                // being loosened upstream without this composable breaking too.
+                                .weight(swatch.proportion.coerceAtLeast(MIN_SEGMENT_WEIGHT))
+                                .fillMaxHeight()
+                                .background(Color(swatch.argb)),
+                        )
+                    }
+                }
+                Text(
+                    text = swatches.joinToString("   ") { it.hex },
+                    color = SECONDARY_TEXT,
+                    style = TextStyle(fontFamily = HyleGrotesk, fontSize = 11.sp, letterSpacing = 0.2.sp),
+                )
+            }
+        }
+    }
+}
+
+private const val MIN_SEGMENT_WEIGHT = 0.001f
+
+/**
+ * The photo's dominant colours, as a segmented-bar-ready list. Empty for a video, or when the
+ * file cannot be decoded at all (corrupt, or a format `BitmapFactory` does not understand).
+ *
+ * The photo is decoded at a small fraction of its real size FIRST — see [decodeSampledBitmap] —
+ * and only then handed to [PaletteExtractor]. Running a quantiser meant to produce five swatches
+ * over a 48-megapixel original would decode tens of megabytes of pixels, spend real CPU time
+ * bucketing all of them, and arrive at the exact same five colours a 100-pixel-wide thumbnail
+ * already carries — the swatches a viewer perceives "from across the room" do not change with
+ * resolution, so paying full-resolution cost for them is pure waste.
+ */
+internal suspend fun readImagePalette(
+    context: Context,
+    asset: MediaAsset,
+    maxColors: Int = PaletteExtractor.DEFAULT_MAX_COLORS,
+): List<PaletteSwatch> {
+    if (asset.isVideo) return emptyList()
+    return withContext(Dispatchers.IO) {
+        runCatching {
+            val bitmap = decodeSampledBitmap(context, asset) ?: return@runCatching emptyList()
+            try {
+                val pixels = IntArray(bitmap.width * bitmap.height)
+                bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                PaletteExtractor.extract(pixels, maxColors)
+            } finally {
+                bitmap.recycle()
+            }
+        }.getOrDefault(emptyList())
+    }
+}
+
+/**
+ * Decode [asset] with its longest edge no greater than [PALETTE_SAMPLE_DIMENSION].
+ *
+ * Bytes are read into memory once and decoded from that byte array twice — first with
+ * `inJustDecodeBounds` to learn the real size without allocating any pixels, then for real with
+ * `inSampleSize` set — rather than opening the content stream twice. Re-opening a `content://`
+ * stream a second time is not guaranteed cheap: for a cloud-backed provider it can mean a second
+ * network fetch of the original file, which is exactly the cost this function exists to avoid.
+ * `inSampleSize` only takes powers of two, so this lands at or below the target rather than
+ * exactly on it — decoding above budget and scaling down afterwards would mean holding the
+ * oversized bitmap first, which is the allocation this whole function is written to avoid.
+ */
+private fun decodeSampledBitmap(context: Context, asset: MediaAsset): Bitmap? {
+    val bytes = context.contentResolver.openInputStream(asset.contentUri)?.use { it.readBytes() }
+        ?: return null
+
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    val longestEdge = maxOf(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
+
+    var sample = 1
+    while (longestEdge / sample > PALETTE_SAMPLE_DIMENSION) sample *= 2
+
+    return BitmapFactory.decodeByteArray(
+        bytes, 0, bytes.size,
+        BitmapFactory.Options().apply { inSampleSize = sample },
+    )
+}
+
+/**
+ * The target longest edge for palette sampling. A segmented bar only ever shows up to
+ * [PaletteExtractor.DEFAULT_MAX_COLORS] swatches, and 100px on the long edge is already tens of
+ * thousands of sample pixels for the quantiser to work with — far more than five colours need to
+ * be measured accurately, and small enough that decoding it costs milliseconds, not seconds.
+ */
+private const val PALETTE_SAMPLE_DIMENSION = 100
 
 /** `2.0 MP`, or null when the file never recorded its own size. */
 internal fun megapixels(width: Int, height: Int): String? {

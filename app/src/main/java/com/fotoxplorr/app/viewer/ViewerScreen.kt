@@ -54,6 +54,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.lift.LiftOverlay
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import dev.aarso.cellshell.ParkStyle
@@ -149,6 +150,10 @@ fun ViewerScreen(
     var offsetY by remember(asset.id) { mutableFloatStateOf(0f) }
     var rotation by remember(asset.id) { mutableFloatStateOf(0f) }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    // Long-press-to-lift. Keyed on asset.id like every other per-photo gesture state here, so
+    // paging to the next photo cannot leave a stale "picking a subject" overlay armed over a
+    // photo the user never long-pressed.
+    var liftActive by remember(asset.id) { mutableStateOf(false) }
     val shell = rememberSpatialController()
 
     // Read here rather than inside the room: the shell only composes a room once it is slightly
@@ -310,6 +315,34 @@ fun ViewerScreen(
                                 }
                             }
                         },
+                        // Long-press enters lift mode. Added as a THIRD callback on this SAME
+                        // detectTapGestures call, deliberately not as a second, separate
+                        // `pointerInput { detectTapGestures(...) }` block: two independent
+                        // detectTapGestures detectors racing to consume the same down is exactly
+                        // the "several stacked detectors" failure this file's header comment
+                        // already describes fixing once for zoom/pan/page vs tap. One detector
+                        // with three callbacks has no such race -- detectTapGestures arbitrates
+                        // tap vs double-tap vs long-press internally, against its own single
+                        // stream, and this screen never has to reason about ordering between two
+                        // detectTapGestures instances at all.
+                        //
+                        // Guarded off whenever LiveTextOverlay is up (chrome visible AND this
+                        // photo has recognised text): that layer is a later sibling inside the
+                        // same photo Box below, so it is hit-tested first and would already be
+                        // consuming every tap and long-press within its bounds -- including ones
+                        // on bare photo, per its own "a tap on bare photo clears [selection]"
+                        // behaviour. Without this guard a long press over live text would not
+                        // reliably do EITHER thing (not select text, since LiveTextOverlay's own
+                        // onLongPress only acts when the point is actually on a text block; not
+                        // lift, since the down was already consumed) -- a dead zone rather than a
+                        // conflict, and worse than either. So: lift is simply unavailable while
+                        // the Live Text layer is showing for this photo. Toggling chrome off (or
+                        // moving to a photo with no recognised text) reaches it again.
+                        onLongPress = {
+                            if (!asset.isVideo && !(chromeVisible && liveTextBlocks.isNotEmpty())) {
+                                liftActive = true
+                            }
+                        },
                     )
                 },
             contentAlignment = Alignment.Center,
@@ -350,6 +383,21 @@ fun ViewerScreen(
                             imageHeight = asset.height,
                         )
                     }
+
+                    // Same transform box as MediaImage and LiveTextOverlay, for the same reason
+                    // LiveTextOverlay is here: a tap has to land on the right pixel of the
+                    // SOURCE photo regardless of the current pinch/pan/rotate state, and putting
+                    // this inside the shared graphicsLayer is what keeps that true without this
+                    // composable knowing anything about scale, offset or rotation itself.
+                    // Renders nothing at all while `liftActive` is false -- see LiftOverlay's own
+                    // KDoc for why that, not an internal armed/disarmed flag, is the mechanism
+                    // that keeps this from ever contending with the gestures above.
+                    LiftOverlay(
+                        asset = asset,
+                        active = liftActive,
+                        onDismiss = { liftActive = false },
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
             }
 

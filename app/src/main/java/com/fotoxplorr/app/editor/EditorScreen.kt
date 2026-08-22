@@ -108,7 +108,12 @@ fun EditorScreen(
                 val pixels = IntArray(sampled.width * sampled.height)
                 sampled.getPixels(pixels, 0, sampled.width, 0, 0, sampled.width, sampled.height)
                 if (sampled !== base) sampled.recycle()
-                AutoFix.suggestionsFor(AutoFix.analyse(pixels))
+                // Same sampled pixels feed both: detectHorizon needs the 2D layout analyse()
+                // throws away, but re-sampling the bitmap a second time would be the exact
+                // "costs real milliseconds for nothing a thumbnail does not" waste the comment
+                // above this block already argues against for the tonal analysis.
+                val horizon = AutoFix.detectHorizon(pixels, sampled.width, sampled.height)
+                AutoFix.suggestionsFor(AutoFix.analyse(pixels), horizonDegrees = horizon)
             }.getOrDefault(emptyList())
         }
     }
@@ -233,7 +238,19 @@ fun EditorScreen(
                                     RoundedCornerShape(12.dp),
                                 )
                                 .clickable {
-                                    recipe = recipe.copy(adjustments = suggestion.adjustments)
+                                    // STRAIGHTEN is not an Adjustments field, and its
+                                    // `suggestion.adjustments` is only `current` passed through
+                                    // unchanged (see AutoFix.suggestionsFor) -- applying it via
+                                    // the same `adjustments = suggestion.adjustments` path the
+                                    // other three chips use would silently reset any colour work
+                                    // done before this chip was tapped. Routing on whether
+                                    // straightenDegrees is set keeps each chip touching only the
+                                    // one thing its label promises.
+                                    recipe = if (suggestion.straightenDegrees != null) {
+                                        recipe.copy(straightenDegrees = suggestion.straightenDegrees)
+                                    } else {
+                                        recipe.copy(adjustments = suggestion.adjustments)
+                                    }
                                 }
                                 .padding(horizontal = 14.dp, vertical = 8.dp),
                         ) {
@@ -350,6 +367,16 @@ fun EditorScreen(
                             Text("Reset all", color = Color.White.copy(alpha = 0.7f))
                         }
                     }
+                    // Free rotation, solved as a crop problem rather than refused: dragging this
+                    // past zero exposes triangular gaps at the corners, which EditRenderer hides
+                    // by auto-cropping inward via StraightenGeometry -- so the preview itself is
+                    // already showing exactly what export will produce, corners and all.
+                    LabelledSlider(
+                        "Straighten",
+                        recipe.straightenDegrees,
+                        range = -STRAIGHTEN_LIMIT_DEGREES..STRAIGHTEN_LIMIT_DEGREES,
+                        unit = "°",
+                    ) { recipe = recipe.copy(straightenDegrees = it) }
                 }
             }
         }
@@ -521,3 +548,12 @@ private const val PREVIEW_VIEWPORT_EDGE_PX = 1080
  * same two decimal places -- a histogram is a statistic, and statistics converge fast.
  */
 private const val ANALYSIS_EDGE_PX = 128
+
+/**
+ * The straighten slider's range, in degrees each direction.
+ *
+ * Matches the "roughly -15..15" a small-angle levelling control needs -- past this, the
+ * auto-crop StraightenGeometry computes would be throwing away a third of the photo or more,
+ * which stops being "straighten" and starts being a very expensive crop tool.
+ */
+private const val STRAIGHTEN_LIMIT_DEGREES = 15f

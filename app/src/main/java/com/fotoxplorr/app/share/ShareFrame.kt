@@ -49,13 +49,20 @@ enum class ShareFrame(val label: String, val description: String) {
  * @param stripMetadata remove GPS, camera and timestamp EXIF from the shared copy. Defaults to
  *   **true** on owner direction: the safe thing should be what happens when nobody thinks about
  *   it, and the advanced sheet is where someone deliberately turns it off.
+ * @param watermark draw the Foto Xplorr mark in the corner. Defaults to **true** (owner,
+ *   2026-08-21): the free tier's whole shape is that a share carries a small mark unless the
+ *   sharer has unlocked Pro, so "on" has to be what happens when nobody has unlocked anything and
+ *   nobody touched the switch — the same reasoning that makes [stripMetadata] default true. This
+ *   field alone does not decide whether the mark actually gets drawn, though: a non-Pro sharer
+ *   cannot set it false at all (the sheet shows the switch locked on), and a Pro one never draws
+ *   it regardless of what it holds. [resolveWatermark] and [resolvedFor] are the real decision.
  * @param caption drawn in the Polaroid's lower lip. Ignored by other frames.
  * @param seal the user's own short signature drawn on a stamp. Ignored by other frames.
  */
 data class ShareOptions(
     val frame: ShareFrame = ShareFrame.NONE,
     val stripMetadata: Boolean = true,
-    val watermark: Boolean = false,
+    val watermark: Boolean = true,
     val caption: String? = null,
     val seal: String? = null,
 ) {
@@ -64,7 +71,39 @@ data class ShareOptions(
      *
      * Worth asking, because a plain copy is dramatically cheaper: it streams bytes and never
      * decodes a bitmap at all. Only a frame or a watermark forces a decode-draw-encode cycle.
+     *
+     * Reads [watermark] as-is, NOT resolved against Pro status — call this on the result of
+     * [resolvedFor], not on a raw, just-constructed [ShareOptions], or a Pro share with no frame
+     * chosen will be judged as needing a render it does not need and pay for a decode-draw-encode
+     * cycle to draw nothing.
      */
     val requiresRender: Boolean
         get() = frame != ShareFrame.NONE || watermark
+
+    /**
+     * Whether the mark should actually be drawn, once the sharer's Pro status is known.
+     *
+     * Deliberately `!isPro` and NOT `watermark && !isPro`: [watermark] is not consulted at all.
+     * Pro removes the mark unconditionally, and everyone else gets it unconditionally — there is
+     * no per-share choice on either side, because a Pro account should never have a stray switch
+     * that can put the mark back by accident, and a non-Pro account cannot buy its way out of the
+     * mark by constructing a [ShareOptions] with `watermark = false` (a bypass this class exists
+     * specifically to close — see [com.fotoxplorr.app.share.SharePreparer]'s class doc). The
+     * [watermark] field survives on the data class only so the sheet has a checked/unchecked
+     * state to render; it is not itself a way to opt out of the free tier's mark. See
+     * [com.fotoxplorr.app.share.ShareOptionsSheet], where the switch is shown locked rather than
+     * wired to let a non-Pro account flip it off.
+     */
+    fun resolveWatermark(isPro: Boolean): Boolean = !isPro
+
+    /**
+     * These options as they should actually be rendered, with [watermark] resolved against
+     * [isPro].
+     *
+     * The one call every real render path makes before touching a pixel
+     * ([com.fotoxplorr.app.share.SharePreparer.prepare], and the sheet's own live preview):
+     * resolving once, up front, means [requiresRender] downstream is asking about the SAME
+     * options that end up drawn rather than the raw, pre-entitlement request.
+     */
+    fun resolvedFor(isPro: Boolean): ShareOptions = copy(watermark = resolveWatermark(isPro))
 }

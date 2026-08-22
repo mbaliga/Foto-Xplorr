@@ -112,7 +112,10 @@ private class RecognitionOpenHelper(context: Context) :
                 face_count INTEGER NOT NULL,
                 pet_verdict TEXT NOT NULL,
                 identity_verdict TEXT NOT NULL,
-                labels TEXT NOT NULL DEFAULT ''
+                labels TEXT NOT NULL DEFAULT '',
+                categories TEXT NOT NULL DEFAULT '',
+                caption TEXT NOT NULL DEFAULT '',
+                hashtags TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent(),
         )
@@ -200,7 +203,7 @@ private class RecognitionOpenHelper(context: Context) :
                 TABLE_ASSETS,
                 arrayOf(
                     "media_id", "source_revision", "face_count", "pet_verdict", "identity_verdict",
-                    "labels",
+                    "labels", "categories", "caption", "hashtags",
                 ),
                 null, null, null, null, null,
             ).use { cursor ->
@@ -218,6 +221,9 @@ private class RecognitionOpenHelper(context: Context) :
                             ),
                             labels = decodeLabels(cursor.getString(5)),
                             textBlocks = blocks[mediaId].orEmpty(),
+                            categories = decodeCategories(cursor.getString(6)),
+                            caption = cursor.getString(7).orEmpty(),
+                            hashtags = decodeLabels(cursor.getString(8)),
                         ),
                     )
                 }
@@ -237,6 +243,9 @@ private class RecognitionOpenHelper(context: Context) :
                         put("pet_verdict", row.petVerdict.name)
                         put("identity_verdict", row.identityVerdict.name)
                         put("labels", encodeLabels(row.labels))
+                        put("categories", encodeCategories(row.categories))
+                        put("caption", row.caption)
+                        put("hashtags", encodeLabels(row.hashtags))
                     },
                     SQLiteDatabase.CONFLICT_REPLACE,
                 )
@@ -297,7 +306,10 @@ private class RecognitionOpenHelper(context: Context) :
 
     private companion object {
         const val DATABASE_NAME = "foto_xplorr_recognition.db"
-        const val DATABASE_VERSION = 2
+        // v3 added categories/caption/hashtags for the on-device scene-recognition and
+        // captioning work. Recognition data is a derived cache (see onUpgrade below), so this
+        // is a version bump and a wider CREATE TABLE, not a migration.
+        const val DATABASE_VERSION = 3
         const val TABLE_ASSETS = "asset_recognition"
         const val TABLE_FACES = "face_descriptor"
         const val TABLE_TEXT = "asset_text_block"
@@ -332,5 +344,29 @@ internal fun encodeLabels(labels: List<String>): String =
 
 internal fun decodeLabels(stored: String?): List<String> =
     stored?.split(LABEL_SEPARATOR)?.filter { it.isNotBlank() }.orEmpty()
+
+// Reused as-is for AssetRecognition.hashtags below: a hashtag list has exactly the same shape
+// as a label list -- a short list of short strings, read back whole alongside the same row --
+// so a second, identically-bodied function with a different name would be duplication for its
+// own sake.
+
+/**
+ * [SceneCategory] set as the same delimited string [encodeLabels] uses -- a category is exactly
+ * the same shape as a label for storage purposes (a short machine word, no delimiter char in
+ * it), so this reuses the same separator rather than inventing a fifth encoding.
+ *
+ * Decoding looks names up with `SceneCategory.entries.firstOrNull` rather than
+ * `SceneCategory.valueOf`, the same defensive choice [enumOrNone] makes for pet/identity
+ * verdicts: a row written by a build with a category this build no longer has must be dropped
+ * silently, not crash the whole read.
+ */
+internal fun encodeCategories(categories: Set<SceneCategory>): String =
+    categories.joinToString(LABEL_SEPARATOR) { it.name }
+
+internal fun decodeCategories(stored: String?): Set<SceneCategory> =
+    stored?.split(LABEL_SEPARATOR)
+        ?.filter { it.isNotBlank() }
+        ?.mapNotNullTo(linkedSetOf()) { name -> SceneCategory.entries.firstOrNull { it.name == name } }
+        .orEmpty()
 
 private const val LABEL_SEPARATOR = ""

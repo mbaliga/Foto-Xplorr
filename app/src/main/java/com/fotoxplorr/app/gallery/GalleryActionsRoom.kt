@@ -1,6 +1,11 @@
 package com.fotoxplorr.app.gallery
 
+import android.app.Activity
 import android.os.Build
+import android.provider.MediaStore
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,10 +15,18 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.material3.Text
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.fileops.BulkRenameOutcome
+import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.ui.RoomEyebrow
@@ -22,6 +35,7 @@ import com.fotoxplorr.app.ui.RoomRule
 import com.fotoxplorr.app.ui.RoomStepper
 import com.fotoxplorr.app.ui.RoomStyle
 import com.fotoxplorr.app.ui.RoomToggle
+import kotlinx.coroutines.launch
 
 /**
  * The gallery's RIGHT room: what you can do with the view you are looking at.
@@ -70,6 +84,80 @@ fun GalleryActionsRoom(
 ) {
     val preferences = state.preferences
     val selectionActive = selection.isActive
+
+    // Bulk rename lives entirely in this room rather than going through `onRenameAsset` (which
+    // only ever carried ONE asset, into a single-file dialog this room does not own). That means
+    // this composable has to hold its own activity-result launcher and its own
+    // MediaFileOperations instance instead of delegating up to the activity the way trash and
+    // delete do — a composable CAN own a launcher (`rememberLauncherForActivityResult` is not
+    // restricted to an Activity root), so this stays self-contained rather than needing a new
+    // callback threaded through GalleryScreen and the activity above it.
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val fileOperations = remember(context) { MediaFileOperations(context) }
+    var renameTarget by remember { mutableStateOf<List<MediaAsset>?>(null) }
+    var pendingConsentRename by remember { mutableStateOf<BulkRenameRequest?>(null) }
+    var renameProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var renameOutcome by remember { mutableStateOf<BulkRenameOutcome?>(null) }
+
+    fun runBulkRename(request: BulkRenameRequest) {
+        coroutineScope.launch {
+            renameProgress = 0 to request.assets.size
+            renameOutcome = fileOperations.renameBatch(
+                assets = request.assets,
+                pattern = request.pattern,
+                startAt = request.startAt,
+            ) { completed, total -> renameProgress = completed to total }
+            renameProgress = null
+        }
+    }
+
+    // Android 11+ can gather consent for the WHOLE batch in one system dialog via
+    // createWriteRequest, exactly the mechanism `requestMediaOperation`'s trash/restore/delete
+    // flow already uses for a list of Uris -- this is that same pattern, just for a write instead
+    // of a trash/delete request, and living here because only a composable can hold an activity
+    // result launcher.
+    val consentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        val request = pendingConsentRename
+        pendingConsentRename = null
+        if (request == null) return@rememberLauncherForActivityResult
+        if (result.resultCode == Activity.RESULT_OK) {
+            runBulkRename(request)
+        } else {
+            renameOutcome = BulkRenameOutcome(
+                succeeded = emptyList(),
+                failed = request.assets.map { it to "Android cancelled the rename request." },
+            )
+        }
+    }
+
+    fun startBulkRename(assets: List<MediaAsset>, pattern: String, startAt: Int) {
+        val request = BulkRenameRequest(assets, pattern, startAt)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Ask up front for every file this app does not own, in one dialog, rather than
+            // discovering the need file-by-file mid-batch the way a bare ContentResolver.update
+            // loop would (each failure throwing its own RecoverableSecurityException).
+            runCatching {
+                MediaStore.createWriteRequest(context.contentResolver, assets.map { it.contentUri })
+            }.onSuccess { pending ->
+                pendingConsentRename = request
+                consentLauncher.launch(IntentSenderRequest.Builder(pending.intentSender).build())
+            }.onFailure { error ->
+                renameOutcome = BulkRenameOutcome(
+                    succeeded = emptyList(),
+                    failed = assets.map { it to (error.message ?: "Could not request rename permission.") },
+                )
+            }
+        } else {
+            // No batched consent API below API 30; MediaFileOperations.renameBatch still handles
+            // this correctly per-file (including the Android 10 RecoverableSecurityException
+            // case, reported honestly rather than attempted as a dialog storm — see its KDoc).
+            runBulkRename(request)
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -102,6 +190,7 @@ fun GalleryActionsRoom(
                 collectionRoute = collectionRoute,
                 onSelectionChange = onSelectionChange,
                 onRenameAsset = onRenameAsset,
+                onBulkRename = { renameTarget = it },
                 onAddToCollection = onAddToCollection,
                 onAddTag = onAddTag,
                 onCloseRoom = onCloseRoom,
@@ -179,7 +268,49 @@ fun GalleryActionsRoom(
             onClick = { actions.onSetHideSensitive(!preferences.hideSensitive) },
         ) { RoomToggle(preferences.hideSensitive, actions.onSetHideSensitive) }
     }
+
+    // Rendered outside the scrolling Column deliberately -- an AlertDialog is its own window
+    // regardless of where in the composition it is declared, but keeping it out of the Column
+    // keeps it from being pulled into that Column's scroll/measure pass for no reason.
+    renameTarget?.let { assets ->
+        BulkRenameDialog(
+            assets = assets,
+            onDismiss = { renameTarget = null },
+            onConfirm = { pattern, startAt ->
+                renameTarget = null
+                startBulkRename(assets, pattern, startAt)
+            },
+        )
+    }
+    renameProgress?.let { (completed, total) ->
+        BulkRenameProgressDialog(completed = completed, total = total)
+    }
+    renameOutcome?.let { outcome ->
+        BulkRenameResultDialog(
+            outcome = outcome,
+            onDismiss = {
+                renameOutcome = null
+                // Only clear the selection and leave the room on a rename that actually did
+                // something -- a batch that failed outright (permission denied, bad pattern)
+                // should leave the user exactly where they were, selection intact, so they can
+                // see what happened and try again rather than losing their picks along with the
+                // failure.
+                if (outcome.succeeded.isNotEmpty()) {
+                    actions.onRefresh()
+                    onSelectionChange(selection.clear())
+                    onCloseRoom()
+                }
+            },
+        )
+    }
 }
+
+/** One bulk-rename request, from the moment the pattern dialog is confirmed to the moment it runs. */
+private data class BulkRenameRequest(
+    val assets: List<MediaAsset>,
+    val pattern: String,
+    val startAt: Int,
+)
 
 /** A stated value at the end of a row, in the room's own muted ink. */
 @Composable
@@ -221,6 +352,7 @@ private fun SelectionActions(
     collectionRoute: BrowserRoute.Collection?,
     onSelectionChange: (GallerySelection) -> Unit,
     onRenameAsset: (MediaAsset) -> Unit,
+    onBulkRename: (List<MediaAsset>) -> Unit,
     onAddToCollection: (Set<MediaId>) -> Unit,
     onAddTag: (Set<MediaId>) -> Unit,
     onCloseRoom: () -> Unit,
@@ -309,10 +441,20 @@ private fun SelectionActions(
             onClick = { finish { actions.onRemoveFromCollection(collection.id, selection.selectedIds) } },
         )
     }
+    // A single photo keeps the existing one-name-at-a-time dialog. More than one uses a naming
+    // PATTERN instead — that used to mean `onRenameAsset(selectedAssets.first())`, silently
+    // renaming exactly one of however many were selected and leaving the rest untouched, which is
+    // the bug the owner asked for bulk rename to fix.
     if (selectedAssets.size == 1) {
         RoomRow(
             label = "Rename",
             onClick = { onCloseRoom(); onRenameAsset(selectedAssets.first()) },
+        )
+    } else if (selectedAssets.isNotEmpty()) {
+        RoomRow(
+            label = "Rename ${selectedAssets.size} photos",
+            caption = "One naming pattern, applied to all of them.",
+            onClick = { onBulkRename(selectedAssets) },
         )
     }
 

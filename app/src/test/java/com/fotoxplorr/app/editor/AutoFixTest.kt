@@ -1,7 +1,10 @@
 package com.fotoxplorr.app.editor
 
+import kotlin.math.tan
+import kotlin.random.Random
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -119,5 +122,117 @@ class AutoFixTest {
         assertEquals(0.5f, analysis.medianLuminance, 0.0001f)
         // And produces no nonsense offers.
         AutoFix.suggestionsFor(analysis)
+    }
+
+    // ---- straighten: Suggestion wiring ----
+
+    @Test
+    fun `a horizon correction below the offer threshold is not surfaced`() {
+        val suggestions = AutoFix.suggestionsFor(AutoFix.analyse(ramp(2, 253)), horizonDegrees = 0.1f)
+        assertFalse(suggestions.any { it.id == AutoFix.Suggestion.Id.STRAIGHTEN })
+    }
+
+    @Test
+    fun `a null horizon produces no straighten offer`() {
+        val suggestions = AutoFix.suggestionsFor(AutoFix.analyse(ramp(2, 253)), horizonDegrees = null)
+        assertFalse(suggestions.any { it.id == AutoFix.Suggestion.Id.STRAIGHTEN })
+    }
+
+    @Test
+    fun `a horizon correction above the threshold is offered unchanged and does not disturb adjustments`() {
+        val current = Adjustments.NONE.copy(saturation = 0.4f)
+        val suggestions = AutoFix.suggestionsFor(AutoFix.analyse(ramp(2, 253)), current, horizonDegrees = 4f)
+
+        val straighten = suggestions.single { it.id == AutoFix.Suggestion.Id.STRAIGHTEN }
+        assertEquals(4f, straighten.straightenDegrees!!, 0.0001f)
+        assertTrue(straighten.reason.isNotBlank())
+        // A straighten offer must not silently reset colour work the user already kept: it rides
+        // on top of `current` unmodified, because straighten and Adjustments are unrelated fields.
+        assertEquals(0.4f, straighten.adjustments.saturation, 0.0001f)
+
+        // And every other suggestion's straightenDegrees stays null -- the field is exclusive to
+        // the STRAIGHTEN id, not a general-purpose slot the other three could accidentally fill.
+        suggestions.filter { it.id != AutoFix.Suggestion.Id.STRAIGHTEN }.forEach {
+            assertNull("only STRAIGHTEN should set straightenDegrees", it.straightenDegrees)
+        }
+    }
+
+    // ---- straighten: detectHorizon ----
+
+    /**
+     * A synthetic "horizon" tilted by [tiltDegrees]: bright above the line `y = x * tan(tilt)`
+     * (in coordinates centred on the image), dark below it. At tilt 0 this is a perfectly
+     * horizontal edge across the middle of the image; small non-zero tilts are exactly what a
+     * levelled-but-not-quite photograph looks like, which is the case this function has to get
+     * both the magnitude AND the sign right for.
+     */
+    private fun tiltedEdgeImage(size: Int, tiltDegrees: Float, bright: Int = 220, dark: Int = 40): IntArray {
+        val centre = (size - 1) / 2.0
+        val slope = tan(Math.toRadians(tiltDegrees.toDouble()))
+        return IntArray(size * size) { index ->
+            val x = index % size
+            val y = index / size
+            val isBright = (y - centre) < (x - centre) * slope
+            val v = if (isBright) bright else dark
+            argb(v, v, v)
+        }
+    }
+
+    /** Independent random luminance per pixel: plenty of strong local gradients, no shared angle. */
+    private fun noiseImage(size: Int, seed: Long = 42L): IntArray {
+        val random = Random(seed)
+        return IntArray(size * size) { argb(random.nextInt(256), random.nextInt(256), random.nextInt(256)) }
+    }
+
+    @Test
+    fun `a clean tilted horizon is detected with approximately the right magnitude`() {
+        val correction = AutoFix.detectHorizon(tiltedEdgeImage(HORIZON_TEST_SIZE, 6f), HORIZON_TEST_SIZE, HORIZON_TEST_SIZE)
+        assertTrue("expected a correction, got null", correction != null)
+        assertEquals(-6f, correction!!, 1.5f)
+    }
+
+    @Test
+    fun `the correction sign flips with the tilt's sign`() {
+        // The classic bug this guards against: levelling a photo tilted one way by rotating it
+        // FURTHER the same way, which makes a slightly crooked horizon badly crooked.
+        val leaningRight = AutoFix.detectHorizon(tiltedEdgeImage(HORIZON_TEST_SIZE, 6f), HORIZON_TEST_SIZE, HORIZON_TEST_SIZE)
+        val leaningLeft = AutoFix.detectHorizon(tiltedEdgeImage(HORIZON_TEST_SIZE, -6f), HORIZON_TEST_SIZE, HORIZON_TEST_SIZE)
+
+        assertTrue(leaningRight != null && leaningLeft != null)
+        assertTrue("a +6 degree tilt must correct negative, got $leaningRight", leaningRight!! < 0f)
+        assertTrue("a -6 degree tilt must correct positive, got $leaningLeft", leaningLeft!! > 0f)
+        // And symmetric in magnitude, since the two images are mirror images of each other.
+        assertEquals(-leaningRight, leaningLeft, 1.5f)
+    }
+
+    @Test
+    fun `an already-level image needs no correction`() {
+        val correction = AutoFix.detectHorizon(tiltedEdgeImage(HORIZON_TEST_SIZE, 0f), HORIZON_TEST_SIZE, HORIZON_TEST_SIZE)
+        assertNull("a perfectly level edge must not be offered a correction", correction)
+    }
+
+    @Test
+    fun `an image with no dominant edge direction offers no correction`() {
+        // The negative case that matters as much as the positive one: gravel, foliage, a crowd --
+        // real texture that must not be mistaken for a horizon.
+        val correction = AutoFix.detectHorizon(noiseImage(HORIZON_TEST_SIZE), HORIZON_TEST_SIZE, HORIZON_TEST_SIZE)
+        assertNull("scattered edge directions must not be offered a straighten correction", correction)
+    }
+
+    @Test
+    fun `a flat image with no edges at all offers no correction`() {
+        val flatPixels = IntArray(HORIZON_TEST_SIZE * HORIZON_TEST_SIZE) { argb(128, 128, 128) }
+        assertNull(AutoFix.detectHorizon(flatPixels, HORIZON_TEST_SIZE, HORIZON_TEST_SIZE))
+    }
+
+    @Test
+    fun `detectHorizon does not crash on degenerate input`() {
+        assertNull(AutoFix.detectHorizon(IntArray(0), 0, 0))
+        assertNull(AutoFix.detectHorizon(IntArray(4), 2, 2))
+    }
+
+    private companion object {
+        /** Big enough that a full-width tilted edge clears MIN_HORIZON_STRONG_PIXELS comfortably. */
+        const val HORIZON_TEST_SIZE = 90
     }
 }

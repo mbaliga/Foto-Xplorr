@@ -12,4 +12,12 @@
     <cache-path
         name="outgoing_share"
         path="outgoing-share/" />
+    <!--
+      lift's own scratch directory. See StickerExporter.SHARE_DIRECTORY's KDoc for why this is
+      NOT the outgoing_share root above: that one is deleteRecursively()'d at the start of every
+      ordinary share, which would race a still-open sticker share chooser off the filesystem.
+    -->
+    <cache-path
+        name="lift_stickers"
+        path="lift-stickers/" />
 </paths>

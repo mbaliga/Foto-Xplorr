@@ -7,6 +7,8 @@ import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.pro.LocalProEntitlement
+import com.fotoxplorr.app.pro.ProEntitlement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -22,8 +24,19 @@ import java.util.UUID
  * exactly the same thing: a copy in the cache directory handed out as a FileProvider URI.
  *
  * The original is never opened for writing, in any path through this class.
+ *
+ * The watermark is resolved against [ProEntitlement] in here, not trusted from the caller's
+ * [ShareOptions] as handed in (owner, 2026-08-21: the mark becomes the free tier's default rather
+ * than an opt-in extra, with a Pro entitlement that removes it). The share sheet already shows
+ * the toggle locked for a non-Pro sharer, but the sheet is UI, and UI is not the only caller this
+ * class can ever have or the only place a bug can put the wrong value in [ShareOptions.watermark]
+ * -- see [ShareOptions.resolvedFor], which is the actual decision and is what makes this class,
+ * not the sheet, the thing that cannot be argued out of drawing the mark for a non-Pro sharer.
  */
-class SharePreparer(context: Context) {
+class SharePreparer(
+    context: Context,
+    private val entitlement: ProEntitlement = LocalProEntitlement(context.applicationContext),
+) {
     private val appContext = context.applicationContext
     private val resolver = appContext.contentResolver
     private val authority = "${appContext.packageName}.files"
@@ -38,6 +51,12 @@ class SharePreparer(context: Context) {
         runCatching {
             require(items.isNotEmpty()) { "No photos selected" }
 
+            // Resolved ONCE, here, before anything downstream asks requiresRender or touches a
+            // pixel -- see the class doc above for why this class re-decides the watermark rather
+            // than trusting it, and the ShareOptions doc for why resolving late would also charge
+            // a Pro share for a render it does not need.
+            val resolvedOptions = options.resolvedFor(entitlement.isPro.value)
+
             val directory = File(appContext.cacheDir, SHARE_DIRECTORY).apply {
                 // Cleared each time: these are transient hand-offs, and a share cache that only
                 // grows is a privacy problem as much as a disk one -- it would keep unstripped
@@ -46,7 +65,7 @@ class SharePreparer(context: Context) {
                 check(mkdirs() || isDirectory) { "Could not prepare share storage" }
             }
 
-            items.map { asset -> prepareOne(asset, options, directory) }
+            items.map { asset -> prepareOne(asset, resolvedOptions, directory) }
         }
     }
 

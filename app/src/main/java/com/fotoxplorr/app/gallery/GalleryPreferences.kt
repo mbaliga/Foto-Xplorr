@@ -67,8 +67,33 @@ data class GalleryPreferencesState(
     val longPressPreview: Boolean = true,
     /** Play GIFs and animated images in the grid rather than showing a still frame. */
     val loopAnimations: Boolean = false,
-    /** Crop grid thumbnails to fill their tile; off keeps each photo's own aspect ratio. */
+    /**
+     * Crop grid thumbnails to fill a uniform square tile. Off switches the primary grid to a
+     * masonry layout instead -- each tile keeps the photo's own [aspect ratio]
+     * [com.fotoxplorr.app.media.MediaAsset.aspectRatio] rather than being forced square, per the
+     * owner's direction (2026-08-20) that the grid should "maintain aspect ratio". This used to
+     * only switch `ContentScale` between Crop and Fit inside a tile that stayed square either
+     * way -- see [com.fotoxplorr.app.gallery.MediaGridScreen] for why that approximation was not
+     * enough and what replaced it.
+     */
     val fitToTile: Boolean = true,
+    /**
+     * The nine-destination rail is pinned open by default on a window wide enough to fit it
+     * beside the grid (tablet, foldable, desktop/ChromeOS); this lets the user fold it down to
+     * a narrow strip without losing the choice every time the window is resized or the app is
+     * relaunched. Meaningless -- and ignored -- on a phone-width window, which always gets the
+     * pull-out room; see [com.fotoxplorr.app.adaptive.navRailPresentation].
+     *
+     * Read and written through a [GalleryPreferences] constructed directly from `LocalContext`
+     * inside `GalleryScreen`, the same way [com.fotoxplorr.app.gallery.rememberGeoRepository]
+     * reaches its own store -- NOT through [com.fotoxplorr.app.gallery.GalleryActions], which is
+     * built outside this package and does not carry a setter for it. A second `GalleryPreferences`
+     * instance over the same `SharedPreferences` file is fine here specifically because this is
+     * the field's only reader anywhere in the app; a field anything else also consulted through
+     * the app-wide `GalleryUiState` would need the real round-trip instead, since two independent
+     * `MutableStateFlow`s over one file agree on what is saved but not on when each learns of it.
+     */
+    val navRailCollapsed: Boolean = false,
     /**
      * What the editor's Save does. ASK by default, which is the owner's choice and also the only
      * default that cannot destroy a photograph before the user has understood the control.
@@ -160,6 +185,10 @@ class GalleryPreferences(context: Context) {
         state.value.copy(fitToTile = enabled),
     ) { putBoolean(KEY_FIT_TO_TILE, enabled) }
 
+    fun setNavRailCollapsed(collapsed: Boolean) = update(
+        state.value.copy(navRailCollapsed = collapsed),
+    ) { putBoolean(KEY_NAV_RAIL_COLLAPSED, collapsed) }
+
     fun setEditorSaveMode(mode: EditorSaveMode) = update(
         state.value.copy(editorSaveMode = mode),
     ) { putString(KEY_EDITOR_SAVE_MODE, mode.name) }
@@ -222,6 +251,7 @@ class GalleryPreferences(context: Context) {
         longPressPreview = preferences.getBoolean(KEY_LONG_PRESS_PREVIEW, true),
         loopAnimations = preferences.getBoolean(KEY_LOOP_ANIMATIONS, false),
         fitToTile = preferences.getBoolean(KEY_FIT_TO_TILE, true),
+        navRailCollapsed = preferences.getBoolean(KEY_NAV_RAIL_COLLAPSED, false),
         editorSaveMode = enumValue(KEY_EDITOR_SAVE_MODE, EditorSaveMode.ASK),
         shareStripMetadata = preferences.getBoolean(KEY_SHARE_STRIP, true),
         shareWatermark = preferences.getBoolean(KEY_SHARE_WATERMARK, false),
@@ -254,6 +284,7 @@ class GalleryPreferences(context: Context) {
         const val KEY_LOOP_ANIMATIONS = "loop_animations"
         const val KEY_EDITOR_SAVE_MODE = "editor_save_mode"
         const val KEY_FIT_TO_TILE = "fit_to_tile"
+        const val KEY_NAV_RAIL_COLLAPSED = "nav_rail_collapsed"
         const val KEY_SHARE_STRIP = "share_strip_metadata"
         const val KEY_SHARE_WATERMARK = "share_watermark"
         const val KEY_SHARE_FRAME = "share_frame"

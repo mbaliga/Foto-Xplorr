@@ -33,6 +33,15 @@ class EditRecipeTest {
         assertFalse(EditRecipe(adjustments = Adjustments(temperature = -0.3f)).isIdentity)
         assertFalse(EditRecipe(adjustments = Adjustments(sharpen = 0.4f)).isIdentity)
         assertFalse(EditRecipe(crop = CropRect(0.1f, 0.1f, 0.9f, 0.9f)).isIdentity)
+        // straightenDegrees follows the same "0 is neutral" rule as everything in Adjustments --
+        // a fresh recipe from before this field existed decodes with 0f and must stay identical.
+        assertFalse(EditRecipe(straightenDegrees = 0.5f).isIdentity)
+        assertFalse(EditRecipe(straightenDegrees = -0.5f).isIdentity)
+    }
+
+    @Test
+    fun `a recipe with straightenDegrees at exactly zero is still the identity`() {
+        assertTrue(EditRecipe(straightenDegrees = 0f).isIdentity)
     }
 
     @Test

@@ -43,7 +43,10 @@ import com.google.android.gms.tasks.Task
  *
  * Per image: one decode, three detectors. Faces produce descriptors for clustering; labels
  * produce a [PetVerdict]; OCR text is scored to an [IdentityVerdict] and then discarded
- * without ever being written to disk.
+ * without ever being written to disk. Labels and faces together also feed [SceneClassifier]
+ * for the [SceneCategory] set and [CaptionGenerator] for a caption and hashtags -- both pure,
+ * template-based and computed once here, per photo; see [SceneClassifier]'s KDoc for why
+ * [SceneCategory.FRIENDS_FAMILY] is the one category that is NOT decided in this pass.
  */
 class RecognitionIndexer(
     context: Context,
@@ -197,6 +200,23 @@ class RecognitionIndexer(
             // not evidence of a document even though the text itself is still worth keeping.
             val documentText = if (faces.size > MAX_FACES_FOR_DOCUMENT) "" else recognisedText.text
 
+            // SceneFace is deliberately built from the raw ML Kit faces, not from `descriptors`:
+            // the latter drops anything below FaceClustering.MIN_RELATIVE_AREA because a small
+            // face clusters unreliably, but a small face is still perfectly good evidence that
+            // this is NOT a single large official-style portrait -- exactly the distinction
+            // SceneClassifier needs, so it must see every detected face, not just the usable ones.
+            val sceneFaces = faces.map { face ->
+                val box = face.boundingBox
+                SceneFace(
+                    relativeArea = (box.width().toLong() * box.height()).toFloat() / frameArea,
+                    centerXFraction = (box.exactCenterX() / frameWidth).coerceIn(0f, 1f),
+                    centerYFraction = (box.exactCenterY() / frameHeight).coerceIn(0f, 1f),
+                )
+            }
+            val labelTexts = labels.filter { it.confidence >= LABEL_CONFIDENCE_FLOOR }.map { it.text }
+            val categories = SceneClassifier.classify(labels, faces.size, sceneFaces)
+            val generatedCaption = CaptionGenerator.generate(labelTexts, categories, faces.size)
+
             return AssetRecognition(
                 mediaId = asset.id,
                 sourceRevision = asset.recognitionRevision(),
@@ -204,8 +224,11 @@ class RecognitionIndexer(
                 faceDescriptors = descriptors,
                 petVerdict = PetClassifier.classify(labels),
                 identityVerdict = IdentityDocumentHeuristics.classify(documentText),
-                labels = labels.filter { it.confidence >= LABEL_CONFIDENCE_FLOOR }.map { it.text },
+                labels = labelTexts,
                 textBlocks = textBlocks,
+                categories = categories,
+                caption = generatedCaption.caption,
+                hashtags = generatedCaption.hashtags,
             )
         } finally {
             bitmap.recycle()

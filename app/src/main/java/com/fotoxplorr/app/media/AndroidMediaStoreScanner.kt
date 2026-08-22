@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import com.fotoxplorr.app.formats.SVG_MIME_TYPE
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -60,34 +61,19 @@ class AndroidMediaStoreScanner(
 
     private fun queryMedia(plan: ScanPlan): Cursor? {
         val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
-        val mediaTypeClause =
-            "(${MediaStore.Files.FileColumns.MEDIA_TYPE}=? OR ${MediaStore.Files.FileColumns.MEDIA_TYPE}=?)"
-        val baseArgs = arrayOf(
-            MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
-            MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
-        )
-        // A delta narrows to rows touched since the (rewound) watermark. `>=` rather than
-        // `>` is deliberate — see ScanPlan's note on second-granular timestamps.
-        val selection = when (plan) {
-            is ScanPlan.Full -> mediaTypeClause
-            is ScanPlan.Delta -> "$mediaTypeClause AND ${MediaStore.MediaColumns.DATE_MODIFIED}>=?"
-        }
-        val selectionArgs = when (plan) {
-            is ScanPlan.Full -> baseArgs
-            is ScanPlan.Delta -> baseArgs + plan.sinceSeconds.toString()
-        }
+        val query = buildSelection(plan)
         val sortOrder = "${MediaStore.Images.ImageColumns.DATE_TAKEN} DESC, ${MediaStore.MediaColumns.DATE_MODIFIED} DESC"
 
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val queryArgs = Bundle().apply {
-                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
-                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, query.clause)
+                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, query.args.toTypedArray())
                 putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, sortOrder)
                 putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE)
             }
             resolver.query(collection, projection(), queryArgs, null)
         } else {
-            resolver.query(collection, projection(), selection, selectionArgs, sortOrder)
+            resolver.query(collection, projection(), query.clause, query.args.toTypedArray(), sortOrder)
         }
     }
 
@@ -158,7 +144,16 @@ class AndroidMediaStoreScanner(
 
         private fun baseUri(type: Int): Uri = when (type) {
             MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-            else -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            // Everything else -- in practice today, only the SVG rows the selection below newly
+            // admits, which carry MEDIA_TYPE_NONE -- lands here. Images.Media.EXTERNAL_CONTENT_URI
+            // is a VIEW filtered to media_type=image; a NONE-typed row's id does not resolve
+            // through it at all, so building "images/media/<id>" for an SVG would produce a Uri
+            // that 404s on openInputStream. That is a WORSE bug than never indexing the file: the
+            // asset would appear in the library with a permanently broken thumbnail instead of
+            // just not appearing. The raw Files collection has no such type filter -- every row
+            // this query can see is openable through it -- so route anything non-image/video there.
+            else -> MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
         }
     }
 
@@ -166,6 +161,61 @@ class AndroidMediaStoreScanner(
         const val SOURCE_NAME = "MediaStore.Files(images+videos)"
         const val PROGRESS_INTERVAL = 64
     }
+}
+
+/** A selection clause plus its positional `?` arguments, kept together so the two can never
+ *  drift out of sync with each other on the way to `ContentResolver.query`. */
+internal data class SelectionQuery(val clause: String, val args: List<String>)
+
+/**
+ * The query selection for [AndroidMediaStoreScanner.scan] -- pulled out to a plain function
+ * (rather than left inline in `queryMedia`) specifically so it is unit-testable without a real
+ * `ContentResolver`: it only builds strings from `MediaStore`'s own constants, which are plain
+ * compile-time-inlined `int`/`String` fields and need no Android runtime to read.
+ *
+ * ## Why filtering on `MEDIA_TYPE` alone misses SVG
+ *
+ * `MediaStore.Files.FileColumns.MEDIA_TYPE` buckets each row into IMAGE/VIDEO/AUDIO/NONE from
+ * an explicit per-mime allowlist maintained by the platform's media scanner -- NOT simply by
+ * checking whether the mime string starts with "image/". SVG is deliberately left off that
+ * allowlist (it is an XML/vector document, not a raster photo the Photos-style pickers this
+ * bucketing exists for are built around), so every SVG on the device is classified
+ * `MEDIA_TYPE_NONE` regardless of its very-much-"image/svg+xml" mime type. The original query
+ * here (`MEDIA_TYPE=IMAGE OR MEDIA_TYPE=VIDEO`) therefore did not just thumbnail SVGs badly --
+ * it excluded every SVG row from the result set entirely, so no SVG ever reached this app's
+ * index in the first place.
+ *
+ * The fix adds a second clause admitting rows whose [MediaStore.MediaColumns.MIME_TYPE] is
+ * exactly `image/svg+xml`, or (defensively, for the rarer provider that leaves `MIME_TYPE`
+ * null/blank for a row it doesn't recognise) whose display name ends in literally `.svg`. Both
+ * arms are scoped to that one, exact case -- nothing else living in `MEDIA_TYPE_NONE` (PDFs,
+ * .txt notes, arbitrary app-private files MediaStore happens to have indexed) matches either
+ * arm, so this cannot sweep in unrelated non-media files.
+ */
+internal fun buildSelection(plan: ScanPlan): SelectionQuery {
+    val mediaTypeClause =
+        "(${MediaStore.Files.FileColumns.MEDIA_TYPE}=? OR ${MediaStore.Files.FileColumns.MEDIA_TYPE}=?)"
+    val svgClause =
+        "(${MediaStore.MediaColumns.MIME_TYPE}=? OR ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?)"
+    val selectionClause = "($mediaTypeClause OR $svgClause)"
+    val baseArgs = listOf(
+        MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
+        MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
+        SVG_MIME_TYPE,
+        "%.svg",
+    )
+
+    // A delta narrows to rows touched since the (rewound) watermark. `>=` rather than `>` is
+    // deliberate — see ScanPlan's note on second-granular timestamps.
+    val clause = when (plan) {
+        is ScanPlan.Full -> selectionClause
+        is ScanPlan.Delta -> "$selectionClause AND ${MediaStore.MediaColumns.DATE_MODIFIED}>=?"
+    }
+    val args = when (plan) {
+        is ScanPlan.Full -> baseArgs
+        is ScanPlan.Delta -> baseArgs + plan.sinceSeconds.toString()
+    }
+    return SelectionQuery(clause, args)
 }
 
 private fun Cursor.stringOrNull(index: Int): String? =

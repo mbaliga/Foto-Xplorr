@@ -23,6 +23,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.pro.LocalProEntitlement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -59,6 +61,13 @@ private val MUTED_TEXT = Color.White.copy(alpha = 0.45f)
  * lands in someone else's chat, and a switch labelled "Polaroid" tells you nothing about that --
  * so the real [FrameRenderer] draws a real sample, off the main thread, on every change. What is
  * on screen is what gets sent.
+ *
+ * The watermark row is the one control here that is not really a choice for a non-Pro account:
+ * the free tier's mark cannot be switched off from this sheet (owner, 2026-08-21), so what is
+ * shown is a locked, checked switch and a way to unlock Pro rather than a working toggle that
+ * would be lying about what Share is about to do. [ShareOptions.resolvedFor] is what both the
+ * preview above and the actual [onShare] call use, so what is on screen matches what is drawn
+ * either way.
  */
 @Composable
 fun ShareOptionsSheet(
@@ -68,9 +77,15 @@ fun ShareOptionsSheet(
     onShare: (ShareOptions) -> Unit,
 ) {
     val context = LocalContext.current
+    val entitlement = remember { LocalProEntitlement(context.applicationContext) }
+    val isPro by entitlement.isPro.collectAsState()
     var options by remember { mutableStateOf(initial) }
     var sourceBitmap by remember(sample?.id) { mutableStateOf<Bitmap?>(null) }
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    // What actually gets drawn and shared, once Pro status is folded in -- see
+    // ShareOptions.resolvedFor. The preview below and the Share button both read this, never the
+    // raw `options`, so what is on screen is never more optimistic than what Share does.
+    val effectiveOptions = options.resolvedFor(isPro)
 
     // Decode the sample small. This is a thumbnail of a thumbnail -- it exists to show the frame's
     // proportions, and the frame's metrics are all relative to the photo's own edge, so a small
@@ -95,10 +110,10 @@ fun ShareOptionsSheet(
         }
     }
 
-    LaunchedEffect(sourceBitmap, options.frame, options.watermark, options.caption, options.seal) {
+    LaunchedEffect(sourceBitmap, effectiveOptions) {
         val base = sourceBitmap ?: return@LaunchedEffect
         previewBitmap = withContext(Dispatchers.Default) {
-            runCatching { FrameRenderer.render(base, options) }.getOrNull()
+            runCatching { FrameRenderer.render(base, effectiveOptions) }.getOrNull()
         }
     }
 
@@ -191,12 +206,7 @@ fun ShareOptionsSheet(
                 checked = options.stripMetadata,
                 onCheckedChange = { options = options.copy(stripMetadata = it) },
             )
-            SheetSwitch(
-                label = "Add the Foto Xplorr mark",
-                caption = "A small signature in the corner.",
-                checked = options.watermark,
-                onCheckedChange = { options = options.copy(watermark = it) },
-            )
+            WatermarkRow(isPro = isPro, onUnlock = entitlement::recordUnlock)
 
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -216,7 +226,7 @@ fun ShareOptionsSheet(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
                         .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
-                        .clickable { onShare(options) }
+                        .clickable { onShare(effectiveOptions) }
                         .padding(horizontal = 18.dp, vertical = 10.dp),
                 )
             }
@@ -229,7 +239,8 @@ private fun SheetSwitch(
     label: String,
     caption: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+    onCheckedChange: ((Boolean) -> Unit)?,
+    enabled: Boolean = true,
 ) {
     Row(
         Modifier.fillMaxWidth(),
@@ -243,7 +254,61 @@ private fun SheetSwitch(
         com.fotoxplorr.app.hyle.HyleToggle(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            enabled = enabled,
             description = label,
+        )
+    }
+}
+
+/**
+ * The watermark control, which is present-but-locked for everyone who has not unlocked Pro.
+ *
+ * A working switch a non-Pro account could flip off would be a promise the free tier does not
+ * keep — see [ShareOptions.resolveWatermark]. So the switch here always shows the true state
+ * ([isPro]'s free/Pro reading, not a per-share choice) and is always disabled; the only thing a
+ * non-Pro sharer can actually do about the mark lives below it, as a plain, honestly labelled
+ * unlock action rather than a toggle wired to look like one.
+ */
+@Composable
+private fun WatermarkRow(isPro: Boolean, onUnlock: () -> Unit) {
+    if (isPro) {
+        SheetSwitch(
+            label = "No Foto Xplorr mark",
+            caption = "Included with Pro. Every share leaves the mark off.",
+            checked = false,
+            onCheckedChange = null,
+            enabled = false,
+        )
+        return
+    }
+
+    Column {
+        SheetSwitch(
+            label = "Add the Foto Xplorr mark",
+            caption = "On for every free share. Unlock Pro to turn it off.",
+            checked = true,
+            onCheckedChange = null,
+            enabled = false,
+        )
+        Text(
+            "Unlock Pro",
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier
+                .padding(top = 6.dp)
+                .clickable(onClick = onUnlock)
+                .padding(vertical = 4.dp),
+        )
+        Text(
+            // Honest about what tapping it actually does today -- see ProEntitlement's KDoc for
+            // why there is no store, no charge and no receipt behind this yet, and where the real
+            // purchase goes once the connect flavour implements one.
+            "This build doesn't charge anything yet — unlocking here just remembers Pro on this " +
+                "device, the same way it will once real billing is wired in.",
+            color = MUTED_TEXT,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(top = 2.dp),
         )
     }
 }
