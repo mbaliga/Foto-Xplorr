@@ -5,7 +5,9 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Crop
 import androidx.media3.effect.ScaleAndRotateTransformation
@@ -148,10 +150,17 @@ class VideoExporter(context: Context) {
 
         return EditedMediaItem.Builder(mediaItem)
             .setRemoveAudio(plan.muted)
-            .setSpeed(plan.speed)
+            .setSpeed(constantSpeedProvider(plan.speed))
             .setEffects(Effects(/* audioProcessors= */ emptyList(), videoEffects))
             .build()
     }
+
+    private fun constantSpeedProvider(speed: Float): SpeedProvider =
+        object : SpeedProvider {
+            override fun getSpeed(presentationTimeUs: Long): Float = speed
+
+            override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = C.TIME_UNSET
+        }
 
     /** Copies the finished bytes into MediaStore beside the original; see class doc. */
     private fun publish(source: MediaAsset, finished: File): Uri {
