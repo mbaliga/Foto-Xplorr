@@ -202,6 +202,18 @@ dependencies {
     implementation("io.coil-kt.coil3:coil-svg:3.5.0")
     implementation("io.coil-kt.coil3:coil-video:3.5.0")
 
+    // Video playback and editing, all on-device (docs/adr/ADR-008-video-editing.md).
+    // ExoPlayer replaces the legacy android.widget.VideoView in the viewer: far wider container
+    // and codec coverage (the "handle every format we can" direction) and the same engine the
+    // editor's preview uses, so what plays is what exports. Transformer + Effects are the edit
+    // pipeline: hardware transcode, clipping, speed, rotate/flip and crop with no native code of
+    // our own and no network anything. All four artifacts are Apache-2.0 AndroidX.
+    val media3 = "1.9.0"
+    implementation("androidx.media3:media3-exoplayer:$media3")
+    implementation("androidx.media3:media3-ui:$media3")
+    implementation("androidx.media3:media3-transformer:$media3")
+    implementation("androidx.media3:media3-effect:$media3")
+
     // On-device image embeddings. The model is installed into app-private storage on demand.
     implementation("com.google.mediapipe:tasks-vision:0.10.35")
 

@@ -37,6 +37,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.editor.EditorScreen
+import com.fotoxplorr.app.videoedit.VideoEditorScreen
 import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.share.SharePreparer
 import com.fotoxplorr.app.share.ZipExporter
@@ -584,7 +585,19 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     }
 
     val editing = editingAsset
-    if (editing != null) {
+    if (editing != null && editing.isVideo) {
+        BackHandler { editingAsset = null }
+        VideoEditorScreen(
+            asset = editing,
+            onClose = { editingAsset = null },
+            onSaved = { message ->
+                editingAsset = null
+                userMessage = message
+                // The exported copy is a new file, so the library has to learn about it.
+                scanRequests.trySend(false)
+            },
+        )
+    } else if (editing != null) {
         BackHandler { editingAsset = null }
         EditorScreen(
             asset = editing,
