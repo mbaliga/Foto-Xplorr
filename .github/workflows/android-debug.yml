@@ -2,7 +2,9 @@ name: Android debug APK
 
 on:
   push:
-    branches: [main]
+    # claude/** so the active working branches build on every push, not only once a PR
+    # exists — the same gap Fyl-Manager's android.yml closed for the same reason.
+    branches: [main, 'claude/**']
   pull_request:
   workflow_dispatch:
 
