@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -55,6 +57,7 @@ private enum class EditTool(val label: String) {
     DETAIL("Detail"),
     CROP("Crop"),
     ROTATE("Rotate"),
+    HEAL("Heal"),
 }
 
 /**
@@ -81,6 +84,7 @@ fun EditorScreen(
     val context = LocalContext.current
     var recipe by remember(asset.id) { mutableStateOf(EditRecipe()) }
     var tool by remember { mutableStateOf(EditTool.LIGHT) }
+    var healRadius by remember { mutableStateOf(HealSpot.DEFAULT_RADIUS) }
     var source by remember(asset.id) { mutableStateOf<Bitmap?>(null) }
     var preview by remember(asset.id) { mutableStateOf<Bitmap?>(null) }
     var saving by remember { mutableStateOf(false) }
@@ -208,12 +212,44 @@ fun EditorScreen(
             if (shown == null) {
                 CircularProgressIndicator(color = Color.White)
             } else {
-                Image(
-                    bitmap = shown.asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize().padding(8.dp),
-                    contentScale = ContentScale.Fit,
-                )
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(8.dp)
+                        // The Heal tool's input: a tap on the photograph places a spot. The tap
+                        // arrives in this Box's coordinates; the ContentScale.Fit letterbox is
+                        // inverted here so the spot lands on the PIXEL the finger meant, not on
+                        // the container point. Keyed on tool + bitmap so leaving the tool
+                        // removes the handler entirely.
+                        .pointerInput(tool, shown.width, shown.height, healRadius) {
+                            if (tool != EditTool.HEAL) return@pointerInput
+                            detectTapGestures { tap ->
+                                val scale = minOf(
+                                    size.width.toFloat() / shown.width,
+                                    size.height.toFloat() / shown.height,
+                                )
+                                val drawnWidth = shown.width * scale
+                                val drawnHeight = shown.height * scale
+                                val left = (size.width - drawnWidth) / 2f
+                                val top = (size.height - drawnHeight) / 2f
+                                val nx = (tap.x - left) / drawnWidth
+                                val ny = (tap.y - top) / drawnHeight
+                                if (nx in 0f..1f && ny in 0f..1f) {
+                                    recipe = recipe.copy(
+                                        heals = recipe.heals + HealSpot(nx, ny, healRadius),
+                                    )
+                                }
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Image(
+                        bitmap = shown.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit,
+                    )
+                }
             }
         }
 
@@ -377,6 +413,42 @@ fun EditorScreen(
                         range = -STRAIGHTEN_LIMIT_DEGREES..STRAIGHTEN_LIMIT_DEGREES,
                         unit = "°",
                     ) { recipe = recipe.copy(straightenDegrees = it) }
+                }
+
+                EditTool.HEAL -> {
+                    Text(
+                        "Tap a blemish to heal it — a matching patch from nearby covers the " +
+                            "spot. Heal after framing: changing crop or rotation moves the spots.",
+                        color = Color.White.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    LabelledSlider(
+                        "Spot size",
+                        healRadius,
+                        range = HealSpot.MIN_RADIUS..HealSpot.MAX_RADIUS,
+                    ) { healRadius = it }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            enabled = recipe.heals.isNotEmpty(),
+                            onClick = { recipe = recipe.copy(heals = recipe.heals.dropLast(1)) },
+                        ) {
+                            Text("Remove last", color = Color.White)
+                        }
+                        TextButton(
+                            enabled = recipe.heals.isNotEmpty(),
+                            onClick = { recipe = recipe.copy(heals = emptyList()) },
+                        ) {
+                            Text("Clear all", color = Color.White.copy(alpha = 0.7f))
+                        }
+                        if (recipe.heals.isNotEmpty()) {
+                            Text(
+                                "${recipe.heals.size} ${if (recipe.heals.size == 1) "spot" else "spots"}",
+                                color = Color.White.copy(alpha = 0.55f),
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.align(Alignment.CenterVertically),
+                            )
+                        }
+                    }
                 }
             }
         }
