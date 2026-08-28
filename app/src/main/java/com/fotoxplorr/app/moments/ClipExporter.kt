@@ -118,7 +118,7 @@ class ClipExporter(context: Context) {
             // track to zero independently would desync audio from picture.
             val baseUs = findClipStart(extractor, tracks, startUs)
 
-            val buffer = ByteBuffer.allocateDirect(COPY_BUFFER_BYTES)
+            val buffer = ByteBuffer.allocateDirect(copyBufferBytesFor(extractor, tracks))
             val bufferInfo = MediaCodec.BufferInfo()
             for (track in tracks) {
                 currentCoroutineContext().ensureActive()
@@ -218,11 +218,42 @@ class ClipExporter(context: Context) {
         }
     }
 
+    /**
+     * How big the sample-copy buffer has to be: the largest [MediaFormat.KEY_MAX_INPUT_SIZE] any
+     * copied track declares, floored at [MIN_COPY_BUFFER_BYTES] and capped at
+     * [MAX_COPY_BUFFER_BYTES].
+     *
+     * Asked rather than assumed, because [MediaExtractor.readSampleData] throws
+     * `IllegalArgumentException` if the sample does not fit — and the samples that do not fit a
+     * fixed 1 MiB are exactly the ones a modern phone produces. A 4K keyframe at a high bitrate
+     * runs to several megabytes; every P-frame after it is a fraction of that, so a buffer sized
+     * off typical frames looks fine right up until the first keyframe of a 4K clip, which is the
+     * first sample this copies. The failure would land on the newest, best footage in the library
+     * and nowhere else.
+     *
+     * The floor covers a track that declares no maximum at all (the key is documented as
+     * optional). The cap is a guard against a corrupt or hostile value, since this figure comes
+     * straight out of the file being read and is used to size a direct allocation.
+     */
+    private fun copyBufferBytesFor(extractor: MediaExtractor, tracks: List<TrackPlan>): Int {
+        val declared = tracks.maxOfOrNull { track ->
+            val format = extractor.getTrackFormat(track.sourceIndex)
+            if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+                runCatching { format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE) }.getOrDefault(0)
+            } else {
+                0
+            }
+        } ?: 0
+        return declared.coerceIn(MIN_COPY_BUFFER_BYTES, MAX_COPY_BUFFER_BYTES)
+    }
+
     private data class TrackPlan(val sourceIndex: Int, val muxerIndex: Int)
 
     private companion object {
-        /** Comfortably larger than one compressed video frame; re-used across every sample of
-         *  every track rather than re-allocated per sample. */
-        const val COPY_BUFFER_BYTES = 1 shl 20 // 1 MiB
+        /** Floor for the copy buffer, for a track that declares no maximum input size. */
+        const val MIN_COPY_BUFFER_BYTES = 1 shl 20 // 1 MiB
+
+        /** Ceiling, so a corrupt declared size cannot turn into a huge direct allocation. */
+        const val MAX_COPY_BUFFER_BYTES = 32 shl 20 // 32 MiB
     }
 }

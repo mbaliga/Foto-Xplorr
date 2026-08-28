@@ -417,6 +417,7 @@ private fun noOpActions() = com.fotoxplorr.app.gallery.GalleryActions(
         onOpenAsset = { _, _ -> Unit },
         onStartSlideshow = { _ -> Unit },
         onPendingSearchConsumed = {},
+        onRejectArchiveSuggestions = { _ -> Unit },
 )
 
 /** A library with nothing in it: these renders are about chrome, not content. */

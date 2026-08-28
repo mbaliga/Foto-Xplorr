@@ -60,6 +60,7 @@ import com.fotoxplorr.app.media.PrefsScanWatermark
 import com.fotoxplorr.app.media.ScanEvent
 import com.fotoxplorr.app.media.ScanPlan
 import com.fotoxplorr.app.media.SqliteMediaRepository
+import com.fotoxplorr.app.curate.AutoCurationPass
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.recognition.RecognitionIndexer
@@ -552,6 +553,11 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     LaunchedEffect(recognitionGeneration) {
         if (recognitionGeneration > 0 && assets.isNotEmpty()) {
             recognitionIndexer.index(assets)
+            // Curate immediately after, on the results that pass just wrote, rather than leaving
+            // it for the next background wake -- someone who taps "index my library" and then
+            // opens a photo expects to see what it found, not to see it tomorrow morning. The
+            // pass is idempotent, so the background run doing this again costs nothing.
+            AutoCurationPass(libraryStore).run(assets, recognitionStore.observe().value)
         }
     }
 
@@ -621,6 +627,15 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // than passed wholesale: the index holds every photo's text, and the viewer needs
             // exactly one photo's worth.
             liveTextBlocks = recognition.textByMedia[activeAsset.id].orEmpty(),
+            // What this photo carries in the library, as opposed to what its file says. Read
+            // from the same LibraryState the grid already renders, so a tag added in the grid's
+            // selection menu is on the photo the moment the viewer opens over it.
+            tags = library.tagsFor(activeAsset.id),
+            autoTags = library.autoTagsFor(activeAsset.id),
+            onRemoveTag = { tag -> libraryStore.removeTag(setOf(activeAsset.id), tag) },
+            caption = library.captionFor(activeAsset.id),
+            captionIsMachineWritten = library.isMachineCaption(activeAsset.id),
+            onSetCaption = { text -> libraryStore.setCaption(activeAsset.id, text) },
             // The Search pill in the details room. Closing the viewer is done HERE rather than
             // inside ViewerScreen (see that parameter's own doc): the results land in the grid,
             // and leaving the photo open on top of them would put the answer behind the question.
@@ -793,6 +808,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     }
                 },
                 onPendingSearchConsumed = { pendingSearch = null },
+                onRejectArchiveSuggestions = libraryStore::rejectArchiveSuggestions,
             ),
         )
     }

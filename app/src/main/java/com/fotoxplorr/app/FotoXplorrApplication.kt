@@ -7,6 +7,9 @@ import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import coil3.request.crossfade
+import com.fotoxplorr.app.background.BackgroundScheduler
+import com.fotoxplorr.app.background.BackgroundWorkRunnerRegistry
+import com.fotoxplorr.app.background.WorkRulesStore
 import dev.aarso.crashrecovery.CrashRecovery
 import okio.Path.Companion.toOkioPath
 
@@ -25,6 +28,28 @@ class FotoXplorrApplication : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         CrashRecovery.install(this, appLabel = "Foto Xplorr")
+        startBackgroundWork()
+    }
+
+    /**
+     * Hands the background scheduler the work it is meant to schedule, and arms it.
+     *
+     * Both halves belong here rather than in a screen. The runner is a process-wide slot read by
+     * a `JobService` the platform may start with no Activity alive at all, so registering it from
+     * a composable would mean the job waking up into a process that has no idea what to do; and
+     * arming only from the Settings tab (where it also happens, on every edit) would leave a fresh
+     * install running unrestricted until someone happened to open that tab — the exact opposite of
+     * what a person setting battery and quiet-hours rules is asking for.
+     *
+     * Reading the stored rules is a SharedPreferences load, which is why this can be synchronous
+     * on the main thread here; [BackgroundScheduler.reconcile] itself only talks to `JobScheduler`.
+     */
+    private fun startBackgroundWork() {
+        BackgroundWorkRunnerRegistry.runner = LibraryBackgroundWork(this)
+        // A failure to arm must not take the app down on launch: the rules are a background
+        // convenience, and an app that will not start because JobScheduler refused a job is a
+        // far worse outcome than one whose background pass waits until Settings is next opened.
+        runCatching { BackgroundScheduler(this).reconcile(WorkRulesStore(this).observe().value) }
     }
 
     /**

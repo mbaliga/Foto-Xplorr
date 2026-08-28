@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -30,6 +31,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.Icon
@@ -43,7 +45,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import com.fotoxplorr.app.hyle.HyleTextField
 import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomStyle
@@ -89,9 +93,10 @@ internal val MUTED_TEXT = Color(0xFF6A6A6A)
  * photo flies into, the caption affordance, then the file's own facts. Related photos stay at
  * the bottom, below everything the room exists to say.
  *
- * The caption row is still an affordance without storage -- Foto Xplorr has no caption
- * field in its data model, and inventing one was out of scope here -- so tapping it does
- * nothing yet. It is drawn because the mockup draws it; it is not claimed to persist.
+ * The caption row is real now. It was drawn-but-dead for as long as this room existed, because
+ * the data model had nowhere to put a caption; `LibraryStore` has a caption field since the
+ * auto-annotation work, so the row writes to it. A caption the annotator wrote says so, and
+ * typing over it makes it yours -- see [CaptionBlock].
  *
  * @param exif read by the viewer rather than here. The shell composes a room only once it is
  *   at least slightly open, so a room that read its own EXIF would start that read on the first
@@ -128,6 +133,17 @@ fun PhotoDetailRoom(
     onClearLocation: (() -> Unit)? = null,
     recognizedText: String = "",
     onSearchLibrary: ((String) -> Unit)? = null,
+    /** Every tag on this photo, whoever or whatever put it there. */
+    tags: Set<String> = emptySet(),
+    /** The subset of [tags] the auto-tagger applied. Drawn differently, never separately. */
+    autoTags: Set<String> = emptySet(),
+    onRemoveTag: ((String) -> Unit)? = null,
+    /** This photo's caption. May have been typed by a person or written by the annotator. */
+    caption: String = "",
+    /** True when [caption] is the annotator's sentence rather than someone's own words. */
+    captionIsMachineWritten: Boolean = false,
+    /** Null leaves the caption read-only, the same shape [onSetLocation] uses. */
+    onSetCaption: ((String) -> Unit)? = null,
 ) {
     // The shell deliberately consumes no insets — it says so in its own KDoc, because doing so
     // would lift its drag-sensitive edges off the physical screen edge. So a room pads for the
@@ -153,14 +169,11 @@ fun PhotoDetailRoom(
             ExifCard(asset = asset, exif = exif)
         }
         TextLensBlock(asset = asset, recognizedText = recognizedText, onSearchLibrary = onSearchLibrary)
-        Text(
-            text = "Add a Caption",
-            color = RoomStyle.InkFaint,
-            style = RoomStyle.Row,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(enabled = false) {}
-                .padding(horizontal = 20.dp, vertical = 18.dp),
+        TagsBlock(tags = tags, autoTags = autoTags, onRemoveTag = onRemoveTag)
+        CaptionBlock(
+            caption = caption,
+            isMachineWritten = captionIsMachineWritten,
+            onSetCaption = onSetCaption,
         )
         InformationBlock(asset = asset, exif = exif, reveal = reveal)
         // The place plate goes LAST, because it is the thing this room exists to show. It used
@@ -248,6 +261,138 @@ private fun TextLensBlock(
             recognizedText = recognizedText,
             onSearchLibrary = onSearchLibrary,
         )
+    }
+}
+
+/**
+ * Every tag on this photo, with the auto-applied ones drawn as what they are.
+ *
+ * One list, not two. A person thinks of these as "this photo's tags" regardless of who typed
+ * them, and splitting them into "Yours" and "Suggested" sections would make the reader do
+ * bookkeeping the app already did. The provenance still shows — an auto tag is outlined rather
+ * than filled, and carries no delete affordance of its own beyond the same one a typed tag has —
+ * because a person who wants to know which words they chose has to be able to tell.
+ *
+ * Renders nothing when there are no tags. The precedent is [TextLensBlock] directly above and
+ * [StatusBlock]'s own reasoning: an empty section header is a promise the room does not keep.
+ */
+@Composable
+private fun TagsBlock(tags: Set<String>, autoTags: Set<String>, onRemoveTag: ((String) -> Unit)?) {
+    if (tags.isEmpty()) return
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        RoomEyebrow("TAGS")
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // Sorted, with the person's own words first. Set iteration order is an accident of
+            // insertion, and a list of chips that reshuffles between two openings of the same
+            // photo reads as a bug even when nothing changed.
+            val ordered = tags.sortedWith(compareBy({ it in autoTags }, { it.lowercase() }))
+            ordered.forEach { tag ->
+                TagChip(
+                    tag = tag,
+                    isAuto = tag in autoTags,
+                    onRemove = onRemoveTag?.let { remove -> { remove(tag) } },
+                )
+            }
+        }
+        if (autoTags.isNotEmpty()) {
+            Text(
+                text = "Outlined tags were suggested by on-device recognition. Removing one " +
+                    "removes it for good — it will not be suggested again.",
+                color = MUTED_TEXT,
+                style = RoomStyle.Caption,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TagChip(tag: String, isAuto: Boolean, onRemove: (() -> Unit)?) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            // Filled for a tag someone typed, outlined for one the app guessed. The same
+            // distinction OutlineBadge already draws elsewhere in this room, used here for the
+            // same reason: two kinds of fact should not look identical.
+            .then(
+                if (isAuto) {
+                    Modifier.border(1.dp, Color(0xFF3A3A3A), RoundedCornerShape(6.dp))
+                } else {
+                    Modifier.background(CARD_HEADER_BACKGROUND)
+                },
+            )
+            .padding(start = 10.dp, end = if (onRemove != null) 4.dp else 10.dp, top = 6.dp, bottom = 6.dp),
+    ) {
+        Text(
+            text = tag,
+            color = if (isAuto) SECONDARY_TEXT else PRIMARY_TEXT,
+            style = RoomStyle.Caption,
+        )
+        if (onRemove != null) {
+            Icon(
+                imageVector = Icons.Outlined.Close,
+                contentDescription = "Remove tag $tag",
+                tint = MUTED_TEXT,
+                modifier = Modifier.size(16.dp).clickable(onClick = onRemove),
+            )
+        }
+    }
+}
+
+/**
+ * The caption row — a real one now.
+ *
+ * It was a `clickable(enabled = false)` placeholder reading "Add a Caption" for as long as this
+ * room has existed, which is worse than absent: it advertised a feature and then did nothing when
+ * tapped.
+ *
+ * The field holds its own draft and commits on focus loss rather than on every keystroke. Writing
+ * per character would mean a database write per letter typed, and — because a machine caption is
+ * cleared the moment a person edits — would also make the first keystroke silently discard the
+ * annotator's sentence before anyone had decided to replace it.
+ */
+@Composable
+private fun CaptionBlock(caption: String, isMachineWritten: Boolean, onSetCaption: ((String) -> Unit)?) {
+    if (onSetCaption == null && caption.isBlank()) return
+
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        RoomEyebrow("CAPTION")
+
+        if (onSetCaption == null) {
+            Text(text = caption, color = PRIMARY_TEXT, style = RoomStyle.Caption)
+        } else {
+            // Keyed on the stored caption so switching photos loads the new one, rather than
+            // carrying the previous photo's draft across on a paging swipe.
+            var draft by remember(caption) { mutableStateOf(caption) }
+            HyleTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                placeholder = "Say something about this photo",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { focus ->
+                        if (!focus.isFocused && draft != caption) onSetCaption(draft)
+                    },
+            )
+        }
+
+        if (caption.isNotBlank() && isMachineWritten) {
+            Text(
+                text = "Written by on-device recognition. Type over it and it becomes yours.",
+                color = MUTED_TEXT,
+                style = RoomStyle.Caption,
+            )
+        }
     }
 }
 

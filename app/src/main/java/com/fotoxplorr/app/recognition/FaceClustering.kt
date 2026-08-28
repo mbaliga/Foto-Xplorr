@@ -172,6 +172,19 @@ data class RecognitionIndex(
      * absent from the map, not mapped to an empty set.
      */
     val categoriesByMedia: Map<MediaId, Set<SceneCategory>> = emptyMap(),
+    /**
+     * The sentence [CaptionGenerator] wrote for each photo during indexing.
+     *
+     * Computed per photo and stored on its [AssetRecognition] row since captioning landed, but
+     * until now never published anywhere a reader could reach — so the app was writing a caption
+     * for every photo in the library and then had no way to show one. Exposed here for the same
+     * reason [labelsByMedia] is: this index is recognition's only published view, and a fact that
+     * does not appear in it may as well not have been computed.
+     *
+     * Sparse, like its neighbours: a photo the generator had nothing to say about is absent
+     * rather than mapped to "".
+     */
+    val captionsByMedia: Map<MediaId, String> = emptyMap(),
 ) {
     /** Every distinct label in the library, for offering search alternatives that exist. */
     val allLabels: Set<String> by lazy(LazyThreadSafetyMode.NONE) {
@@ -229,6 +242,8 @@ data class RecognitionIndex(
                         hasRecurringPerson = row.mediaId in recurringPersonMediaIds,
                     )
                 }.filterValues { it.isNotEmpty() },
+                captionsByMedia = rows.filter { it.caption.isNotBlank() }
+                    .associate { it.mediaId to it.caption },
             )
         }
     }

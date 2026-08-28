@@ -285,6 +285,13 @@ data class GalleryActions(
     val onStartSlideshow: (List<MediaAsset>) -> Unit,
     /** Clears [GalleryUiState.pendingSearch] once the browser has acted on it. */
     val onPendingSearchConsumed: () -> Unit,
+    /**
+     * "No, keep this one" in the archive review queue. Remembered permanently — see
+     * [com.fotoxplorr.app.organize.LibraryStore.rejectArchiveSuggestions] — so the same photo is
+     * never offered again. Declining a suggestion has to stick, or the queue becomes a thing you
+     * dismiss the same items out of every time you open it.
+     */
+    val onRejectArchiveSuggestions: (Set<MediaId>) -> Unit,
 )
 
 @Composable

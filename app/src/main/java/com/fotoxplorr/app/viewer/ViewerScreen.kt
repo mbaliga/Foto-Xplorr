@@ -127,6 +127,13 @@ fun ViewerScreen(
      * Null leaves the pill visibly disabled -- see [com.fotoxplorr.app.lens.LensCard].
      */
     onSearchLibrary: ((String) -> Unit)? = null,
+    /** This photo's tags and caption, for the details room. See [PhotoDetailRoom]. */
+    tags: Set<String> = emptySet(),
+    autoTags: Set<String> = emptySet(),
+    onRemoveTag: ((String) -> Unit)? = null,
+    caption: String = "",
+    captionIsMachineWritten: Boolean = false,
+    onSetCaption: ((String) -> Unit)? = null,
     /** Let GIFs and animated images play. */
     loopAnimations: Boolean = false,
     /** Start videos without waiting for a tap on play. */
@@ -257,6 +264,12 @@ fun ViewerScreen(
                 // the overlay and the details card must never disagree about what the photo says.
                 recognizedText = liveTextBlocks.joinToString("\n") { it.text },
                 onSearchLibrary = onSearchLibrary,
+                tags = tags,
+                autoTags = autoTags,
+                onRemoveTag = onRemoveTag,
+                caption = caption,
+                captionIsMachineWritten = captionIsMachineWritten,
+                onSetCaption = onSetCaption,
                 // NEGATED, and this is not cosmetic. The bottom room opens with vProgress
                 // running NEGATIVE (SpatialMotion's sign convention), while PlaceMorph.stagger
                 // clamps its input to 0..1 -- so feeding the raw value would hold every stagger

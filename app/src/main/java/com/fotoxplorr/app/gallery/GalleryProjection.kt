@@ -324,7 +324,12 @@ private fun MediaAsset.matchesQuery(query: String, tags: Set<String>): Boolean {
 private fun List<MediaAsset>.filterByQuery(query: String): List<MediaAsset> =
     filter { it.matchesQuery(query, emptySet()) }
 
-private fun MediaAsset.isScreenshot(): Boolean =
+/**
+ * internal, not file-private: the archive review queue asks the same question when deciding
+ * whether a photo is an old screenshot worth offering to tidy away, and two copies of "what
+ * counts as a screenshot" would eventually disagree about the same photo on two screens.
+ */
+internal fun MediaAsset.isScreenshot(): Boolean =
     displayName.contains("screenshot", ignoreCase = true) ||
         folderIdentity(this).displayName.contains("screenshot", ignoreCase = true)
 
