@@ -42,7 +42,16 @@ data class VideoMoment(
     val label: String = "",
 ) {
     val isManual: Boolean get() = source == MomentSource.MANUAL
+    val key: MomentKey get() = MomentKey(mediaId, positionMs)
 }
+
+/**
+ * What identifies one moment: which video, and where in it.
+ *
+ * A named type rather than a `Pair`, because it is a map key in two places and `Pair`'s
+ * `first`/`second` say nothing at a call site about which of the two is the position.
+ */
+data class MomentKey(val mediaId: MediaId, val positionMs: Long)
 
 /**
  * A moment the detector found, before it is attached to a video.
@@ -58,6 +67,62 @@ data class DetectedMoment(
 )
 
 /**
+ * A person's verdict on an AUTO-detected moment: was flagging this spot the right call.
+ *
+ * Lives here rather than beside the pill that draws the two thumbs, because it is stored, and
+ * because [MomentFeedbackFilter] gives it a consequence — both of which belong to this layer.
+ * There is nowhere to send this and no model to retrain: it is read back by re-detection on this
+ * device and nowhere else, which is the only thing an app with no network permission could
+ * honestly do with it.
+ */
+enum class MomentFeedback { GOOD, BAD }
+
+/**
+ * What a thumbs-down actually does: keeps the detector from proposing the same spot again.
+ *
+ * Without this the two thumbs are decoration — a control that lights up and changes nothing, of
+ * exactly the kind [KeyMomentDetector]'s own class doc argues against when it insists a video of
+ * identical frames must report no moments at all. Rejecting a moment and having it return on the
+ * next scan is worse than never being asked.
+ *
+ * Only [MomentFeedback.BAD] suppresses. A thumbs-up is not a request to pin anything: the moment
+ * was already going to be proposed, so "yes, good" needs no mechanism to come true, and treating
+ * it as one would quietly convert an opinion into a manual marker the person never placed.
+ */
+object MomentFeedbackFilter {
+
+    /**
+     * [items], minus anything whose position sits within [WINDOW_MS] of a position in [rejected].
+     *
+     * A window rather than exact equality on the millisecond. Re-detection is not guaranteed to
+     * land on the same instant twice — [FrameSampler] steps by a computed interval, so a longer
+     * video, a different build's sampling budget, or a re-encoded file will shift every position
+     * slightly — and a rejection matched only exactly would then quietly stop applying to the
+     * moment it was about.
+     *
+     * Generic over what it filters because both sides of the storage boundary need it: the
+     * indexer holds [DetectedMoment]s and [VideoMomentStore.replaceAuto] holds [VideoMoment]s.
+     * One implementation, so the two cannot disagree about what "the same moment" means.
+     */
+    fun <T> suppress(items: List<T>, rejected: Collection<Long>, positionOf: (T) -> Long): List<T> {
+        if (rejected.isEmpty()) return items
+        return items.filterNot { isRejected(positionOf(it), rejected) }
+    }
+
+    fun isRejected(positionMs: Long, rejected: Collection<Long>): Boolean =
+        rejected.any { position -> kotlin.math.abs(positionMs - position) <= WINDOW_MS }
+
+    /**
+     * How near a rejected position a new detection has to be to count as the same moment.
+     *
+     * Comfortably under the detector's own 3s minimum spacing between reported moments, so this
+     * can never swallow a genuinely different, adjacent moment: at that spacing the nearest
+     * OTHER moment is always at least twice this far away.
+     */
+    const val WINDOW_MS = 1_200L
+}
+
+/**
  * App-private storage for key moments.
  *
  * Its own database rather than a table inside the recognition one, because the two have opposite
@@ -70,14 +135,64 @@ class VideoMomentStore(context: Context) {
     private val helper = MomentOpenHelper(context.applicationContext)
     private val mutex = Mutex()
     private val moments = MutableStateFlow<Map<MediaId, List<VideoMoment>>>(emptyMap())
+    private val feedback = MutableStateFlow<Map<MomentKey, MomentFeedback>>(emptyMap())
 
     fun observe(): StateFlow<Map<MediaId, List<VideoMoment>>> = moments.asStateFlow()
+
+    /**
+     * Thumbs verdicts, keyed by video and exact position.
+     *
+     * Its own flow rather than a field on [VideoMoment], because the two have different
+     * lifetimes: re-detection rewrites every AUTO moment in a video, and a verdict has to
+     * outlive that rewrite in order to still be suppressing anything on the other side of it.
+     */
+    fun observeFeedback(): StateFlow<Map<MomentKey, MomentFeedback>> = feedback.asStateFlow()
 
     /** Everything for one video, earliest first. Cheap: reads the already-loaded map. */
     fun momentsFor(mediaId: MediaId): List<VideoMoment> = moments.value[mediaId].orEmpty()
 
+    fun feedbackFor(mediaId: MediaId, positionMs: Long): MomentFeedback? =
+        feedback.value[MomentKey(mediaId, positionMs)]
+
+    /**
+     * Record, or clear, a verdict on one moment.
+     *
+     * Passing the verdict that is already stored CLEARS it — the "tap the lit thumb again to
+     * un-say it" rule the favourite and sensitive toggles already use.
+     *
+     * ## Why a thumbs-down also deletes the marker
+     * Because otherwise it does nothing a person can see. [markScanned] means a video is scanned
+     * once and never again, so a rejection that only sat in a table waiting for the next
+     * detection pass would wait for ever, leaving the marker exactly where it was — a control
+     * that lights up and changes nothing. So the rejection is applied immediately as well as
+     * remembered.
+     *
+     * The stored verdict is what makes this different from "Remove marker" one row up the same
+     * menu. Both delete the marker now; only this one is still true after a re-index (see
+     * [replaceAuto]), which is the difference between "not this one" and "not this one, ever".
+     *
+     * There is no undo, for the same reason "Remove marker" has none: with the marker gone the
+     * pill is gone too, and with it the lit thumb there would be to tap again. Deliberate, and
+     * the reason the two thumbs sit behind a menu rather than on the pill itself, where a
+     * mis-tap while scrubbing would be easy.
+     */
+    suspend fun setFeedback(mediaId: MediaId, positionMs: Long, value: MomentFeedback) =
+        withContext(Dispatchers.IO) {
+            val key = MomentKey(mediaId, positionMs)
+            mutex.withLock {
+                if (feedback.value[key] == value) {
+                    helper.clearFeedback(mediaId, positionMs)
+                } else {
+                    helper.putFeedback(mediaId, positionMs, value)
+                    if (value == MomentFeedback.BAD) helper.removeAuto(mediaId, positionMs)
+                }
+            }
+            reload()
+        }
+
     suspend fun reload() = withContext(Dispatchers.IO) {
         moments.value = helper.readAll()
+        feedback.value = helper.readFeedback()
     }
 
     suspend fun add(moment: VideoMoment) = withContext(Dispatchers.IO) {
@@ -97,9 +212,22 @@ class VideoMomentStore(context: Context) {
      * re-detection happens in the background, possibly while the user is looking at markers they
      * placed themselves, and a delete-everything-then-insert would make their work vanish
      * mid-session.
+     *
+     * Moments the person has thumbed down are dropped here too, for the same reason and in the
+     * same place: suppression that lived in the indexer instead would be skipped by any other
+     * caller of this method, and "the moment I rejected came back" is not a failure anyone would
+     * report as a bug — they would just stop using the thumbs. See [MomentFeedbackFilter].
      */
     suspend fun replaceAuto(mediaId: MediaId, detected: List<VideoMoment>) = withContext(Dispatchers.IO) {
-        mutex.withLock { helper.replaceAuto(mediaId, detected.filterNot { it.isManual }) }
+        mutex.withLock {
+            val rejected = helper.rejectedPositions(mediaId)
+            val keep = MomentFeedbackFilter.suppress(
+                items = detected.filterNot { it.isManual },
+                rejected = rejected,
+                positionOf = { it.positionMs },
+            )
+            helper.replaceAuto(mediaId, keep)
+        }
         reload()
     }
 
@@ -133,6 +261,7 @@ private class MomentOpenHelper(context: Context) :
         // not re-scanned on every open. Without this, "found nothing" and "never looked" are the
         // same state, and the expensive pass runs for ever on the same file.
         db.execSQL("CREATE TABLE $TABLE_SCANNED (media_id INTEGER PRIMARY KEY)")
+        db.execSQL(CREATE_FEEDBACK)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -140,6 +269,9 @@ private class MomentOpenHelper(context: Context) :
         // Only the scan bookkeeping is disposable.
         db.execSQL("DROP TABLE IF EXISTS $TABLE_SCANNED")
         db.execSQL("CREATE TABLE IF NOT EXISTS $TABLE_SCANNED (media_id INTEGER PRIMARY KEY)")
+        // Thumbs verdicts are user-authored too — a rejection is the only record that a person
+        // ever looked at a moment and said no — so this is created if absent, never dropped.
+        db.execSQL(CREATE_FEEDBACK)
     }
 
     fun readAll(): Map<MediaId, List<VideoMoment>> {
@@ -193,6 +325,21 @@ private class MomentOpenHelper(context: Context) :
         )
     }
 
+    /**
+     * Delete one moment, but only if it is an AUTO one.
+     *
+     * The source check is the safety rail: this runs off a thumbs-down, which the menu only
+     * offers for detected moments — but "only the UI stops it" is exactly how a hand-placed
+     * marker eventually gets deleted by a code path that was never meant to touch one.
+     */
+    fun removeAuto(mediaId: MediaId, positionMs: Long) {
+        writableDatabase.delete(
+            TABLE_MOMENTS,
+            "media_id = ? AND position_ms = ? AND source = ?",
+            arrayOf(mediaId.value.toString(), positionMs.toString(), MomentSource.AUTO.name),
+        )
+    }
+
     fun replaceAuto(mediaId: MediaId, rows: List<VideoMoment>) {
         writableDatabase.transaction {
             delete(
@@ -234,10 +381,80 @@ private class MomentOpenHelper(context: Context) :
         )
     }
 
+    fun readFeedback(): Map<MomentKey, MomentFeedback> {
+        val out = HashMap<MomentKey, MomentFeedback>()
+        readableDatabase.query(
+            TABLE_FEEDBACK,
+            arrayOf("media_id", "position_ms", "verdict"),
+            null, null, null, null, null,
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val verdict = if (cursor.getString(2) == MomentFeedback.GOOD.name) {
+                    MomentFeedback.GOOD
+                } else {
+                    MomentFeedback.BAD
+                }
+                out[MomentKey(MediaId(cursor.getLong(0)), cursor.getLong(1))] = verdict
+            }
+        }
+        return out
+    }
+
+    fun putFeedback(mediaId: MediaId, positionMs: Long, value: MomentFeedback) {
+        writableDatabase.insertWithOnConflict(
+            TABLE_FEEDBACK, null,
+            ContentValues().apply {
+                put("media_id", mediaId.value)
+                put("position_ms", positionMs)
+                put("verdict", value.name)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+    }
+
+    fun clearFeedback(mediaId: MediaId, positionMs: Long) {
+        writableDatabase.delete(
+            TABLE_FEEDBACK,
+            "media_id = ? AND position_ms = ?",
+            arrayOf(mediaId.value.toString(), positionMs.toString()),
+        )
+    }
+
+    /** Positions in one video the person has thumbed down. Read inside replaceAuto's lock. */
+    fun rejectedPositions(mediaId: MediaId): List<Long> {
+        val out = ArrayList<Long>()
+        readableDatabase.query(
+            TABLE_FEEDBACK, arrayOf("position_ms"),
+            "media_id = ? AND verdict = ?",
+            arrayOf(mediaId.value.toString(), MomentFeedback.BAD.name),
+            null, null, null,
+        ).use { cursor ->
+            while (cursor.moveToNext()) out += cursor.getLong(0)
+        }
+        return out
+    }
+
     private companion object {
         const val DATABASE_NAME = "foto_xplorr_moments.db"
-        const val DATABASE_VERSION = 1
+
+        /** 2 added [TABLE_FEEDBACK]; see [MomentOpenHelper.onUpgrade] for what a bump may touch. */
+        const val DATABASE_VERSION = 2
         const val TABLE_MOMENTS = "video_moment"
         const val TABLE_SCANNED = "video_scanned"
+        const val TABLE_FEEDBACK = "moment_feedback"
+
+        /**
+         * Shared by create and upgrade so the two paths cannot define the table differently —
+         * the classic way a fresh install and an upgraded one end up with schemas that diverge
+         * for exactly as long as it takes someone to notice.
+         */
+        const val CREATE_FEEDBACK = """
+            CREATE TABLE IF NOT EXISTS moment_feedback (
+                media_id INTEGER NOT NULL,
+                position_ms INTEGER NOT NULL,
+                verdict TEXT NOT NULL,
+                PRIMARY KEY (media_id, position_ms)
+            )
+        """
     }
 }

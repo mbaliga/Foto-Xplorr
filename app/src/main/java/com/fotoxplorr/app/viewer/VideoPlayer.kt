@@ -165,6 +165,7 @@ fun VideoPlayer(
         runCatching { VideoMomentIndexer(context, momentStore).index(asset) }
     }
     val momentsByAsset by momentStore.observe().collectAsState()
+    val feedbackByMoment by momentStore.observeFeedback().collectAsState()
     val moments = momentsByAsset[asset.id].orEmpty()
     val activeMoment = remember(moments, positionMs) {
         activeMomentAt(moments, positionMs, MOMENT_PILL_TOLERANCE_MS)
@@ -240,7 +241,7 @@ fun VideoPlayer(
                     activeMoment = activeMoment,
                     positionMs = positionMs,
                     durationMs = durationMs,
-                    feedback = activeMoment?.let { MomentFeedbackStore.get(it.mediaId, it.positionMs) },
+                    feedback = activeMoment?.let { feedbackByMoment[it.key] },
                     onShareMoment = { moment ->
                         scope.launch {
                             exportGateway.exportFrame(asset, moment.positionMs).fold(
@@ -264,7 +265,7 @@ fun VideoPlayer(
                         scope.launch { momentStore.remove(moment.mediaId, moment.positionMs) }
                     },
                     onFeedback = { moment, value ->
-                        MomentFeedbackStore.set(moment.mediaId, moment.positionMs, value)
+                        scope.launch { momentStore.setFeedback(moment.mediaId, moment.positionMs, value) }
                     },
                 )
 

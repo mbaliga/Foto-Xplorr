@@ -30,7 +30,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,7 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.app.moments.MomentFeedback
 import com.fotoxplorr.app.moments.MomentSource
 import com.fotoxplorr.app.moments.VideoMoment
 import com.fotoxplorr.app.ui.HyleGrotesk
@@ -87,43 +86,6 @@ internal fun activeMomentAt(
 ): VideoMoment? = moments
     .filter { kotlin.math.abs(it.positionMs - positionMs) <= toleranceMs }
     .minByOrNull { kotlin.math.abs(it.positionMs - positionMs) }
-
-/** Thumbs feedback on an AUTO-detected moment: was flagging this spot the right call. */
-enum class MomentFeedback { GOOD, BAD }
-
-/**
- * Where thumbs feedback lives: IN MEMORY ONLY, for the life of this process.
- *
- * This is deliberate, not an oversight, and there are two separate reasons neither of which is
- * "nobody got round to it". First, the offline flavor has no INTERNET permission at all (see
- * `build.gradle.kts`'s `verifyOffline*` gates) and this project's whole posture forbids inventing
- * a network call to send this feedback anywhere -- there is no server for it to go to. Second,
- * [VideoMoment] has no column for it, and that contract file is explicitly out of scope for this
- * change; adding one would mean either widening a schema this change does not own, or bolting an
- * unrelated second table onto [com.fotoxplorr.app.moments.VideoMomentStore]'s database, which
- * exists specifically to protect user-authored manual markers from exactly this kind of casual
- * scope creep (see that class's own KDoc).
- *
- * What this DOES give you: the thumb stays lit while browsing continues this session, because it
- * lives in a top-level object rather than being [remember]ed inside [KeyMomentBar] itself -- a
- * `remember` tied to that composable would forget the instant the pill unmounts, which happens
- * every time the playhead drifts one polling tick off the moment. It is still lost the moment the
- * app process dies, and a future change that wires this into a real store only has to replace the
- * two functions below; nothing that calls [get]/[set] needs to change.
- */
-internal object MomentFeedbackStore {
-    private val feedback = mutableStateMapOf<Pair<MediaId, Long>, MomentFeedback>()
-
-    fun get(mediaId: MediaId, positionMs: Long): MomentFeedback? = feedback[mediaId to positionMs]
-
-    /** Tapping the thumb that is already lit un-marks it -- the same "tap again to undo" rule
-     *  [ViewerActionsRoom]'s favourite/sensitive toggles use, and without it feedback given once
-     *  could never be taken back. */
-    fun set(mediaId: MediaId, positionMs: Long, value: MomentFeedback) {
-        val key = mediaId to positionMs
-        if (feedback[key] == value) feedback.remove(key) else feedback[key] = value
-    }
-}
 
 @Composable
 fun KeyMomentBar(
