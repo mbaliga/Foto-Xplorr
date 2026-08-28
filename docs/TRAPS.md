@@ -67,3 +67,37 @@ Related: do not reach for uCrop to "just add crop". It declares `com.squareup.ok
 hard-fails `verifyOfflineRuntimeClasspath`, whose allowlist holds one exact coordinate and has no
 escape hatch. And do not copy from Fossify/Simple-Gallery: GPL-3.0 with no "or later", which would
 make this whole app GPL.
+
+## 18. AGP's `splits {}` block is global, not per-build-type
+
+There is no `release { splits { … } }`. Configuring ABI splits anywhere in `android {}` renames
+the artifacts of **every** build type, so `app-offline-debug.apk` silently becomes
+`app-offline-arm64-v8a-debug.apk` and every workflow step that names the old file fails — three
+red CI runs before the cause was obvious, because the build itself stayed green and only the
+artifact upload failed.
+
+Splits are therefore gated behind a Gradle property: `providers.gradleProperty("abiSplits")`, set
+only by the release job (`assembleOfflineRelease -PabiSplits`). If you need per-variant packaging,
+gate it on a property; do not reach for a nested block that does not exist.
+
+## 19. An XML comment may not contain `--`
+
+Not a style rule — `--` inside `<!-- … -->` is malformed XML, and the manifest merger reports it
+as `ManifestMerger2$MergeFailureException: Error parsing …/AndroidManifest.xml`, which reads like
+a merge conflict and sends you looking in entirely the wrong place. Prose dashes in a manifest
+comment must be commas or em dashes. Parse-check with `python3 -c "import
+xml.dom.minidom,sys; xml.dom.minidom.parse(sys.argv[1])"` before rebuilding; it names the line,
+which the merger does not.
+
+## 20. "ML Kit" is not uniformly offline
+
+The bundled models this app already uses — face detection, image labeling, text recognition — ship
+inside the APK and need no network. `com.google.mlkit:translate` does **not**: it downloads a
+~30 MB language model over the network the first time a given language pair is used, which makes
+it a network-capable library in exactly the way OkHttp is.
+
+So it is `connectImplementation`, never `implementation`, and the offline flavour's
+`com.fotoxplorr.app.lens.TextTranslator` implementation must not reference the artifact at all —
+it reports itself unavailable and the UI hands off to an installed translator app. Do not assume a
+new `com.google.mlkit:*` coordinate is safe for the offline classpath because the existing ones
+are; check whether its model is bundled or downloaded before adding it.
