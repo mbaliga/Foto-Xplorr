@@ -39,6 +39,32 @@
         android:name="android.hardware.location.gps"
         android:required="false" />
 
+    <!--
+      Package visibility for the text hand-offs (Android 11+).
+
+      Intent.resolveActivity() and queryIntentActivities() return nothing for packages the app
+      cannot see, and since API 30 an app sees almost nothing by default. Without this block the
+      "Translate with..." hand-off would report NO translator installed on a phone that has
+      several, and would silently fall back to the generic share sheet, a failure that looks
+      like the feature is broken rather than like a manifest omission.
+
+      Declares only the two intents actually used, not QUERY_ALL_PACKAGES: the broad permission is
+      a Play policy problem and gives this app far more visibility than reading text needs.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.WEB_SEARCH" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+    </queries>
+
     <application
         android:name=".FotoXplorrApplication"
         android:allowBackup="false"

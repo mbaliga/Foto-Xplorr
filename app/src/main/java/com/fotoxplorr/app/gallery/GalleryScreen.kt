@@ -219,6 +219,19 @@ data class GalleryUiState(
     /** On-device recognition results backing the Pets / People / Identity destinations. */
     val recognition: RecognitionIndex = RecognitionIndex.EMPTY,
     val recognitionProgress: RecognitionProgress = RecognitionProgress(),
+    /**
+     * A search the user asked for from somewhere outside the grid — today, the viewer's
+     * "Search inside this photo" card (see [com.fotoxplorr.app.lens.LensCard]).
+     *
+     * A one-shot value rather than the search field's actual contents: the field is the
+     * browser's own state and stays that way, because making it a hoisted parameter would mean
+     * every keystroke in it round-tripped through the activity. This carries an *instruction*
+     * ("open search on this text"), which the browser obeys once and then reports back through
+     * [GalleryActions.onPendingSearchConsumed]. Without that acknowledgement the instruction
+     * would still be sitting here on the next recomposition, and typing over the seeded text
+     * would snap back to it.
+     */
+    val pendingSearch: String? = null,
 )
 
 data class GalleryActions(
@@ -270,6 +283,8 @@ data class GalleryActions(
     val onImportMetadata: () -> Unit,
     val onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
     val onStartSlideshow: (List<MediaAsset>) -> Unit,
+    /** Clears [GalleryUiState.pendingSearch] once the browser has acted on it. */
+    val onPendingSearchConsumed: () -> Unit,
 )
 
 @Composable
@@ -416,6 +431,28 @@ private fun GalleryBrowser(
     // Orthogonal to the ladder's own rungs -- it is still a Grid rung underneath, just drawn with
     // headers -- so it is its own flag rather than a fourth kind of [GalleryZoomLevel].
     var timelineHeadersOn by remember { mutableStateOf(false) }
+
+    // A search handed over from outside the grid -- today the viewer's "Search inside this photo"
+    // card. Three things move together, because a search that lands on a surface which cannot
+    // show results is the same as no search at all: the drill-down route resets to Root (a search
+    // scoped to whichever album the photo happened to live in would silently hide most of its own
+    // matches), and the zoom ladder drops back to a grid rung (the Calendar and Map rungs draw
+    // months and pins, not photos, so results arriving underneath one are invisible). The
+    // DESTINATION is deliberately left alone: which of the nine categories the person is browsing
+    // is a choice they made, not incidental state, and search reads as a filter within it.
+    LaunchedEffect(state.pendingSearch) {
+        val seed = state.pendingSearch ?: return@LaunchedEffect
+        query = seed
+        searchVisible = true
+        route = BrowserRoute.Root
+        if (zoomLevel !is GalleryZoomLevel.Grid) {
+            zoomLevel = GalleryZoomLevel.Grid(state.preferences.gridColumns)
+        }
+        // Acknowledged only after the seeding above has actually happened, so a consumer that
+        // clears the value cannot race ahead of the state it is acknowledging.
+        actions.onPendingSearchConsumed()
+    }
+
     // One bridge instance for the grid's mouse/touch chrome; see [GridChromeBridge]'s own doc for
     // why this is a `remember`ed instance whose FIELDS are mutated every recomposition rather than
     // a value re-provided fresh each time -- the latter would recompose all 22k tiles on every

@@ -20,4 +20,13 @@
     <cache-path
         name="lift_stickers"
         path="lift-stickers/" />
+    <!--
+      Video key moments' own scratch directory: a saved frame (JPEG) or a trimmed clip (MP4).
+      See MomentExportStorage.DIRECTORY's KDoc. Same reasoning as lift_stickers just above: never
+      wiped, so it cannot race the outgoing_share root's deleteRecursively(), and shared between
+      the frame and clip exporters because neither of them ever deletes what the other wrote.
+    -->
+    <cache-path
+        name="moments_export"
+        path="moments-export/" />
 </paths>

@@ -118,6 +118,15 @@ fun ViewerScreen(
      * text simply has no text layer, rather than an invisible one intercepting taps.
      */
     liveTextBlocks: List<com.fotoxplorr.app.recognition.TextBlock> = emptyList(),
+    /**
+     * Search the library for text read off this photo, from the details room's Search pill.
+     *
+     * Leaving the viewer is the caller's job, not this screen's: the pill hands over a string and
+     * says nothing about where the results should appear, so a caller that wants search results
+     * on some other surface is not fighting a close() this screen decided to do on its behalf.
+     * Null leaves the pill visibly disabled -- see [com.fotoxplorr.app.lens.LensCard].
+     */
+    onSearchLibrary: ((String) -> Unit)? = null,
     /** Let GIFs and animated images play. */
     loopAnimations: Boolean = false,
     /** Start videos without waiting for a tap on play. */
@@ -243,6 +252,11 @@ fun ViewerScreen(
                 manualLongitude = manualLongitude,
                 onSetLocation = onSetLocation,
                 onClearLocation = onClearLocation,
+                // Derived from the blocks this screen already receives rather than taken as a
+                // second parameter: two sources for the same text is how they drift apart, and
+                // the overlay and the details card must never disagree about what the photo says.
+                recognizedText = liveTextBlocks.joinToString("\n") { it.text },
+                onSearchLibrary = onSearchLibrary,
                 // NEGATED, and this is not cosmetic. The bottom room opens with vProgress
                 // running NEGATIVE (SpatialMotion's sign convention), while PlaceMorph.stagger
                 // clamps its input to 0..1 -- so feeding the raw value would hold every stagger
@@ -348,7 +362,12 @@ fun ViewerScreen(
             contentAlignment = Alignment.Center,
         ) {
             if (asset.isVideo) {
-                VideoPlayer(asset = asset, modifier = Modifier.fillMaxSize())
+                VideoPlayer(
+                    asset = asset,
+                    modifier = Modifier.fillMaxSize(),
+                    chromeVisible = chromeVisible,
+                    autoplayVideos = autoplayVideos,
+                )
             } else {
                 // The photo and its text layer share ONE transform box. Putting the overlay
                 // inside the same graphicsLayer is what keeps the OCR boxes glued to the words
@@ -435,7 +454,16 @@ fun ViewerScreen(
             // where the photo is selected"). Gated on the same chrome flag as everything else
             // drawn over the photo, for the same reason: immersive means immersive by default,
             // and the strip is unambiguously chrome.
-            if (chromeVisible && showFilmstrip && relatedAssets.size > 1) {
+            //
+            // Also suppressed for video: VideoPlayer draws its own bottom chrome while a video is
+            // showing (the key-moment pill/menu and a scrubber over the VIDEO's own timeline),
+            // anchored to this exact same screen edge. Leaving this roll-level filmstrip on too
+            // would stack two scrubbers fighting for the same band at the bottom of the screen.
+            // The roll is still reachable while a video plays -- the swipe-to-page gesture above
+            // is not gated on asset type -- just not via this particular thumbnail strip. Not
+            // verified on a device (none available in this environment); if that trade-off turns
+            // out wrong once someone can look at it, this is a one-token `!asset.isVideo` to drop.
+            if (!asset.isVideo && chromeVisible && showFilmstrip && relatedAssets.size > 1) {
                 FilmstripScrubber(
                     assets = relatedAssets,
                     currentIndex = position - 1,

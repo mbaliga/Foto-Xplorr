@@ -189,6 +189,13 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     var pendingRenameName by remember { mutableStateOf<String?>(null) }
     var userMessage by remember { mutableStateOf<String?>(null) }
     var editingAsset by remember { mutableStateOf<MediaAsset?>(null) }
+    // Text handed over from the viewer's "Search inside this photo" card, on its way to the
+    // grid's search field. Lives here rather than in either screen because the two are siblings
+    // under this composable, not nested -- the viewer has no way to reach into the browser's own
+    // state, so the instruction has to pass through their nearest common ancestor. Cleared by
+    // GalleryActions.onPendingSearchConsumed as soon as the browser has acted on it; see
+    // GalleryUiState.pendingSearch for why it is a one-shot instruction and not the field itself.
+    var pendingSearch by remember { mutableStateOf<String?>(null) }
     // Non-null while the advanced share sheet is up; holds what is being shared.
     var pendingShare by remember { mutableStateOf<List<MediaAsset>?>(null) }
     var recognitionGeneration by remember { mutableStateOf(0) }
@@ -614,6 +621,15 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // than passed wholesale: the index holds every photo's text, and the viewer needs
             // exactly one photo's worth.
             liveTextBlocks = recognition.textByMedia[activeAsset.id].orEmpty(),
+            // The Search pill in the details room. Closing the viewer is done HERE rather than
+            // inside ViewerScreen (see that parameter's own doc): the results land in the grid,
+            // and leaving the photo open on top of them would put the answer behind the question.
+            onSearchLibrary = { text ->
+                pendingSearch = text
+                selectedAssetId = null
+                viewerAssets = emptyList()
+                slideshowActive = false
+            },
             hasPrevious = selectedIndex > 0,
             hasNext = selectedIndex < viewerAssets.lastIndex,
             canMoveToTrash = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
@@ -694,6 +710,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 preferences = preferences,
                 recognition = recognition,
                 recognitionProgress = recognitionProgress,
+                pendingSearch = pendingSearch,
             ),
             actions = GalleryActions(
                 onRequestPermission = { permissionLauncher.launch(requiredMediaPermissions()) },
@@ -775,6 +792,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                         slideshowActive = true
                     }
                 },
+                onPendingSearchConsumed = { pendingSearch = null },
             ),
         )
     }

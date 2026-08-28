@@ -65,11 +65,15 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 private val PANEL_BACKGROUND = Color(0xFF0B0B0B)
-private val CARD_BACKGROUND = Color(0xFF151515)
-private val CARD_HEADER_BACKGROUND = Color(0xFF1D1D1D)
-private val PRIMARY_TEXT = Color(0xFFF2F2F2)
-private val SECONDARY_TEXT = Color(0xFF8A8A8A)
-private val MUTED_TEXT = Color(0xFF6A6A6A)
+// internal, not private: com.fotoxplorr.app.lens.LensCard's "Search inside this photo" card is
+// visually one more card in this same room (see its own KDoc), and re-declaring these five hex
+// values a second time in that package would be exactly the drift RoomStyle's own KDoc warns
+// about -- "three different apps" -- for a card that is supposed to read as part of this one.
+internal val CARD_BACKGROUND = Color(0xFF151515)
+internal val CARD_HEADER_BACKGROUND = Color(0xFF1D1D1D)
+internal val PRIMARY_TEXT = Color(0xFFF2F2F2)
+internal val SECONDARY_TEXT = Color(0xFF8A8A8A)
+internal val MUTED_TEXT = Color(0xFF6A6A6A)
 
 /**
  * The viewer's **top room**: what this photo is, and where it was taken.
@@ -95,6 +99,17 @@ private val MUTED_TEXT = Color(0xFF6A6A6A)
  *   before the gesture begins, not fetched because it did.
  * @param reveal how open the room is, 0..1. Read on the draw pass so a drag animates the
  *   arrival without recomposing the room's content on every frame.
+ * @param recognizedText this photo's OCR text, flattened -- read by the viewer the same way
+ *   [exif] is (see this KDoc's own note on [exif]), typically
+ *   `recognition.textOf(asset.id)` off [com.fotoxplorr.app.recognition.RecognitionIndex].
+ *   Defaulted to empty, not required, so a caller that has not been updated to pass it yet
+ *   still compiles -- it simply gets the room's previous behaviour, no "Search inside this
+ *   photo" card, exactly as before this feature existed. Blank hides the card entirely; see
+ *   [com.fotoxplorr.app.lens.LensCard]'s own KDoc.
+ * @param onSearchLibrary hands recognised text to [com.fotoxplorr.app.search] to search the
+ *   user's own library. Same shape as [onSetLocation] below: null leaves that one action
+ *   visibly disabled rather than wired to nothing. See
+ *   [com.fotoxplorr.app.lens.LensCard]'s own KDoc.
  */
 @Composable
 fun PhotoDetailRoom(
@@ -111,6 +126,8 @@ fun PhotoDetailRoom(
     /** Null leaves the room read-only, which is what the "no location" line used to be. */
     onSetLocation: ((Double, Double) -> Unit)? = null,
     onClearLocation: (() -> Unit)? = null,
+    recognizedText: String = "",
+    onSearchLibrary: ((String) -> Unit)? = null,
 ) {
     // The shell deliberately consumes no insets — it says so in its own KDoc, because doing so
     // would lift its drag-sensitive edges off the physical screen edge. So a room pads for the
@@ -135,6 +152,7 @@ fun PhotoDetailRoom(
         Box(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
             ExifCard(asset = asset, exif = exif)
         }
+        TextLensBlock(asset = asset, recognizedText = recognizedText, onSearchLibrary = onSearchLibrary)
         Text(
             text = "Add a Caption",
             color = RoomStyle.InkFaint,
@@ -203,6 +221,32 @@ private fun RoomHeader(asset: MediaAsset, reveal: () -> Float) {
             text = DetailFormatting.dateLine(asset.dateTakenMillis),
             color = SECONDARY_TEXT,
             style = TextStyle(fontSize = 14.sp),
+        )
+    }
+}
+
+/**
+ * The "Search inside this photo" card -- see [com.fotoxplorr.app.lens.LensCard] for everything
+ * it actually does; this wrapper only supplies the room's own outer padding, exactly as the
+ * [ExifCard] wrapper a few lines up does for the camera card, and hands through what the room
+ * already has in hand rather than fetching anything itself.
+ *
+ * No [PlaceMorph.textAlpha]-driven fade-in here, on purpose: like [ExifCard] right above it in
+ * the room -- and unlike the plain text blocks around both of them -- this is a CARD, not a
+ * line of the room's own prose, and it follows that precedent rather than the reveal-fade one.
+ */
+@Composable
+private fun TextLensBlock(
+    asset: MediaAsset,
+    recognizedText: String,
+    onSearchLibrary: ((String) -> Unit)?,
+) {
+    if (recognizedText.isBlank()) return
+    Box(Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
+        com.fotoxplorr.app.lens.LensCard(
+            asset = asset,
+            recognizedText = recognizedText,
+            onSearchLibrary = onSearchLibrary,
         )
     }
 }
