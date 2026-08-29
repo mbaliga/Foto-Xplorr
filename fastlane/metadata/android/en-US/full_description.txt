@@ -1,0 +1,36 @@
+A gallery for the photos already on your phone. It opens fast, it does not want an
+account, and it never uploads anything.
+
+BROWSE
+• Photos, Albums, Discover and Library as four clear destinations.
+• A timeline grouped by day or month, or ungrouped.
+• Search by filename, folder, media type or your own tags.
+• Sort by newest, oldest, name or size, with a grid from two to seven columns.
+• A full-screen viewer with swipe, zoom, pan, metadata and a slideshow.
+• Video playback in the app.
+• SVG and animated GIF, WebP and AVIF.
+• System, light and dark themes with several accent palettes.
+
+ORGANISE, REVERSIBLY
+• Favourites, an archive, a sensitive flag and your own tags, all persistent.
+• Collections that group media without moving the source files.
+• Device folders and virtual collections shown separately, so you always know
+  which is which.
+• Bulk selection, multi-share and bulk organisation.
+• Copy to any folder through Android's storage access framework.
+• A safe move that copies first and only then asks Android to trash the original.
+
+DISCOVER
+• Smart albums for favourites, recents, videos, screenshots, animated media, large
+  files, possible duplicates, sensitive media, archive, trash and untagged.
+• Location metadata extracted from your own files, on demand, on device.
+• An offline coordinate map that downloads no tiles and never asks for your
+  current location.
+
+QUIET BY DESIGN
+• No ads, no accounts, no analytics, no tracking.
+• Your photos are never uploaded, and never used to train anything.
+• Face grouping and similarity work locally if you use them.
+• Optional AI features are bring-your-own-key and off unless you set them up.
+
+Foto Xplorr is open source.

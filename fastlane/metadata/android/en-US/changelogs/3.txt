@@ -1,0 +1,6 @@
+Discover and Library destinations, smart albums, user tags, and reversible
+organisation: collections that never move your files, and a safe move that copies
+before it trashes the original.
+
+On-demand local extraction of location metadata, shown on an offline map that
+downloads no tiles.
