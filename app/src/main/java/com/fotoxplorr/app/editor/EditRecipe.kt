@@ -55,6 +55,13 @@ data class EditRecipe(
     val adjustments: Adjustments = Adjustments.NONE,
     /** The crop, in normalised 0..1 coordinates of the *rotated* image. */
     val crop: CropRect = CropRect.FULL,
+    /**
+     * Heal spots, applied LAST in the pipeline, in the FINAL image's coordinates — see
+     * [HealSpot] for why that space, and its stated cost (reframing moves the spots). Data,
+     * not pixels, like every other field: [SpotHeal] is deterministic, so the same recipe
+     * renders the same photograph every time.
+     */
+    val heals: List<HealSpot> = emptyList(),
 ) {
     /** True when applying this recipe would change nothing, so saving can be refused. */
     val isIdentity: Boolean
@@ -62,7 +69,8 @@ data class EditRecipe(
             !flipHorizontal &&
             straightenDegrees == 0f &&
             adjustments.isIdentity &&
-            crop.isFull
+            crop.isFull &&
+            heals.isEmpty()
 
     fun rotatedClockwise(): EditRecipe = copy(quarterTurns = (quarterTurns + 1) % 4)
 
