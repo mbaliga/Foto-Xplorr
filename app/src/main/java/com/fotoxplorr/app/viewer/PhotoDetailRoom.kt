@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -30,6 +31,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.Icon
@@ -43,7 +45,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import com.fotoxplorr.app.hyle.HyleTextField
 import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomStyle
@@ -65,11 +69,15 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 private val PANEL_BACKGROUND = Color(0xFF0B0B0B)
-private val CARD_BACKGROUND = Color(0xFF151515)
-private val CARD_HEADER_BACKGROUND = Color(0xFF1D1D1D)
-private val PRIMARY_TEXT = Color(0xFFF2F2F2)
-private val SECONDARY_TEXT = Color(0xFF8A8A8A)
-private val MUTED_TEXT = Color(0xFF6A6A6A)
+// internal, not private: com.fotoxplorr.app.lens.LensCard's "Search inside this photo" card is
+// visually one more card in this same room (see its own KDoc), and re-declaring these five hex
+// values a second time in that package would be exactly the drift RoomStyle's own KDoc warns
+// about -- "three different apps" -- for a card that is supposed to read as part of this one.
+internal val CARD_BACKGROUND = Color(0xFF151515)
+internal val CARD_HEADER_BACKGROUND = Color(0xFF1D1D1D)
+internal val PRIMARY_TEXT = Color(0xFFF2F2F2)
+internal val SECONDARY_TEXT = Color(0xFF8A8A8A)
+internal val MUTED_TEXT = Color(0xFF6A6A6A)
 
 /**
  * The viewer's **top room**: what this photo is, and where it was taken.
@@ -85,9 +93,10 @@ private val MUTED_TEXT = Color(0xFF6A6A6A)
  * photo flies into, the caption affordance, then the file's own facts. Related photos stay at
  * the bottom, below everything the room exists to say.
  *
- * The caption row is still an affordance without storage -- Foto Xplorr has no caption
- * field in its data model, and inventing one was out of scope here -- so tapping it does
- * nothing yet. It is drawn because the mockup draws it; it is not claimed to persist.
+ * The caption row is real now. It was drawn-but-dead for as long as this room existed, because
+ * the data model had nowhere to put a caption; `LibraryStore` has a caption field since the
+ * auto-annotation work, so the row writes to it. A caption the annotator wrote says so, and
+ * typing over it makes it yours -- see [CaptionBlock].
  *
  * @param exif read by the viewer rather than here. The shell composes a room only once it is
  *   at least slightly open, so a room that read its own EXIF would start that read on the first
@@ -95,6 +104,17 @@ private val MUTED_TEXT = Color(0xFF6A6A6A)
  *   before the gesture begins, not fetched because it did.
  * @param reveal how open the room is, 0..1. Read on the draw pass so a drag animates the
  *   arrival without recomposing the room's content on every frame.
+ * @param recognizedText this photo's OCR text, flattened -- read by the viewer the same way
+ *   [exif] is (see this KDoc's own note on [exif]), typically
+ *   `recognition.textOf(asset.id)` off [com.fotoxplorr.app.recognition.RecognitionIndex].
+ *   Defaulted to empty, not required, so a caller that has not been updated to pass it yet
+ *   still compiles -- it simply gets the room's previous behaviour, no "Search inside this
+ *   photo" card, exactly as before this feature existed. Blank hides the card entirely; see
+ *   [com.fotoxplorr.app.lens.LensCard]'s own KDoc.
+ * @param onSearchLibrary hands recognised text to [com.fotoxplorr.app.search] to search the
+ *   user's own library. Same shape as [onSetLocation] below: null leaves that one action
+ *   visibly disabled rather than wired to nothing. See
+ *   [com.fotoxplorr.app.lens.LensCard]'s own KDoc.
  */
 @Composable
 fun PhotoDetailRoom(
@@ -111,6 +131,19 @@ fun PhotoDetailRoom(
     /** Null leaves the room read-only, which is what the "no location" line used to be. */
     onSetLocation: ((Double, Double) -> Unit)? = null,
     onClearLocation: (() -> Unit)? = null,
+    recognizedText: String = "",
+    onSearchLibrary: ((String) -> Unit)? = null,
+    /** Every tag on this photo, whoever or whatever put it there. */
+    tags: Set<String> = emptySet(),
+    /** The subset of [tags] the auto-tagger applied. Drawn differently, never separately. */
+    autoTags: Set<String> = emptySet(),
+    onRemoveTag: ((String) -> Unit)? = null,
+    /** This photo's caption. May have been typed by a person or written by the annotator. */
+    caption: String = "",
+    /** True when [caption] is the annotator's sentence rather than someone's own words. */
+    captionIsMachineWritten: Boolean = false,
+    /** Null leaves the caption read-only, the same shape [onSetLocation] uses. */
+    onSetCaption: ((String) -> Unit)? = null,
 ) {
     // The shell deliberately consumes no insets — it says so in its own KDoc, because doing so
     // would lift its drag-sensitive edges off the physical screen edge. So a room pads for the
@@ -135,14 +168,12 @@ fun PhotoDetailRoom(
         Box(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
             ExifCard(asset = asset, exif = exif)
         }
-        Text(
-            text = "Add a Caption",
-            color = RoomStyle.InkFaint,
-            style = RoomStyle.Row,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(enabled = false) {}
-                .padding(horizontal = 20.dp, vertical = 18.dp),
+        TextLensBlock(asset = asset, recognizedText = recognizedText, onSearchLibrary = onSearchLibrary)
+        TagsBlock(tags = tags, autoTags = autoTags, onRemoveTag = onRemoveTag)
+        CaptionBlock(
+            caption = caption,
+            isMachineWritten = captionIsMachineWritten,
+            onSetCaption = onSetCaption,
         )
         InformationBlock(asset = asset, exif = exif, reveal = reveal)
         // The place plate goes LAST, because it is the thing this room exists to show. It used
@@ -204,6 +235,164 @@ private fun RoomHeader(asset: MediaAsset, reveal: () -> Float) {
             color = SECONDARY_TEXT,
             style = TextStyle(fontSize = 14.sp),
         )
+    }
+}
+
+/**
+ * The "Search inside this photo" card -- see [com.fotoxplorr.app.lens.LensCard] for everything
+ * it actually does; this wrapper only supplies the room's own outer padding, exactly as the
+ * [ExifCard] wrapper a few lines up does for the camera card, and hands through what the room
+ * already has in hand rather than fetching anything itself.
+ *
+ * No [PlaceMorph.textAlpha]-driven fade-in here, on purpose: like [ExifCard] right above it in
+ * the room -- and unlike the plain text blocks around both of them -- this is a CARD, not a
+ * line of the room's own prose, and it follows that precedent rather than the reveal-fade one.
+ */
+@Composable
+private fun TextLensBlock(
+    asset: MediaAsset,
+    recognizedText: String,
+    onSearchLibrary: ((String) -> Unit)?,
+) {
+    if (recognizedText.isBlank()) return
+    Box(Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
+        com.fotoxplorr.app.lens.LensCard(
+            asset = asset,
+            recognizedText = recognizedText,
+            onSearchLibrary = onSearchLibrary,
+        )
+    }
+}
+
+/**
+ * Every tag on this photo, with the auto-applied ones drawn as what they are.
+ *
+ * One list, not two. A person thinks of these as "this photo's tags" regardless of who typed
+ * them, and splitting them into "Yours" and "Suggested" sections would make the reader do
+ * bookkeeping the app already did. The provenance still shows — an auto tag is outlined rather
+ * than filled, and carries no delete affordance of its own beyond the same one a typed tag has —
+ * because a person who wants to know which words they chose has to be able to tell.
+ *
+ * Renders nothing when there are no tags. The precedent is [TextLensBlock] directly above and
+ * [StatusBlock]'s own reasoning: an empty section header is a promise the room does not keep.
+ */
+@Composable
+private fun TagsBlock(tags: Set<String>, autoTags: Set<String>, onRemoveTag: ((String) -> Unit)?) {
+    if (tags.isEmpty()) return
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        RoomEyebrow("TAGS")
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // Sorted, with the person's own words first. Set iteration order is an accident of
+            // insertion, and a list of chips that reshuffles between two openings of the same
+            // photo reads as a bug even when nothing changed.
+            val ordered = tags.sortedWith(compareBy({ it in autoTags }, { it.lowercase() }))
+            ordered.forEach { tag ->
+                TagChip(
+                    tag = tag,
+                    isAuto = tag in autoTags,
+                    onRemove = onRemoveTag?.let { remove -> { remove(tag) } },
+                )
+            }
+        }
+        if (autoTags.isNotEmpty()) {
+            Text(
+                text = "Outlined tags were suggested by on-device recognition. Removing one " +
+                    "removes it for good — it will not be suggested again.",
+                color = MUTED_TEXT,
+                style = RoomStyle.Caption,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TagChip(tag: String, isAuto: Boolean, onRemove: (() -> Unit)?) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            // Filled for a tag someone typed, outlined for one the app guessed. The same
+            // distinction OutlineBadge already draws elsewhere in this room, used here for the
+            // same reason: two kinds of fact should not look identical.
+            .then(
+                if (isAuto) {
+                    Modifier.border(1.dp, Color(0xFF3A3A3A), RoundedCornerShape(6.dp))
+                } else {
+                    Modifier.background(CARD_HEADER_BACKGROUND)
+                },
+            )
+            .padding(start = 10.dp, end = if (onRemove != null) 4.dp else 10.dp, top = 6.dp, bottom = 6.dp),
+    ) {
+        Text(
+            text = tag,
+            color = if (isAuto) SECONDARY_TEXT else PRIMARY_TEXT,
+            style = RoomStyle.Caption,
+        )
+        if (onRemove != null) {
+            Icon(
+                imageVector = Icons.Outlined.Close,
+                contentDescription = "Remove tag $tag",
+                tint = MUTED_TEXT,
+                modifier = Modifier.size(16.dp).clickable(onClick = onRemove),
+            )
+        }
+    }
+}
+
+/**
+ * The caption row — a real one now.
+ *
+ * It was a `clickable(enabled = false)` placeholder reading "Add a Caption" for as long as this
+ * room has existed, which is worse than absent: it advertised a feature and then did nothing when
+ * tapped.
+ *
+ * The field holds its own draft and commits on focus loss rather than on every keystroke. Writing
+ * per character would mean a database write per letter typed, and — because a machine caption is
+ * cleared the moment a person edits — would also make the first keystroke silently discard the
+ * annotator's sentence before anyone had decided to replace it.
+ */
+@Composable
+private fun CaptionBlock(caption: String, isMachineWritten: Boolean, onSetCaption: ((String) -> Unit)?) {
+    if (onSetCaption == null && caption.isBlank()) return
+
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        RoomEyebrow("CAPTION")
+
+        if (onSetCaption == null) {
+            Text(text = caption, color = PRIMARY_TEXT, style = RoomStyle.Caption)
+        } else {
+            // Keyed on the stored caption so switching photos loads the new one, rather than
+            // carrying the previous photo's draft across on a paging swipe.
+            var draft by remember(caption) { mutableStateOf(caption) }
+            HyleTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                placeholder = "Say something about this photo",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { focus ->
+                        if (!focus.isFocused && draft != caption) onSetCaption(draft)
+                    },
+            )
+        }
+
+        if (caption.isNotBlank() && isMachineWritten) {
+            Text(
+                text = "Written by on-device recognition. Type over it and it becomes yours.",
+                color = MUTED_TEXT,
+                style = RoomStyle.Caption,
+            )
+        }
     }
 }
 

@@ -247,6 +247,20 @@ dependencies {
     // classpath gate fails the build if either ever reaches it.
     "connectImplementation"(project(":feature:ai-remote"))
 
+    // On-device translation for the "Search inside this photo" card's Translate action
+    // (com.fotoxplorr.app.lens). CONNECT ONLY, same reasoning as the two dependencies
+    // just above: unlike the bundled face/label/text-recognition models a few lines up
+    // in this file, ML Kit Translate has no no-network variant -- it downloads a ~30 MB
+    // language model over the network the first time a given language pair is used, which
+    // makes it a network-capable library exactly like OkHttp or MapLibre. The offline
+    // flavor's com.fotoxplorr.app.lens.TextTranslator implementation
+    // (src/offline/java/.../lens/AppTextTranslator.kt) never references this artifact at
+    // all -- it reports itself unavailable and the UI hands off to another installed
+    // translator app instead -- so declaring this connectImplementation, not
+    // implementation, is what keeps it off verifyOfflineRuntimeClasspath's resolved set
+    // in the first place, the same way MapLibre and :feature:ai-remote are kept off it.
+    "connectImplementation"("com.google.mlkit:translate:17.0.3")
+
     // Hyle Design System, via git submodule + Gradle includeBuild dependency substitution
     // (settings.gradle.kts) -- the constellation's one sanctioned sharing mechanism (D-A).
     // Coordinates and versions must match hyle-design-system/*/build.gradle.kts exactly for

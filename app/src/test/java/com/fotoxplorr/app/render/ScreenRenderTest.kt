@@ -133,7 +133,7 @@ class ScreenRenderTest {
  * shade covers the grid rather than pushing it down, and exactly how much of the top row goes.
  */
 @androidx.compose.runtime.Composable
-private fun PhotoGridStandIn() {
+internal fun PhotoGridStandIn() {
     androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
         columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
         modifier = Modifier.fillMaxSize().background(Color.Black),
@@ -369,7 +369,7 @@ private fun FieldLabel(text: String, faint: Boolean = false) {
 }
 
 /** Every action, wired to nothing. Renders need the shape, not the behaviour. */
-private fun noOpActions() = com.fotoxplorr.app.gallery.GalleryActions(
+internal fun noOpActions() = com.fotoxplorr.app.gallery.GalleryActions(
         onRequestPermission = { Unit },
         onRefresh = { Unit },
         onSetSort = { _ -> Unit },
@@ -416,10 +416,12 @@ private fun noOpActions() = com.fotoxplorr.app.gallery.GalleryActions(
         onImportMetadata = { Unit },
         onOpenAsset = { _, _ -> Unit },
         onStartSlideshow = { _ -> Unit },
+        onPendingSearchConsumed = {},
+        onRejectArchiveSuggestions = { _ -> Unit },
 )
 
 /** A library with nothing in it: these renders are about chrome, not content. */
-private fun emptyState() = com.fotoxplorr.app.gallery.GalleryUiState(
+internal fun emptyState() = com.fotoxplorr.app.gallery.GalleryUiState(
     assets = emptyList(),
     favoriteIds = emptySet(),
     sensitiveIds = emptySet(),

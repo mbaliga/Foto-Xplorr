@@ -42,6 +42,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.aarso.cellshell.WheelItem
 import dev.aarso.cellshell.WordWheelRail
+import com.fotoxplorr.app.curate.ArchiveAdvisor
+import com.fotoxplorr.app.curate.ArchiveReviewItem
+import com.fotoxplorr.app.curate.ArchiveSuggestionsReview
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
@@ -426,6 +429,14 @@ enum class LegacyScreen(val label: String) {
     CALENDAR("Calendar"),
     DISCOVER("Discover"),
     LIBRARY("Library"),
+
+    /**
+     * The archive review queue. A [LegacyScreen] rather than a tenth rail destination: the nine
+     * are the app's primary IA and the owner has been explicit that things which are not places
+     * you browse do not belong there. This is a job you finish and leave, reached from Settings,
+     * which is exactly what this enum exists for.
+     */
+    TIDY_UP("Tidy up"),
 }
 
 @Composable
@@ -493,7 +504,52 @@ fun LegacyScreenHost(
                 onExportMetadata = actions.onExportMetadata,
                 onImportMetadata = actions.onImportMetadata,
             )
+            LegacyScreen.TIDY_UP -> ArchiveSuggestionsReview(
+                items = archiveReviewItems(state),
+                onAccept = { ids -> actions.onSetArchived(ids, true) },
+                onReject = actions.onRejectArchiveSuggestions,
+            )
         }
+    }
+}
+
+/**
+ * Everything [com.fotoxplorr.app.curate.ArchiveAdvisor] currently offers, paired with its photo.
+ *
+ * The candidate list is built here rather than inside the advisor because the advisor is pure and
+ * reads no clock and no store — see its own KDoc. `now` is sampled once for the whole pass so
+ * every photo's age is measured against the same instant; sampling per photo would make the
+ * ordering of the list very slightly affect its contents.
+ *
+ * `sharpness` is left null, which the advisor reads as "unknown", not "sharp" — so no photo is
+ * currently offered for being blurry. Computing it means decoding every photo in the library, and
+ * doing that on the way into a settings screen would freeze it solid on a real library. The
+ * signal is built and tested ([com.fotoxplorr.app.curate.BlurDetector]); what it is waiting for is
+ * somewhere to cache a score per photo, so the background pass can fill it in over time instead of
+ * this screen computing it all at once.
+ */
+private fun archiveReviewItems(state: GalleryUiState): List<ArchiveReviewItem> {
+    val assetsById = state.assets.associateBy { it.id }
+    val now = System.currentTimeMillis()
+    val candidates = state.assets
+        .filterNot { it.isTrashed || it.isVideo }
+        .map { asset ->
+            ArchiveAdvisor.ArchiveCandidate(
+                mediaId = asset.id,
+                isFavorite = asset.id in state.favoriteIds,
+                isArchived = asset.id in state.library.archivedIds,
+                previouslyDismissed = state.library.isDismissedFromArchiveSuggestions(asset.id),
+                isScreenshot = asset.isScreenshot(),
+                ageMillis = now - asset.dateTakenMillis,
+                sizeBytes = asset.sizeBytes,
+                widthPx = asset.width,
+                heightPx = asset.height,
+                mimeType = asset.mimeType,
+                sharpness = null,
+            )
+        }
+    return ArchiveAdvisor.suggestions(candidates).mapNotNull { suggestion ->
+        assetsById[suggestion.mediaId]?.let { ArchiveReviewItem(suggestion, it) }
     }
 }
 

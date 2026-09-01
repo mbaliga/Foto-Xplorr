@@ -15,6 +15,14 @@
     -->
     <uses-sdk tools:overrideLibrary="dev.aarso.hyle" />
 
+    <!--
+      Lets the background work job survive a reboot (JobInfo.setPersisted, in
+      BackgroundScheduler). Declared for this and nothing else: the app registers no
+      BOOT_COMPLETED receiver and runs no code at boot. It grants no network access and is not
+      one of the permissions verifyOfflineManifest forbids, so it is safe in both flavours.
+    -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <!-- No network permissions here. INTERNET lives in src/connect/AndroidManifest.xml:
          the offline flavor is the app's local-first identity, and the verifyOfflineManifest
          gate fails the build if any network permission reaches its merged manifest — from
@@ -39,6 +47,32 @@
         android:name="android.hardware.location.gps"
         android:required="false" />
 
+    <!--
+      Package visibility for the text hand-offs (Android 11+).
+
+      Intent.resolveActivity() and queryIntentActivities() return nothing for packages the app
+      cannot see, and since API 30 an app sees almost nothing by default. Without this block the
+      "Translate with..." hand-off would report NO translator installed on a phone that has
+      several, and would silently fall back to the generic share sheet, a failure that looks
+      like the feature is broken rather than like a manifest omission.
+
+      Declares only the two intents actually used, not QUERY_ALL_PACKAGES: the broad permission is
+      a Play policy problem and gives this app far more visibility than reading text needs.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.WEB_SEARCH" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+    </queries>
+
     <application
         android:name=".FotoXplorrApplication"
         android:allowBackup="false"
@@ -56,6 +90,21 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!--
+          The job the background work rules schedule. Declared for both flavours: the idle,
+          quiet-hours, charging and battery rules are all meaningful with no network at all, and
+          the one connect-only rule (Wi-Fi) is gated in code rather than here.
+
+          BIND_JOB_SERVICE is declared ON the service to restrict binding to the system, which is
+          the only holder of that permission. It is standard JobService boilerplate, not a
+          permission this app requests for itself, so it adds nothing to the offline flavour's
+          permission set and the verifyOfflineManifest gate is unaffected.
+        -->
+        <service
+            android:name="com.fotoxplorr.app.background.BackgroundWorkJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
 
         <activity
             android:name=".FotoXplorrActivity"

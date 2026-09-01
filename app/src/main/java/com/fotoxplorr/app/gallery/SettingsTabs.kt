@@ -24,6 +24,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +37,16 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.background.BackgroundScheduler
+import com.fotoxplorr.app.background.BackgroundWorkStatusCenter
+import com.fotoxplorr.app.background.BATTERY_PERCENT_STEP
+import com.fotoxplorr.app.background.MAX_BATTERY_PERCENT_ALLOWED
+import com.fotoxplorr.app.background.MAX_HOUR_OF_DAY
+import com.fotoxplorr.app.background.MIN_BATTERY_PERCENT_ALLOWED
+import com.fotoxplorr.app.background.WorkRulesStore
+import com.fotoxplorr.app.background.describe
+import com.fotoxplorr.app.background.formatHourOfDay
+import com.fotoxplorr.app.background.summarize
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.pro.LocalProEntitlement
 
@@ -60,6 +71,7 @@ enum class SettingsTab(val label: String) {
     PRIVACY("Privacy"),
     VIEWER("Viewer"),
     DATA("Data"),
+    BACKGROUND("Background"),
     PRO("Pro"),
     ABOUT("About"),
 }
@@ -72,8 +84,10 @@ fun SettingsTabsRoom(
     onOpenSupport: () -> Unit,
     onOpenMoreApps: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Which tab opens first. The app always starts on Appearance; screen renders pick others. */
+    initialTab: SettingsTab = SettingsTab.APPEARANCE,
 ) {
-    var tab by remember { mutableStateOf(SettingsTab.APPEARANCE) }
+    var tab by remember { mutableStateOf(initialTab) }
     val preferences = state.preferences
     // One stable sample for the whole session: a preview that reshuffled on every toggle would
     // make it impossible to see what the toggle actually changed.
@@ -291,6 +305,146 @@ fun SettingsTabsRoom(
                     )
                 }
 
+                SettingsTab.BACKGROUND -> {
+                    // Built the same way the PRO tab reads LocalProEntitlement, above: straight
+                    // off Context rather than threaded through GalleryUiState/GalleryActions, so
+                    // this whole tab is a self-contained addition. It has to be -- GalleryUiState
+                    // and GalleryActions live in GalleryScreen.kt, which this change does not own
+                    // and other agents are editing concurrently right now.
+                    val backgroundContext = LocalContext.current
+                    val rulesStore = remember { WorkRulesStore(backgroundContext.applicationContext) }
+                    val scheduler = remember { BackgroundScheduler(backgroundContext.applicationContext) }
+                    val rules by rulesStore.observe().collectAsState()
+                    val workStatus by BackgroundWorkStatusCenter.status.collectAsState()
+
+                    // Re-arms the platform job every time the rules change. Not the only place
+                    // that arms it -- FotoXplorrApplication.startBackgroundWork() does so at
+                    // process start, so a fresh install obeys its rules without anyone opening
+                    // this tab. This one exists so an EDIT takes effect immediately rather than
+                    // at next launch.
+                    LaunchedEffect(rules) { scheduler.reconcile(rules) }
+
+                    SectionLabel("WHEN")
+                    SwitchRow(
+                        "Use background rules",
+                        "On, the options below decide when indexing and other heavy passes run. " +
+                            "Off, they run whenever the system schedules them, with nothing held back.",
+                        rules.enabled,
+                        rulesStore::setEnabled,
+                    )
+                    SwitchRow(
+                        "Only when the phone is idle",
+                        "Android decides exactly when \"idle\" starts, and can hold this off for " +
+                            "a long time -- sometimes hours -- if it is being conservative about " +
+                            "battery. That is the platform's own guarantee, not a number this app " +
+                            "controls.",
+                        rules.requireIdle,
+                        rulesStore::setRequireIdle,
+                        enabled = rules.enabled,
+                    )
+                    SwitchRow(
+                        "Only while charging",
+                        "Waits for the charger before spending battery on a long pass.",
+                        rules.requireCharging,
+                        rulesStore::setRequireCharging,
+                        enabled = rules.enabled,
+                    )
+                    StepperRow(
+                        label = "Minimum battery",
+                        value = "${rules.minBatteryPercent}%",
+                        onDecrease = {
+                            rulesStore.setMinBatteryPercent(rules.minBatteryPercent - BATTERY_PERCENT_STEP)
+                        },
+                        onIncrease = {
+                            rulesStore.setMinBatteryPercent(rules.minBatteryPercent + BATTERY_PERCENT_STEP)
+                        },
+                        canDecrease = rules.enabled && rules.minBatteryPercent > MIN_BATTERY_PERCENT_ALLOWED,
+                        canIncrease = rules.enabled && rules.minBatteryPercent < MAX_BATTERY_PERCENT_ALLOWED,
+                    )
+                    Text(
+                        "Charging counts as \"enough battery\" on its own, whatever this is set to. " +
+                            "Android also will not wake a background pass below roughly 15-20% " +
+                            "battery, however low you set this -- that floor is the platform's, " +
+                            "not this app's, and it cannot be turned off from here.",
+                        color = Color.White.copy(alpha = 0.5f),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+
+                    SectionLabel("ACTIVE HOURS")
+                    StepperRow(
+                        label = "From",
+                        value = formatHourOfDay(rules.activeHoursStart),
+                        onDecrease = {
+                            rulesStore.setActiveHoursStart((rules.activeHoursStart - 1).mod(MAX_HOUR_OF_DAY + 1))
+                        },
+                        onIncrease = {
+                            rulesStore.setActiveHoursStart((rules.activeHoursStart + 1).mod(MAX_HOUR_OF_DAY + 1))
+                        },
+                        canDecrease = rules.enabled,
+                        canIncrease = rules.enabled,
+                    )
+                    StepperRow(
+                        label = "Until",
+                        value = formatHourOfDay(rules.activeHoursEnd),
+                        onDecrease = {
+                            rulesStore.setActiveHoursEnd((rules.activeHoursEnd - 1).mod(MAX_HOUR_OF_DAY + 1))
+                        },
+                        onIncrease = {
+                            rulesStore.setActiveHoursEnd((rules.activeHoursEnd + 1).mod(MAX_HOUR_OF_DAY + 1))
+                        },
+                        canDecrease = rules.enabled,
+                        canIncrease = rules.enabled,
+                    )
+                    Text(
+                        if (rules.activeHoursStart == rules.activeHoursEnd) {
+                            "Start and end are the same hour, which means always -- there is no " +
+                                "window to wait for."
+                        } else if (rules.activeHoursStart > rules.activeHoursEnd) {
+                            "Wraps past midnight: covers ${formatHourOfDay(rules.activeHoursStart)} " +
+                                "through to ${formatHourOfDay(rules.activeHoursEnd)} the next morning."
+                        } else {
+                            "A single window within one day."
+                        },
+                        color = Color.White.copy(alpha = 0.5f),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+
+                    SectionLabel("NETWORK")
+                    SwitchRow(
+                        "Only on Wi-Fi",
+                        if (com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES) {
+                            "Skips a pass entirely while on mobile data."
+                        } else {
+                            "Not available in this build -- Foto Xplorr's offline build has no " +
+                                "network connection of any kind, so there is no metered connection " +
+                                "to avoid."
+                        },
+                        rules.onlyOnUnmetered,
+                        rulesStore::setOnlyOnUnmetered,
+                        enabled = rules.enabled && com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES,
+                    )
+
+                    SectionLabel("RIGHT NOW")
+                    Text(
+                        summarize(rules),
+                        color = Color.White.copy(alpha = 0.85f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        workStatus.describe(),
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    Text(
+                        "Checked roughly every half hour while background rules are on, not " +
+                            "watched continuously -- this can run a little behind what the phone " +
+                            "is actually doing this second.",
+                        color = Color.White.copy(alpha = 0.5f),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
                 SettingsTab.PRO -> {
                     // Built the same way the share sheet's own Pro row is: read the entitlement
                     // straight off Context rather than threading it through GalleryUiState, so
@@ -434,6 +588,13 @@ private fun SwitchRow(
     caption: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    // Defaulted so every existing call site (all of them switches that are always interactive)
+    // compiles unchanged. Added for the BACKGROUND tab's "Only on Wi-Fi" row, which is a real
+    // control in the connect flavour and a permanently-inapplicable one in offline -- disabling
+    // it in place, with a caption saying why, is the "say so" this codebase's honesty rule asks
+    // for; a switch that merely LOOKED interactive but silently did nothing would be worse than
+    // either removing it or explaining it.
+    enabled: Boolean = true,
 ) {
     Row(
         Modifier.fillMaxWidth(),
@@ -441,16 +602,21 @@ private fun SwitchRow(
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Column(Modifier.padding(end = 16.dp).weight(1f)) {
-            Text(label, color = Color.White, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                label,
+                color = Color.White.copy(alpha = if (enabled) 1f else 0.4f),
+                style = MaterialTheme.typography.bodyLarge,
+            )
             Text(
                 caption,
-                color = Color.White.copy(alpha = 0.55f),
+                color = Color.White.copy(alpha = if (enabled) 0.55f else 0.35f),
                 style = MaterialTheme.typography.bodySmall,
             )
         }
         com.fotoxplorr.app.hyle.HyleToggle(
             checked = checked,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = if (enabled) onCheckedChange else null,
+            enabled = enabled,
             description = label,
         )
     }
