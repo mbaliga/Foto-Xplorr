@@ -84,8 +84,10 @@ fun SettingsTabsRoom(
     onOpenSupport: () -> Unit,
     onOpenMoreApps: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Which tab opens first. The app always starts on Appearance; screen renders pick others. */
+    initialTab: SettingsTab = SettingsTab.APPEARANCE,
 ) {
-    var tab by remember { mutableStateOf(SettingsTab.APPEARANCE) }
+    var tab by remember { mutableStateOf(initialTab) }
     val preferences = state.preferences
     // One stable sample for the whole session: a preview that reshuffled on every toggle would
     // make it impossible to see what the toggle actually changed.

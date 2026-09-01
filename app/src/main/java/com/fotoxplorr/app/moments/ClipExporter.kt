@@ -180,11 +180,29 @@ class ClipExporter(context: Context) {
             buffer.clear()
             val size = extractor.readSampleData(buffer, 0)
             if (size < 0) break
-            bufferInfo.set(0, size, (sampleTimeUs - baseUs).coerceAtLeast(0L), extractor.sampleFlags)
+            bufferInfo.set(0, size, (sampleTimeUs - baseUs).coerceAtLeast(0L), bufferFlagsFor(extractor.sampleFlags))
             muxer.writeSampleData(muxerTrackIndex, buffer, bufferInfo)
             extractor.advance()
         }
     }
+
+    /**
+     * Translates [MediaExtractor]'s sample flags into [MediaCodec.BufferInfo] flags.
+     *
+     * They are DIFFERENT flag sets that happen to share bit values, which is exactly what makes
+     * passing one straight through look correct and be wrong. `SAMPLE_FLAG_SYNC` is bit 1 and so
+     * is `BUFFER_FLAG_KEY_FRAME`, so keyframes survive by luck — but `SAMPLE_FLAG_ENCRYPTED` is bit
+     * 2, which the muxer reads as `BUFFER_FLAG_CODEC_CONFIG`, and `SAMPLE_FLAG_PARTIAL_FRAME` is bit
+     * 4, which it reads as `BUFFER_FLAG_END_OF_STREAM`. A single partial-frame sample would tell the
+     * muxer the track is over. Lint's `WrongConstant` check caught the pass-through, and it was
+     * right to.
+     *
+     * Only the keyframe bit is carried across. It is the one flag [MediaMuxer] actually uses (to
+     * build the sync-sample table a player seeks by); the muxer has no use for a partial-frame
+     * mark, and an encrypted sample cannot be stream-copied into a plain MP4 in any case.
+     */
+    private fun bufferFlagsFor(sampleFlags: Int): Int =
+        if (sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
 
     /**
      * Reads the container-level rotation via a second, throwaway [MediaMetadataRetriever] rather

@@ -98,6 +98,12 @@ fun KeyMomentBar(
     onRemoveMarker: (VideoMoment) -> Unit,
     onFeedback: (VideoMoment, MomentFeedback) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Whether the menu starts open. False in the app; the JVM screen renders set it true so the
+     * Share moment / Create clip / Remove marker rows and the two thumbs can be captured without
+     * a tap, which a render cannot perform.
+     */
+    initiallyExpanded: Boolean = false,
 ) {
     if (activeMoment == null) return
 
@@ -105,7 +111,7 @@ fun KeyMomentBar(
     // one key moment into a neighbouring one (two moments close enough that both fall inside
     // tolerance somewhere along the drag) must not leave a menu that was opened for the FIRST
     // moment still open and now silently pointed at the second one's Remove/Share actions.
-    var menuOpen by remember(activeMoment.mediaId, activeMoment.positionMs) { mutableStateOf(false) }
+    var menuOpen by remember(activeMoment.mediaId, activeMoment.positionMs) { mutableStateOf(initiallyExpanded) }
 
     Column(
         modifier = modifier,
