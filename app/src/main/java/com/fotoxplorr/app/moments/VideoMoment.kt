@@ -157,8 +157,9 @@ class VideoMomentStore(context: Context) {
     /**
      * Record, or clear, a verdict on one moment.
      *
-     * Passing the verdict that is already stored CLEARS it — the "tap the lit thumb again to
-     * un-say it" rule the favourite and sensitive toggles already use.
+     * Passing a GOOD that is already stored CLEARS it — the "tap the lit thumb again to un-say
+     * it" rule the favourite and sensitive toggles already use. BAD is the exception, for the
+     * reason given below: once it has deleted the marker there is nothing to tap again.
      *
      * ## Why a thumbs-down also deletes the marker
      * Because otherwise it does nothing a person can see. [markScanned] means a video is scanned
@@ -178,13 +179,22 @@ class VideoMomentStore(context: Context) {
      */
     suspend fun setFeedback(mediaId: MediaId, positionMs: Long, value: MomentFeedback) =
         withContext(Dispatchers.IO) {
-            val key = MomentKey(mediaId, positionMs)
             mutex.withLock {
-                if (feedback.value[key] == value) {
-                    helper.clearFeedback(mediaId, positionMs)
-                } else {
-                    helper.putFeedback(mediaId, positionMs, value)
-                    if (value == MomentFeedback.BAD) helper.removeAuto(mediaId, positionMs)
+                // The stored verdict is read from the database here, inside the lock -- not from
+                // the StateFlow, which reload() below only refreshes AFTER the lock is released.
+                // Reading the flow meant a second tap ~150ms after the first (the pill still on
+                // screen, its recomposition not yet through) saw the stale "no verdict", took the
+                // toggle branch, and CLEARED the rejection the first tap had just recorded.
+                val stored = helper.feedbackFor(mediaId, positionMs)
+                when {
+                    // BAD does not toggle. It has deleted the marker, so there is no lit thumb to
+                    // un-say it with; a repeat is a repeat, not a reversal.
+                    value == MomentFeedback.BAD -> {
+                        helper.putFeedback(mediaId, positionMs, value)
+                        helper.removeAuto(mediaId, positionMs)
+                    }
+                    stored == value -> helper.clearFeedback(mediaId, positionMs)
+                    else -> helper.putFeedback(mediaId, positionMs, value)
                 }
             }
             reload()
@@ -399,6 +409,18 @@ private class MomentOpenHelper(context: Context) :
         }
         return out
     }
+
+    /** The verdict on one moment, straight from disk. See [VideoMomentStore.setFeedback] for why not the flow. */
+    fun feedbackFor(mediaId: MediaId, positionMs: Long): MomentFeedback? =
+        readableDatabase.query(
+            TABLE_FEEDBACK, arrayOf("verdict"),
+            "media_id = ? AND position_ms = ?",
+            arrayOf(mediaId.value.toString(), positionMs.toString()),
+            null, null, null,
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return@use null
+            if (cursor.getString(0) == MomentFeedback.GOOD.name) MomentFeedback.GOOD else MomentFeedback.BAD
+        }
 
     fun putFeedback(mediaId: MediaId, positionMs: Long, value: MomentFeedback) {
         writableDatabase.insertWithOnConflict(

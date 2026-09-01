@@ -22,11 +22,27 @@ class SqliteMediaRepository(context: Context) : MediaRepository {
     private val state = MutableStateFlow<List<MediaAsset>>(emptyList())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    init {
-        scope.launch { state.value = helper.readAll() }
-    }
+    // Kept as a handle, not fire-and-forget, so a caller that needs the catalogue NOW rather than
+    // "whenever it arrives" has something to wait on -- see awaitLoaded.
+    private val initialLoad = scope.launch { state.value = helper.readAll() }
 
     override fun observeAll(): Flow<List<MediaAsset>> = state.asStateFlow()
+
+    /**
+     * The catalogue once the load started at construction has finished.
+     *
+     * [observeAll] is a StateFlow, and a StateFlow hands its CURRENT value to a new collector
+     * immediately -- which, for the first few hundred milliseconds of this object's life, is the
+     * empty list the state was initialised with, not the library. A one-shot reader like the
+     * background pass that did `observeAll().first()` on a fresh instance therefore saw an empty
+     * library every single time, concluded there was nothing to do, and returned -- a feature that
+     * ran on schedule and never did anything, with no error anywhere to say so. The UI never hit
+     * this because it collects continuously and simply receives the real list a moment later.
+     */
+    suspend fun awaitLoaded(): List<MediaAsset> {
+        initialLoad.join()
+        return state.value
+    }
 
     override suspend fun replaceAll(items: List<MediaAsset>) = withContext(Dispatchers.IO) {
         mutex.withLock {

@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -375,12 +376,20 @@ fun ViewerScreen(
             contentAlignment = Alignment.Center,
         ) {
             if (asset.isVideo) {
-                VideoPlayer(
-                    asset = asset,
-                    modifier = Modifier.fillMaxSize(),
-                    chromeVisible = chromeVisible,
-                    autoplayVideos = autoplayVideos,
-                )
+                // key(asset.id): one VideoPlayer instance per video, not one reused across the
+                // roll. VideoPlayer hands its VideoView to AndroidView's factory, and AndroidView
+                // calls that factory exactly once for the life of the node -- so without this,
+                // swiping from one clip to the next left the OLD, stopped VideoView on screen
+                // while the new one it had built for the next clip was never attached: a black
+                // or frozen frame, and a play button that flips to pause with nothing playing.
+                key(asset.id) {
+                    VideoPlayer(
+                        asset = asset,
+                        modifier = Modifier.fillMaxSize(),
+                        chromeVisible = chromeVisible,
+                        autoplayVideos = autoplayVideos,
+                    )
+                }
             } else {
                 // The photo and its text layer share ONE transform box. Putting the overlay
                 // inside the same graphicsLayer is what keeps the OCR boxes glued to the words

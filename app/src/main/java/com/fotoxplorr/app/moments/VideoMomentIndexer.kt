@@ -51,10 +51,14 @@ class VideoMomentIndexer(
             if (store.hasBeenScanned(asset.id)) return@runCatching 0
 
             currentCoroutineContext().ensureActive()
-            val signatures = sampler.sample(asset)
+            val sampled = sampler.sample(asset)
 
             currentCoroutineContext().ensureActive()
-            val detected = KeyMomentDetector.detect(signatures, asset.durationMillis)
+            // The sampler's duration, never asset.durationMillis: the positions were computed
+            // against the former, and the MediaStore value can be 0 for a perfectly readable
+            // file -- see FrameSampler's class doc for the video that got marked scanned with
+            // nothing found because of exactly that.
+            val detected = KeyMomentDetector.detect(sampled.signatures, sampled.durationMs)
 
             currentCoroutineContext().ensureActive()
             val moments = detected.map { moment ->

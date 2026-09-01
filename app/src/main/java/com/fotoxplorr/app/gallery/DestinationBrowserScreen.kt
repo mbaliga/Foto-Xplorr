@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -505,7 +506,13 @@ fun LegacyScreenHost(
                 onImportMetadata = actions.onImportMetadata,
             )
             LegacyScreen.TIDY_UP -> ArchiveSuggestionsReview(
-                items = archiveReviewItems(state),
+                // remember, keyed on exactly the inputs the derivation reads: it groups the whole
+                // library for duplicates, and this host recomposes on every recognition-progress
+                // tick -- several a second while indexing -- which is a full O(n) pass per frame
+                // on a 22k library without it.
+                items = remember(state.assets, state.favoriteIds, state.library, state.lockedFolders, state.unlockedFolders) {
+                    archiveReviewItems(state)
+                },
                 onAccept = { ids -> actions.onSetArchived(ids, true) },
                 onReject = actions.onRejectArchiveSuggestions,
             )
@@ -533,6 +540,10 @@ private fun archiveReviewItems(state: GalleryUiState): List<ArchiveReviewItem> {
     val now = System.currentTimeMillis()
     val candidates = state.assets
         .filterNot { it.isTrashed || it.isVideo }
+        // The same privacy rule every other surface applies. Without it the queue listed a
+        // locked folder's old screenshots and duplicates with their thumbnails and filenames,
+        // to anyone holding the phone, with the folder still locked.
+        .filter { it.isPrivacyVisible(state.lockedFolders, state.unlockedFolders) }
         .map { asset ->
             ArchiveAdvisor.ArchiveCandidate(
                 mediaId = asset.id,

@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.organize
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Base64
 import com.fotoxplorr.app.media.MediaId
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,6 +59,20 @@ data class LibraryState(
      * histories distinct in storage.
      */
     val rejectedArchiveSuggestionIds: Set<MediaId> = emptySet(),
+    /**
+     * Per photo, auto tags a person removed by hand. The curation pass treats these like tags the
+     * photo already carries, so it never re-applies one -- without this memory a removed auto tag
+     * came straight back on the next pass, which is the same as not being able to remove it.
+     * Populated by [LibraryStore.removeTag] and [LibraryStore.clearAutoTags]; withdrawn for a photo
+     * by [LibraryStore.addTag] when a person types the same tag back themselves.
+     */
+    val rejectedAutoTagsByMediaId: Map<MediaId, Set<String>> = emptyMap(),
+    /**
+     * Photos whose machine-written caption a person deliberately cleared. [LibraryStore.applyMachineCaption]
+     * refuses these, for the same reason as [rejectedAutoTagsByMediaId]: an empty caption slot the
+     * annotator may refill on every pass is one the person can never actually empty.
+     */
+    val suppressedMachineCaptionIds: Set<MediaId> = emptySet(),
 ) {
     val allTags: List<String>
         get() = tagsByMediaId.values.flatten().distinct().sortedBy(String::lowercase)
@@ -76,14 +91,38 @@ data class LibraryState(
     /** True when [id] must never be offered by `curate.ArchiveAdvisor` again. See [everUnarchivedIds]. */
     fun isDismissedFromArchiveSuggestions(id: MediaId): Boolean =
         id in everUnarchivedIds || id in rejectedArchiveSuggestionIds
+
+    /** Auto tags a person removed from [id]; the curation pass must never propose these again. */
+    fun rejectedAutoTagsFor(id: MediaId): Set<String> = rejectedAutoTagsByMediaId[id].orEmpty()
+
+    /** True when a person cleared the annotator's caption on [id]; it must stay cleared. */
+    fun isMachineCaptionSuppressed(id: MediaId): Boolean = id in suppressedMachineCaptionIds
 }
 
-class LibraryStore(context: Context) {
-    private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+/**
+ * One instance per process -- see [get].
+ *
+ * The constructor is private because two instances over the same SharedPreferences file are a
+ * data-loss bug waiting for a schedule: every mutation here is a read-modify-write of a whole
+ * set key (all tag names, all archived ids, all caption ids), and two instances writing from two
+ * threads -- the Activity on Main, the background job on Default -- can each read the same
+ * starting set and the second apply() silently drops whatever the first added. Every instance
+ * also keeps its own StateFlow, refreshed only by its own writes, so a caller reading
+ * `observe().value` on one instance after the other wrote sees a stale library. A single
+ * instance with every mutation `@Synchronized` removes both failure modes at once.
+ *
+ * The constructor is `internal` rather than private for exactly one caller: tests, which need an
+ * isolated instance per test method over the fresh preferences Robolectric hands each one. App
+ * code must go through [get] -- there are two call sites today, and both do.
+ */
+class LibraryStore internal constructor(context: Context) {
+    private val preferences = context.applicationContext
+        .getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val state = MutableStateFlow(load())
 
     fun observe(): StateFlow<LibraryState> = state.asStateFlow()
 
+    @Synchronized
     fun createCollection(name: String): MediaCollection? {
         val cleanName = name.trim().takeIf { it.isNotEmpty() } ?: return null
         val collection = MediaCollection(
@@ -102,6 +141,7 @@ class LibraryStore(context: Context) {
         return collection
     }
 
+    @Synchronized
     fun renameCollection(collectionId: String, name: String): Boolean {
         val cleanName = name.trim().takeIf { it.isNotEmpty() } ?: return false
         if (collectionId !in collectionIds()) return false
@@ -110,6 +150,7 @@ class LibraryStore(context: Context) {
         return true
     }
 
+    @Synchronized
     fun deleteCollection(collectionId: String) {
         preferences.edit()
             .putStringSet(KEY_COLLECTION_IDS, collectionIds() - collectionId)
@@ -120,6 +161,7 @@ class LibraryStore(context: Context) {
         refresh()
     }
 
+    @Synchronized
     fun addToCollection(collectionId: String, ids: Set<MediaId>) {
         if (ids.isEmpty() || collectionId !in collectionIds()) return
         val updated = collectionMedia(collectionId) + ids
@@ -129,6 +171,7 @@ class LibraryStore(context: Context) {
         refresh()
     }
 
+    @Synchronized
     fun removeFromCollection(collectionId: String, ids: Set<MediaId>) {
         if (ids.isEmpty()) return
         preferences.edit()
@@ -137,6 +180,7 @@ class LibraryStore(context: Context) {
         refresh()
     }
 
+    @Synchronized
     fun setArchived(ids: Set<MediaId>, archived: Boolean) {
         if (ids.isEmpty()) return
         val current = decodeIds(preferences.getStringSet(KEY_ARCHIVED_IDS, emptySet()))
@@ -169,6 +213,7 @@ class LibraryStore(context: Context) {
      * change, which is exactly what distinguishes this from [setArchived]. See
      * [LibraryState.everUnarchivedIds] for the other half of this memory.
      */
+    @Synchronized
     fun rejectArchiveSuggestions(ids: Set<MediaId>) {
         if (ids.isEmpty()) return
         preferences.edit()
@@ -180,6 +225,7 @@ class LibraryStore(context: Context) {
         refresh()
     }
 
+    @Synchronized
     fun addTag(ids: Set<MediaId>, tag: String) {
         val cleanTag = tag.trim().replace(Regex("\\s+"), " ").takeIf { it.isNotEmpty() } ?: return
         if (ids.isEmpty()) return
@@ -199,10 +245,13 @@ class LibraryStore(context: Context) {
         } else {
             editor.putStringSet(autoTagMediaKey(cleanTag), encodeIds(remainingAuto))
         }
+        // Typing the tag back by hand withdraws any earlier rejection of it for these photos.
+        forgetRejectedAutoTag(editor, cleanTag, ids)
         editor.apply()
         refresh()
     }
 
+    @Synchronized
     fun removeTag(ids: Set<MediaId>, tag: String) {
         if (ids.isEmpty()) return
         val remaining = tagMedia(tag) - ids
@@ -218,12 +267,18 @@ class LibraryStore(context: Context) {
         // machine-provenance for ids that no longer carry it at all. Left uncleaned, a user who
         // removes an auto tag and later retypes the SAME text by hand would find their manual tag
         // still counted in a bulk clearAutoTags sweep, silently deleting something they wrote.
+        val wasAuto = autoTagMedia(tag).intersect(ids)
         val remainingAuto = autoTagMedia(tag) - ids
         if (remainingAuto.isEmpty()) {
             editor.remove(autoTagMediaKey(tag))
         } else {
             editor.putStringSet(autoTagMediaKey(tag), encodeIds(remainingAuto))
         }
+        // A person removing a tag the app applied is the one signal the app gets that it guessed
+        // wrong, so it is remembered: the next curation pass must not put the same tag straight
+        // back. Only the ids where the tag WAS machine-applied are recorded -- removing a tag you
+        // typed yourself says nothing about the auto-tagger.
+        if (wasAuto.isNotEmpty()) rememberRejectedAutoTag(editor, tag, wasAuto)
         editor.apply()
         refresh()
     }
@@ -241,6 +296,7 @@ class LibraryStore(context: Context) {
      * from under them -- the precise failure mode "never emit a tag that duplicates one the user
      * already applied" was written to prevent.
      */
+    @Synchronized
     fun addAutoTags(id: MediaId, tags: Set<String>) {
         if (tags.isEmpty()) return
         val cleanTags = tags.mapNotNullTo(linkedSetOf()) { raw ->
@@ -252,6 +308,8 @@ class LibraryStore(context: Context) {
         cleanTags.forEach { tag ->
             val currentMedia = tagMedia(tag)
             if (id in currentMedia) return@forEach
+            // The person already said no to this one on this photo -- see rejectedAutoTagsByMediaId.
+            if (id in rejectedAutoTagMedia(tag)) return@forEach
             tagNamesUpdated = tagNamesUpdated + tag
             editor.putStringSet(tagMediaKey(tag), encodeIds(currentMedia + id))
             editor.putStringSet(autoTagMediaKey(tag), encodeIds(autoTagMedia(tag) + id))
@@ -269,15 +327,24 @@ class LibraryStore(context: Context) {
      * text left behind would look, to every other part of this app, exactly like a tag a person
      * typed -- that is not an undo, it is a disguise.
      */
+    @Synchronized
     fun clearAutoTags(ids: Set<MediaId>? = null) {
         val editor = preferences.edit()
         var tagNamesUpdated = tagNames()
         var changed = false
+        val rejectedNames = rejectedAutoTagNames().toMutableSet()
         tagNamesUpdated.toList().forEach { tag ->
             val autoIds = autoTagMedia(tag)
             val toRemove = if (ids == null) autoIds else autoIds.intersect(ids)
             if (toRemove.isEmpty()) return@forEach
             changed = true
+            // Bulk-undoing is the strongest "no" there is; without remembering it the next pass
+            // would re-apply every tag just cleared and the undo would have done nothing. The
+            // per-tag set is written here; the NAMES index is written once, below, because each
+            // putStringSet of the same key inside one editor replaces the last -- written per
+            // tag from the not-yet-applied preferences, only the final tag's name survived.
+            editor.putStringSet(rejectedAutoTagMediaKey(tag), encodeIds(rejectedAutoTagMedia(tag) + toRemove))
+            rejectedNames += tag
             val remainingTagged = tagMedia(tag) - toRemove
             if (remainingTagged.isEmpty()) {
                 tagNamesUpdated = tagNamesUpdated - tag
@@ -294,6 +361,7 @@ class LibraryStore(context: Context) {
         }
         if (!changed) return
         editor.putStringSet(KEY_TAG_NAMES, tagNamesUpdated)
+        editor.putStringSet(KEY_REJECTED_AUTO_TAG_NAMES, rejectedNames)
         editor.apply()
         refresh()
     }
@@ -305,6 +373,7 @@ class LibraryStore(context: Context) {
      * stored text entirely rather than leaving an empty string behind, the same convention
      * [removeTag] uses for a tag with zero photos left.
      */
+    @Synchronized
     fun setCaption(id: MediaId, caption: String) {
         val clean = caption.trim()
         val editor = preferences.edit()
@@ -312,6 +381,15 @@ class LibraryStore(context: Context) {
             editor
                 .remove(captionKey(id))
                 .putStringSet(KEY_CAPTION_MEDIA_IDS, encodeIds(captionMediaIds() - id))
+            // Deleting the annotator's sentence is a decision about it, and one that has to
+            // stick: applyMachineCaption treats an empty slot as fillable, so without this the
+            // same sentence came back on the next pass and the caption could never be emptied.
+            if (id in machineCaptionIds()) {
+                editor.putStringSet(
+                    KEY_SUPPRESSED_MACHINE_CAPTION_IDS,
+                    encodeIds(suppressedMachineCaptionIds() + id),
+                )
+            }
         } else {
             editor
                 .putString(captionKey(id), clean)
@@ -337,9 +415,11 @@ class LibraryStore(context: Context) {
      * @return whether this actually wrote a caption, so a caller sweeping the whole library can
      *   count how many photos it annotated without keeping its own separate tally.
      */
+    @Synchronized
     fun applyMachineCaption(id: MediaId, caption: String): Boolean {
         val clean = caption.trim()
         if (clean.isEmpty()) return false
+        if (id in suppressedMachineCaptionIds()) return false
         val current = preferences.getString(captionKey(id), null).orEmpty()
         val currentIsMachine = id in machineCaptionIds()
         if (current.isNotEmpty() && !currentIsMachine) return false
@@ -360,6 +440,7 @@ class LibraryStore(context: Context) {
      * needed -- there is no way, by construction, for a caption to be both person-edited and
      * still flagged machine.
      */
+    @Synchronized
     fun clearMachineCaptions(ids: Set<MediaId>? = null) {
         val current = machineCaptionIds()
         val toClear = if (ids == null) current else current.intersect(ids)
@@ -369,10 +450,79 @@ class LibraryStore(context: Context) {
         editor
             .putStringSet(KEY_CAPTION_MEDIA_IDS, encodeIds(captionMediaIds() - toClear))
             .putStringSet(KEY_MACHINE_CAPTION_IDS, encodeIds(current - toClear))
+            // Same reasoning as the clearing branch of setCaption: an undo that the next pass
+            // reverses is not an undo.
+            .putStringSet(KEY_SUPPRESSED_MACHINE_CAPTION_IDS, encodeIds(suppressedMachineCaptionIds() + toClear))
             .apply()
         refresh()
     }
 
+    /**
+     * Everything one curation pass wants to write, committed as ONE edit.
+     *
+     * The per-photo methods above each do a read-modify-write, an apply() and a full [refresh] --
+     * fine for a person tapping one chip, ruinous for a pass over twenty thousand photos: that is
+     * twenty thousand StateFlow emissions, each of which recomposes every screen observing the
+     * library. This applies exactly the same guards as [addAutoTags] and [applyMachineCaption],
+     * per item, and emits once.
+     *
+     * @return how many photos actually changed. Zero is the normal answer for a library that has
+     *   already been through this, which is why a proposal identical to what is stored is not
+     *   counted -- a pass that reports "changed 20,000 photos" every night while changing nothing
+     *   is a status line nobody can trust.
+     */
+    @Synchronized
+    fun applyCuration(autoTags: Map<MediaId, Set<String>>, captions: Map<MediaId, String>): Int {
+        val editor = preferences.edit()
+        val changed = HashSet<MediaId>()
+
+        var tagNamesUpdated = tagNames()
+        // Working copies per tag, so two photos gaining the same tag in one pass compose instead
+        // of the second putStringSet overwriting the first's within the same editor.
+        val tagMediaWork = HashMap<String, MutableSet<MediaId>>()
+        val autoMediaWork = HashMap<String, MutableSet<MediaId>>()
+        autoTags.forEach { (id, tags) ->
+            tags.forEach tag@{ raw ->
+                val tag = raw.trim().replace(Regex("\\s+"), " ")
+                if (tag.isEmpty()) return@tag
+                val media = tagMediaWork.getOrPut(tag) { tagMedia(tag).toMutableSet() }
+                if (id in media) return@tag
+                if (id in rejectedAutoTagMedia(tag)) return@tag
+                media += id
+                autoMediaWork.getOrPut(tag) { autoTagMedia(tag).toMutableSet() } += id
+                tagNamesUpdated = tagNamesUpdated + tag
+                changed += id
+            }
+        }
+        tagMediaWork.forEach { (tag, media) -> editor.putStringSet(tagMediaKey(tag), encodeIds(media)) }
+        autoMediaWork.forEach { (tag, media) -> editor.putStringSet(autoTagMediaKey(tag), encodeIds(media)) }
+        editor.putStringSet(KEY_TAG_NAMES, tagNamesUpdated)
+
+        val captionIds = captionMediaIds().toMutableSet()
+        val machineIds = machineCaptionIds().toMutableSet()
+        val suppressed = suppressedMachineCaptionIds()
+        captions.forEach { (id, caption) ->
+            val clean = caption.trim()
+            if (clean.isEmpty() || id in suppressed) return@forEach
+            val current = preferences.getString(captionKey(id), null).orEmpty()
+            if (current.isNotEmpty() && id !in machineIds) return@forEach
+            if (current == clean) return@forEach
+            editor.putString(captionKey(id), clean)
+            captionIds += id
+            machineIds += id
+            changed += id
+        }
+        editor
+            .putStringSet(KEY_CAPTION_MEDIA_IDS, encodeIds(captionIds))
+            .putStringSet(KEY_MACHINE_CAPTION_IDS, encodeIds(machineIds))
+
+        if (changed.isEmpty()) return 0
+        editor.apply()
+        refresh()
+        return changed.size
+    }
+
+    @Synchronized
     fun removeMissingMedia(availableIds: Set<MediaId>) {
         val snapshot = state.value
         val editor = preferences.edit()
@@ -401,6 +551,19 @@ class LibraryStore(context: Context) {
         val remainingTags = snapshot.allTags.filterTo(linkedSetOf()) { tag ->
             tagMedia(tag).any { it in availableIds }
         }
+        // Rejection memory is indexed by its own name list, because a rejected tag may no longer
+        // be in KEY_TAG_NAMES at all (it was removed from the last photo that carried it).
+        val remainingRejectedNames = linkedSetOf<String>()
+        rejectedAutoTagNames().forEach { tag ->
+            val remaining = rejectedAutoTagMedia(tag).intersect(availableIds)
+            if (remaining.isEmpty()) {
+                editor.remove(rejectedAutoTagMediaKey(tag))
+            } else {
+                remainingRejectedNames += tag
+                editor.putStringSet(rejectedAutoTagMediaKey(tag), encodeIds(remaining))
+            }
+        }
+        editor.putStringSet(KEY_REJECTED_AUTO_TAG_NAMES, remainingRejectedNames)
         // A caption for a photo that no longer exists is dead weight, same as everything above --
         // and unlike a tag's per-tag key, a caption's key is per-id, so it is removed directly
         // rather than rewritten with a shrunk set.
@@ -414,6 +577,10 @@ class LibraryStore(context: Context) {
             .putStringSet(
                 KEY_REJECTED_ARCHIVE_SUGGESTION_IDS,
                 encodeIds(snapshot.rejectedArchiveSuggestionIds.intersect(availableIds)),
+            )
+            .putStringSet(
+                KEY_SUPPRESSED_MACHINE_CAPTION_IDS,
+                encodeIds(suppressedMachineCaptionIds().intersect(availableIds)),
             )
             .apply()
         refresh()
@@ -465,8 +632,19 @@ class LibraryStore(context: Context) {
             "rejectedArchiveSuggestionIds",
             JSONArray(state.value.rejectedArchiveSuggestionIds.map { it.value }),
         )
+        // The two "the person said no" memories for curation travel too, for the same reason the
+        // archive ones do: a restore that forgets them would re-apply every tag and caption the
+        // person had removed, the first time recognition ran again.
+        put("rejectedAutoTags", JSONObject().apply {
+            rejectedAutoTagNames().forEach { tag ->
+                val ids = rejectedAutoTagMedia(tag)
+                if (ids.isNotEmpty()) put(tag, JSONArray(ids.map { it.value }))
+            }
+        })
+        put("suppressedMachineCaptionIds", JSONArray(state.value.suppressedMachineCaptionIds.map { it.value }))
     }
 
+    @Synchronized
     fun importJson(root: JSONObject): Result<Unit> = runCatching {
         require(root.optInt("schema", 0) == BACKUP_SCHEMA) { "Unsupported metadata backup" }
         val editor = preferences.edit().clear()
@@ -542,6 +720,22 @@ class LibraryStore(context: Context) {
             KEY_REJECTED_ARCHIVE_SUGGESTION_IDS,
             encodeIds(root.optJSONArray("rejectedArchiveSuggestionIds").toMediaIds()),
         )
+        val rejectedNames = linkedSetOf<String>()
+        root.optJSONObject("rejectedAutoTags")?.let { rejected ->
+            rejected.keys().forEach { tag ->
+                val cleanTag = tag.trim()
+                val ids = rejected.optJSONArray(tag).toMediaIds()
+                if (cleanTag.isNotEmpty() && ids.isNotEmpty()) {
+                    rejectedNames += cleanTag
+                    editor.putStringSet(rejectedAutoTagMediaKey(cleanTag), encodeIds(ids))
+                }
+            }
+        }
+        editor.putStringSet(KEY_REJECTED_AUTO_TAG_NAMES, rejectedNames)
+        editor.putStringSet(
+            KEY_SUPPRESSED_MACHINE_CAPTION_IDS,
+            encodeIds(root.optJSONArray("suppressedMachineCaptionIds").toMediaIds()),
+        )
         editor.apply()
         refresh()
     }
@@ -556,6 +750,10 @@ class LibraryStore(context: Context) {
         tagNames().forEach { tag ->
             tagMedia(tag).forEach { id -> tagsById.getOrPut(id, ::linkedSetOf).add(tag) }
             autoTagMedia(tag).forEach { id -> autoTagsById.getOrPut(id, ::linkedSetOf).add(tag) }
+        }
+        val rejectedById = linkedMapOf<MediaId, MutableSet<String>>()
+        rejectedAutoTagNames().forEach { tag ->
+            rejectedAutoTagMedia(tag).forEach { id -> rejectedById.getOrPut(id, ::linkedSetOf).add(tag) }
         }
         val captionText = captionMediaIds().associateWith { id ->
             preferences.getString(captionKey(id), null).orEmpty()
@@ -577,6 +775,8 @@ class LibraryStore(context: Context) {
             machineCaptionIds = machineCaptionIds(),
             everUnarchivedIds = everUnarchivedIds(),
             rejectedArchiveSuggestionIds = rejectedArchiveSuggestionIds(),
+            rejectedAutoTagsByMediaId = rejectedById.mapValues { it.value.toSet() },
+            suppressedMachineCaptionIds = suppressedMachineCaptionIds(),
         )
     }
 
@@ -629,22 +829,70 @@ class LibraryStore(context: Context) {
     private fun rejectedArchiveSuggestionIds(): Set<MediaId> =
         decodeIds(preferences.getStringSet(KEY_REJECTED_ARCHIVE_SUGGESTION_IDS, emptySet()))
 
-    private companion object {
-        const val PREFERENCES_NAME = "foto_xplorr_library"
-        const val BACKUP_SCHEMA = 1
-        const val KEY_COLLECTION_IDS = "collection_ids"
-        const val KEY_TAG_NAMES = "tag_names"
-        const val KEY_ARCHIVED_IDS = "archived_ids"
-        const val TAG_MEDIA_PREFIX = "tag_media:"
-        const val AUTO_TAG_MEDIA_PREFIX = "auto_tag_media:"
-        const val KEY_CAPTION_MEDIA_IDS = "caption_media_ids"
-        const val CAPTION_PREFIX = "caption:"
-        const val KEY_MACHINE_CAPTION_IDS = "machine_caption_ids"
-        const val KEY_EVER_UNARCHIVED_IDS = "ever_unarchived_ids"
-        const val KEY_REJECTED_ARCHIVE_SUGGESTION_IDS = "rejected_archive_suggestion_ids"
-        fun collectionNameKey(id: String) = "collection_name:$id"
-        fun collectionMediaKey(id: String) = "collection_media:$id"
-        fun collectionCreatedKey(id: String) = "collection_created:$id"
+    private fun suppressedMachineCaptionIds(): Set<MediaId> =
+        decodeIds(preferences.getStringSet(KEY_SUPPRESSED_MACHINE_CAPTION_IDS, emptySet()))
+
+    /** Names with at least one rejection recorded -- its own index, since such a tag may no longer be in [tagNames]. */
+    private fun rejectedAutoTagNames(): Set<String> =
+        preferences.getStringSet(KEY_REJECTED_AUTO_TAG_NAMES, emptySet()).orEmpty().toSet()
+
+    private fun rejectedAutoTagMedia(tag: String): Set<MediaId> =
+        decodeIds(preferences.getStringSet(rejectedAutoTagMediaKey(tag), emptySet()))
+
+    /** Same Base64-over-UTF-8 scheme as [tagMediaKey], under a third prefix. */
+    private fun rejectedAutoTagMediaKey(tag: String): String {
+        val encoded = Base64.encodeToString(
+            tag.toByteArray(StandardCharsets.UTF_8),
+            Base64.NO_WRAP or Base64.URL_SAFE,
+        )
+        return "$REJECTED_AUTO_TAG_MEDIA_PREFIX$encoded"
+    }
+
+    private fun rememberRejectedAutoTag(editor: SharedPreferences.Editor, tag: String, ids: Set<MediaId>) {
+        editor.putStringSet(KEY_REJECTED_AUTO_TAG_NAMES, rejectedAutoTagNames() + tag)
+        editor.putStringSet(rejectedAutoTagMediaKey(tag), encodeIds(rejectedAutoTagMedia(tag) + ids))
+    }
+
+    private fun forgetRejectedAutoTag(editor: SharedPreferences.Editor, tag: String, ids: Set<MediaId>) {
+        val current = rejectedAutoTagMedia(tag)
+        if (current.isEmpty()) return
+        val remaining = current - ids
+        if (remaining.isEmpty()) {
+            editor.remove(rejectedAutoTagMediaKey(tag))
+            editor.putStringSet(KEY_REJECTED_AUTO_TAG_NAMES, rejectedAutoTagNames() - tag)
+        } else {
+            editor.putStringSet(rejectedAutoTagMediaKey(tag), encodeIds(remaining))
+        }
+    }
+
+    companion object {
+        @Volatile
+        private var instance: LibraryStore? = null
+
+        /** The process's one [LibraryStore]. See the class KDoc for why there must be only one. */
+        fun get(context: Context): LibraryStore =
+            instance ?: synchronized(this) {
+                instance ?: LibraryStore(context.applicationContext).also { instance = it }
+            }
+
+        private const val PREFERENCES_NAME = "foto_xplorr_library"
+        private const val BACKUP_SCHEMA = 1
+        private const val KEY_COLLECTION_IDS = "collection_ids"
+        private const val KEY_TAG_NAMES = "tag_names"
+        private const val KEY_ARCHIVED_IDS = "archived_ids"
+        private const val TAG_MEDIA_PREFIX = "tag_media:"
+        private const val AUTO_TAG_MEDIA_PREFIX = "auto_tag_media:"
+        private const val REJECTED_AUTO_TAG_MEDIA_PREFIX = "rejected_auto_tag_media:"
+        private const val KEY_REJECTED_AUTO_TAG_NAMES = "rejected_auto_tag_names"
+        private const val KEY_CAPTION_MEDIA_IDS = "caption_media_ids"
+        private const val CAPTION_PREFIX = "caption:"
+        private const val KEY_MACHINE_CAPTION_IDS = "machine_caption_ids"
+        private const val KEY_SUPPRESSED_MACHINE_CAPTION_IDS = "suppressed_machine_caption_ids"
+        private const val KEY_EVER_UNARCHIVED_IDS = "ever_unarchived_ids"
+        private const val KEY_REJECTED_ARCHIVE_SUGGESTION_IDS = "rejected_archive_suggestion_ids"
+        private fun collectionNameKey(id: String) = "collection_name:$id"
+        private fun collectionMediaKey(id: String) = "collection_media:$id"
+        private fun collectionCreatedKey(id: String) = "collection_created:$id"
     }
 }
 

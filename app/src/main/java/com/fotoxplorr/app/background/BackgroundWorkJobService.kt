@@ -2,10 +2,12 @@ package com.fotoxplorr.app.background
 
 import android.app.job.JobParameters
 import android.app.job.JobService
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 /**
@@ -67,11 +69,21 @@ class BackgroundWorkJobService : JobService() {
                     // over -- a background pass that silently never runs again because one
                     // pass threw is a worse outcome than one that logs nothing and retries next
                     // period, which is what returning to Pending below already achieves.
+                    //
+                    // Cancellation is the one thing that must NOT be swallowed. runCatching
+                    // catches every Throwable, CancellationException included, so without the
+                    // rethrow an onStopJob mid-pass would be followed by this coroutine calmly
+                    // publishing Pending over the "Android paused this" status onStopJob just
+                    // wrote, and calling jobFinished(false) over its "please reschedule".
                     runCatching { BackgroundWorkRunnerRegistry.runner.runPendingWork() }
+                        .onFailure { if (it is CancellationException) throw it }
                     BackgroundWorkStatusCenter.publish(BackgroundWorkStatus.Pending)
                 }
             }
 
+            // Not reached after onStopJob: the rethrow above ends this coroutine first, and the
+            // platform has already been told (onStopJob's `true`) to reschedule this occurrence.
+            ensureActive()
             // false: this is a PERIODIC job (see BackgroundScheduler.POLL_INTERVAL_MS), so the
             // platform already knows to wake it again next period on its own. Rescheduling here
             // as well would be the same duplicate-schedule problem BackgroundScheduler's KDoc

@@ -1,11 +1,14 @@
 package com.fotoxplorr.app.curate
 
+import com.fotoxplorr.app.gallery.folderIdentity
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.recognition.RecognitionIndex
 import com.fotoxplorr.app.recognition.SceneClassifier
-import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
 /**
  * Turns what recognition SAW into what the library KNOWS: auto tags, and a caption for a photo
@@ -25,44 +28,58 @@ import kotlinx.coroutines.ensureActive
  * recognition indexer would put a dependency on the durable store inside the disposable one, and
  * every future schema decision about the cache would have to think about the library too.
  *
- * It also means re-running recognition from scratch — which the cache's own upgrade path does —
- * cannot lose a caption or a tag, because nothing here deletes: see [AutoTagger.tagsFor]'s
- * `existingTags` and [AutoAnnotator.apply], both of which are constructed so a second run over
- * the same photo is a no-op rather than a rewrite.
+ * ## Why it decides everything first and writes once
+ * The pass runs over the whole library. Writing per photo through the store's per-photo methods
+ * would mean one preference commit and one StateFlow emission per photo — twenty thousand
+ * recompositions of every screen observing the library, for a pass whose point is to be
+ * unnoticed. So it collects every proposed change and hands the lot to
+ * [LibraryStore.applyCuration], which commits and emits once. It also runs on
+ * [Dispatchers.Default] itself rather than trusting the caller to: the foreground call site is a
+ * `LaunchedEffect`, whose dispatcher is Main, and a whole-library loop on Main is an ANR.
  *
- * ## Why it never touches a person's own words
- * Both guards are enforced twice over, and that is deliberate rather than redundant. A caption
- * someone typed is checked by [AutoAnnotator.apply] here and again by
- * [LibraryStore.applyMachineCaption] at the storage layer; a tag someone added is filtered out of
- * the candidate list by `existingTags` here and rejected again by [LibraryStore.addAutoTags].
- * Silently overwriting something a person wrote is the one failure in this whole feature that
- * cannot be undone by re-running it, so it is worth checking on both sides of the boundary.
+ * ## What it never touches
+ * - A person's own words. Enforced twice over, deliberately: a typed caption is refused by
+ *   [AutoAnnotator.apply] here and again by the store at write time; a typed tag is filtered out of
+ *   the candidate list here and rejected again on insert. Silently overwriting something a person
+ *   wrote is the one failure in this feature that re-running cannot undo, so it is checked on both
+ *   sides of the boundary.
+ * - A person's "no". An auto tag they removed and a machine caption they cleared are both
+ *   remembered by the store ([LibraryStore.observe]'s `rejectedAutoTagsFor` and
+ *   `isMachineCaptionSuppressed`) and treated here exactly like a tag the photo already carries or
+ *   a caption a person wrote. Without that, removing an auto tag was a thirty-minute reprieve.
+ * - A locked folder. Photos behind [lockedFolders] are skipped entirely, because a tag is visible
+ *   library-wide — in the Tags row, in search suggestions — and auto-tagging a locked folder's
+ *   contents would print what is in it on screens that are not behind the lock.
  */
 class AutoCurationPass(private val library: LibraryStore) {
 
     /**
      * Apply auto tags and captions for every image in [assets] that recognition has an opinion
-     * about.
+     * about, except those in [lockedFolders].
      *
      * @return how many photos were changed. Zero is the normal steady state for a library that
      *   has already been through this once, not a sign anything went wrong.
      */
-    suspend fun run(assets: List<MediaAsset>, recognition: RecognitionIndex): Int {
-        if (assets.isEmpty()) return 0
+    suspend fun run(
+        assets: List<MediaAsset>,
+        recognition: RecognitionIndex,
+        lockedFolders: Set<String> = emptySet(),
+    ): Int = withContext(Dispatchers.Default) {
+        if (assets.isEmpty()) return@withContext 0
         val state = library.observe().value
-        var changed = 0
+        val proposedTags = HashMap<MediaId, Set<String>>()
+        val proposedCaptions = HashMap<MediaId, String>()
 
         for (asset in assets) {
             if (asset.isVideo || asset.isTrashed) continue
-            currentCoroutineContext().ensureActive()
+            if (lockedFolders.isNotEmpty() && folderIdentity(asset).key.value in lockedFolders) continue
+            ensureActive()
 
             val labels = recognition.labelsByMedia[asset.id].orEmpty()
             val categories = recognition.categoriesByMedia[asset.id].orEmpty()
             // Nothing was recognised in this photo, so there is nothing to say about it. Skipped
             // rather than run with empty inputs, which would be the same answer for more work.
             if (labels.isEmpty() && categories.isEmpty()) continue
-
-            var touched = false
 
             val tags = AutoTagger.tagsFor(
                 labels = labels,
@@ -72,29 +89,24 @@ class AutoCurationPass(private val library: LibraryStore) {
                 // why this is a whole-call gate rather than a per-label filter.
                 confidenceFloor = SceneClassifier.SCENE_LABEL_CONFIDENCE,
                 maxTags = MAX_AUTO_TAGS_PER_PHOTO,
-                existingTags = state.tagsFor(asset.id),
+                // Rejected auto tags count as "already there" for the purpose of never proposing
+                // them again -- see the class KDoc.
+                existingTags = state.tagsFor(asset.id) + state.rejectedAutoTagsFor(asset.id),
             )
-            if (tags.isNotEmpty()) {
-                library.addAutoTags(asset.id, tags.toSet())
-                touched = true
-            }
+            if (tags.isNotEmpty()) proposedTags[asset.id] = tags.toSet()
 
             val candidate = recognition.captionsByMedia[asset.id].orEmpty()
-            if (candidate.isNotBlank()) {
-                val caption = AutoAnnotator.apply(
+            if (candidate.isNotBlank() && !state.isMachineCaptionSuppressed(asset.id)) {
+                AutoAnnotator.apply(
                     currentCaption = state.captionFor(asset.id),
                     currentIsMachineWritten = state.isMachineCaption(asset.id),
                     candidateCaption = candidate,
-                )
-                // applyMachineCaption re-checks the same condition and reports whether it actually
-                // wrote; trusting the decision above without it would count a photo as changed on
-                // a write the store declined.
-                if (caption != null && library.applyMachineCaption(asset.id, caption)) touched = true
+                )?.let { proposedCaptions[asset.id] = it }
             }
-
-            if (touched) changed++
         }
-        return changed
+
+        ensureActive()
+        library.applyCuration(proposedTags, proposedCaptions)
     }
 
     private companion object {

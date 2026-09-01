@@ -123,11 +123,29 @@ class BackgroundScheduler(context: Context) {
             builder.setRequiredNetworkType(JobInfo.NETWORK_TYPE_UNMETERED)
         }
 
-        val result = runCatching { scheduler.schedule(builder.build()) }.getOrDefault(JobScheduler.RESULT_FAILURE)
+        val job = builder.build()
+        // JobScheduler.schedule() with an id that is already pending REPLACES the job, and if
+        // that job is running right now it is stopped mid-pass -- so a reschedule is only worth
+        // its cost when something JobScheduler itself enforces has changed. Battery percent and
+        // active hours are the evaluator's, not the platform's; nudging either from Settings
+        // must not kill a pass that is half-way through the library.
+        val pending = runCatching { scheduler.getPendingJob(JOB_ID) }.getOrNull()
+        if (pending != null && pending.sameConstraintsAs(job)) return
+
+        val result = runCatching { scheduler.schedule(job) }.getOrDefault(JobScheduler.RESULT_FAILURE)
         BackgroundWorkStatusCenter.publish(
             if (result == JobScheduler.RESULT_SUCCESS) BackgroundWorkStatus.Pending else BackgroundWorkStatus.Unknown,
         )
     }
+
+    /** The constraints the platform enforces; everything else lives in [WorkRuleEvaluator]. */
+    private fun JobInfo.sameConstraintsAs(other: JobInfo): Boolean =
+        isRequireDeviceIdle == other.isRequireDeviceIdle &&
+            isRequireCharging == other.isRequireCharging &&
+            isRequireBatteryNotLow == other.isRequireBatteryNotLow &&
+            networkType == other.networkType &&
+            isPersisted == other.isPersisted &&
+            intervalMillis == other.intervalMillis
 
     /** Removes the platform job entirely. Used only if this app ever needs a harder stop than
      *  [WorkRules.enabled] = false (which already routes through [reconcile] above); nothing

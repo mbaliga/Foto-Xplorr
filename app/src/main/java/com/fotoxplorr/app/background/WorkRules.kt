@@ -17,7 +17,7 @@ package com.fotoxplorr.app.background
  * [WorkRuleEvaluator] decides for real") that is this feature's entire architecture.
  *
  * @param requireIdle Wait for [DeviceState.idle] -- Android's own "nothing else is happening"
- *   signal (`PowerManager.isDeviceIdleMode`) -- before running. OFF by default: idle can mean
+ *   signal (JobScheduler's device-idle constraint, `JobInfo.setRequiresDeviceIdle`) -- before running. OFF by default: idle can mean
  *   "screen off for a while" long before it means Doze's deep maintenance window, and most heavy
  *   passes do not need to wait that long for that little benefit.
  * @param requireCharging Wait for the charger. OFF by default -- [minBatteryPercent] below is
@@ -69,7 +69,7 @@ data class WorkRules(
  * @param charging Whether the device is currently on any power source (USB, AC or wireless) --
  *   also satisfies [WorkRules.minBatteryPercent] outright regardless of [batteryPercent]; see
  *   [WorkRuleEvaluator.evaluate].
- * @param idle Android's own device-idle signal (`PowerManager.isDeviceIdleMode`), not merely
+ * @param idle Android's own device-idle signal (JobScheduler's device-idle constraint, `JobInfo.setRequiresDeviceIdle`), not merely
  *   "screen off" -- see [WorkRules.requireIdle].
  * @param unmetered Whether the current network is NOT metered, i.e. safe to use freely. Always
  *   `true` as produced by this app's own Android glue, and that is not a placeholder -- read

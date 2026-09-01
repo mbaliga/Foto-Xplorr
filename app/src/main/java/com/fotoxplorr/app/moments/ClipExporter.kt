@@ -123,7 +123,15 @@ class ClipExporter(context: Context) {
             for (track in tracks) {
                 currentCoroutineContext().ensureActive()
                 extractor.selectOnly(track.sourceIndex, tracks)
-                extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                // baseUs, NOT startUs. Seeking each track to startUs would start the audio a
+                // GOP after the video (the video's previous sync sample is earlier; the audio's
+                // is at startUs itself), and the only thing carrying that offset into the file
+                // would be an MP4 edit list -- which the platform player ignores on API 26-28,
+                // so the clip's sound would run up to a couple of seconds early there. Seeking
+                // every track to the same instant means every track's first sample is at (or a
+                // single frame before) time zero, and no edit list is needed to keep them in
+                // step.
+                extractor.seekTo(baseUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                 copyTrack(extractor, muxer, track.muxerIndex, endUs, baseUs, buffer, bufferInfo)
             }
 

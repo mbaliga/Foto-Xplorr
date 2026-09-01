@@ -215,11 +215,20 @@ fun MomentScrubber(
                     }
 
                     seekToX(down.position.x)
-                    drag(down.id) { change ->
-                        seekToX(change.position.x)
-                        change.consume()
+                    try {
+                        drag(down.id) { change ->
+                            seekToX(change.position.x)
+                            change.consume()
+                        }
+                    } finally {
+                        // In a finally, because the gesture can be CANCELLED rather than end:
+                        // this pointerInput is keyed on durationMs, and VideoPlayer replaces the
+                        // MediaStore duration with the player's own in onPrepared, usually a few
+                        // milliseconds different. A drag in flight at that moment was unwound by
+                        // cancellation, skipped a plain reset here, and left the marker frozen at
+                        // the last touched position for the rest of playback.
+                        dragMs = null
                     }
-                    dragMs = null
                 }
             },
         contentAlignment = Alignment.Center,

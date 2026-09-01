@@ -29,6 +29,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +38,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.drop
 import com.fotoxplorr.app.background.BackgroundScheduler
 import com.fotoxplorr.app.background.BackgroundWorkStatusCenter
 import com.fotoxplorr.app.background.BATTERY_PERCENT_STEP
@@ -317,12 +319,16 @@ fun SettingsTabsRoom(
                     val rules by rulesStore.observe().collectAsState()
                     val workStatus by BackgroundWorkStatusCenter.status.collectAsState()
 
-                    // Re-arms the platform job every time the rules change. Not the only place
-                    // that arms it -- FotoXplorrApplication.startBackgroundWork() does so at
-                    // process start, so a fresh install obeys its rules without anyone opening
-                    // this tab. This one exists so an EDIT takes effect immediately rather than
-                    // at next launch.
-                    LaunchedEffect(rules) { scheduler.reconcile(rules) }
+                    // Re-arms the platform job when the rules CHANGE -- drop(1) skips the value
+                    // already in force when the tab opens. FotoXplorrApplication.startBackgroundWork()
+                    // armed that one at process start, and re-arming it here on every visit had a
+                    // visible cost: reconcile() publishes Pending, so opening this tab to find out
+                    // why indexing was blocked overwrote the very reason you came to read with
+                    // "Scheduled. Waiting for the system…". This exists so an EDIT takes effect
+                    // immediately rather than at next launch, and only for that.
+                    LaunchedEffect(Unit) {
+                        snapshotFlow { rules }.drop(1).collect { scheduler.reconcile(it) }
+                    }
 
                     SectionLabel("WHEN")
                     SwitchRow(

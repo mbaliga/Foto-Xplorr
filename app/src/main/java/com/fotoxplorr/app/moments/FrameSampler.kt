@@ -28,14 +28,32 @@ import kotlinx.coroutines.withContext
  * already more resolution than the analysis can use, and decoding a full-size frame forty times
  * over would be paying for detail that gets thrown away one line later.
  *
- * ## Why `OPTION_CLOSEST`, not the cheaper `OPTION_CLOSEST_SYNC`
- * `OPTION_CLOSEST_SYNC` only ever returns an actual keyframe. On a video whose keyframes are
- * sparse relative to this class's ~500ms sample spacing (see [frameCountFor]), several
- * consecutive requested positions can all round to the SAME keyframe -- the detector would then
- * see a run of identical signatures where the real footage was changing the whole time, silently
- * blind to whatever happened between those keyframes. `OPTION_CLOSEST` decodes forward from the
- * nearest sync frame when it has to, which costs more per call; [MAX_FRAMES] and [SAMPLE_EDGE_PX]
- * are what keep the total bounded instead of this.
+ * ## Why `OPTION_CLOSEST_SYNC`, and what it gives up
+ * `OPTION_CLOSEST_SYNC` returns the nearest keyframe, decoded on its own. `OPTION_CLOSEST`
+ * returns the frame nearest the requested instant -- and to do that it must seek to the previous
+ * keyframe and decode every frame in between at FULL resolution, however small the bitmap asked
+ * for, because the decoder cannot produce a P-frame without the frames it depends on. On a 4K
+ * recording with a two-second keyframe interval that is thirty to sixty full-resolution software
+ * decodes per sample, forty samples per video, running the first time each video is opened --
+ * while it plays. Minutes of a saturated CPU for a 64x64 histogram.
+ *
+ * The cost of the cheap option is precision: on a video whose keyframes are sparser than the
+ * sample spacing, consecutive requested positions can round to the SAME keyframe, and a change
+ * that happens entirely between two keyframes is invisible to this pass. Two things make that an
+ * acceptable trade. Phone recordings keyframe every one to two seconds, close to the sample
+ * spacing, so the blind stretch is short; and identical consecutive keyframes produce identical
+ * signatures, which the detector already treats as "nothing happened" rather than as a moment.
+ * A reported moment lands within a keyframe interval of the real cut, which is inside the
+ * detector's own 3s minimum spacing between moments anyway.
+ *
+ * ## Why the duration comes back with the signatures
+ * The positions are computed against the duration the RETRIEVER reports, with the MediaStore
+ * value only as a fallback. The detector needs that same number: handed the MediaStore duration
+ * instead, a video whose row carries 0 (metadata that failed to extract at scan time, a file
+ * copied in over MTP and scanned before it was parseable) sampled forty frames perfectly well and
+ * then had every one of them discarded by the detector's `durationMs <= 0` guard -- and was marked
+ * scanned, so it was never looked at again. Returning both together is what keeps the two from
+ * disagreeing.
  *
  * ## Why an unreadable video comes back as an empty list, never a thrown exception
  * A corrupt file, an unsupported codec, or a `MediaStore` row whose file vanished out from under
@@ -45,18 +63,28 @@ import kotlinx.coroutines.withContext
  * identically, which is what lets a video this app can never open be marked scanned once and left
  * alone, instead of being retried forever.
  */
+/**
+ * What one pass over a video produced: its signatures and the duration they were positioned
+ * against. See [FrameSampler]'s class doc on why the two travel together.
+ */
+data class SampledVideo(val signatures: List<FrameSignature>, val durationMs: Long) {
+    companion object {
+        val EMPTY = SampledVideo(emptyList(), 0L)
+    }
+}
+
 class FrameSampler(context: Context) {
     private val appContext = context.applicationContext
 
-    suspend fun sample(asset: MediaAsset, maxFrames: Int = MAX_FRAMES): List<FrameSignature> =
+    suspend fun sample(asset: MediaAsset, maxFrames: Int = MAX_FRAMES): SampledVideo =
         withContext(Dispatchers.IO) {
-            if (!asset.isVideo) return@withContext emptyList()
+            if (!asset.isVideo) return@withContext SampledVideo.EMPTY
 
             val retriever = MediaMetadataRetriever()
             try {
                 retriever.setDataSource(appContext, asset.contentUri)
                 val durationMs = readDurationMs(retriever) ?: asset.durationMillis
-                if (durationMs <= 0L) return@withContext emptyList()
+                if (durationMs <= 0L) return@withContext SampledVideo.EMPTY
 
                 val frameCount = frameCountFor(durationMs, maxFrames)
                 val signatures = ArrayList<FrameSignature>(frameCount)
@@ -79,14 +107,14 @@ class FrameSampler(context: Context) {
                     // its doc. The rest of an otherwise-readable video should not be thrown away
                     // for one unreadable instant in the middle of it.
                 }
-                signatures
+                SampledVideo(signatures, durationMs)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
                 // setDataSource threw, or something else here failed in a way no per-frame guard
                 // caught. See the class doc: total unreadability and "read fine, nothing to
                 // report" are deliberately the same outcome from this function's point of view.
-                emptyList()
+                SampledVideo.EMPTY
             } finally {
                 runCatching { retriever.release() }
             }
@@ -106,7 +134,7 @@ class FrameSampler(context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 retriever.getScaledFrameAtTime(
                     timeUs,
-                    MediaMetadataRetriever.OPTION_CLOSEST,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
                     SAMPLE_EDGE_PX,
                     SAMPLE_EDGE_PX,
                 )
@@ -115,7 +143,7 @@ class FrameSampler(context: Context) {
                 // devices pays, once per sampled frame, exactly the full-resolution decode cost
                 // getScaledFrameAtTime exists to avoid -- still bounded overall, because
                 // frameCountFor caps how many times this branch can run per video.
-                retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)?.let { full ->
+                retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { full ->
                     val scaled = Bitmap.createScaledBitmap(full, SAMPLE_EDGE_PX, SAMPLE_EDGE_PX, false)
                     if (scaled !== full) full.recycle()
                     scaled

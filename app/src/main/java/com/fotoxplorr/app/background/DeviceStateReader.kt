@@ -33,7 +33,16 @@ fun readDeviceState(context: Context): DeviceState {
             // friendlier-looking fallback.
             ?: FALLBACK_BATTERY_PERCENT_WHEN_UNREADABLE,
         charging = batteryManager?.isCharging ?: false,
-        idle = powerManager?.isDeviceIdleMode ?: false,
+        // Always true, for the same reason `unmetered` below is -- and this one was a real bug
+        // before it was. "Only when idle" is expressed to JobScheduler as
+        // JobInfo.setRequiresDeviceIdle, which the platform satisfies through its own idle
+        // tracking (screen off or docked plus an inactivity timeout, typically about an hour)
+        // and enforces BEFORE onStartJob is ever called. The previous live re-check read
+        // PowerManager.isDeviceIdleMode, which is Doze -- a different, far stricter state that
+        // never engages while the phone is on a charger. So the exact overnight-on-the-charger
+        // case the rule exists for went: platform says idle, job starts, Doze says not idle,
+        // verdict Blocked, nothing ever indexed. The platform's guarantee is the honest answer.
+        idle = true,
         // Always true. NOT a stub -- this is the honest value. Unlike battery percent or the
         // active-hours window, "unmetered network" is something android.app.job.JobScheduler can
         // express EXACTLY (JobInfo.NETWORK_TYPE_UNMETERED), so BackgroundScheduler requests that

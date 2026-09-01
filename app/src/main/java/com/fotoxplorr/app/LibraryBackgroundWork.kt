@@ -5,6 +5,7 @@ import com.fotoxplorr.app.background.BackgroundWorkRunner
 import com.fotoxplorr.app.curate.AutoCurationPass
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.organize.LibraryStore
+import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.media.SqliteMediaRepository
 import com.fotoxplorr.app.moments.VideoMomentIndexer
 import com.fotoxplorr.app.moments.VideoMomentStore
@@ -12,7 +13,6 @@ import com.fotoxplorr.app.recognition.RecognitionIndexer
 import com.fotoxplorr.app.recognition.RecognitionStore
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.flow.first
 
 /**
  * The heavy work the background rules exist to schedule.
@@ -41,7 +41,10 @@ class LibraryBackgroundWork(context: Context) : BackgroundWorkRunner {
     private val appContext = context.applicationContext
 
     override suspend fun runPendingWork(): String? {
-        val assets = SqliteMediaRepository(appContext).observeAll().first()
+        // awaitLoaded, NOT observeAll().first(): the repository loads asynchronously after
+        // construction, and a StateFlow's first value on a fresh instance is the empty list it
+        // was initialised with. See SqliteMediaRepository.awaitLoaded for the failure this was.
+        val assets = SqliteMediaRepository(appContext).awaitLoaded()
         if (assets.isEmpty()) return null
 
         currentCoroutineContext().ensureActive()
@@ -64,9 +67,14 @@ class LibraryBackgroundWork(context: Context) : BackgroundWorkRunner {
         val indexed = RecognitionIndexer(appContext, store).index(assets).getOrDefault(0)
 
         currentCoroutineContext().ensureActive()
-        // LibraryStore loads its state in its constructor, so this instance is already current;
-        // unlike RecognitionStore there is no separate reload step to forget.
-        AutoCurationPass(LibraryStore(appContext)).run(assets, store.observe().value)
+        // LibraryStore.get, never a second instance: the Activity writes to the same preferences
+        // file from the main thread, and two instances over one file lose writes -- see the
+        // class's own KDoc. Locked folders are read so the pass leaves their contents alone.
+        AutoCurationPass(LibraryStore.get(appContext)).run(
+            assets = assets,
+            recognition = store.observe().value,
+            lockedFolders = PrivateFolderStore(appContext).observeLockedFolders().value,
+        )
         return indexed
     }
 

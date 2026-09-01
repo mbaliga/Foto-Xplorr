@@ -9,6 +9,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
+import java.util.Locale
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -34,8 +35,14 @@ class AppTextTranslator : TextTranslator {
         targetLanguageTag: String,
         sourceLanguageTag: String,
     ): Result<Translation> {
-        val targetCode = TranslateLanguage.fromLanguageTag(targetLanguageTag)
-        val sourceCode = TranslateLanguage.fromLanguageTag(sourceLanguageTag)
+        // Language only, never the full BCP-47 tag. Locale.getDefault().toLanguageTag() is
+        // region-qualified on practically every device -- "en-US", "de-DE", "pt-BR" -- and ML
+        // Kit's fromLanguageTag recognises only its bare two-letter codes (plus three legacy
+        // aliases), returning null for anything with a region. Passed through unchanged, every
+        // translation on a default-locale device failed the model lookup and fell through to
+        // the hand-off, so the on-device translator this flavour exists to provide never ran.
+        val targetCode = TranslateLanguage.fromLanguageTag(languageOf(targetLanguageTag))
+        val sourceCode = TranslateLanguage.fromLanguageTag(languageOf(sourceLanguageTag))
         if (targetCode == null || sourceCode == null) {
             val badTag = if (targetCode == null) targetLanguageTag else sourceLanguageTag
             return Result.failure(
@@ -109,3 +116,10 @@ private suspend fun <T> Task<T>.await(): T = suspendCancellableCoroutine { conti
  * within one sitting rather than an eternal "Translating…".
  */
 private const val TRANSLATE_TIMEOUT_MILLIS = 45_000L
+
+/**
+ * "en-US" -> "en". Falls back to the tag itself for an input Locale cannot parse, so an already
+ * bare code, or garbage, reaches ML Kit's own validation unchanged rather than as "".
+ */
+private fun languageOf(tag: String): String =
+    Locale.forLanguageTag(tag).language.ifEmpty { tag }

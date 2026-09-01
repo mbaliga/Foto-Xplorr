@@ -439,26 +439,11 @@ private fun GalleryBrowser(
     // headers -- so it is its own flag rather than a fourth kind of [GalleryZoomLevel].
     var timelineHeadersOn by remember { mutableStateOf(false) }
 
-    // A search handed over from outside the grid -- today the viewer's "Search inside this photo"
-    // card. Three things move together, because a search that lands on a surface which cannot
-    // show results is the same as no search at all: the drill-down route resets to Root (a search
-    // scoped to whichever album the photo happened to live in would silently hide most of its own
-    // matches), and the zoom ladder drops back to a grid rung (the Calendar and Map rungs draw
-    // months and pins, not photos, so results arriving underneath one are invisible). The
-    // DESTINATION is deliberately left alone: which of the nine categories the person is browsing
-    // is a choice they made, not incidental state, and search reads as a filter within it.
-    LaunchedEffect(state.pendingSearch) {
-        val seed = state.pendingSearch ?: return@LaunchedEffect
-        query = seed
-        searchVisible = true
-        route = BrowserRoute.Root
-        if (zoomLevel !is GalleryZoomLevel.Grid) {
-            zoomLevel = GalleryZoomLevel.Grid(state.preferences.gridColumns)
-        }
-        // Acknowledged only after the seeding above has actually happened, so a consumer that
-        // clears the value cannot race ahead of the state it is acknowledging.
-        actions.onPendingSearchConsumed()
-    }
+    // Set by the pending-search seeding effect (further down, after the route-change reset it
+    // has to outrun) immediately before it changes `route`, so the reset that route change
+    // triggers knows to leave the seeded query alone this once. Consumed by that reset and by
+    // nothing else.
+    var seededRouteChange by remember { mutableStateOf(false) }
 
     // One bridge instance for the grid's mouse/touch chrome; see [GridChromeBridge]'s own doc for
     // why this is a `remember`ed instance whose FIELDS are mutated every recomposition rather than
@@ -617,8 +602,44 @@ private fun GalleryBrowser(
     }
     LaunchedEffect(destination, route) {
         selection = selection.clear()
+        // A route change the seeding effect below made on purpose carries a search with it;
+        // wiping that search here would make the Search pill in the photo details room close
+        // the viewer and open an empty grid -- which is exactly what it did, because this effect
+        // runs on the browser's first composition too, and effects run in declaration order.
+        if (seededRouteChange) {
+            seededRouteChange = false
+            return@LaunchedEffect
+        }
         query = ""
         searchVisible = false
+    }
+
+    // A search handed over from outside the grid -- today the viewer's "Search inside this photo"
+    // card. Declared AFTER the reset effect above on purpose: on the browser's first composition
+    // every effect runs once, in order, and this one has to be the last word on `query`. Three
+    // things move together, because a search that lands on a surface which cannot show results
+    // is the same as no search at all: the drill-down route resets to Root (a search scoped to
+    // whichever album the photo happened to live in would silently hide most of its own matches),
+    // and the zoom ladder drops back to a grid rung (the Calendar and Map rungs draw months and
+    // pins, not photos). The DESTINATION is deliberately left alone: which of the nine categories
+    // the person is browsing is a choice they made, not incidental state, and search reads as a
+    // filter within it.
+    LaunchedEffect(state.pendingSearch) {
+        val seed = state.pendingSearch ?: return@LaunchedEffect
+        if (route != BrowserRoute.Root) {
+            // Flag first, then change: the flag must already be set when the reset effect
+            // re-runs for this route change on the next frame.
+            seededRouteChange = true
+            route = BrowserRoute.Root
+        }
+        if (zoomLevel !is GalleryZoomLevel.Grid) {
+            zoomLevel = GalleryZoomLevel.Grid(state.preferences.gridColumns)
+        }
+        query = seed
+        searchVisible = true
+        // Acknowledged only after the seeding above has actually happened, so a consumer that
+        // clears the value cannot race ahead of the state it is acknowledging.
+        actions.onPendingSearchConsumed()
     }
 
     BackHandler(

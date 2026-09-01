@@ -304,7 +304,12 @@ private fun SmartAlbum.subtitle(): String = when (this) {
     SmartAlbum.UNTAGGED -> "Media without custom tags"
 }
 
-private fun MediaAsset.isPrivacyVisible(
+/**
+ * internal, not file-private, for the same reason [isScreenshot] is: the Tidy up queue must apply
+ * the exact rule every other browsing surface applies, or a locked folder's contents surface
+ * there with thumbnails and filenames.
+ */
+internal fun MediaAsset.isPrivacyVisible(
     lockedFolders: Set<String>,
     unlockedFolders: Set<String>,
 ): Boolean {

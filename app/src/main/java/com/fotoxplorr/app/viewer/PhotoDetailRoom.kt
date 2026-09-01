@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,10 +38,13 @@ import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.palette.PaletteExtractor
 import com.fotoxplorr.app.palette.PaletteSwatch
@@ -155,6 +160,10 @@ fun PhotoDetailRoom(
             // The room is at the BOTTOM edge now, so the shell parks the card upward and insets
             // this room at its top. The system bar to clear is therefore the navigation bar.
             .navigationBarsPadding()
+            // The activity is edge-to-edge, so the window no longer shrinks for the keyboard on
+            // its own; without this the caption field, low in the room, was covered by the
+            // keyboard that opened to type into it, caret and all.
+            .imePadding()
             .verticalScroll(rememberScrollState())
             .padding(top = 16.dp, bottom = 24.dp),
     ) {
@@ -171,6 +180,7 @@ fun PhotoDetailRoom(
         TextLensBlock(asset = asset, recognizedText = recognizedText, onSearchLibrary = onSearchLibrary)
         TagsBlock(tags = tags, autoTags = autoTags, onRemoveTag = onRemoveTag)
         CaptionBlock(
+            photoId = asset.id,
             caption = caption,
             isMachineWritten = captionIsMachineWritten,
             onSetCaption = onSetCaption,
@@ -357,9 +367,25 @@ private fun TagChip(tag: String, isAuto: Boolean, onRemove: (() -> Unit)?) {
  * per character would mean a database write per letter typed, and — because a machine caption is
  * cleared the moment a person edits — would also make the first keystroke silently discard the
  * annotator's sentence before anyone had decided to replace it.
+ *
+ * Two more commit paths back that one up, because focus loss alone is not guaranteed to fire:
+ * leaving the room or the viewer with the field still focused detaches the node, and Compose does
+ * not promise a final focus event to a node on its way out. So the draft is also flushed when the
+ * block leaves composition or the photo underneath it changes, and on the keyboard's Done. Without
+ * those, a caption typed and then dismissed with Back was simply gone, with nothing to say so.
+ *
+ * @param photoId which photo the draft belongs to. The draft is keyed on this AND the stored
+ *   caption: keyed on the caption string alone, two consecutive photos with no caption share the
+ *   key "", the remember never resets, and a half-typed draft rides across a page swipe and is
+ *   committed to the wrong photo.
  */
 @Composable
-private fun CaptionBlock(caption: String, isMachineWritten: Boolean, onSetCaption: ((String) -> Unit)?) {
+private fun CaptionBlock(
+    photoId: MediaId,
+    caption: String,
+    isMachineWritten: Boolean,
+    onSetCaption: ((String) -> Unit)?,
+) {
     if (onSetCaption == null && caption.isBlank()) return
 
     Column(
@@ -371,19 +397,34 @@ private fun CaptionBlock(caption: String, isMachineWritten: Boolean, onSetCaptio
         if (onSetCaption == null) {
             Text(text = caption, color = PRIMARY_TEXT, style = RoomStyle.Caption)
         } else {
-            // Keyed on the stored caption so switching photos loads the new one, rather than
-            // carrying the previous photo's draft across on a paging swipe.
-            var draft by remember(caption) { mutableStateOf(caption) }
-            HyleTextField(
-                value = draft,
-                onValueChange = { draft = it },
-                placeholder = "Say something about this photo",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onFocusChanged { focus ->
-                        if (!focus.isFocused && draft != caption) onSetCaption(draft)
-                    },
-            )
+            // key(photoId): a change of photo DISPOSES this whole editable block and creates a
+            // fresh one, rather than recomposing it in place. That is what makes the dispose-time
+            // flush below commit to the right photo: an in-place recomposition would have reset
+            // the draft to the new photo's caption before the old effect's onDispose ran, so the
+            // old photo's unsaved draft compared equal to "nothing typed" and was dropped.
+            key(photoId) {
+                var draft by remember(caption) { mutableStateOf(caption) }
+                // rememberUpdatedState so the flush reads the LATEST draft, and the commit lambda
+                // this block last saw -- which, inside the disposed key, is still the old photo's.
+                val latestDraft by rememberUpdatedState(draft)
+                val latestStored by rememberUpdatedState(caption)
+                val latestCommit by rememberUpdatedState(onSetCaption)
+                DisposableEffect(Unit) {
+                    onDispose {
+                        if (latestDraft != latestStored) latestCommit(latestDraft)
+                    }
+                }
+                HyleTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    placeholder = "Say something about this photo",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { focus ->
+                            if (!focus.isFocused && draft != caption) onSetCaption(draft)
+                        },
+                )
+            }
         }
 
         if (caption.isNotBlank() && isMachineWritten) {

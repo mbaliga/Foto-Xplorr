@@ -133,7 +133,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val favoriteStore = remember { FavoriteStore(applicationContext) }
     val sensitiveStore = remember { SensitiveStore(applicationContext) }
     val privateFolderStore = remember { PrivateFolderStore(applicationContext) }
-    val libraryStore = remember { LibraryStore(applicationContext) }
+    val libraryStore = remember { LibraryStore.get(applicationContext) }
     val fileOperations = remember { MediaFileOperations(applicationContext) }
     val sharePreparer = remember { SharePreparer(applicationContext) }
     val zipExporter = remember { ZipExporter(applicationContext) }
@@ -557,7 +557,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // it for the next background wake -- someone who taps "index my library" and then
             // opens a photo expects to see what it found, not to see it tomorrow morning. The
             // pass is idempotent, so the background run doing this again costs nothing.
-            AutoCurationPass(libraryStore).run(assets, recognitionStore.observe().value)
+            AutoCurationPass(libraryStore).run(assets, recognitionStore.observe().value, lockedFolders)
         }
     }
 

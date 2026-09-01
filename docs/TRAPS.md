@@ -101,3 +101,64 @@ So it is `connectImplementation`, never `implementation`, and the offline flavou
 it reports itself unavailable and the UI hands off to an installed translator app. Do not assume a
 new `com.google.mlkit:*` coordinate is safe for the offline classpath because the existing ones
 are; check whether its model is bundled or downloaded before adding it.
+
+## 21. A StateFlow hands a new collector its CURRENT value, which for a fresh store is "empty"
+
+`SqliteMediaRepository` (and `RecognitionStore`) load from disk in a coroutine started by the
+constructor. `observeAll().first()` on a just-constructed instance returns the `emptyList()` the
+flow was initialised with, not the library — the UI never notices because it collects
+continuously and gets the real list a moment later, but a one-shot reader (the background pass)
+saw an empty library every single time, decided there was nothing to do, and returned. No error,
+no log, a feature that ran on schedule and did nothing. One-shot readers use
+`awaitLoaded()`, which joins the load first. If you add a store with this shape, give it one.
+
+## 22. `LaunchedEffect`s run in declaration order on first composition — every one of them
+
+A `LaunchedEffect(destination, route)` that resets the search query "on change" also runs on the
+browser's first composition. A seeding effect declared ABOVE it set the query, and the reset
+below it wiped the seed in the same frame: the Search pill closed the viewer and opened an empty
+grid. Effects that must have the last word go last, and an effect that reacts to a change your
+own code is about to make needs a flag to tell that change from the user's.
+
+## 23. JobScheduler's "idle" is not Doze
+
+`JobInfo.setRequiresDeviceIdle` is satisfied by the platform's own idle tracking (screen off or
+docked plus an inactivity timeout). `PowerManager.isDeviceIdleMode` is Doze, which never engages
+on a charger. Re-checking the first with the second blocked the exact overnight-on-the-charger case
+the rule exists for. Where the platform enforces a constraint before `onStartJob`, report it as
+satisfied; do not re-derive it from a different signal.
+
+## 24. `MediaExtractor` sample flags and `MediaCodec.BufferInfo` flags share bit values
+
+`SAMPLE_FLAG_SYNC` is 1 and so is `BUFFER_FLAG_KEY_FRAME`, so a pass-through works on keyframes
+by luck. `SAMPLE_FLAG_PARTIAL_FRAME` is 4, which the muxer reads as `BUFFER_FLAG_END_OF_STREAM`.
+Translate explicitly; lint's `WrongConstant` is right and CI runs it even when you do not.
+
+## 25. Two writes to the same key in one `SharedPreferences.Editor`: the last one wins
+
+`putStringSet(KEY, read() + item)` inside a loop reads the NOT-YET-APPLIED preferences each time,
+so every iteration overwrites the previous iteration's pending value with "original plus this
+item". Only the last item survived. Accumulate in memory, write the key once.
+
+## 26. Two instances over one `SharedPreferences` file lose writes
+
+Every `LibraryStore` mutation is a read-modify-write of a whole set key. Two instances (Activity on
+Main, background job on Default) can read the same starting set, and the second `apply()` drops
+whatever the first added — and each instance's StateFlow only refreshes on its own writes, so the
+other's changes are invisible until restart. One instance per process (`LibraryStore.get`), every
+mutation `@Synchronized`. The constructor is `internal` for tests only.
+
+## 27. `AndroidView`'s factory runs once per node — identity must be a `key()`
+
+`remember(asset.id) { VideoView(...) }` handed to `AndroidView(factory = { videoView })` built a
+new view per video and attached none of them after the first: the factory lambda is called once
+for the node's lifetime and later changes to it are ignored. Swiping between videos showed the
+old, stopped view. Wrap the composable in `key(asset.id) { … }` so a new video is a new node.
+
+## 28. ML Kit Translate wants "en", not "en-US"
+
+`TranslateLanguage.fromLanguageTag` recognises its bare two-letter codes (plus three legacy
+aliases) and returns null for anything region-qualified, which is what `Locale.getDefault()
+.toLanguageTag()` returns on practically every device. Every on-device translation fell through to
+the hand-off. Pass `Locale.forLanguageTag(tag).language`.
+
