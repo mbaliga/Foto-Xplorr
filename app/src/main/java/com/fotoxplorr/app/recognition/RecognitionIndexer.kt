@@ -43,7 +43,10 @@ import com.google.android.gms.tasks.Task
  *
  * Per image: one decode, three detectors. Faces produce descriptors for clustering; labels
  * produce a [PetVerdict]; OCR text is scored to an [IdentityVerdict] and then discarded
- * without ever being written to disk.
+ * without ever being written to disk. Labels and faces together also feed [SceneClassifier]
+ * for the [SceneCategory] set and [CaptionGenerator] for a caption and hashtags -- both pure,
+ * template-based and computed once here, per photo; see [SceneClassifier]'s KDoc for why
+ * [SceneCategory.FRIENDS_FAMILY] is the one category that is NOT decided in this pass.
  */
 class RecognitionIndexer(
     context: Context,
@@ -84,6 +87,15 @@ class RecognitionIndexer(
             var completed = 0
             var failed = 0
             val batch = ArrayList<AssetRecognition>(BATCH_SIZE)
+            // Progress is THROTTLED, not published per photo.
+            //
+            // RecognitionProgress is a field of GalleryUiState, so every emission recomposes the
+            // whole gallery, which re-derives the entire catalogue. Publishing once per asset
+            // therefore cost one full re-derivation per photo -- tens of thousands of them on a
+            // real library, on the main thread, while the user is trying to scroll. The progress
+            // line is a human-readable count; it cannot be read faster than a few times a second,
+            // so nothing is lost by rate-limiting it and a great deal is gained.
+            var lastPublishAtMs = 0L
             try {
                 for (asset in pending) {
                     currentCoroutineContext().ensureActive()
@@ -101,14 +113,18 @@ class RecognitionIndexer(
                         }
                     }
                     completed += 1
-                    store.publishProgress(
-                        RecognitionProgress(
-                            running = true,
-                            completed = completed,
-                            total = pending.size,
-                            failed = failed,
-                        ),
-                    )
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs - lastPublishAtMs >= PROGRESS_INTERVAL_MS) {
+                        lastPublishAtMs = nowMs
+                        store.publishProgress(
+                            RecognitionProgress(
+                                running = true,
+                                completed = completed,
+                                total = pending.size,
+                                failed = failed,
+                            ),
+                        )
+                    }
                 }
             } finally {
                 if (batch.isNotEmpty()) store.upsert(batch.toList())
@@ -152,12 +168,27 @@ class RecognitionIndexer(
             val image = InputImage.fromBitmap(bitmap, 0)
             val faces = faceDetector.process(image).await()
             val labels = labeler.process(image).await().map { ImageLabel(it.text, it.confidence) }
-            // OCR only where it can pay off: a frame dominated by faces is a portrait, not a
-            // document, and skipping it saves the most expensive of the three passes.
-            val ocrText = if (faces.size > MAX_FACES_FOR_DOCUMENT) {
-                ""
-            } else {
-                textRecognizer.process(image).await().text
+
+            // OCR now runs on EVERY image, where it used to be skipped on any frame with more than
+            // a couple of faces. That skip was correct for its original purpose — deciding whether
+            // something is an identity document — and wrong for the two purposes the text now
+            // serves: searching for words in photos, and selecting text off a photo. A group of
+            // friends in front of a shop sign has text on it, and the old rule guaranteed the app
+            // would never find it. The identity heuristic keeps the face rule for itself, below.
+            val recognisedText = textRecognizer.process(image).await()
+            val frameWidth = bitmap.width.toFloat().coerceAtLeast(1f)
+            val frameHeight = bitmap.height.toFloat().coerceAtLeast(1f)
+            val textBlocks = recognisedText.textBlocks.mapNotNull { block ->
+                val box = block.boundingBox ?: return@mapNotNull null
+                val text = block.text.trim()
+                if (text.isEmpty()) return@mapNotNull null
+                TextBlock(
+                    text = text,
+                    left = (box.left / frameWidth).coerceIn(0f, 1f),
+                    top = (box.top / frameHeight).coerceIn(0f, 1f),
+                    right = (box.right / frameWidth).coerceIn(0f, 1f),
+                    bottom = (box.bottom / frameHeight).coerceIn(0f, 1f),
+                )
             }
 
             val frameArea = (bitmap.width.toLong() * bitmap.height).coerceAtLeast(1L).toFloat()
@@ -165,13 +196,39 @@ class RecognitionIndexer(
                 describe(face, faceIndex, asset, bitmap, frameArea)
             }
 
+            // The face rule lives here now: a frame full of faces is a portrait, so its text is
+            // not evidence of a document even though the text itself is still worth keeping.
+            val documentText = if (faces.size > MAX_FACES_FOR_DOCUMENT) "" else recognisedText.text
+
+            // SceneFace is deliberately built from the raw ML Kit faces, not from `descriptors`:
+            // the latter drops anything below FaceClustering.MIN_RELATIVE_AREA because a small
+            // face clusters unreliably, but a small face is still perfectly good evidence that
+            // this is NOT a single large official-style portrait -- exactly the distinction
+            // SceneClassifier needs, so it must see every detected face, not just the usable ones.
+            val sceneFaces = faces.map { face ->
+                val box = face.boundingBox
+                SceneFace(
+                    relativeArea = (box.width().toLong() * box.height()).toFloat() / frameArea,
+                    centerXFraction = (box.exactCenterX() / frameWidth).coerceIn(0f, 1f),
+                    centerYFraction = (box.exactCenterY() / frameHeight).coerceIn(0f, 1f),
+                )
+            }
+            val labelTexts = labels.filter { it.confidence >= LABEL_CONFIDENCE_FLOOR }.map { it.text }
+            val categories = SceneClassifier.classify(labels, faces.size, sceneFaces)
+            val generatedCaption = CaptionGenerator.generate(labelTexts, categories, faces.size)
+
             return AssetRecognition(
                 mediaId = asset.id,
                 sourceRevision = asset.recognitionRevision(),
                 faceCount = faces.size,
                 faceDescriptors = descriptors,
                 petVerdict = PetClassifier.classify(labels),
-                identityVerdict = IdentityDocumentHeuristics.classify(ocrText),
+                identityVerdict = IdentityDocumentHeuristics.classify(documentText),
+                labels = labelTexts,
+                textBlocks = textBlocks,
+                categories = categories,
+                caption = generatedCaption.caption,
+                hashtags = generatedCaption.hashtags,
             )
         } finally {
             bitmap.recycle()
@@ -277,6 +334,16 @@ class RecognitionIndexer(
         const val PATCH_SIDE = 32
 
         const val BATCH_SIZE = 24
+
+        /**
+         * Floor on the gap between two progress publications, in milliseconds.
+         *
+         * Each publication recomposes the gallery and re-derives the catalogue (see the call
+         * site), so this is a frame-budget decision rather than a cosmetic one: four updates a
+         * second is faster than anyone can read a changing number, and leaves the remaining
+         * ~240 ms of every quarter-second free for scrolling.
+         */
+        const val PROGRESS_INTERVAL_MS = 250L
         const val MIN_FACE_SIZE = 0.06f
         const val LABEL_CONFIDENCE_FLOOR = 0.45f
         const val MAX_FACES_FOR_DOCUMENT = 2

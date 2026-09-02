@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -30,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,6 +43,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.aarso.cellshell.WheelItem
 import dev.aarso.cellshell.WordWheelRail
+import com.fotoxplorr.app.curate.ArchiveAdvisor
+import com.fotoxplorr.app.curate.ArchiveReviewItem
+import com.fotoxplorr.app.curate.ArchiveSuggestionsReview
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
@@ -49,9 +54,16 @@ import com.fotoxplorr.app.spatial.PlacesScreen
 
 /**
  * The nine primary destinations from the owner's mockups. These are the app's top-level
- * information architecture -- reached from the slide-in rail, not from a route -- and have
+ * information architecture -- reached from the rail room, not from a route -- and have
  * replaced the retired four-tab bottom navigation (Photos / Albums / Discover / Library) as
  * the default IA.
+ *
+ * A destination is a WORD, not a word and an icon.
+ *
+ * Each carried an [androidx.compose.ui.graphics.vector.ImageVector] until the rail's marker
+ * became the destination's own covers (owner, 2026-08-14). That icon had exactly one reader --
+ * the rail marker -- so once the covers took the gutter, every one of these was dead weight
+ * whose only effect would have been to tempt a future surface into drawing a menu.
  */
 enum class HyleDestination(val label: String) {
     PETS("Pets"),
@@ -101,7 +113,7 @@ fun destinationAssets(
         HyleDestination.PLACES, HyleDestination.PROTECTED -> emptyList()
     }
     if (query.isBlank()) return base
-    return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id)) }
+    return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds) }
 }
 
 /**
@@ -146,6 +158,14 @@ fun destinationEmptyMessage(
  * No scroll wrapper: the wheel measures its own rows against the height it is given and takes
  * care of overflow itself. Wrapping it in a `verticalScroll` would hand it an infinite height to
  * measure against, which is the fastest way to make a distance-weighted list stop weighting.
+ *
+ * Below the wheel, not inside a separate room, sits Settings (owner, 2026-08-14, reference
+ * screenshot of a rail with a dimmer "Settings / Help" pair under the primary nav: *"The
+ * settings should come below the menu nav itself"*). It used to be reachable only by already
+ * knowing to swipe in from the right edge -- true, but not discoverable, especially now that
+ * removing the header (item 4, previous round) took away the last visible entry point.
+ * [WordWheelRail] is handed a bounded height via `Modifier.weight(1f)` so it keeps working
+ * exactly as documented above; the settings row is the `Column`'s other, unweighted child.
  */
 @Composable
 fun DestinationRailPanel(
@@ -153,24 +173,71 @@ fun DestinationRailPanel(
     selectedId: String,
     onSelect: (String) -> Unit,
     state: GalleryUiState,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    WordWheelRail(
-        items = items,
-        selectedId = selectedId,
-        onSelect = onSelect,
-        inkColor = Color.White,
-        accentColor = MaterialTheme.colorScheme.primary,
+    Column(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
-            .statusBarsPadding()
-            .padding(start = 24.dp, end = 16.dp, top = 40.dp, bottom = 40.dp),
-        trailing = { item ->
-            RailThumbnailCascade(
-                destinationAssets(HyleDestination.valueOf(item.id), state).take(3),
-            )
-        },
+            .statusBarsPadding(),
+    ) {
+        WordWheelRail(
+            items = items,
+            selectedId = selectedId,
+            onSelect = onSelect,
+            inkColor = Color.White,
+            accentColor = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                // Tighter than the old 24dp because the marker gutter grew: the covers are wider
+                // than the icon they replaced, and the words must not march away from the edge.
+                .padding(start = 12.dp, end = 16.dp, top = 40.dp),
+            // The covers ARE the marker now, and they ride the left gutter (owner, 2026-08-14: the
+            // icon goes, "the few images are indication enough... I would rather have them on the
+            // left and for them to do the movement dance").
+            //
+            // Putting them in the marker slot rather than the trailing one is what buys the dance
+            // for free: the marker is pinned to its row and animates on a longer curve than the
+            // wheel, so a selection change makes the covers travel across the intervening rows
+            // and dip in scale mid-flight, exactly as the reference video's morphing bullet did.
+            // In the trailing slot they simply appeared beside whichever row was selected.
+            marker = { item ->
+                RailThumbnailCascade(
+                    destinationAssets(HyleDestination.valueOf(item.id), state).take(3),
+                )
+            },
+            // Nothing trails the word any more: the one indicator should not be shown twice.
+            markerWidth = RAIL_MARKER_WIDTH.dp,
+            markerHeight = RAIL_MARKER_HEIGHT.dp,
+        )
+        RailSettingsRow(onClick = onOpenSettings)
+    }
+}
+
+/**
+ * The one row under the wheel. Visually a step down from the primary destinations -- smaller,
+ * lighter weight, dimmer -- so the eye reads it as secondary without needing a divider line to
+ * say so, matching the reference screenshot's own "Settings / Help" treatment.
+ *
+ * A plain [Text], not a [WordWheelRail] row: this list is never scrolled, is never the wheel's
+ * subject, and does not participate in its distance-weighted fade -- giving it one would be
+ * pretending it is a tenth destination, which is exactly the confusion a fixed row avoids.
+ */
+@Composable
+private fun RailSettingsRow(onClick: () -> Unit) {
+    Text(
+        text = "Settings",
+        color = Color.White.copy(alpha = 0.55f),
+        style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Normal, letterSpacing = (-0.3).sp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            // This is now the panel's bottom-most element, so it -- not a hardcoded inset --
+            // is what has to clear the gesture-navigation bar.
+            .navigationBarsPadding()
+            .padding(start = 12.dp, end = 16.dp, top = 14.dp, bottom = 28.dp),
     )
 }
 
@@ -231,11 +298,15 @@ fun DestinationContent(
                     sensitiveIds = state.sensitiveIds,
                     blurSensitive = state.preferences.blurSensitive,
                     selectedIds = selection.selectedIds,
+                    selectionActive = selection.isActive,
                     onOpen = { asset -> actions.onOpenAsset(asset, assets) },
                     onToggleSelection = { id -> onSelectionChange(selection.toggle(id)) },
                     // The mockups' main grid is one continuous mosaic with no date headers.
                     showDateHeaders = false,
                     gridState = gridState,
+                    fitToTile = state.preferences.fitToTile,
+                    loopAnimations = state.preferences.loopAnimations,
+                    longPressPreview = state.preferences.longPressPreview,
                 )
             }
         }
@@ -356,8 +427,17 @@ private fun RailThumbnailCascade(assets: List<MediaAsset>) {
  */
 enum class LegacyScreen(val label: String) {
     ALBUMS("Albums"),
+    CALENDAR("Calendar"),
     DISCOVER("Discover"),
     LIBRARY("Library"),
+
+    /**
+     * The archive review queue. A [LegacyScreen] rather than a tenth rail destination: the nine
+     * are the app's primary IA and the owner has been explicit that things which are not places
+     * you browse do not belong there. This is a job you finish and leave, reached from Settings,
+     * which is exactly what this enum exists for.
+     */
+    TIDY_UP("Tidy up"),
 }
 
 @Composable
@@ -391,6 +471,14 @@ fun LegacyScreenHost(
                     onOpenRoute(BrowserRoute.Collection(collection.id, collection.name))
                 },
             )
+            LegacyScreen.CALENDAR -> CalendarScreen(
+                assets = state.assets,
+                // A day opens as a route rather than a nested grid, so the calendar hands off to
+                // exactly the same browsing surface everything else uses.
+                onOpenDay = { dayAssets ->
+                    dayAssets.firstOrNull()?.let { actions.onOpenAsset(it, dayAssets) }
+                },
+            )
             LegacyScreen.DISCOVER -> DiscoverScreen(
                 summaries = smartAlbumSummaries(
                     assets = state.assets,
@@ -417,7 +505,62 @@ fun LegacyScreenHost(
                 onExportMetadata = actions.onExportMetadata,
                 onImportMetadata = actions.onImportMetadata,
             )
+            LegacyScreen.TIDY_UP -> ArchiveSuggestionsReview(
+                // remember, keyed on exactly the inputs the derivation reads: it groups the whole
+                // library for duplicates, and this host recomposes on every recognition-progress
+                // tick -- several a second while indexing -- which is a full O(n) pass per frame
+                // on a 22k library without it.
+                items = remember(state.assets, state.favoriteIds, state.library, state.lockedFolders, state.unlockedFolders) {
+                    archiveReviewItems(state)
+                },
+                onAccept = { ids -> actions.onSetArchived(ids, true) },
+                onReject = actions.onRejectArchiveSuggestions,
+            )
         }
+    }
+}
+
+/**
+ * Everything [com.fotoxplorr.app.curate.ArchiveAdvisor] currently offers, paired with its photo.
+ *
+ * The candidate list is built here rather than inside the advisor because the advisor is pure and
+ * reads no clock and no store — see its own KDoc. `now` is sampled once for the whole pass so
+ * every photo's age is measured against the same instant; sampling per photo would make the
+ * ordering of the list very slightly affect its contents.
+ *
+ * `sharpness` is left null, which the advisor reads as "unknown", not "sharp" — so no photo is
+ * currently offered for being blurry. Computing it means decoding every photo in the library, and
+ * doing that on the way into a settings screen would freeze it solid on a real library. The
+ * signal is built and tested ([com.fotoxplorr.app.curate.BlurDetector]); what it is waiting for is
+ * somewhere to cache a score per photo, so the background pass can fill it in over time instead of
+ * this screen computing it all at once.
+ */
+private fun archiveReviewItems(state: GalleryUiState): List<ArchiveReviewItem> {
+    val assetsById = state.assets.associateBy { it.id }
+    val now = System.currentTimeMillis()
+    val candidates = state.assets
+        .filterNot { it.isTrashed || it.isVideo }
+        // The same privacy rule every other surface applies. Without it the queue listed a
+        // locked folder's old screenshots and duplicates with their thumbnails and filenames,
+        // to anyone holding the phone, with the folder still locked.
+        .filter { it.isPrivacyVisible(state.lockedFolders, state.unlockedFolders) }
+        .map { asset ->
+            ArchiveAdvisor.ArchiveCandidate(
+                mediaId = asset.id,
+                isFavorite = asset.id in state.favoriteIds,
+                isArchived = asset.id in state.library.archivedIds,
+                previouslyDismissed = state.library.isDismissedFromArchiveSuggestions(asset.id),
+                isScreenshot = asset.isScreenshot(),
+                ageMillis = now - asset.dateTakenMillis,
+                sizeBytes = asset.sizeBytes,
+                widthPx = asset.width,
+                heightPx = asset.height,
+                mimeType = asset.mimeType,
+                sharpness = null,
+            )
+        }
+    return ArchiveAdvisor.suggestions(candidates).mapNotNull { suggestion ->
+        assetsById[suggestion.mediaId]?.let { ArchiveReviewItem(suggestion, it) }
     }
 }
 
@@ -507,3 +650,13 @@ fun SettingsPanel(
         }
     }
 }
+
+/**
+ * The rail's marker gutter, sized for a three-cover cascade (28dp + 10dp per extra cover = 48dp)
+ * with a little air. Handed to the rail so every row reserves it and the words keep one optical
+ * left edge whether or not the covers are beside them.
+ */
+private const val RAIL_MARKER_WIDTH = 52
+
+/** Cover height, matching [RailThumbnailCascade]'s own 28dp box. */
+private const val RAIL_MARKER_HEIGHT = 28

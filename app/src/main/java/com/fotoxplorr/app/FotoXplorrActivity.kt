@@ -36,8 +36,13 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.fotoxplorr.app.editor.EditorScreen
 import com.fotoxplorr.app.favorites.FavoriteStore
-import com.fotoxplorr.app.fileops.CleanShareExporter
+import com.fotoxplorr.app.share.SharePreparer
+import com.fotoxplorr.app.share.ZipExporter
+import com.fotoxplorr.app.share.ShareOptionsSheet
+import com.fotoxplorr.app.share.ShareOptions
+import com.fotoxplorr.app.share.ShareFrame
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.gallery.GalleryActions
 import com.fotoxplorr.app.gallery.GalleryPreferences
@@ -45,6 +50,7 @@ import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.GalleryScreen
 import com.fotoxplorr.app.gallery.GalleryUiState
 import com.fotoxplorr.app.gallery.folderIdentity
+import com.fotoxplorr.app.gallery.rememberGeoRepository
 import com.fotoxplorr.app.media.AndroidMediaStoreScanner
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
@@ -54,6 +60,7 @@ import com.fotoxplorr.app.media.PrefsScanWatermark
 import com.fotoxplorr.app.media.ScanEvent
 import com.fotoxplorr.app.media.ScanPlan
 import com.fotoxplorr.app.media.SqliteMediaRepository
+import com.fotoxplorr.app.curate.AutoCurationPass
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.recognition.RecognitionIndexer
@@ -126,9 +133,10 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val favoriteStore = remember { FavoriteStore(applicationContext) }
     val sensitiveStore = remember { SensitiveStore(applicationContext) }
     val privateFolderStore = remember { PrivateFolderStore(applicationContext) }
-    val libraryStore = remember { LibraryStore(applicationContext) }
+    val libraryStore = remember { LibraryStore.get(applicationContext) }
     val fileOperations = remember { MediaFileOperations(applicationContext) }
-    val cleanShareExporter = remember { CleanShareExporter(applicationContext) }
+    val sharePreparer = remember { SharePreparer(applicationContext) }
+    val zipExporter = remember { ZipExporter(applicationContext) }
     val changeObserver = remember { MediaStoreChangeObserver(contentResolver) }
     // On-device recognition backing the Pets / People / Identity destinations. Bundled ML
     // Kit models only -- nothing here can reach the network, so personal photos never leave
@@ -143,6 +151,11 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         )
     }
     val scope = rememberCoroutineScope()
+    // One geo index for the whole app: the gallery reads it for the map and compass, the viewer
+    // writes hand-placed locations into it. Two instances over the same file would each hold
+    // their own StateFlow and a pin dropped in the viewer would not reach the map.
+    val geoRepository = rememberGeoRepository()
+    val geoState by geoRepository.observe().collectAsStateWithLifecycle()
 
     val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
@@ -176,6 +189,16 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     var pendingRenameAsset by remember { mutableStateOf<MediaAsset?>(null) }
     var pendingRenameName by remember { mutableStateOf<String?>(null) }
     var userMessage by remember { mutableStateOf<String?>(null) }
+    var editingAsset by remember { mutableStateOf<MediaAsset?>(null) }
+    // Text handed over from the viewer's "Search inside this photo" card, on its way to the
+    // grid's search field. Lives here rather than in either screen because the two are siblings
+    // under this composable, not nested -- the viewer has no way to reach into the browser's own
+    // state, so the instruction has to pass through their nearest common ancestor. Cleared by
+    // GalleryActions.onPendingSearchConsumed as soon as the browser has acted on it; see
+    // GalleryUiState.pendingSearch for why it is a one-shot instruction and not the field itself.
+    var pendingSearch by remember { mutableStateOf<String?>(null) }
+    // Non-null while the advanced share sheet is up; holds what is being shared.
+    var pendingShare by remember { mutableStateOf<List<MediaAsset>?>(null) }
     var recognitionGeneration by remember { mutableStateOf(0) }
 
     val selectedIndex = selectedAssetId?.let { id -> viewerAssets.indexOfFirst { it.id == id } } ?: -1
@@ -426,28 +449,45 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             .onFailure { userMessage = "No compatible sharing app was found." }
     }
 
-    fun share(items: List<MediaAsset>) {
+    /**
+     * Prepare and hand off to the system share sheet.
+     *
+     * EVERY share goes through SharePreparer now, not just the one behind an opt-in menu item.
+     * Metadata stripping is the default (owner, 2026-08-15), so the ordinary path is the private
+     * one and the advanced sheet is where somebody deliberately chooses otherwise.
+     */
+    fun shareWith(items: List<MediaAsset>, options: ShareOptions) {
         if (items.isEmpty()) return
-        shareUris(
-            uris = items.map { it.contentUri },
-            mimeType = commonShareType(items),
-            title = "Share ${items.size} item${if (items.size == 1) "" else "s"}",
-        )
-    }
-
-    fun shareClean(items: List<MediaAsset>) {
         scope.launch {
-            userMessage = "Preparing metadata-clean ${if (items.size == 1) "copy" else "copies"}…"
-            cleanShareExporter.createCopies(items).fold(
+            userMessage = "Preparing ${if (items.size == 1) "your photo" else "your photos"}…"
+            sharePreparer.prepare(items, options).fold(
                 onSuccess = { uris ->
                     userMessage = null
-                    shareUris(uris, "image/*", "Share without common EXIF metadata")
+                    shareUris(
+                        uris = uris,
+                        // A stamp frame is a PNG (it has real transparency at the perforations),
+                        // so a blanket image/jpeg would misdescribe it to the receiving app.
+                        mimeType = if (options.requiresRender) "image/*" else commonShareType(items),
+                        title = "Share ${items.size} item${if (items.size == 1) "" else "s"}",
+                    )
                 },
                 onFailure = { error ->
-                    userMessage = error.message ?: "Could not prepare metadata-clean copies."
+                    userMessage = error.message ?: "Could not prepare the photos to share."
                 },
             )
         }
+    }
+
+    /** The plain Share action: uses the saved defaults, no sheet, one tap. */
+    fun share(items: List<MediaAsset>) {
+        if (items.isEmpty()) return
+        shareWith(items, preferences.toShareOptions())
+    }
+
+    /** The advanced trigger: opens the options sheet above the system share sheet. */
+    fun shareAdvanced(items: List<MediaAsset>) {
+        if (items.isEmpty()) return
+        pendingShare = items
     }
 
     fun openExternally(asset: MediaAsset, action: String) {
@@ -513,6 +553,11 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     LaunchedEffect(recognitionGeneration) {
         if (recognitionGeneration > 0 && assets.isNotEmpty()) {
             recognitionIndexer.index(assets)
+            // Curate immediately after, on the results that pass just wrote, rather than leaving
+            // it for the next background wake -- someone who taps "index my library" and then
+            // opens a photo expects to see what it found, not to see it tomorrow morning. The
+            // pass is idempotent, so the background run doing this again costs nothing.
+            AutoCurationPass(libraryStore).run(assets, recognitionStore.observe().value, lockedFolders)
         }
     }
 
@@ -532,7 +577,41 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         )
     }
 
-    if (activeAsset != null) {
+    pendingShare?.let { items ->
+        ShareOptionsSheet(
+            // The first selected photo stands in for the batch: the preview is about the FRAME,
+            // and the frame is identical across every photo in one share.
+            sample = items.firstOrNull { !it.isVideo },
+            initial = preferences.toShareOptions(),
+            onDismiss = { pendingShare = null },
+            onShare = { chosen ->
+                pendingShare = null
+                // Remember the choices, so a habit does not have to be re-picked every time.
+                galleryPreferences.setShareFrame(chosen.frame.name)
+                galleryPreferences.setShareStripMetadata(chosen.stripMetadata)
+                galleryPreferences.setShareWatermark(chosen.watermark)
+                chosen.seal?.let(galleryPreferences::setShareSeal)
+                shareWith(items, chosen)
+            },
+        )
+    }
+
+    val editing = editingAsset
+    if (editing != null) {
+        BackHandler { editingAsset = null }
+        EditorScreen(
+            asset = editing,
+            saveMode = preferences.editorSaveMode,
+            onSetSaveMode = galleryPreferences::setEditorSaveMode,
+            onClose = { editingAsset = null },
+            onSaved = { message ->
+                editingAsset = null
+                userMessage = message
+                // The copy is a new file, so the library has to learn about it.
+                scanRequests.trySend(false)
+            },
+        )
+    } else if (activeAsset != null) {
         BackHandler {
             selectedAssetId = null
             viewerAssets = emptyList()
@@ -544,6 +623,28 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             total = viewerAssets.size,
             isFavorite = activeAsset.id in favoriteIds,
             isSensitive = activeAsset.id in sensitiveIds,
+            // Text the offline pass already read out of this photo. Looked up per asset rather
+            // than passed wholesale: the index holds every photo's text, and the viewer needs
+            // exactly one photo's worth.
+            liveTextBlocks = recognition.textByMedia[activeAsset.id].orEmpty(),
+            // What this photo carries in the library, as opposed to what its file says. Read
+            // from the same LibraryState the grid already renders, so a tag added in the grid's
+            // selection menu is on the photo the moment the viewer opens over it.
+            tags = library.tagsFor(activeAsset.id),
+            autoTags = library.autoTagsFor(activeAsset.id),
+            onRemoveTag = { tag -> libraryStore.removeTag(setOf(activeAsset.id), tag) },
+            caption = library.captionFor(activeAsset.id),
+            captionIsMachineWritten = library.isMachineCaption(activeAsset.id),
+            onSetCaption = { text -> libraryStore.setCaption(activeAsset.id, text) },
+            // The Search pill in the details room. Closing the viewer is done HERE rather than
+            // inside ViewerScreen (see that parameter's own doc): the results land in the grid,
+            // and leaving the photo open on top of them would put the answer behind the question.
+            onSearchLibrary = { text ->
+                pendingSearch = text
+                selectedAssetId = null
+                viewerAssets = emptyList()
+                slideshowActive = false
+            },
             hasPrevious = selectedIndex > 0,
             hasNext = selectedIndex < viewerAssets.lastIndex,
             canMoveToTrash = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
@@ -553,7 +654,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
             onToggleSensitive = { sensitiveStore.toggle(activeAsset.id) },
             onShare = { share(listOf(activeAsset)) },
-            onEdit = { openExternally(activeAsset, Intent.ACTION_EDIT) },
+            onEdit = { editingAsset = activeAsset },
             onOpenWith = { openExternally(activeAsset, Intent.ACTION_VIEW) },
             onMoveToTrash = { requestMediaOperation(listOf(activeAsset), PendingMediaOperation.TRASH) },
             onPrevious = {
@@ -561,6 +662,11 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             },
             onNext = {
                 val nextIndex = when {
+                    // Shuffle only applies to a running slideshow: a manual swipe means "the
+                    // next photo", and answering it with a random one would be a bug, not a
+                    // setting.
+                    slideshowActive && preferences.slideshowShuffle && viewerAssets.size > 1 ->
+                        randomOtherIndex(viewerAssets.size, selectedIndex)
                     selectedIndex < viewerAssets.lastIndex -> selectedIndex + 1
                     slideshowActive && viewerAssets.size > 1 -> 0
                     else -> -1
@@ -572,12 +678,31 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 viewerAssets = emptyList()
                 slideshowActive = false
             },
-            relatedAssets = viewerAssets,
-            onOpenRelated = { related ->
-                if (viewerAssets.any { it.id == related.id }) {
-                    selectedAssetId = related.id
-                }
+            // Hand-placed location for a photo whose file carries no GPS tag. Written to Foto
+            // Xplorr's own index, never into the user's file -- see setManualLocation.
+            manualLatitude = geoState.metadataById[activeAsset.id]?.latitude,
+            manualLongitude = geoState.metadataById[activeAsset.id]?.longitude,
+            onSetLocation = { latitude, longitude ->
+                scope.launch { geoRepository.setManualLocation(activeAsset.id, latitude, longitude) }
             },
+            onClearLocation = {
+                scope.launch { geoRepository.clearManualLocation(activeAsset.id) }
+            },
+            // The viewer's own settings room edits these, so it needs the value and the setter.
+            blurSensitive = preferences.blurSensitive,
+            keepScreenOn = preferences.keepScreenOn,
+            showFilmstrip = preferences.showFilmstrip,
+            slideshowShuffle = preferences.slideshowShuffle,
+            loopAnimations = preferences.loopAnimations,
+            autoplayVideos = preferences.autoplayVideos,
+            onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
+            onSetBlurSensitive = galleryPreferences::setBlurSensitive,
+            onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
+            onSetKeepScreenOn = galleryPreferences::setKeepScreenOn,
+            onSetSlideshowShuffle = galleryPreferences::setSlideshowShuffle,
+            onSetLoopAnimations = galleryPreferences::setLoopAnimations,
+            onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
+            relatedAssets = viewerAssets,
             onSelectAsset = { picked ->
                 if (viewerAssets.any { it.id == picked.id }) {
                     selectedAssetId = picked.id
@@ -587,6 +712,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         )
     } else {
         GalleryScreen(
+            geoRepository = geoRepository,
             state = GalleryUiState(
                 assets = assets,
                 favoriteIds = favoriteIds,
@@ -599,6 +725,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 preferences = preferences,
                 recognition = recognition,
                 recognitionProgress = recognitionProgress,
+                pendingSearch = pendingSearch,
             ),
             actions = GalleryActions(
                 onRequestPermission = { permissionLauncher.launch(requiredMediaPermissions()) },
@@ -613,6 +740,12 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onSetAccentPalette = galleryPreferences::setAccentPalette,
                 onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
                 onSetDefaultDestination = galleryPreferences::setDefaultDestination,
+                onSetKeepScreenOn = galleryPreferences::setKeepScreenOn,
+                onSetSlideshowShuffle = galleryPreferences::setSlideshowShuffle,
+                onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
+                onSetFitToTile = galleryPreferences::setFitToTile,
+                onSetLoopAnimations = galleryPreferences::setLoopAnimations,
+                onSetLongPressPreview = galleryPreferences::setLongPressPreview,
                 onIndexRecognition = { recognitionGeneration += 1 },
                 onProtectFolder = privateFolderStore::protect,
                 onUnlockFolder = privateFolderStore::unlock,
@@ -622,7 +755,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onSetSensitive = sensitiveStore::setSensitive,
                 onSetArchived = libraryStore::setArchived,
                 onShare = ::share,
-                onShareClean = ::shareClean,
+                onShareClean = ::shareAdvanced,
                 onCopyToFolder = { items ->
                     pendingTreeOperation = PendingTreeOperation.COPY
                     pendingTreeItems = items
@@ -644,7 +777,23 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onRemoveFromCollection = libraryStore::removeFromCollection,
                 onAddTag = libraryStore::addTag,
                 onRemoveTag = libraryStore::removeTag,
-                onExportMetadata = { exportMetadataLauncher.launch("foto-xplorr-metadata.json") },
+                onExportZip = { items ->
+                scope.launch {
+                    val result = zipExporter.export(items)
+                    result.fold(
+                        onSuccess = { uri ->
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "application/zip"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            startActivity(Intent.createChooser(intent, null))
+                        },
+                        onFailure = { userMessage = it.message ?: "Could not build the archive" },
+                    )
+                }
+            },
+            onExportMetadata = { exportMetadataLauncher.launch("foto-xplorr-metadata.json") },
                 onImportMetadata = { importMetadataLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
                 onOpenAsset = { asset, visible ->
                     viewerAssets = visible
@@ -658,6 +807,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                         slideshowActive = true
                     }
                 },
+                onPendingSearchConsumed = { pendingSearch = null },
+                onRejectArchiveSuggestions = libraryStore::rejectArchiveSuggestions,
             ),
         )
     }
@@ -711,3 +862,34 @@ sealed interface ScanState {
     data class Complete(val total: Int, val incremental: Boolean = false) : ScanState
     data class Error(val message: String) : ScanState
 }
+
+/**
+ * A random index other than [current], for a shuffled slideshow.
+ *
+ * Drawing from the other [size] - 1 positions and stepping over [current] rather than retrying a
+ * uniform draw: a retry loop is unbounded in the worst case, and at size 2 it would spin on the
+ * one index it must not pick roughly half the time.
+ */
+internal fun randomOtherIndex(size: Int, current: Int): Int {
+    if (size <= 1) return 0
+    val drawn = kotlin.random.Random.nextInt(size - 1)
+    return if (drawn >= current) drawn + 1 else drawn
+}
+
+/**
+ * The saved share defaults, as the value the share pipeline actually consumes.
+ *
+ * Kept as an extension rather than a field on the preferences data class so that
+ * `GalleryPreferencesState` stays a plain record of what is stored, and the mapping from stored
+ * strings to the share package's own types lives next to the code that needs it.
+ *
+ * An unrecognised stored frame name falls back to NONE rather than throwing: the value comes from
+ * SharedPreferences, which can outlive a rename of the enum, and a crash on start because someone
+ * once picked a frame that no longer exists would be an absurd way to lose a library.
+ */
+private fun GalleryPreferencesState.toShareOptions(): ShareOptions = ShareOptions(
+    frame = ShareFrame.entries.firstOrNull { it.name == shareFrame } ?: ShareFrame.NONE,
+    stripMetadata = shareStripMetadata,
+    watermark = shareWatermark,
+    seal = shareSeal.takeIf { it.isNotBlank() },
+)

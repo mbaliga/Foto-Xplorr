@@ -20,7 +20,6 @@ import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -104,12 +103,13 @@ fun PhotoWallScreen(
                 )
             }
             Icon(Icons.Outlined.Explore, contentDescription = null, tint = Color.White)
-            Switch(
+            com.fotoxplorr.app.hyle.HyleToggle(
                 checked = gyroEnabled,
                 onCheckedChange = { enabled ->
                     gyroEnabled = enabled
                     surface.setGyroEnabled(enabled)
                 },
+                description = "Gyro control",
             )
             IconButton(onClick = surface::resetCamera) {
                 Icon(

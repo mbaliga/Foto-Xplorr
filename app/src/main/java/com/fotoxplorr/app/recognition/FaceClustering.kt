@@ -149,7 +149,64 @@ data class RecognitionIndex(
     val peopleMediaIds: Set<MediaId>,
     val petMediaIds: Set<MediaId>,
     val identityMediaIds: Set<MediaId>,
+    /**
+     * What the labeller saw, per photo — the vocabulary `label:flower` searches against.
+     *
+     * Per-media rather than folded into a set of ids like the three above, because this index is
+     * the only published view of recognition data and search needs to know *which* photo has
+     * which label, not merely that some photo does.
+     */
+    val labelsByMedia: Map<MediaId, List<String>> = emptyMap(),
+    /** OCR text per photo, positioned. Feeds both text search and selecting text on a photo. */
+    val textByMedia: Map<MediaId, List<TextBlock>> = emptyMap(),
+    /**
+     * [SceneCategory] set per photo -- the union of what [SceneClassifier.classify] decided
+     * from that photo alone (persisted on `AssetRecognition.categories`) and, where it
+     * qualifies, [SceneCategory.FRIENDS_FAMILY] from THIS library's current clustering (see
+     * [SceneClassifier.withRecurringPeopleContext]). That second part is why this field lives
+     * on the derived [RecognitionIndex] rather than only ever being read off the stored row:
+     * it can change as more of a person's photos get indexed, even though this photo's own
+     * file never did.
+     *
+     * Sparse like [labelsByMedia] and [textByMedia]: a photo with no categories is simply
+     * absent from the map, not mapped to an empty set.
+     */
+    val categoriesByMedia: Map<MediaId, Set<SceneCategory>> = emptyMap(),
+    /**
+     * The sentence [CaptionGenerator] wrote for each photo during indexing.
+     *
+     * Computed per photo and stored on its [AssetRecognition] row since captioning landed, but
+     * until now never published anywhere a reader could reach — so the app was writing a caption
+     * for every photo in the library and then had no way to show one. Exposed here for the same
+     * reason [labelsByMedia] is: this index is recognition's only published view, and a fact that
+     * does not appear in it may as well not have been computed.
+     *
+     * Sparse, like its neighbours: a photo the generator had nothing to say about is absent
+     * rather than mapped to "".
+     */
+    val captionsByMedia: Map<MediaId, String> = emptyMap(),
 ) {
+    /** Every distinct label in the library, for offering search alternatives that exist. */
+    val allLabels: Set<String> by lazy(LazyThreadSafetyMode.NONE) {
+        labelsByMedia.values.flatMapTo(linkedSetOf()) { it }
+    }
+
+    /** The flat text of one photo, for matching. Empty when nothing was read. */
+    fun textOf(mediaId: MediaId): String =
+        textByMedia[mediaId]?.joinToString("\n") { it.text }.orEmpty()
+
+    /** Reverse of [categoriesByMedia], built once and reused: destinations ask "which photos", not "what is this photo". */
+    private val mediaIdsByCategory: Map<SceneCategory, Set<MediaId>> by lazy(LazyThreadSafetyMode.NONE) {
+        buildMap<SceneCategory, MutableSet<MediaId>> {
+            categoriesByMedia.forEach { (mediaId, categories) ->
+                categories.forEach { category -> getOrPut(category) { linkedSetOf() } += mediaId }
+            }
+        }
+    }
+
+    /** Every photo tagged with [category]. Empty before recognition has run, same as [peopleMediaIds] and friends. */
+    fun mediaIn(category: SceneCategory): Set<MediaId> = mediaIdsByCategory[category].orEmpty()
+
     companion object {
         val EMPTY = RecognitionIndex(emptyList(), emptySet(), emptySet(), emptySet())
 
@@ -159,12 +216,34 @@ data class RecognitionIndex(
         ): RecognitionIndex {
             if (rows.isEmpty()) return EMPTY
             val descriptors = rows.flatMap { it.faceDescriptors }
+            val people = FaceClustering.cluster(descriptors, maxCosineDistance)
+            // A person only reads as "recurring" once SceneClassifier.RECURRING_PERSON_MIN_PHOTOS
+            // of their photos exist in the library -- see SceneClassifier's own KDoc for why
+            // that can only be known here, after clustering the *whole* library, and not at the
+            // point any single photo was indexed.
+            val recurringPersonMediaIds: Set<MediaId> = people
+                .asSequence()
+                .filter { it.mediaIds.size >= SceneClassifier.RECURRING_PERSON_MIN_PHOTOS }
+                .flatMapTo(linkedSetOf()) { it.mediaIds }
             return RecognitionIndex(
-                people = FaceClustering.cluster(descriptors, maxCosineDistance),
+                people = people,
                 peopleMediaIds = rows.filter { it.faceCount > 0 }.mapTo(linkedSetOf()) { it.mediaId },
                 petMediaIds = rows.filter { it.petVerdict.isPet }.mapTo(linkedSetOf()) { it.mediaId },
                 identityMediaIds = rows.filter { it.identityVerdict.isIdentity }
                     .mapTo(linkedSetOf()) { it.mediaId },
+                labelsByMedia = rows.filter { it.labels.isNotEmpty() }
+                    .associate { it.mediaId to it.labels },
+                textByMedia = rows.filter { it.textBlocks.isNotEmpty() }
+                    .associate { it.mediaId to it.textBlocks },
+                categoriesByMedia = rows.associate { row ->
+                    row.mediaId to SceneClassifier.withRecurringPeopleContext(
+                        base = row.categories,
+                        faceCount = row.faceCount,
+                        hasRecurringPerson = row.mediaId in recurringPersonMediaIds,
+                    )
+                }.filterValues { it.isNotEmpty() },
+                captionsByMedia = rows.filter { it.caption.isNotBlank() }
+                    .associate { it.mediaId to it.caption },
             )
         }
     }

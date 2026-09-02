@@ -27,6 +27,30 @@ class DetailFormattingTest {
     }
 
     @Test
+    fun `the byte line gives the exact count and the readable one`() {
+        assertEquals("25,939 bytes (25.3 KB)", DetailFormatting.byteLine(25_939L, Locale.UK))
+    }
+
+    @Test
+    fun `sub-kilobyte sizes are not restated in the same unit`() {
+        // "512 bytes (512 B)" says the same thing twice, so the rounding is dropped below 1 KB.
+        assertEquals("512 bytes", DetailFormatting.byteLine(512L, Locale.UK))
+    }
+
+    @Test
+    fun `an unknown size says so rather than showing zero`() {
+        assertEquals("Unknown size", DetailFormatting.byteLine(0L, Locale.UK))
+        assertEquals("Unknown size", DetailFormatting.byteLine(-1L, Locale.UK))
+    }
+
+    @Test
+    fun `durations are minutes and padded seconds`() {
+        assertEquals("1:04", DetailFormatting.durationLine(64_000L))
+        assertEquals("0:09", DetailFormatting.durationLine(9_400L))
+        assertEquals("Unknown", DetailFormatting.durationLine(0L))
+    }
+
+    @Test
     fun `format badges map from mime types`() {
         assertEquals("HEIF", DetailFormatting.formatBadge("image/heic"))
         assertEquals("HEIF", DetailFormatting.formatBadge("image/heif"))
