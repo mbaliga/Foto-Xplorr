@@ -59,42 +59,17 @@ val SelectionToolbarShape: Shape = notchShape(TOOLBAR_DESIGN_W, TOOLBAR_DESIGN_H
     close()
 }
 
-/** Design-space width x height of the bottom-left count pill (including its right cove cap). */
-const val PILL_DESIGN_W = 316f
-const val PILL_DESIGN_H = 44f
-
 /**
- * Bottom-left count pill: a 16dp-radius rounded bar whose right end is not a symmetric round but a
- * cove cap — it bulges out above centre and slants back in toward the bottom, so it reads as the
- * mate of the trash notch beside it. Built as the union of the mockup's rounded rect (x 15..312)
- * and its `Group 1000003488` extension (origin-shifted by (-15, -909)); the two sub-paths overlap
- * and fill as one.
+ * Height of the selection count bar.
+ *
+ * A bare dimension with no shape beside it any more: the bottom-left pill this once described,
+ * with its right-hand cove cap, was retired when the owner's later mockups moved the count to the
+ * top right and drew it as a plain rounded bar. The cove is an edge-meeting device, and a bar
+ * floating below the top edge has no edge to meet — see the reasoning at the call site in
+ * `GalleryScreen.SelectionOverlay`, which records what rendering the mirrored cap actually looked
+ * like.
  */
-val SelectionPillShape: Shape = notchShape(PILL_DESIGN_W, PILL_DESIGN_H) { sx, sy ->
-    // Rounded-rect body: local x[0..297], y[0..44], corner radius 16.
-    val r = 16f
-    moveTo(r * sx, 0f)
-    lineTo(297f * sx, 0f)
-    // right side of the body is subsumed by the extension below, so round only the left corners
-    // and let the extension carry the right cap.
-    lineTo(297f * sx, 44f * sy)
-    lineTo(r * sx, 44f * sy)
-    cubicTo(7.163f * sx, 44f * sy, 0f, 36.837f * sy, 0f, 28f * sy)
-    lineTo(0f, 16f * sy)
-    cubicTo(0f, 7.163f * sy, 7.163f * sx, 0f, r * sx, 0f)
-    close()
-    // Extension cap (the cove) — a second sub-path, same fill.
-    moveTo(157f * sx, 16f * sy)
-    cubicTo(157f * sx, 7.163f * sy, 164.163f * sx, 0f, 173f * sx, 0f)
-    lineTo(299.663f * sx, 0f)
-    cubicTo(311.168f * sx, 0f, 318.913f * sx, 11.78f * sy, 314.352f * sx, 22.343f * sy)
-    lineTo(309.17f * sx, 34.343f * sy)
-    cubicTo(306.639f * sx, 40.204f * sy, 300.866f * sx, 44f * sy, 294.481f * sx, 44f * sy)
-    lineTo(173f * sx, 44f * sy)
-    cubicTo(164.163f * sx, 44f * sy, 157f * sx, 36.837f * sy, 157f * sx, 28f * sy)
-    lineTo(157f * sx, 16f * sy)
-    close()
-}
+const val PILL_DESIGN_H = 44f
 
 /** Design-space width x height of the bottom-right trash notch. */
 const val TRASH_DESIGN_W = 134f

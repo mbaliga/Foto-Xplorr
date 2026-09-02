@@ -7,7 +7,6 @@ package com.fotoxplorr.app.gallery
 
 import android.os.Build
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,7 +19,6 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -79,8 +77,8 @@ import androidx.annotation.DrawableRes
 import androidx.compose.ui.res.painterResource
 import com.fotoxplorr.app.R
 import com.fotoxplorr.app.ui.HyleGrotesk
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
@@ -99,11 +97,9 @@ import com.fotoxplorr.app.hyle.BackgroundActivity
 import com.fotoxplorr.app.hyle.ShadeState
 import com.fotoxplorr.app.hyle.shadeHeight
 import com.fotoxplorr.app.hyle.SelectionToolbarShape
-import com.fotoxplorr.app.hyle.SelectionPillShape
 import com.fotoxplorr.app.hyle.SelectionTrashShape
 import com.fotoxplorr.app.hyle.TOOLBAR_DESIGN_W
 import com.fotoxplorr.app.hyle.TOOLBAR_DESIGN_H
-import com.fotoxplorr.app.hyle.PILL_DESIGN_W
 import com.fotoxplorr.app.hyle.PILL_DESIGN_H
 import com.fotoxplorr.app.hyle.TRASH_DESIGN_W
 import com.fotoxplorr.app.hyle.TRASH_DESIGN_H
@@ -1584,18 +1580,39 @@ internal fun BoxScope.SelectionOverlay(
         }
     }
 
-    // ---- bottom-left: how many, and the way out ----
-    // A rounded pill whose right end is a cove cap ([SelectionPillShape]) — the mate of the trash
-    // notch beside it. The long run of empty black between the label and the ✕ is in the mockup,
-    // not an accident of layout: it puts the dismiss under a right thumb instead of beside the
-    // count, where it would be a mis-tap away from nothing in particular.
+    // ---- top right, beside the toolbar: how many ----
+    // The owner's later mockups put the count on the SAME line as the toolbar, at the right, with
+    // a run of bare photograph between the two; it used to sit alone across the bottom left.
+    //
+    // A PLAIN rounded bar, and that is deliberate after getting it wrong once: the first attempt
+    // mirrored the old bottom-left pill's cove cap so it would face the toolbar, and rendering it
+    // showed why the mockups do not draw one there. The cap hangs BELOW the bar it caps, so at the
+    // top of the screen it became a spike pointing down into the photographs, and its flare
+    // reached far enough left to close the gap and fuse the count and the toolbar into one black
+    // band. The cove is an edge-meeting device; two of them meeting each other in mid-air is not
+    // what it is for.
+    //
+    // Sized to its content rather than to a fixed width, which a plain shape allows and a cove
+    // shape did not: the vector cove has to be drawn at its design aspect or its curve distorts,
+    // whereas a rounded rectangle can be any width. So "3 SELECTED" is a short bar and "9999
+    // SELECTED" a long one, instead of every count padding out to the width of the longest.
+    //
+    // No ✕. The mockups do not draw one, and inventing chrome they leave out is exactly what this
+    // pass is correcting — so the bar ITSELF clears the selection: the same target, the same
+    // gesture, one fewer glyph than the design asks for. Back also clears it (see the BackHandler
+    // in GalleryBrowser), which is what a person reaches for first anyway.
     Row(
         modifier = Modifier
-            .align(Alignment.BottomStart)
-            .offset(x = PILL_LEFT.dp, y = -PILL_BOTTOM_GAP.dp)
-            .background(Color.Black, SelectionPillShape)
-            .size(width = PILL_BOX_W.dp, height = PILL_DESIGN_H.dp)
-            .padding(start = PILL_TEXT_INSET.dp, end = PILL_END_INSET.dp),
+            .align(Alignment.TopEnd)
+            .offset(x = -COUNT_RIGHT.dp, y = COUNT_TOP.dp)
+            .height(PILL_DESIGN_H.dp)
+            .clip(RoundedCornerShape(COUNT_RADIUS.dp))
+            .background(Color.Black)
+            .clickable(
+                onClickLabel = "Clear selection",
+                onClick = { onSelectionChange(selection.clear()) },
+            )
+            .padding(horizontal = COUNT_TEXT_INSET.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -1611,25 +1628,6 @@ internal fun BoxScope.SelectionOverlay(
             style = TextStyle(fontFamily = HyleGrotesk, fontSize = 20.sp, lineHeight = 26.sp),
             modifier = Modifier.padding(start = 6.dp),
         )
-        Spacer(Modifier.weight(1f))
-        // Drawn rather than an icon: the mockup's ✕ is two 3dp strokes, which no Material glyph
-        // matches at this weight.
-        Canvas(
-            Modifier
-                .size(SELECTION_DISMISS_TARGET.dp)
-                .clickable(
-                    onClickLabel = "Clear selection",
-                    onClick = { onSelectionChange(selection.clear()) },
-                ),
-        ) {
-            // In dp, converted here. It was a raw pixel constant, which made the ✕ a different
-            // physical size on every screen density — 15dp on a 2.6x phone and 11dp on a 3.5x one.
-            val arm = SELECTION_DISMISS_ARM.dp.toPx()
-            val inset = (size.minDimension - arm) / 2f
-            val far = size.minDimension - inset
-            drawLine(Color.White, Offset(inset, inset), Offset(far, far), strokeWidth = 3.1f * density)
-            drawLine(Color.White, Offset(far, inset), Offset(inset, far), strokeWidth = 3.1f * density)
-        }
     }
 
     // ---- bottom-right: the destructive one, alone and shaped differently ----
@@ -1641,7 +1639,12 @@ internal fun BoxScope.SelectionOverlay(
             .align(Alignment.BottomEnd)
             .offset(x = -TRASH_RIGHT.dp)
             .shadow(SELECTION_BAR_SHADOW.dp, SelectionTrashShape, clip = false)
-            .background(Color.Black, SelectionTrashShape)
+            // RED, not black. Every other surface in this overlay is black; this one is not, and
+            // that is the whole point — the mockups colour the single destructive control and
+            // nothing else, so it is told apart before it is read. It already differs in shape
+            // from the pill; colour is the second signal, and the two together mean a hand
+            // reaching for the corner cannot mistake it for the count.
+            .background(SELECTION_TRASH_RED, SelectionTrashShape)
             .size(width = TRASH_BOX_W.dp, height = TRASH_DESIGN_H.dp)
             .clickable(
                 enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
@@ -1714,23 +1717,37 @@ private const val SELECTION_GLYPH_PAD = 8
 // diffs against draws them a shade smaller than the SVG export. Rendering each vector into a box a
 // little narrower than its native design width lands the cap peak and the notch width on the PNG's
 // own extents, without re-fitting the curves. PILL native is 316dp, trash 134dp.
-/** Pill: left edge 4dp in, bottom 3dp up; drawn into 303dp so the cove cap peaks where the PNG's does. */
-private const val PILL_LEFT = 4
-private const val PILL_BOTTOM_GAP = 3
-private const val PILL_BOX_W = 303
+/**
+ * Count bar: 8dp in from the right edge, 6dp down from the top.
+ *
+ * Not flush to the corner the way the toolbar is flush to its own. The toolbar coves INTO the top
+ * edge, so it has to touch it; this is a plain bar and would just look stuck to the corner. The
+ * 6dp drop also centres it against the toolbar's glyph row, which is what the mockups show.
+ */
+private const val COUNT_RIGHT = 8
+private const val COUNT_TOP = 6
 
-/** Count sits just inside the rounded left corner; the ✕ sits near the right, before the cove. */
-private const val PILL_TEXT_INSET = 12
-private const val PILL_END_INSET = 10
+/**
+ * 20dp on a 44dp bar: rounded, but not a stadium. A full-radius end would read as a chip, and the
+ * mockups draw a bar whose corners are clearly softer than its height.
+ */
+private const val COUNT_RADIUS = 20
 
-/** The ✕ is 15.27 x 14 in the mockup; the target around it is a real 44dp. */
-private const val SELECTION_DISMISS_TARGET = 44
-private const val SELECTION_DISMISS_ARM = 15
+/** Even margin either side of the count, since neither end carries a cove any more. */
+private const val COUNT_TEXT_INSET = 18
 
 /** Trash: right edge 15dp in; drawn into 110dp (native 134) so the notch matches the PNG's width. */
 private const val TRASH_RIGHT = 15
 private const val TRASH_BOX_W = 110
 private const val SELECTION_TRASH_GLYPH = 32
+
+/**
+ * The trash's fill, sampled from the mockups — the one saturated colour anywhere in this app's
+ * chrome, spent on the one action that destroys something. Deliberately not a Material error
+ * colour: those follow the theme, and this must be the same red whatever palette the user picks,
+ * because "the red one deletes" stops being a rule the moment it is sometimes not red.
+ */
+private val SELECTION_TRASH_RED = Color(0xFFE0332A)
 
 /** Nudge the trash glyph up from dead centre to sit with the mockup's own placement. */
 private const val TRASH_GLYPH_DROP = -2

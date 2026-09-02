@@ -16,11 +16,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Remove
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -672,6 +667,16 @@ private fun <T> ChoiceRow(
  * The minus / value / plus control. Extracted because the same three-part pattern was written out
  * longhand for grid columns and again for the slideshow interval, and a stepper copied twice is a
  * stepper that will be fixed once.
+ *
+ * The control itself is [com.fotoxplorr.app.hyle.HyleStepper] (owner, 2026-09-01: *"As for the
+ * internals like the binary toggles, please use Hyle and do not invent buttons."*). This row used
+ * to draw two Material `IconButton`s around bare `+` / `-` glyphs, which was the last Material
+ * chrome on a screen whose every other control is Hyle. The row's job is only the label, in the
+ * room's own white type, exactly as [SwitchRow] does around its toggle.
+ *
+ * The label dims with the control for the same reason [SwitchRow]'s does: the BACKGROUND tab hands
+ * both ends `canDecrease = canIncrease = false` while the whole feature is switched off, and a
+ * full-strength label over a grey control claims the row is live when it is not.
  */
 @Composable
 private fun StepperRow(
@@ -687,31 +692,20 @@ private fun StepperRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(label, color = Color.White, style = MaterialTheme.typography.bodyLarge)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onDecrease, enabled = canDecrease) {
-                Icon(
-                    Icons.Outlined.Remove,
-                    contentDescription = "Fewer",
-                    tint = Color.White.copy(alpha = if (canDecrease) 1f else 0.3f),
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            Text(
-                value,
-                color = Color.White,
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.padding(horizontal = 8.dp),
-            )
-            IconButton(onClick = onIncrease, enabled = canIncrease) {
-                Icon(
-                    Icons.Outlined.Add,
-                    contentDescription = "More",
-                    tint = Color.White.copy(alpha = if (canIncrease) 1f else 0.3f),
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
+        Text(
+            label,
+            color = Color.White.copy(alpha = if (canDecrease || canIncrease) 1f else 0.4f),
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(end = 16.dp).weight(1f),
+        )
+        com.fotoxplorr.app.hyle.HyleStepper(
+            label = label,
+            value = value,
+            onDecrease = onDecrease,
+            onIncrease = onIncrease,
+            canDecrease = canDecrease,
+            canIncrease = canIncrease,
+        )
     }
 }
 

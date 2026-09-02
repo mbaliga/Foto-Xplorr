@@ -1,15 +1,20 @@
+// FlowRow carries this marker in the Compose version this app builds against; ViewerScreen.kt
+// opts in the same way at the same place rather than sprinkling @OptIn onto each call site.
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.fotoxplorr.app.lens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -36,6 +41,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.media.MediaAsset
@@ -64,10 +71,19 @@ import java.util.Locale
  * model when the library is indexed, entirely locally, and this card's subtitle says exactly
  * that instead of borrowing a name that is not this app's to use.
  *
- * The four actions and what backs each one:
+ * The four actions are drawn as a wrapping grid of square tiles, not a scrolling strip. They were
+ * a [Row] with `horizontalScroll` until the owner saw it rendered: at 440dp the fourth action was
+ * sliced through the middle of its own word at the card's right edge, and the only way to reach
+ * it was a sideways drag nothing on screen advertised. A control that has to be discovered by
+ * swiping is a control most people never find, and four fixed actions are not a list -- there is
+ * no fifth one coming, so there is nothing to scroll TO. [LensActionTile] and the [FlowRow] below
+ * size themselves to be wholly visible instead, and stack onto a second line on a narrow device
+ * rather than hiding anything off the edge.
+ *
+ * What backs each action:
  *  - **Copy text** -- the clipboard, offline, identical in both flavors.
  *  - **Search** -- searches the user's OWN library via [onSearchLibrary] (primary), with a
- *    secondary, plainly-labelled hand-off to a web search underneath the pill row.
+ *    secondary, plainly-labelled hand-off to a web search underneath the tile grid.
  *  - **Listen** -- [android.speech.tts.TextToSpeech], a platform API with no library dependency,
  *    identical in both flavors; see [LensSpeaker] for how an unavailable engine or an
  *    uninstalled language voice is turned into a visible message rather than a silent no-op.
@@ -78,12 +94,12 @@ import java.util.Locale
  *
  * @param recognizedText the photo's OCR text, flattened -- see
  *   [com.fotoxplorr.app.recognition.RecognitionIndex.textOf]. Blank hides the whole card; see
- *   [LensActions.plan] for why an empty card is the honest choice there, not four dead pills.
+ *   [LensActions.plan] for why an empty card is the honest choice there, not four dead tiles.
  * @param onSearchLibrary runs [com.fotoxplorr.app.search] against the user's library for the
- *   text built by [LensSearchQuery.buildQuery]. Null leaves the Search pill visibly disabled --
+ *   text built by [LensSearchQuery.buildQuery]. Null leaves the Search tile visibly disabled --
  *   the same shape [com.fotoxplorr.app.viewer.PhotoDetailRoom] already uses for
- *   `onSetLocation == null` -- rather than the pill silently doing nothing when tapped; the
- *   secondary web-search link below the pills works with or without this callback, since it
+ *   `onSetLocation == null` -- rather than the tile silently doing nothing when tapped; the
+ *   secondary web-search link below the grid works with or without this callback, since it
  *   needs no in-app search surface to reach.
  */
 @Composable
@@ -173,26 +189,28 @@ fun LensCard(
             }
         }
 
-        Row(
+        FlowRow(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(TILE_GAP),
+            // Only earned when a device is narrow enough to wrap, but it has to be declared here
+            // or the second line would sit flush against the first.
+            verticalArrangement = Arrangement.spacedBy(TILE_GAP),
         ) {
-            LensPill(icon = Icons.Outlined.ContentCopy, label = "Copy text", enabled = true) {
+            LensActionTile(icon = Icons.Outlined.ContentCopy, label = "Copy text", enabled = true) {
                 clipboard.setText(AnnotatedString(recognizedText))
                 translateState = TranslateUiState.Idle
                 statusMessage = "Copied"
             }
 
-            LensPill(icon = Icons.Outlined.Search, label = "Search", enabled = onSearchLibrary != null) {
+            LensActionTile(icon = Icons.Outlined.Search, label = "Search", enabled = onSearchLibrary != null) {
                 statusMessage = null
                 onSearchLibrary?.invoke(searchQuery)
             }
 
             val speaking = speaker.outcome == SpeechOutcome.Speaking
-            LensPill(
+            LensActionTile(
                 icon = if (speaking) Icons.Outlined.Stop else Icons.Outlined.VolumeUp,
                 label = if (speaking) "Stop" else "Listen",
                 enabled = plan.listenEnabled,
@@ -201,7 +219,7 @@ fun LensCard(
                 if (speaking) speaker.stop() else speaker.speak(recognizedText, deviceLanguageTag)
             }
 
-            LensPill(icon = Icons.Outlined.Translate, label = "Translate", enabled = true) {
+            LensActionTile(icon = Icons.Outlined.Translate, label = "Translate", enabled = true) {
                 statusMessage = null
                 if (plan.translateMode == TranslateMode.ON_DEVICE) {
                     translateState = TranslateUiState.Loading
@@ -244,7 +262,7 @@ fun LensCard(
 
         // Speech's own failure message is kept separate from statusMessage/translateState below
         // rather than sharing one slot: it can be true at the same time as either of them (Listen
-        // fails, then Translate is tried next) and one pill's explanation must not evict another's.
+        // fails, then Translate is tried next) and one tile's explanation must not evict another's.
         val speechOutcome = speaker.outcome
         if (speechOutcome is SpeechOutcome.Unavailable) {
             LensFootnote(speechOutcome.message)
@@ -258,8 +276,8 @@ fun LensCard(
         statusMessage?.let { LensFootnote(it) }
 
         // The optional web hand-off this feature's spec allows ("MAY offer"), kept visually
-        // secondary and separate from the four pills the reference always draws, and labelled
-        // honestly up front: unlike the in-library Search pill above it, this one sends the
+        // secondary and separate from the four tiles the reference always draws, and labelled
+        // honestly up front: unlike the in-library Search tile above it, this one sends the
         // photo's text off-device.
         Text(
             text = "Search the web instead — leaves Foto Xplorr",
@@ -284,20 +302,41 @@ private sealed interface TranslateUiState {
     data class Message(val text: String) : TranslateUiState
 }
 
-/** One pill: a leading icon and a label, exactly the shape the reference draws four of. Dimmed
- *  rather than removed when [enabled] is false -- see [LensCard]'s own KDoc on [onSearchLibrary]
- *  for why a visibly-disabled control, not a hidden or silently inert one, is this feature's
- *  answer to "not currently wired up". */
+/**
+ * One square action tile: icon over label, both centred, sized so the whole set is visible at once.
+ *
+ * This was `LensPill` -- a horizontal icon-and-label lozenge -- and the rename is not cosmetic: a
+ * pill is as wide as its own text, which is precisely why four of them overflowed the card and
+ * had to be scrolled. A tile that fixes its own width instead lets the card do the arithmetic in
+ * advance, and a fixed edge is what makes the four read as one set of equals rather than four
+ * differently-sized buttons whose widths accidentally rank them by label length.
+ *
+ * Its surface, disabled tone and icon tint are the pill's, unchanged -- the card's visual
+ * language did not need fixing, only its geometry. The corner radius is the one thing that could
+ * not survive the change of shape: 20dp was there to round a 38dp-tall lozenge into a true pill,
+ * and on an 84dp square it reads as a blob. It steps down to the card's own 9dp instead, which
+ * puts the tiles in the same family as the surface holding them rather than inventing a third
+ * radius between that and the 6dp thumbnail beside them.
+ *
+ * Dimmed rather than removed when [enabled] is false -- see [LensCard]'s own KDoc on
+ * `onSearchLibrary` for why a visibly-disabled control, not a hidden or silently inert one, is
+ * this feature's answer to "not currently wired up".
+ */
 @Composable
-private fun LensPill(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
-    Row(
+private fun LensActionTile(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+    Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(if (enabled) PILL_BACKGROUND else PILL_BACKGROUND_DISABLED)
+            .width(TILE_EDGE)
+            // Squared by ratio rather than by a matching .height(): the two numbers cannot drift
+            // apart later, and a tile that is a square by construction stays one if TILE_EDGE
+            // is ever retuned for a different device class.
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(9.dp))
+            .background(if (enabled) TILE_BACKGROUND else TILE_BACKGROUND_DISABLED)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
         Icon(
             icon,
@@ -308,17 +347,33 @@ private fun LensPill(icon: ImageVector, label: String, enabled: Boolean, onClick
             // is not something either of us can verify without a device in this environment.
             contentDescription = label,
             tint = if (enabled) PRIMARY_TEXT else MUTED_TEXT,
-            modifier = Modifier.size(16.dp),
+            // 16dp was sized to stand beside a label at the pill's own height. Carrying it into
+            // a tile nearly five times as wide, with nothing beside it, leaves a speck floating
+            // in an empty square -- on a tile the icon is the thing being pointed at, not a
+            // bullet in front of the text.
+            modifier = Modifier.size(22.dp),
         )
         Text(
             text = label,
             color = if (enabled) PRIMARY_TEXT else MUTED_TEXT,
-            style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp),
+            // 12sp, down from the pill's 13sp: under an icon this is a caption rather than the
+            // control's own inline name, and it is the size the card's other secondary lines
+            // ("On-device text recognition") already speak at. It also buys "Copy text" enough
+            // room to stay on one line at the default font scale.
+            style = TextStyle(fontFamily = HyleGrotesk, fontSize = 12.sp),
+            textAlign = TextAlign.Center,
+            // Two lines allowed, because the whole point of this rewrite was that no label gets
+            // cut off: at a large system font scale a label wraps inside its tile instead of
+            // being sliced at an edge. The ellipsis is only a backstop for a future label longer
+            // than these four.
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 7.dp),
         )
     }
 }
 
-/** A small status line under the pill row: a copy confirmation, a translated result, or an
+/** A small status line under the tile grid: a copy confirmation, a translated result, or an
  *  honest explanation of why an action did not happen. */
 @Composable
 private fun LensFootnote(text: String, emphasise: Boolean = false) {
@@ -332,5 +387,26 @@ private fun LensFootnote(text: String, emphasise: Boolean = false) {
     )
 }
 
-private val PILL_BACKGROUND = Color(0xFF262626)
-private val PILL_BACKGROUND_DISABLED = Color(0xFF1A1A1A)
+/**
+ * The tile edge, chosen so all four actions fit on one line of the reference 440dp device.
+ *
+ * The width available to the grid on that device: 440 screen - 20 room padding on each side = 400
+ * card, - 14 card padding on each side = 372dp. Four tiles and the three [TILE_GAP]s between them
+ * come to 4x84 + 3x8 = 360dp, which clears 372 with 12dp to spare -- enough that a slightly wider
+ * system gutter or a rounding difference cannot push the fourth tile off the edge again, which is
+ * the exact failure this replaced. 87dp is the true ceiling (4x87 + 24 = 372, exactly flush) and
+ * 88 already overflows; sizing to the millimetre a card's padding happens to leave is how the
+ * previous layout got into trouble, so this takes the round number below it.
+ *
+ * A narrower device is not a problem to solve here: at 360dp wide the row has 292dp, three tiles
+ * (3x84 + 2x8 = 268) fit, and the FlowRow drops the fourth onto a second line where it is still
+ * whole and still reachable without a gesture.
+ */
+private val TILE_EDGE = 84.dp
+
+/** Used between tiles on both axes, so a wrapped grid has even gutters rather than a tighter
+ *  seam in one direction than the other. */
+private val TILE_GAP = 8.dp
+
+private val TILE_BACKGROUND = Color(0xFF262626)
+private val TILE_BACKGROUND_DISABLED = Color(0xFF1A1A1A)

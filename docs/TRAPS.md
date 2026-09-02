@@ -162,3 +162,22 @@ aliases) and returns null for anything region-qualified, which is what `Locale.g
 .toLanguageTag()` returns on practically every device. Every on-device translation fell through to
 the hand-off. Pass `Locale.forLanguageTag(tag).language`.
 
+## 29. The cove meets a screen EDGE, never another shape
+
+`HyleNotch`'s coves are inverted-radius flares that blend a black surface into the edge it touches:
+the toolbar into the top, the trash into the bottom. They only read correctly against an edge. When
+the count moved to the top right, mirroring the old bottom-left pill's cove cap so it would face
+the toolbar produced a spike hanging down into the photographs and a flare wide enough to fuse the
+count and the toolbar into one black band. A surface floating clear of an edge takes a plain
+rounded rectangle. A second consequence: a cove has to be drawn at its design aspect or its curve
+distorts, so a coved surface is a fixed size and only a plain one can be sized to its content.
+
+## 30. Render a layout before believing it
+
+Three defects in one screen survived reading the code and died the moment it was rendered: a
+sideways-scrolling action row that clipped its fourth item mid-word, an album name printed as a
+bare unlabelled line that read as a mystery word, and a camera card repeating the labelled list
+beneath it field for field — including focal length and aperture twice within the card itself.
+`ScreenRenderTest`/`NewSurfaceRenderTest` draw the real composables to PNG on the JVM in seconds.
+Use them; a layout you have only read is a layout you have not checked.
+

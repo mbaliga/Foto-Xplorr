@@ -24,14 +24,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudOff
@@ -75,9 +73,10 @@ import kotlin.math.roundToInt
 
 private val PANEL_BACKGROUND = Color(0xFF0B0B0B)
 // internal, not private: com.fotoxplorr.app.lens.LensCard's "Search inside this photo" card is
-// visually one more card in this same room (see its own KDoc), and re-declaring these five hex
-// values a second time in that package would be exactly the drift RoomStyle's own KDoc warns
-// about -- "three different apps" -- for a card that is supposed to read as part of this one.
+// visually a card of this same room (see its own KDoc), and re-declaring these five hex values a
+// second time in that package would be exactly the drift RoomStyle's own KDoc warns about --
+// "three different apps" -- for a card that is supposed to read as part of this one. They stay
+// even though the camera card that also used them has gone: LensCard is the surface now.
 internal val CARD_BACKGROUND = Color(0xFF151515)
 internal val CARD_HEADER_BACKGROUND = Color(0xFF1D1D1D)
 internal val PRIMARY_TEXT = Color(0xFFF2F2F2)
@@ -94,9 +93,35 @@ internal val MUTED_TEXT = Color(0xFF6A6A6A)
  * pulled down from the top of the viewer, with the photo still alive on the parked card behind
  * it, and no chrome of its own because the card *is* the way back.
  *
- * The order is the reference video's: filename, date, the camera card, the place plate the
- * photo flies into, the caption affordance, then the file's own facts. Related photos stay at
- * the bottom, below everything the room exists to say.
+ * The order is the reference video's: filename, date, what the photo carries in your library,
+ * the caption affordance, the file's own facts, and the place plate the photo flies into last.
+ *
+ * **Every fact is said once.** It was not: a camera card sat near the top repeating twelve rows'
+ * worth of the labelled list further down — make, model, lens, focal length, aperture, format,
+ * flash, dimensions, megapixels, file size, ISO, shutter and exposure bias — and repeated focal
+ * length and aperture a second time *inside itself*, once on its lens line and again in the
+ * exposure strip directly under that line. The
+ * header's filename and date were printed again as rows. The album name appeared as a bare,
+ * unlabelled line under "IN YOUR LIBRARY" as well as in the labelled "Album" row (owner,
+ * 2026-09-01: *"make sure the details/info part of the photo does not have duplicate info (shows
+ * multiple times)"* — the render that prompted it showed a lone, unexplained word "Camera" under
+ * that heading, which is what an unlabelled value always eventually reads as).
+ *
+ * The card lost rather than the list, and that was forced, not preferred. The standing rule for
+ * this room is that every label is present whether or not the file answers it (owner,
+ * 2026-08-18: *"it's fine if the values are empty, but the headers do need to exist"*), so
+ * trimming the duplicated rows out of [InformationBlock] instead would have left a screenshot —
+ * no camera, no lens, no aperture, which is most of a real library — with no "Lens" label
+ * anywhere and no way to tell a lens the file never recorded from a lens this app declines to
+ * show. A card cannot state an absence; a labelled row exists in order to state one.
+ *
+ * So the facts divide by who states them best, and each is stated exactly once: [RoomHeader]
+ * owns the filename, the capture date and the storage state, because it is the room's title;
+ * [StatusBlock] owns the marks *you* put on the photo and nothing the file knows; [PlaceBlock]
+ * owns the coordinates, which [PlacePlate] prints under the pin itself; and [InformationBlock]
+ * owns every remaining file and capture fact, labelled, including the two that used to exist
+ * only on the card — its format badge, which is "Kind", and its dynamic-range badge, which had
+ * no row at all until the card's removal made one necessary.
  *
  * The caption row is real now. It was drawn-but-dead for as long as this room existed, because
  * the data model had nowhere to put a caption; `LibraryStore` has a caption field since the
@@ -105,8 +130,8 @@ internal val MUTED_TEXT = Color(0xFF6A6A6A)
  *
  * @param exif read by the viewer rather than here. The shell composes a room only once it is
  *   at least slightly open, so a room that read its own EXIF would start that read on the first
- *   pixel of the pull and show an empty card for the rest of it — the facts have to be in hand
- *   before the gesture begins, not fetched because it did.
+ *   pixel of the pull and show a CAPTURE section of dashes for the rest of it — the facts have to
+ *   be in hand before the gesture begins, not fetched because it did.
  * @param reveal how open the room is, 0..1. Read on the draw pass so a drag animates the
  *   arrival without recomposing the room's content on every frame.
  * @param recognizedText this photo's OCR text, flattened -- read by the viewer the same way
@@ -174,9 +199,6 @@ fun PhotoDetailRoom(
             isSensitive = isSensitive,
             reveal = reveal,
         )
-        Box(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
-            ExifCard(asset = asset, exif = exif)
-        }
         TextLensBlock(asset = asset, recognizedText = recognizedText, onSearchLibrary = onSearchLibrary)
         TagsBlock(tags = tags, autoTags = autoTags, onRemoveTag = onRemoveTag)
         CaptionBlock(
@@ -207,7 +229,21 @@ fun PhotoDetailRoom(
     }
 }
 
-/** Filename, date line and the local-storage glyph — the room's first block. */
+/**
+ * Filename, date line and the local-storage glyph — the room's first block, and now the only
+ * place any of those three facts is stated.
+ *
+ * [InformationBlock] used to carry "Name" and "Taken" as rows too, a few hundred pixels below a
+ * header that had just said both in larger type. The header keeps them because it is the room's
+ * *title*: it is what the reader lands on, and a title restated as a field is not a field, it is
+ * an echo. The extension that `substringBeforeLast` drops from the title is not lost with the
+ * "Name" row — it survives, said better, as the "Kind" row's "HEIF".
+ *
+ * The storage glyph is the single statement of the trashed/on-device state for the same reason in
+ * reverse: it is the only one of the two that speaks in *both* directions. [StatusBlock] used to
+ * add "In the trash" beside it, a mark that by construction can only ever appear when the answer
+ * is yes.
+ */
 @Composable
 private fun RoomHeader(asset: MediaAsset, reveal: () -> Float) {
     Column(
@@ -250,13 +286,17 @@ private fun RoomHeader(asset: MediaAsset, reveal: () -> Float) {
 
 /**
  * The "Search inside this photo" card -- see [com.fotoxplorr.app.lens.LensCard] for everything
- * it actually does; this wrapper only supplies the room's own outer padding, exactly as the
- * [ExifCard] wrapper a few lines up does for the camera card, and hands through what the room
- * already has in hand rather than fetching anything itself.
+ * it actually does; this wrapper only supplies the room's own outer padding and hands through
+ * what the room already has in hand rather than fetching anything itself.
  *
- * No [PlaceMorph.textAlpha]-driven fade-in here, on purpose: like [ExifCard] right above it in
- * the room -- and unlike the plain text blocks around both of them -- this is a CARD, not a
- * line of the room's own prose, and it follows that precedent rather than the reveal-fade one.
+ * No [PlaceMorph.textAlpha]-driven fade-in here, on purpose: unlike the plain text blocks around
+ * it, this is a CARD, not a line of the room's own prose, and a card arrives rather than fades.
+ * It is the only card left in this room now that the camera card has gone, so the precedent it
+ * used to borrow from that one is written down here instead.
+ *
+ * It survives the de-duplication pass untouched because it duplicates nothing: the words inside a
+ * photo are not recorded anywhere else in the room, and unlike the camera card it is absent
+ * entirely when there is nothing to say rather than headlining a shrug.
  */
 @Composable
 private fun TextLensBlock(
@@ -328,9 +368,9 @@ private fun TagChip(tag: String, isAuto: Boolean, onRemove: (() -> Unit)?) {
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
-            // Filled for a tag someone typed, outlined for one the app guessed. The same
-            // distinction OutlineBadge already draws elsewhere in this room, used here for the
-            // same reason: two kinds of fact should not look identical.
+            // Filled for a tag someone typed, outlined for one the app guessed. Drawn here rather
+            // than said in a legend for the same reason the room labels its rows: two kinds of
+            // fact should not look identical.
             .then(
                 if (isAuto) {
                     Modifier.border(1.dp, Color(0xFF3A3A3A), RoundedCornerShape(6.dp))
@@ -438,20 +478,19 @@ private fun CaptionBlock(
 }
 
 /**
- * The place plate, or an honest absence.
- *
- * Most libraries are mostly un-geotagged — screenshots, downloads, anything shared through a
- * messenger that strips EXIF, and every file this app's own clean-share export has been through.
- * A plate drawn at 0°,0° for those would be a confident lie, so the block says the fix is
- * missing instead, and says it quietly.
- */
-/**
  * What this photo is to *you*, as distinct from what the file is.
  *
  * Everything else in this room is read off the file — its size, its camera, its coordinates. This
- * block is the library's own knowledge: whether you marked it, whether you hid it, and where it
- * actually lives on the device. Worth its own group because "is this one of my favourites?" is a
- * question the room could not previously answer at all, even though the viewer already knew.
+ * block is the library's own knowledge: whether you marked it and whether you hid it. Worth its
+ * own group because "is this one of my favourites?" is a question the room could not previously
+ * answer at all, even though the viewer already knew.
+ *
+ * It used to print the album name here as well, as a bare line under the eyebrow with nothing
+ * beside it to say what it was — in the render that started the de-duplication pass it read as a
+ * mysterious lone word "Camera" under "IN YOUR LIBRARY", while the same value sat a few blocks
+ * down as a labelled "Album" row. The labelled row keeps it. "In the trash" went with it: the
+ * header's cloud glyph already states that, and states the other half of it too (see
+ * [RoomHeader]), which a mark that can only appear when the answer is yes never could.
  */
 @Composable
 private fun StatusBlock(
@@ -463,13 +502,11 @@ private fun StatusBlock(
     val marks = buildList {
         if (isFavorite) add("Favourite")
         if (isSensitive) add("Sensitive")
-        if (asset.isTrashed) add("In the trash")
         if (asset.isVideo) add("Video")
     }
-    val album = asset.bucketName?.takeIf(String::isNotBlank)
-    // Nothing to say and no album to name means no empty heading: a section that renders as a
-    // lone eyebrow over blank space is the same mistake as the bare warning triangle was.
-    if (marks.isEmpty() && album == null) return
+    // No marks means no empty heading: a section that renders as a lone eyebrow over blank space
+    // is the same mistake as the bare warning triangle was.
+    if (marks.isEmpty()) return
 
     Column(
         modifier = Modifier
@@ -478,25 +515,33 @@ private fun StatusBlock(
             .padding(horizontal = 20.dp, vertical = 4.dp),
     ) {
         RoomEyebrow("IN YOUR LIBRARY")
-        if (marks.isNotEmpty()) {
-            Text(
-                text = marks.joinToString(" · "),
-                color = RoomStyle.Ink,
-                style = RoomStyle.Row,
-                modifier = Modifier.padding(top = 6.dp),
-            )
-        }
-        album?.let {
-            Text(
-                text = it,
-                color = RoomStyle.InkMuted,
-                style = RoomStyle.Caption,
-                modifier = Modifier.padding(top = 3.dp),
-            )
-        }
+        Text(
+            text = marks.joinToString(" · "),
+            color = RoomStyle.Ink,
+            style = RoomStyle.Row,
+            modifier = Modifier.padding(top = 6.dp),
+        )
     }
 }
 
+/**
+ * The place plate, or an honest absence — and the room's only statement of where this photo was
+ * taken.
+ *
+ * Most libraries are mostly un-geotagged — screenshots, downloads, anything shared through a
+ * messenger that strips EXIF, and every file this app's own clean-share export has been through.
+ * A plate drawn at 0°,0° for those would be a confident lie, so the block says the fix is
+ * missing instead, and says it quietly.
+ *
+ * That is why [InformationBlock] no longer carries "Latitude" and "Longitude" rows. They were the
+ * one pair of labels the de-duplication pass could delete without losing the label's job:
+ * [PlacePlate] prints the coordinate under the pin itself, and every branch below already states
+ * the absence more loudly than a dash would — the picker draws it as a map still searching and
+ * offers to fix it, and the read-only branch names the usual cause in a sentence.
+ *
+ * (This KDoc used to sit orphaned above [StatusBlock], describing a block two functions away. It
+ * belongs here.)
+ */
 @Composable
 private fun PlaceBlock(
     asset: MediaAsset,
@@ -559,9 +604,20 @@ private fun PlaceBlock(
 }
 
 /**
- * The file's own facts, in the shape of the owner's second reference screenshot: kind, size,
- * where it lives, when it changed, its pixel dimensions and — only when the file actually
- * records one — its colour space.
+ * The file's own facts — and, since the camera card went, *every* one of them.
+ *
+ * The shape is the owner's second reference screenshot: kind, size, where it lives, when it
+ * changed, its pixel dimensions, its colour space. It is also the room's only surface that can
+ * say "this file does not record that", which is why the de-duplication pass kept this block
+ * whole and deleted the card that repeated a dozen of its rows rather than the other way round —
+ * see [PhotoDetailRoom]'s own KDoc for that argument in full.
+ *
+ * Two consequences of the card's removal live here. "Dynamic range" is a new row: it was the
+ * card's second badge and had no row at all, so deleting the card without adding it would have
+ * quietly lost the one fact the card carried alone. "Latitude" and "Longitude", by contrast, are
+ * gone: [PlacePlate] prints the coordinate under the pin in the block below, and [PlaceBlock]
+ * spells the absence out in words when there is no fix, so both the value and the empty case
+ * already have a home — and a home that says more than two columns of decimals could.
  */
 @Composable
 private fun InformationBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: () -> Float) {
@@ -581,8 +637,12 @@ private fun InformationBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: 
         // was null, so the room silently changed shape from photo to photo and there was no way
         // to tell "this file has no lens recorded" from "this app does not show lenses".
         RoomEyebrow("FILE", Modifier.padding(bottom = 3.dp))
-        InformationRow("Name", asset.displayName)
+        // No "Name" row: the room's title is the filename, and RoomHeader's KDoc says why the
+        // title wins. The extension the title drops is what "Kind" is.
         InformationRow("Kind", DetailFormatting.formatBadge(asset.mimeType) ?: asset.mimeType)
+        // Never null, and deliberately unconditional: "STANDARD" is a real answer here, not a
+        // missing one — see DetailFormatting.dynamicRangeBadge on what this can honestly claim.
+        InformationRow("Dynamic range", DetailFormatting.dynamicRangeBadge(asset.mimeType))
         InformationRow("Size", DetailFormatting.byteLine(asset.sizeBytes))
         InformationRow("Dimensions", "${asset.width} × ${asset.height}")
         InformationRow("Megapixels", megapixels(asset.width, asset.height))
@@ -593,9 +653,14 @@ private fun InformationBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: 
                 asset.durationMillis.takeIf { it > 0L }?.let(DetailFormatting::durationLine),
             )
         }
+        // Album and Where look like the same fact on a phone whose album name is the last segment
+        // of its folder path, and they are not: Album is the grouping the library files this photo
+        // under and the one the Albums room opens, Where is the folder it physically sits in. Both
+        // stay for that reason -- unlike the album line StatusBlock used to print, which was this
+        // row's own value said a second time with no label on it.
         InformationRow("Album", asset.bucketName?.takeIf(String::isNotBlank))
         InformationRow("Where", asset.relativePath?.takeIf(String::isNotBlank))
-        InformationRow("Taken", asset.dateTakenMillis.takeIf { it > 0L }?.let(DetailFormatting::dateLine))
+        // No "Taken" row either: the header's date line is this value, in larger type, at the top.
         InformationRow("Modified", DetailFormatting.dateLine(asset.dateModifiedSeconds * 1_000L))
         InformationRow("Colour space", exif.colorSpace)
         // Not a video: MediaImage never decodes a video's frames here, and readImagePalette
@@ -611,8 +676,9 @@ private fun InformationBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: 
         InformationRow("ISO", exif.iso)
         InformationRow("Exposure bias", exif.exposureBiasEv?.let { "${it.roundToInt()} ev" })
         InformationRow("Flash", exif.flash?.let { if (DetailFormatting.flashFired(it)) "Fired" else "Did not fire" })
-        InformationRow("Latitude", exif.latitude?.let { formatCoordinate(it) })
-        InformationRow("Longitude", exif.longitude?.let { formatCoordinate(it) })
+        // Latitude and Longitude used to close this list. PlaceBlock, directly below, is their
+        // single home now -- as a plate with the coordinate on it, or as a sentence saying there
+        // is none. See this block's KDoc.
     }
 }
 
@@ -805,134 +871,11 @@ internal fun aspectRatioLabel(width: Int, height: Int): String? {
     return if (w > 50 || h > 50) null else "$w : $h"
 }
 
-/** A coordinate to five decimals — roughly a metre, and past what any phone's GPS resolves. */
-internal fun formatCoordinate(value: Double): String =
-    ((value * 100_000).roundToInt() / 100_000.0).toString()
-
-@Composable
-private fun ExifCard(asset: MediaAsset, exif: ImageExifDetails) {
-    val deviceLine = listOfNotNull(exif.make, exif.model)
-        .joinToString(" ").trim().takeIf(String::isNotEmpty)
-    val lensLine = DetailFormatting.lensLine(exif.lensModel, exif.focalLengthMm, exif.aperture)
-    val formatBadge = DetailFormatting.formatBadge(asset.mimeType)
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(9.dp))
-            .background(CARD_BACKGROUND),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(CARD_HEADER_BACKGROUND)
-                .padding(horizontal = 14.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = deviceLine ?: "Unknown camera",
-                color = PRIMARY_TEXT,
-                style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Medium),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            formatBadge?.let { OutlineBadge(it) }
-            if (DetailFormatting.flashFired(exif.flash)) {
-                Box(
-                    modifier = Modifier
-                        .size(22.dp)
-                        .clip(RoundedCornerShape(11.dp))
-                        .background(Color(0xFF2B2B2B)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Filled.Bolt,
-                        contentDescription = "Flash fired",
-                        tint = PRIMARY_TEXT,
-                        modifier = Modifier.size(14.dp),
-                    )
-                }
-            }
-        }
-
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            lensLine?.let {
-                Text(it, color = SECONDARY_TEXT, style = TextStyle(fontSize = 14.sp))
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = DetailFormatting.dimensionsLine(asset.width, asset.height, asset.sizeBytes),
-                    color = SECONDARY_TEXT,
-                    style = TextStyle(fontSize = 14.sp),
-                    modifier = Modifier.weight(1f),
-                )
-                OutlineBadge(DetailFormatting.dynamicRangeBadge(asset.mimeType))
-            }
-        }
-
-        val exposureFields = listOfNotNull(
-            exif.iso?.let { "ISO $it" },
-            exif.focalLengthMm?.takeIf { it > 0.0 }?.let { "${it.roundToInt()} mm" },
-            exif.exposureBiasEv?.let { "${it.roundToInt()} ev" },
-            exif.aperture?.takeIf { it > 0.0 }?.let { DetailFormatting.apertureText(it) },
-            exif.shutterSpeed,
-        )
-        if (exposureFields.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp)
-                    .padding(bottom = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                exposureFields.forEachIndexed { index, field ->
-                    if (index > 0) {
-                        Box(
-                            Modifier
-                                .width(1.dp)
-                                .height(12.dp)
-                                .background(Color(0xFF333333)),
-                        )
-                    }
-                    Text(
-                        text = field,
-                        color = MUTED_TEXT,
-                        style = TextStyle(fontSize = 12.sp),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun OutlineBadge(text: String) {
-    Text(
-        text = text,
-        color = SECONDARY_TEXT,
-        style = TextStyle(fontSize = 11.sp, letterSpacing = 0.4.sp),
-        modifier = Modifier
-            .border(1.dp, Color(0xFF3A3A3A), RoundedCornerShape(4.dp))
-            .padding(horizontal = 7.dp, vertical = 3.dp),
-    )
-}
-
 /**
- * EXIF fields for the metadata card. All optional: many images (esp. screenshots, edited
+ * EXIF fields for the room's CAPTURE section. All optional: many images (esp. screenshots, edited
  * copies, or anything that already had EXIF stripped by this app's own clean-share export)
- * won't carry camera data.
+ * won't carry camera data — which is why those fields are rows with labels and a dash rather than
+ * a card that has to invent a headline when the file says nothing.
  *
  * Numeric fields are kept numeric here and formatted in [DetailFormatting] rather than being
  * pre-stringified at extraction time, so the presentation can be changed without touching
