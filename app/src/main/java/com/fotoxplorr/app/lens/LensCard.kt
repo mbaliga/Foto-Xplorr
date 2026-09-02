@@ -1,7 +1,3 @@
-// FlowRow carries this marker in the Compose version this app builds against; ViewerScreen.kt
-// opts in the same way at the same place rather than sprinkling @OptIn onto each call site.
-@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-
 package com.fotoxplorr.app.lens
 
 import androidx.compose.foundation.background
@@ -10,7 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -327,10 +323,15 @@ private fun LensActionTile(icon: ImageVector, label: String, enabled: Boolean, o
     Column(
         modifier = Modifier
             .width(TILE_EDGE)
-            // Squared by ratio rather than by a matching .height(): the two numbers cannot drift
-            // apart later, and a tile that is a square by construction stays one if TILE_EDGE
-            // is ever retuned for a different device class.
-            .aspectRatio(1f)
+            // A FLOOR, not a fixed square. `aspectRatio(1f)` made the tile exactly TILE_EDGE tall
+            // whatever was inside it, and `clip` below then cut off anything that did not fit --
+            // which is precisely the defect this rewrite exists to remove, moved from the right
+            // edge of a scrolling row to the bottom edge of a tile. Only the text scales with the
+            // system font setting; the 22dp icon and the paddings are fixed dp, so at a large
+            // accessibility scale a label that wraps to two lines needs more room than a square
+            // has. With a minimum it is a square at every ordinary setting and grows only when
+            // the alternative would be slicing a word in half.
+            .heightIn(min = TILE_EDGE)
             .clip(RoundedCornerShape(9.dp))
             .background(if (enabled) TILE_BACKGROUND else TILE_BACKGROUND_DISABLED)
             .clickable(enabled = enabled, onClick = onClick)
@@ -363,9 +364,9 @@ private fun LensActionTile(icon: ImageVector, label: String, enabled: Boolean, o
             style = TextStyle(fontFamily = HyleGrotesk, fontSize = 12.sp),
             textAlign = TextAlign.Center,
             // Two lines allowed, because the whole point of this rewrite was that no label gets
-            // cut off: at a large system font scale a label wraps inside its tile instead of
-            // being sliced at an edge. The ellipsis is only a backstop for a future label longer
-            // than these four.
+            // cut off: at a large system font scale a label wraps inside its tile, and the tile
+            // grows to hold it (see heightIn above) rather than clipping the second line. The
+            // ellipsis is only a backstop for a future label longer than these four.
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 7.dp),
