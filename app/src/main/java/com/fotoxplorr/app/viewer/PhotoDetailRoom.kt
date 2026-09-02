@@ -237,12 +237,13 @@ fun PhotoDetailRoom(
  * header that had just said both in larger type. The header keeps them because it is the room's
  * *title*: it is what the reader lands on, and a title restated as a field is not a field, it is
  * an echo. The extension that `substringBeforeLast` drops from the title is not lost with the
- * "Name" row — it survives, said better, as the "Kind" row's "HEIF".
+ * "Name" row — it survives, said better, as the "Kind" row's "HEIF". The title takes two lines so
+ * that dropping the row removed a duplicate rather than the name itself; see the [Text] below.
  *
- * The storage glyph is the single statement of the trashed/on-device state for the same reason in
- * reverse: it is the only one of the two that speaks in *both* directions. [StatusBlock] used to
- * add "In the trash" beside it, a mark that by construction can only ever appear when the answer
- * is yes.
+ * The storage glyph does NOT carry the trashed state on its own. It speaks in both directions,
+ * which the old "In the trash" mark could not, but an outline glyph swapped for another outline
+ * glyph is too quiet for "this photo is queued for deletion" — so [StatusBlock] still says it in
+ * words, and this says the half the glyph is actually for: whether the file is still here.
  */
 @Composable
 private fun RoomHeader(asset: MediaAsset, reveal: () -> Float) {
@@ -261,7 +262,13 @@ private fun RoomHeader(asset: MediaAsset, reveal: () -> Float) {
                 text = asset.displayName.substringBeforeLast('.'),
                 color = PRIMARY_TEXT,
                 style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Medium),
-                maxLines = 1,
+                // Two lines, because dropping the "Name" row made this the ONLY place the
+                // filename appears anywhere in the viewer. At one line a name like
+                // "Screenshot_20250614-091233_com.google.android.youtube" ellipsised after about
+                // two thirds and the rest was unreachable -- which is not de-duplication, it is
+                // deletion. "Kind: PNG" does not recover it either: it cannot tell .jpg from
+                // .jpeg, or .heic from .heif.
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
             )
@@ -488,9 +495,13 @@ private fun CaptionBlock(
  * It used to print the album name here as well, as a bare line under the eyebrow with nothing
  * beside it to say what it was — in the render that started the de-duplication pass it read as a
  * mysterious lone word "Camera" under "IN YOUR LIBRARY", while the same value sat a few blocks
- * down as a labelled "Album" row. The labelled row keeps it. "In the trash" went with it: the
- * header's cloud glyph already states that, and states the other half of it too (see
- * [RoomHeader]), which a mark that can only appear when the answer is yes never could.
+ * down as a labelled "Album" row. The labelled row keeps it.
+ *
+ * "In the trash" stayed. It was cut alongside the album line on the argument that the header's
+ * cloud glyph already says it — but that glyph is documented as reporting local presence, not
+ * trash, and leaving a consequential state to an 18dp outline is the bare-glyph mistake this
+ * project has already made once. A mark that only appears when the answer is yes is the right
+ * shape for a state that is only worth mentioning when it holds.
  */
 @Composable
 private fun StatusBlock(
@@ -503,6 +514,12 @@ private fun StatusBlock(
         if (isFavorite) add("Favourite")
         if (isSensitive) add("Sensitive")
         if (asset.isVideo) add("Video")
+        // Stated in words, not left to the header's cloud glyph. That glyph's own comment says it
+        // reports whether the file is still present locally -- it is not a trash indicator, and
+        // an 18dp outline swapped for another 18dp outline is exactly the bare glyph carrying a
+        // consequential meaning that the owner already rejected once (see TRAPS 14, and the
+        // warning-triangle round). This photo is queued for deletion; that deserves a word.
+        if (asset.isTrashed) add("In the trash")
     }
     // No marks means no empty heading: a section that renders as a lone eyebrow over blank space
     // is the same mistake as the bare warning triangle was.
