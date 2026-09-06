@@ -54,10 +54,13 @@ arises.
 - `CropGeometry` (in `EditRecipe.kt`) — normalised crop rects and aspect presets, so a crop
   survives the preview→export resolution change.
 - `EditRenderer` — recipe → bitmap. Fixed order: orient, crop, colour.
-- `EditedCopyWriter` — writes a **new** file. There is no code path in it that opens the original
-  for writing, and that is the point: a photo library is often the only copy of an irreplaceable
-  image.
-- `EditorScreen` — the UI.
+- `EditedCopyWriter` — writes a **new** file by default (`save`), in the source's own format or an
+  explicit `OutputFormat` (JPEG/PNG/WebP) the user picked — this is Save As. `overwrite` is the one
+  place this class *does* open the original for writing, gated on the same per-file consent dance
+  `FotoXplorrActivity` already runs for rename and metadata, and only for a source already in one
+  of those three formats — see `overwriteFormatFor`.
+- `EditorScreen` — the UI, split into a Simple tier (fewer, coarser sliders) and an on-demand Pro
+  tier (the rest, plus Curves) — see `EditorTier`.
 
 ### Consequences and honest limits
 

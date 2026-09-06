@@ -53,8 +53,61 @@ private enum class EditTool(val label: String) {
     LIGHT("Light"),
     COLOUR("Colour"),
     DETAIL("Detail"),
+    CURVES("Curves"),
     CROP("Crop"),
     ROTATE("Rotate"),
+}
+
+/**
+ * How much of the editor is showing — Snapseed's own split, by the owner's own description: "a
+ * simple interface for most, regular users, and an on-demand suite of professional editing tools".
+ *
+ * [SIMPLE] is not a smaller tool SET so much as a smaller SLIDER count within [EditTool.LIGHT] and
+ * [EditTool.COLOUR] — the two tabs that matter for almost every photo — plus [EditTool.CROP] and
+ * [EditTool.ROTATE], which are not optional in any tier. [PRO] adds the remaining, more granular
+ * sliders to those same two tabs and unlocks [EditTool.DETAIL] and [EditTool.CURVES] entirely,
+ * which stay hidden rather than shown-and-empty in [SIMPLE] — an on-demand suite that is visible by
+ * default is not on demand.
+ *
+ * Deliberately unrelated to [com.fotoxplorr.app.pro.ProEntitlement]: that gate is about payment
+ * (it removes the share watermark), this one is about interface complexity, and conflating "the
+ * tools you get for free" with "the tools shown right now" would make a paying user's own Simple
+ * tier feel like a downgrade.
+ */
+private enum class EditorTier(val label: String) {
+    SIMPLE("Simple"),
+    PRO("Pro"),
+}
+
+/** Which [EditTool] tabs [tier] shows at all — see [EditorTier]'s own doc. */
+private fun toolsFor(tier: EditorTier): List<EditTool> = when (tier) {
+    EditorTier.SIMPLE -> listOf(EditTool.LIGHT, EditTool.COLOUR, EditTool.CROP, EditTool.ROTATE)
+    EditorTier.PRO -> EditTool.entries.toList()
+}
+
+/**
+ * Named tone-curve shapes offered by [EditTool.CURVES] — see that branch's own comment for why
+ * these are presets rather than draggable control points.
+ *
+ * Each is a real [ToneCurve], not a cosmetic label: selecting one sets [Adjustments.rgbCurve]
+ * outright, so [ToneCurveTest]'s monotone-interpolation guarantees apply to every shape here
+ * exactly as they would to a hand-dragged curve.
+ */
+private enum class CurvePreset(val label: String, val curve: ToneCurve) {
+    /** [ToneCurve.IDENTITY] under a name that reads as an action ("remove the curve") rather
+     *  than a shape, since an identity curve has no shape to describe. */
+    LINEAR("Linear", ToneCurve.IDENTITY),
+    SOFT_CONTRAST(
+        "Soft contrast",
+        ToneCurve(listOf(CurvePoint(0f, 0f), CurvePoint(0.25f, 0.20f), CurvePoint(0.75f, 0.80f), CurvePoint(1f, 1f))),
+    ),
+    STRONG_CONTRAST(
+        "Strong contrast",
+        ToneCurve(listOf(CurvePoint(0f, 0f), CurvePoint(0.25f, 0.12f), CurvePoint(0.75f, 0.88f), CurvePoint(1f, 1f))),
+    ),
+    // Two points only: a faded look is a straight lift-and-lower of black and white, not an S --
+    // adding interior points here would just be a slower way to draw the same line.
+    FADE("Fade", ToneCurve(listOf(CurvePoint(0f, 0.08f), CurvePoint(1f, 0.92f)))),
 }
 
 /**
@@ -65,8 +118,12 @@ private enum class EditTool(val label: String) {
  * classpath gate, and the strongest open-source galleries in this space are GPL-3.0, which this
  * app cannot take without becoming GPL itself.
  *
- * Everything here is non-destructive: the screen holds an [EditRecipe], previews it at a bounded
- * size, and writes a **new file** on save. The original is never opened for writing.
+ * Editing itself is non-destructive: the screen only ever holds an [EditRecipe] and previews it at
+ * a bounded size, never touching the original's bytes until Save is actually tapped. Saving a
+ * COPY (this editor's long-standing default, and the one the save sheet lists first) still never
+ * opens the original for writing at all. Saving with OVERWRITE does — deliberately, and only after
+ * the same per-file write consent Android already requires for [com.fotoxplorr.app.metadata.MetadataWriter]
+ * and rename — see [onOverwrite]'s own doc and [EditedCopyWriter.overwrite].
  */
 @Composable
 fun EditorScreen(
@@ -77,10 +134,30 @@ fun EditorScreen(
     /** What Save does. ASK shows the choice; anything else acts and remembers. */
     saveMode: EditorSaveMode = EditorSaveMode.ASK,
     onSetSaveMode: (EditorSaveMode) -> Unit = {},
+    /**
+     * Replaces [asset]'s own file with [Bitmap], in place. Fire-and-forget: only an `Activity` can
+     * run the write-consent dance a per-file grant needs (see [EditedCopyWriter.overwrite]'s own
+     * doc), so this screen hands the rendered bitmap off and closes itself immediately afterward —
+     * the caller is the one that reports success or failure, the same way
+     * [com.fotoxplorr.app.FotoXplorrActivity] already does for rename and metadata writes.
+     */
+    onOverwrite: (asset: MediaAsset, bitmap: Bitmap) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     var recipe by remember(asset.id) { mutableStateOf(EditRecipe()) }
+    // Simple by default -- the "regular users" half of the tier's own reasoning (see EditorTier's
+    // doc): a photo editor most people open should not open onto the Pro-tier control set.
+    var tier by remember { mutableStateOf(EditorTier.SIMPLE) }
     var tool by remember { mutableStateOf(EditTool.LIGHT) }
+    val availableTools = toolsFor(tier)
+    // Switching tier can leave `tool` pointing at a tab that just disappeared (Pro -> Simple while
+    // DETAIL or CURVES was open). Falling back to LIGHT rather than rendering an empty panel for a
+    // tab no chip now selects. A LaunchedEffect rather than a plain `if` in the composable body: a
+    // direct write here would be a state mutation during composition, which is exactly the pattern
+    // Compose's own tooling warns against.
+    LaunchedEffect(tier) {
+        if (tool !in toolsFor(tier)) tool = EditTool.LIGHT
+    }
     var source by remember(asset.id) { mutableStateOf<Bitmap?>(null) }
     var preview by remember(asset.id) { mutableStateOf<Bitmap?>(null) }
     var saving by remember { mutableStateOf(false) }
@@ -157,30 +234,52 @@ fun EditorScreen(
             }
         }
 
+        // A format this file's own bytes could actually be replaced in, or null when they can't
+        // be — see overwriteFormatFor's own doc. Read once here rather than per-save so both the
+        // sheet (which hides the row entirely) and performSave (which must not attempt one) agree.
+        val canOverwriteInPlace = overwriteFormatFor(asset.mimeType) != null
+
         // Saving in one place, whichever route asked for it. Two call sites for "write the file"
         // is how a save path ends up with two different sets of error handling.
-        fun performSave(mode: EditorSaveMode) {
+        //
+        // [format] only ever affects the COPY path: null means "keep the source's own format"
+        // (outputFormatFor), a non-null value is an explicit override from the save sheet's format
+        // chips. OVERWRITE has no format choice at all -- it can only ever re-encode into the
+        // file's OWN existing format, by construction (see EditedCopyWriter.overwrite).
+        fun performSave(mode: EditorSaveMode, format: OutputFormat?) {
             saveRequested = false
             saving = true
             scope.launch {
                 val full = renderFullSize(context, asset, recipe)
-                val result = if (full == null) {
-                    Result.failure(IllegalStateException("Could not read the photo at full size"))
-                } else {
-                    writer.save(asset, full)
+                if (full == null) {
+                    saving = false
+                    onSaved("Could not read the photo at full size")
+                    return@launch
                 }
+
+                if (mode == EditorSaveMode.OVERWRITE && canOverwriteInPlace) {
+                    saving = false
+                    // Hands off to the Activity and exits -- see onOverwrite's own doc for why
+                    // this screen cannot wait for the result itself.
+                    onOverwrite(asset, full)
+                    onClose()
+                    return@launch
+                }
+
+                val resolvedFormat = format ?: outputFormatFor(asset.mimeType)
+                val result = writer.save(asset, full, resolvedFormat)
                 saving = false
                 onSaved(
                     result.fold(
                         onSuccess = {
-                            if (mode == EditorSaveMode.OVERWRITE) {
-                                // Honest about what actually happened. Replacing the original
-                                // needs a per-file write grant that this build does not yet
-                                // request, and claiming a replacement that did not happen is
-                                // worse than doing the safe thing and saying so.
-                                "Saved a copy — replacing the original is not wired up yet"
-                            } else {
-                                "Saved a copy at full resolution"
+                            when {
+                                // Honest about what actually happened: OVERWRITE was chosen but
+                                // this format has no in-place path at all (see canOverwriteInPlace
+                                // above), so the safe fallback ran instead and needs to say so.
+                                mode == EditorSaveMode.OVERWRITE ->
+                                    "Saved a copy — ${asset.mimeType} can't be replaced in place"
+                                format != null -> "Saved a copy as ${resolvedFormat.label}"
+                                else -> "Saved a copy at full resolution"
                             }
                         },
                         onFailure = { it.message ?: "Could not save the edited photo" },
@@ -192,14 +291,15 @@ fun EditorScreen(
         if (saveRequested) {
             if (saveMode == EditorSaveMode.ASK) {
                 SaveChoiceSheet(
+                    canOverwrite = canOverwriteInPlace,
                     onDismiss = { saveRequested = false },
-                    onChoose = { mode, remember ->
+                    onChoose = { mode, format, remember ->
                         if (remember) onSetSaveMode(mode)
-                        performSave(mode)
+                        performSave(mode, format)
                     },
                 )
             } else {
-                LaunchedEffect(saveRequested) { performSave(saveMode) }
+                LaunchedEffect(saveRequested) { performSave(saveMode, format = null) }
             }
         }
 
@@ -269,22 +369,46 @@ fun EditorScreen(
                 }
             }
 
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(EditTool.entries.toList(), key = { it.name }) { entry ->
-                    val selected = entry == tool
-                    Text(
-                        entry.label,
-                        color = if (selected) Color.Black else Color.White,
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier
-                            .background(
-                                if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
-                                RoundedCornerShape(50),
-                            )
-                            .clickable { tool = entry }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                    )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(availableTools, key = { it.name }) { entry ->
+                        val selected = entry == tool
+                        Text(
+                            entry.label,
+                            color = if (selected) Color.Black else Color.White,
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier
+                                .background(
+                                    if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
+                                    RoundedCornerShape(50),
+                                )
+                                .clickable { tool = entry }
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                        )
+                    }
                 }
+                // Off to the side rather than mixed into the tool row above: this switches what
+                // the WHOLE row above even offers, so it reads as a setting for the row rather
+                // than one more tab inside it. Same filled-when-on chip language as the tool tabs
+                // themselves, so "this is currently active" reads the same way everywhere in this
+                // screen rather than needing its own convention for one toggle.
+                val proOn = tier == EditorTier.PRO
+                Text(
+                    "Pro tools",
+                    color = if (proOn) Color.Black else Color.White.copy(alpha = 0.7f),
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier
+                        .background(
+                            if (proOn) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
+                            RoundedCornerShape(50),
+                        )
+                        .clickable { tier = if (proOn) EditorTier.SIMPLE else EditorTier.PRO }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                )
             }
 
             val adjust = recipe.adjustments
@@ -300,25 +424,67 @@ fun EditorScreen(
                         set { copy(exposure = it) }
                     }
                     LabelledSlider("Contrast", adjust.contrast) { set { copy(contrast = it) } }
-                    LabelledSlider("Highlights", adjust.highlights) { set { copy(highlights = it) } }
-                    LabelledSlider("Shadows", adjust.shadows) { set { copy(shadows = it) } }
-                    LabelledSlider("Whites", adjust.whites) { set { copy(whites = it) } }
-                    LabelledSlider("Blacks", adjust.blacks) { set { copy(blacks = it) } }
+                    // Highlights/Shadows/Whites/Blacks are the finer, region-targeted half of tone
+                    // -- Exposure and Contrast alone already cover "make it look right" for most
+                    // photos, which is exactly what SIMPLE is for. See EditorTier's own doc.
+                    if (tier == EditorTier.PRO) {
+                        LabelledSlider("Highlights", adjust.highlights) { set { copy(highlights = it) } }
+                        LabelledSlider("Shadows", adjust.shadows) { set { copy(shadows = it) } }
+                        LabelledSlider("Whites", adjust.whites) { set { copy(whites = it) } }
+                        LabelledSlider("Blacks", adjust.blacks) { set { copy(blacks = it) } }
+                    }
                 }
 
                 EditTool.COLOUR -> {
                     LabelledSlider("Temperature", adjust.temperature) { set { copy(temperature = it) } }
-                    LabelledSlider("Tint", adjust.tint) { set { copy(tint = it) } }
-                    LabelledSlider("Vibrance", adjust.vibrance) { set { copy(vibrance = it) } }
                     LabelledSlider("Saturation", adjust.saturation) { set { copy(saturation = it) } }
+                    // Tint and Vibrance are the more surgical pair -- a green/magenta cast and a
+                    // saturation curve that spares skin tones are both real needs, just rarer ones
+                    // than "warmer/cooler" and "more colourful", which SIMPLE already covers above.
+                    if (tier == EditorTier.PRO) {
+                        LabelledSlider("Tint", adjust.tint) { set { copy(tint = it) } }
+                        LabelledSlider("Vibrance", adjust.vibrance) { set { copy(vibrance = it) } }
+                    }
                 }
 
                 EditTool.DETAIL -> {
-                    // These three run neighbourhood passes rather than a lookup, so they are the
-                    // slow ones -- grouped together so it is obvious which controls cost time.
+                    // Pro-only tab (see toolsFor) -- these three run neighbourhood passes rather
+                    // than a lookup, so they are the slow ones, grouped together so it is obvious
+                    // which controls cost time.
                     LabelledSlider("Sharpen", adjust.sharpen, range = 0f..1f) { set { copy(sharpen = it) } }
                     LabelledSlider("Clarity", adjust.clarity, range = 0f..1f) { set { copy(clarity = it) } }
                     LabelledSlider("Vignette", adjust.vignette) { set { copy(vignette = it) } }
+                }
+
+                EditTool.CURVES -> {
+                    // Pro-only tab (see toolsFor). A handful of named shapes rather than draggable
+                    // control points: ToneCurve's own math (monotone Hermite, tested in
+                    // ToneCurveTest) already supports arbitrary points, but a touch-drag graph
+                    // editor is real, separate UI work -- tracked as its own follow-up rather than
+                    // rushed into this pass. These presets still reach the identical rgbCurve field
+                    // a future drag editor would, so nothing here needs revisiting when that lands.
+                    Text(
+                        "A tone-curve shape, applied across all three colour channels together.",
+                        color = Color.White.copy(alpha = 0.5f),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(CurvePreset.entries.toList(), key = { it.name }) { preset ->
+                            val selected = adjust.rgbCurve == preset.curve
+                            Text(
+                                preset.label,
+                                color = if (selected) Color.Black else Color.White,
+                                style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier
+                                    .background(
+                                        if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
+                                        RoundedCornerShape(50),
+                                    )
+                                    .clickable { set { copy(rgbCurve = preset.curve) } }
+                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                            )
+                        }
+                    }
                 }
 
                 EditTool.CROP -> {
@@ -388,13 +554,25 @@ fun EditorScreen(
  *
  * Copy is listed first and is the safe one. The order is not decoration: the destructive option
  * being second means the muscle-memory tap is the one that cannot lose a photograph.
+ *
+ * @param canOverwrite whether the photo being edited can be replaced in its own format at all (see
+ *   [overwriteFormatFor]). The OVERWRITE row is omitted entirely rather than shown-then-refused —
+ *   an option that always fails when tapped is worse than no option, the same reasoning
+ *   [com.fotoxplorr.app.viewer.PhotoDetailRoom] already applies to every editable row it draws.
+ * @param onChoose the format is null for OVERWRITE (meaningless there — it can only ever re-encode
+ *   into the file's own existing format) and for a COPY where the user left the format chips on
+ *   their default, "keep the original".
  */
 @Composable
 private fun SaveChoiceSheet(
+    canOverwrite: Boolean,
     onDismiss: () -> Unit,
-    onChoose: (EditorSaveMode, Boolean) -> Unit,
+    onChoose: (EditorSaveMode, OutputFormat?, Boolean) -> Unit,
 ) {
     var remember by remember { mutableStateOf(false) }
+    // null = "keep the original format" (outputFormatFor at save time), matching COPY's own
+    // long-standing default behaviour rather than forcing a choice on someone who never asks.
+    var selectedFormat by remember { mutableStateOf<OutputFormat?>(null) }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Column(
             Modifier
@@ -403,21 +581,50 @@ private fun SaveChoiceSheet(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text("Save this edit", color = Color.White, style = MaterialTheme.typography.titleMedium)
-            listOf(EditorSaveMode.COPY, EditorSaveMode.OVERWRITE).forEach { mode ->
+
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onChoose(EditorSaveMode.COPY, selectedFormat, remember) }
+                    .padding(vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column {
+                    Text(EditorSaveMode.COPY.label, color = Color.White, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        EditorSaveMode.COPY.description,
+                        color = Color.White.copy(alpha = 0.55f),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                // Narrows what tapping the row above produces; tapping a chip does not itself
+                // save. Kept inside the same clickable region as a separate row of smaller
+                // clickables, the same nested-clickable shape TagChip's remove glyph already uses
+                // elsewhere in this app -- Compose resolves the innermost tap target correctly.
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FormatChip("Original", selected = selectedFormat == null) { selectedFormat = null }
+                    OutputFormat.entries.forEach { format ->
+                        FormatChip(format.label, selected = selectedFormat == format) { selectedFormat = format }
+                    }
+                }
+            }
+
+            if (canOverwrite) {
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .clickable { onChoose(mode, remember) }
+                        .clickable { onChoose(EditorSaveMode.OVERWRITE, null, remember) }
                         .padding(vertical = 12.dp),
                 ) {
-                    Text(mode.label, color = Color.White, style = MaterialTheme.typography.bodyLarge)
+                    Text(EditorSaveMode.OVERWRITE.label, color = Color.White, style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        mode.description,
+                        EditorSaveMode.OVERWRITE.description,
                         color = Color.White.copy(alpha = 0.55f),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
+
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -440,6 +647,22 @@ private fun SaveChoiceSheet(
             )
         }
     }
+}
+
+@Composable
+private fun FormatChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (selected) Color.Black else Color.White,
+        style = MaterialTheme.typography.labelSmall,
+        modifier = Modifier
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
+                RoundedCornerShape(50),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    )
 }
 
 /**

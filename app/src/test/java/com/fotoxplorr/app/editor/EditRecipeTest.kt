@@ -139,4 +139,19 @@ class EditRecipeTest {
         assertEquals(".hidden-edited.jpg", editedName(".hidden"))
         assertEquals("photo-edited.jpg", editedName("   "))
     }
+
+    /**
+     * [editedName]'s extension now comes from the chosen [OutputFormat] rather than always being
+     * `.jpg` -- the whole point of Save As. The stem/marker logic above is untouched by format, so
+     * this only needs to pin the one thing that changed: which extension lands on the end.
+     */
+    @Test
+    fun `an edited copy's extension follows the chosen output format, not always jpg`() {
+        assertEquals("holiday-edited.png", editedName("holiday.jpg", OutputFormat.PNG))
+        assertEquals("holiday-edited.webp", editedName("holiday.png", OutputFormat.WEBP))
+        // The default parameter keeps every existing call above compiling and producing exactly
+        // the `.jpg` output it always has -- Save As is additive, not a breaking change to the
+        // ordinary copy path.
+        assertEquals("holiday-edited.jpg", editedName("holiday.png"))
+    }
 }

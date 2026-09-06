@@ -6,6 +6,7 @@ import android.app.RecoverableSecurityException
 import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -36,6 +37,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.fotoxplorr.app.editor.EditedCopyWriter
 import com.fotoxplorr.app.editor.EditorScreen
 import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.share.SharePreparer
@@ -139,6 +141,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val libraryStore = remember { LibraryStore.get(applicationContext) }
     val fileOperations = remember { MediaFileOperations(applicationContext) }
     val metadataWriter = remember { MetadataWriter(applicationContext) }
+    val editedCopyWriter = remember { EditedCopyWriter(applicationContext) }
     val sharePreparer = remember { SharePreparer(applicationContext) }
     val zipExporter = remember { ZipExporter(applicationContext) }
     val changeObserver = remember { MediaStoreChangeObserver(contentResolver) }
@@ -194,6 +197,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     var pendingRenameName by remember { mutableStateOf<String?>(null) }
     var pendingMetadataAsset by remember { mutableStateOf<MediaAsset?>(null) }
     var pendingMetadataEdit by remember { mutableStateOf<MetadataEdit?>(null) }
+    var pendingOverwriteAsset by remember { mutableStateOf<MediaAsset?>(null) }
+    var pendingOverwriteBitmap by remember { mutableStateOf<Bitmap?>(null) }
     // Bumped on every metadata write that actually lands, so ViewerScreen's own EXIF/XMP cache
     // (which only reloads when the asset itself changes) knows to re-read the file it just wrote
     // into. See that parameter's own doc for why nothing else already covers this.
@@ -404,6 +409,69 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     pendingMetadataEdit = null
                     outcome.onSuccess { metadataRevision++; scanRequests.trySend(false) }
                         .onFailure { userMessage = it.message ?: "Android did not allow this file's metadata to be updated." }
+                }
+            }
+        }
+    }
+
+    fun finishOverwrite(outcome: Result<Unit>) {
+        pendingOverwriteAsset = null
+        pendingOverwriteBitmap = null
+        userMessage = outcome.fold(
+            onSuccess = { "Replaced the original." },
+            onFailure = { it.message ?: "Could not replace the original photo." },
+        )
+        // The bytes at this Uri changed size and content; the library's cached size/date-modified
+        // (and any thumbnail) are stale until MediaStore is asked to look again.
+        scanRequests.trySend(false)
+    }
+
+    // Mirrors metadataPermissionLauncher/requestMetadataWrite immediately above, field for field:
+    // the same three-tier consent dance applies here too -- EditedCopyWriter.overwrite touches a
+    // file this app did not create, exactly like a metadata write does.
+    val overwritePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        val asset = pendingOverwriteAsset
+        val bitmap = pendingOverwriteBitmap
+        if (result.resultCode == Activity.RESULT_OK && asset != null && bitmap != null) {
+            scope.launch { finishOverwrite(editedCopyWriter.overwrite(asset, bitmap)) }
+        } else {
+            pendingOverwriteAsset = null
+            pendingOverwriteBitmap = null
+            userMessage = "Android cancelled replacing the original — nothing was saved."
+        }
+    }
+
+    // EditorScreen already rendered the edit at full size and decided OVERWRITE is even possible
+    // for this asset's format (see EditorScreen's own canOverwriteInPlace) before calling this --
+    // this function's only job is the consent dance and the actual write, the same division of
+    // labour requestMetadataWrite already has with MetadataWriter.
+    fun requestOverwrite(asset: MediaAsset, bitmap: Bitmap) {
+        pendingOverwriteAsset = asset
+        pendingOverwriteBitmap = bitmap
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching {
+                MediaStore.createWriteRequest(contentResolver, listOf(asset.contentUri))
+            }.onSuccess { request ->
+                overwritePermissionLauncher.launch(
+                    IntentSenderRequest.Builder(request.intentSender).build(),
+                )
+            }.onFailure { error ->
+                pendingOverwriteAsset = null
+                pendingOverwriteBitmap = null
+                userMessage = error.message ?: "Could not request permission to replace the original."
+            }
+        } else {
+            scope.launch {
+                val outcome = editedCopyWriter.overwrite(asset, bitmap)
+                val error = outcome.exceptionOrNull()
+                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q && error is RecoverableSecurityException) {
+                    overwritePermissionLauncher.launch(
+                        IntentSenderRequest.Builder(error.userAction.actionIntent.intentSender).build(),
+                    )
+                } else {
+                    finishOverwrite(outcome)
                 }
             }
         }
@@ -685,6 +753,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 // The copy is a new file, so the library has to learn about it.
                 scanRequests.trySend(false)
             },
+            onOverwrite = ::requestOverwrite,
         )
     } else if (activeAsset != null) {
         BackHandler {

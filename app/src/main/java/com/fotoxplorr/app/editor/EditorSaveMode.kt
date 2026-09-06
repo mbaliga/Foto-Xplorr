@@ -26,11 +26,14 @@ enum class EditorSaveMode(val label: String, val description: String) {
     ),
 
     /**
-     * Replace the original.
+     * Replace the original, in its own existing format, in place.
      *
      * Needs a per-file write grant from Android for photos this app did not create, so it can be
-     * refused by the system even when it is the chosen mode — the editor falls back to a copy and
-     * says so rather than failing the save.
+     * refused by the system even when it is the chosen mode -- and it is simply not possible at
+     * all for a source format `Bitmap` has no encoder for (HEIC, GIF, RAW, ...), since replacing a
+     * file's bytes cannot also change its extension. Either way the editor falls back to a copy
+     * and says so rather than failing the save; see [EditedCopyWriter.overwrite] and
+     * `overwriteFormatFor` for exactly which formats this mode can actually reach.
      */
     OVERWRITE(
         "Replace the original",
