@@ -135,6 +135,23 @@ fun ViewerScreen(
     caption: String = "",
     captionIsMachineWritten: Boolean = false,
     onSetCaption: ((String) -> Unit)? = null,
+    /**
+     * Editors for this photo's own FILE-embedded metadata — its current value is read off
+     * [PhotoDetailRoom]'s own `exif` parameter, already loaded by this screen just below, not
+     * passed in again here. See [PhotoDetailRoom].
+     */
+    onSetRating: ((Int) -> Unit)? = null,
+    onSetCreator: ((String) -> Unit)? = null,
+    onSetCopyright: ((String) -> Unit)? = null,
+    onEmbedKeywords: (() -> Unit)? = null,
+    /**
+     * Bumped by the caller every time a metadata write actually lands on this asset's file, so
+     * the EXIF/XMP re-read below picks it up. [exif] is otherwise only reloaded when [asset]
+     * itself changes — a rating tapped or a creator typed would otherwise sit on screen showing
+     * its OLD value until the viewer moved to a different photo and back, since nothing else here
+     * observes a write this screen did not itself perform.
+     */
+    metadataRevision: Int = 0,
     /** Let GIFs and animated images play. */
     loopAnimations: Boolean = false,
     /** Start videos without waiting for a tap on play. */
@@ -178,7 +195,7 @@ fun ViewerScreen(
     // leave the card empty for the rest of the gesture.
     val context = LocalContext.current
     var exif by remember(asset.id) { mutableStateOf(ImageExifDetails()) }
-    LaunchedEffect(asset.id) {
+    LaunchedEffect(asset.id, metadataRevision) {
         exif = readImageExifDetails(context, asset)
     }
 
@@ -271,6 +288,10 @@ fun ViewerScreen(
                 caption = caption,
                 captionIsMachineWritten = captionIsMachineWritten,
                 onSetCaption = onSetCaption,
+                onSetRating = onSetRating,
+                onSetCreator = onSetCreator,
+                onSetCopyright = onSetCopyright,
+                onEmbedKeywords = onEmbedKeywords,
                 // NEGATED, and this is not cosmetic. The bottom room opens with vProgress
                 // running NEGATIVE (SpatialMotion's sign convention), while PlaceMorph.stagger
                 // clamps its input to 0..1 -- so feeding the raw value would hold every stagger

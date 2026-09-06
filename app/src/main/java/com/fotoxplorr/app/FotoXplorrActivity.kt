@@ -61,6 +61,9 @@ import com.fotoxplorr.app.media.ScanEvent
 import com.fotoxplorr.app.media.ScanPlan
 import com.fotoxplorr.app.media.SqliteMediaRepository
 import com.fotoxplorr.app.curate.AutoCurationPass
+import com.fotoxplorr.app.metadata.GpsCoordinate
+import com.fotoxplorr.app.metadata.MetadataEdit
+import com.fotoxplorr.app.metadata.MetadataWriter
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.recognition.RecognitionIndexer
@@ -135,6 +138,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val privateFolderStore = remember { PrivateFolderStore(applicationContext) }
     val libraryStore = remember { LibraryStore.get(applicationContext) }
     val fileOperations = remember { MediaFileOperations(applicationContext) }
+    val metadataWriter = remember { MetadataWriter(applicationContext) }
     val sharePreparer = remember { SharePreparer(applicationContext) }
     val zipExporter = remember { ZipExporter(applicationContext) }
     val changeObserver = remember { MediaStoreChangeObserver(contentResolver) }
@@ -188,6 +192,12 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     var pendingTreeItems by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
     var pendingRenameAsset by remember { mutableStateOf<MediaAsset?>(null) }
     var pendingRenameName by remember { mutableStateOf<String?>(null) }
+    var pendingMetadataAsset by remember { mutableStateOf<MediaAsset?>(null) }
+    var pendingMetadataEdit by remember { mutableStateOf<MetadataEdit?>(null) }
+    // Bumped on every metadata write that actually lands, so ViewerScreen's own EXIF/XMP cache
+    // (which only reloads when the asset itself changes) knows to re-read the file it just wrote
+    // into. See that parameter's own doc for why nothing else already covers this.
+    var metadataRevision by remember { mutableStateOf(0) }
     var userMessage by remember { mutableStateOf<String?>(null) }
     var editingAsset by remember { mutableStateOf<MediaAsset?>(null) }
     // Text handed over from the viewer's "Search inside this photo" card, on its way to the
@@ -329,6 +339,71 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                         },
                         onFailure = { it.message ?: "Android did not allow this file to be renamed." },
                     )
+                }
+            }
+        }
+    }
+
+    fun performPendingMetadataWrite() {
+        val asset = pendingMetadataAsset ?: return
+        val edit = pendingMetadataEdit ?: return
+        scope.launch {
+            val outcome = metadataWriter.write(asset, edit)
+            pendingMetadataAsset = null
+            pendingMetadataEdit = null
+            // Both a scan request (the write changed the file's own size/modified-date, which
+            // InformationBlock shows) and the revision bump (so ViewerScreen's own EXIF/XMP cache
+            // for THIS still-open photo re-reads immediately, rather than waiting on that scan).
+            outcome.onSuccess { metadataRevision++; scanRequests.trySend(false) }
+                .onFailure { userMessage = it.message ?: "Android did not allow this file's metadata to be updated." }
+        }
+    }
+
+    // Mirrors renamePermissionLauncher/requestRename immediately above, field for field: the same
+    // three-tier consent dance (direct write pre-Q, RecoverableSecurityException on Q, an upfront
+    // MediaStore.createWriteRequest on R+) applies to any write into a file this app did not
+    // itself create, and a caption/rating/keyword edit is exactly that kind of write.
+    val metadataPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            performPendingMetadataWrite()
+        } else {
+            pendingMetadataAsset = null
+            pendingMetadataEdit = null
+            userMessage = "Android cancelled the metadata update."
+        }
+    }
+
+    fun requestMetadataWrite(asset: MediaAsset, edit: MetadataEdit) {
+        if (edit.isEmpty) return
+        pendingMetadataAsset = asset
+        pendingMetadataEdit = edit
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching {
+                MediaStore.createWriteRequest(contentResolver, listOf(asset.contentUri))
+            }.onSuccess { request ->
+                metadataPermissionLauncher.launch(
+                    IntentSenderRequest.Builder(request.intentSender).build(),
+                )
+            }.onFailure { error ->
+                pendingMetadataAsset = null
+                pendingMetadataEdit = null
+                userMessage = error.message ?: "Could not request metadata write permission."
+            }
+        } else {
+            scope.launch {
+                val outcome = metadataWriter.write(asset, edit)
+                val error = outcome.exceptionOrNull()
+                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q && error is RecoverableSecurityException) {
+                    metadataPermissionLauncher.launch(
+                        IntentSenderRequest.Builder(error.userAction.actionIntent.intentSender).build(),
+                    )
+                } else {
+                    pendingMetadataAsset = null
+                    pendingMetadataEdit = null
+                    outcome.onSuccess { metadataRevision++; scanRequests.trySend(false) }
+                        .onFailure { userMessage = it.message ?: "Android did not allow this file's metadata to be updated." }
                 }
             }
         }
@@ -636,6 +711,28 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             caption = library.captionFor(activeAsset.id),
             captionIsMachineWritten = library.isMachineCaption(activeAsset.id),
             onSetCaption = { text -> libraryStore.setCaption(activeAsset.id, text) },
+            // MetadataWriter is built on ExifInterface, which this app relies on only for still
+            // images (see readImageExifDetails's own early return for asset.isVideo) -- so these
+            // stay null for a video rather than offering fields a tap on would just fail against.
+            // Video's own metadata story is Phase 3/4, not this one.
+            onSetRating = if (activeAsset.isVideo) null else { rating: Int ->
+                requestMetadataWrite(activeAsset, MetadataEdit(rating = rating))
+            },
+            onSetCreator = if (activeAsset.isVideo) null else { creator: String ->
+                requestMetadataWrite(activeAsset, MetadataEdit(creator = creator))
+            },
+            onSetCopyright = if (activeAsset.isVideo) null else { copyright: String ->
+                requestMetadataWrite(activeAsset, MetadataEdit(copyright = copyright))
+            },
+            onEmbedKeywords = if (activeAsset.isVideo) null else {
+                {
+                    val tags = library.tagsFor(activeAsset.id)
+                    if (tags.isNotEmpty()) {
+                        requestMetadataWrite(activeAsset, MetadataEdit(keywordsToAdd = tags.toList()))
+                    }
+                }
+            },
+            metadataRevision = metadataRevision,
             // The Search pill in the details room. Closing the viewer is done HERE rather than
             // inside ViewerScreen (see that parameter's own doc): the results land in the grid,
             // and leaving the photo open on top of them would put the answer behind the question.
@@ -684,9 +781,22 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             manualLongitude = geoState.metadataById[activeAsset.id]?.longitude,
             onSetLocation = { latitude, longitude ->
                 scope.launch { geoRepository.setManualLocation(activeAsset.id, latitude, longitude) }
+                // PlaceBlock only ever offers this picker when the file itself carries no GPS
+                // tag (see its own KDoc), so writing this coordinate into the file's EXIF here
+                // can only ever be FILLING IN an absent location, never overwriting a real one.
+                // That is what turns a hand-placed pin from an app-only fact into one that
+                // travels with the file when it is copied, shared, or opened elsewhere. Skipped
+                // for a video for the same reason as the fields just above: MetadataWriter is an
+                // ExifInterface-on-still-images story, not (yet) a video one.
+                if (!activeAsset.isVideo) {
+                    requestMetadataWrite(activeAsset, MetadataEdit(setLocation = GpsCoordinate(latitude, longitude)))
+                }
             },
             onClearLocation = {
                 scope.launch { geoRepository.clearManualLocation(activeAsset.id) }
+                if (!activeAsset.isVideo) {
+                    requestMetadataWrite(activeAsset, MetadataEdit(clearLocation = true))
+                }
             },
             // The viewer's own settings room edits these, so it needs the value and the setter.
             blurSensitive = preferences.blurSensitive,

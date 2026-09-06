@@ -30,9 +30,11 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -65,6 +67,9 @@ import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.metadata.CurrentMetadata
+import com.fotoxplorr.app.metadata.XmpPacket
+import com.fotoxplorr.app.metadata.currentMetadataFrom
 import com.fotoxplorr.app.palette.PaletteExtractor
 import com.fotoxplorr.app.palette.PaletteSwatch
 import kotlinx.coroutines.Dispatchers
@@ -174,6 +179,17 @@ fun PhotoDetailRoom(
     captionIsMachineWritten: Boolean = false,
     /** Null leaves the caption read-only, the same shape [onSetLocation] uses. */
     onSetCaption: ((String) -> Unit)? = null,
+    /**
+     * `0` clears the rating; `1..5` sets it. Null leaves the row read-only. The current value is
+     * read off [exif]`.professionalMetadata`, not a separate parameter here — the same file this
+     * whole room already reads for its camera facts is the one [com.fotoxplorr.app.metadata.MetadataWriter]
+     * writes these fields into.
+     */
+    onSetRating: ((Int) -> Unit)? = null,
+    onSetCreator: ((String) -> Unit)? = null,
+    onSetCopyright: ((String) -> Unit)? = null,
+    /** Writes this photo's [tags] into the file's own XMP keyword list. See [TagsBlock]. */
+    onEmbedKeywords: (() -> Unit)? = null,
 ) {
     // The shell deliberately consumes no insets — it says so in its own KDoc, because doing so
     // would lift its drag-sensitive edges off the physical screen edge. So a room pads for the
@@ -200,12 +216,19 @@ fun PhotoDetailRoom(
             reveal = reveal,
         )
         TextLensBlock(asset = asset, recognizedText = recognizedText, onSearchLibrary = onSearchLibrary)
-        TagsBlock(tags = tags, autoTags = autoTags, onRemoveTag = onRemoveTag)
+        TagsBlock(tags = tags, autoTags = autoTags, onRemoveTag = onRemoveTag, onEmbedKeywords = onEmbedKeywords)
         CaptionBlock(
             photoId = asset.id,
             caption = caption,
             isMachineWritten = captionIsMachineWritten,
             onSetCaption = onSetCaption,
+        )
+        MetadataBlock(
+            photoId = asset.id,
+            metadata = exif.professionalMetadata,
+            onSetRating = onSetRating,
+            onSetCreator = onSetCreator,
+            onSetCopyright = onSetCopyright,
         )
         InformationBlock(asset = asset, exif = exif, reveal = reveal)
         // The place plate goes LAST, because it is the thing this room exists to show. It used
@@ -334,7 +357,12 @@ private fun TextLensBlock(
  * [StatusBlock]'s own reasoning: an empty section header is a promise the room does not keep.
  */
 @Composable
-private fun TagsBlock(tags: Set<String>, autoTags: Set<String>, onRemoveTag: ((String) -> Unit)?) {
+private fun TagsBlock(
+    tags: Set<String>,
+    autoTags: Set<String>,
+    onRemoveTag: ((String) -> Unit)?,
+    onEmbedKeywords: (() -> Unit)? = null,
+) {
     if (tags.isEmpty()) return
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
@@ -363,6 +391,19 @@ private fun TagsBlock(tags: Set<String>, autoTags: Set<String>, onRemoveTag: ((S
                     "removes it for good — it will not be suggested again.",
                 color = MUTED_TEXT,
                 style = RoomStyle.Caption,
+            )
+        }
+        // Tags above live in this app's own library, same as a caption typed before this photo's
+        // file supported one -- see MetadataWriter's own class doc on the distinction. This is
+        // the bridge between the two: a photographer's tags, written into the file's own XMP
+        // keyword list, so they travel with a copy or a share rather than staying legible only
+        // inside Foto Xplorr.
+        if (onEmbedKeywords != null) {
+            Text(
+                text = "Embed these tags as keywords in the file →",
+                color = SECONDARY_TEXT,
+                style = RoomStyle.Caption,
+                modifier = Modifier.clickable(onClick = onEmbedKeywords),
             )
         }
     }
@@ -440,45 +481,149 @@ private fun CaptionBlock(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         RoomEyebrow("CAPTION")
-
-        if (onSetCaption == null) {
-            Text(text = caption, color = PRIMARY_TEXT, style = RoomStyle.Caption)
-        } else {
-            // key(photoId): a change of photo DISPOSES this whole editable block and creates a
-            // fresh one, rather than recomposing it in place. That is what makes the dispose-time
-            // flush below commit to the right photo: an in-place recomposition would have reset
-            // the draft to the new photo's caption before the old effect's onDispose ran, so the
-            // old photo's unsaved draft compared equal to "nothing typed" and was dropped.
-            key(photoId) {
-                var draft by remember(caption) { mutableStateOf(caption) }
-                // rememberUpdatedState so the flush reads the LATEST draft, and the commit lambda
-                // this block last saw -- which, inside the disposed key, is still the old photo's.
-                val latestDraft by rememberUpdatedState(draft)
-                val latestStored by rememberUpdatedState(caption)
-                val latestCommit by rememberUpdatedState(onSetCaption)
-                DisposableEffect(Unit) {
-                    onDispose {
-                        if (latestDraft != latestStored) latestCommit(latestDraft)
-                    }
-                }
-                HyleTextField(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    placeholder = "Say something about this photo",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onFocusChanged { focus ->
-                            if (!focus.isFocused && draft != caption) onSetCaption(draft)
-                        },
-                )
-            }
-        }
-
+        EditableCommitField(
+            fieldKey = photoId,
+            value = caption,
+            placeholder = "Say something about this photo",
+            onCommit = onSetCaption,
+        )
         if (caption.isNotBlank() && isMachineWritten) {
             Text(
                 text = "Written by on-device recognition. Type over it and it becomes yours.",
                 color = MUTED_TEXT,
                 style = RoomStyle.Caption,
+            )
+        }
+    }
+}
+
+/**
+ * A text field that holds its own draft and commits only when it stops being safe to keep
+ * editing — the exact dance [CaptionBlock]'s own history explains in full: focus loss alone is
+ * not a guaranteed final event, so the draft is also flushed when this block leaves composition
+ * (room closed, photo swiped away with the field still focused) rather than only on blur.
+ *
+ * Pulled out once [MetadataBlock]'s creator and copyright rows needed the identical dance: three
+ * independent copies of logic this subtle (see the dispose-time flush below) are three
+ * independent places it could quietly drift out of sync, which is a different situation from
+ * three merely SIMILAR lines.
+ *
+ * @param fieldKey identifies which field on which photo this draft belongs to. Keying on [value]
+ *   alone is wrong: two photos with the same blank field would share the key "", the `remember`
+ *   would never reset across a page swipe, and a half-typed draft would ride onto the wrong photo.
+ */
+@Composable
+private fun EditableCommitField(
+    fieldKey: Any,
+    value: String,
+    placeholder: String,
+    onCommit: ((String) -> Unit)?,
+) {
+    if (onCommit == null) {
+        if (value.isNotBlank()) Text(text = value, color = PRIMARY_TEXT, style = RoomStyle.Caption)
+        return
+    }
+    // key(fieldKey): see this function's own doc, and CaptionBlock's history, for why an in-place
+    // recomposition across a field/photo change would commit the wrong draft to the wrong place.
+    key(fieldKey) {
+        var draft by remember(value) { mutableStateOf(value) }
+        val latestDraft by rememberUpdatedState(draft)
+        val latestStored by rememberUpdatedState(value)
+        val latestCommit by rememberUpdatedState(onCommit)
+        DisposableEffect(Unit) {
+            onDispose {
+                if (latestDraft != latestStored) latestCommit(latestDraft)
+            }
+        }
+        HyleTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            placeholder = placeholder,
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { focus ->
+                    if (!focus.isFocused && draft != value) onCommit(draft)
+                },
+        )
+    }
+}
+
+/**
+ * The professional fields a photographer's own tools already read and write — star rating,
+ * creator, copyright — as opposed to [StatusBlock] just below, which is this app's own private
+ * knowledge about a photo. These are written into the FILE itself (EXIF and XMP together; see
+ * [com.fotoxplorr.app.metadata.MetadataWriter]) precisely so they show up unchanged in Lightroom,
+ * Photo Mechanic, or any other tool the same file is later opened in.
+ *
+ * Renders nothing when every callback is null AND there is nothing to show — the same "an absent
+ * feature affordance is worse than no affordance" reasoning [CaptionBlock] already established,
+ * rather than a permanently-visible section most callers (anything not yet wired to
+ * [com.fotoxplorr.app.metadata.MetadataWriter]) would show as three dead rows.
+ */
+@Composable
+private fun MetadataBlock(
+    photoId: MediaId,
+    metadata: CurrentMetadata,
+    onSetRating: ((Int) -> Unit)?,
+    onSetCreator: ((String) -> Unit)?,
+    onSetCopyright: ((String) -> Unit)?,
+) {
+    val hasAnyField = onSetRating != null || onSetCreator != null || onSetCopyright != null ||
+        metadata.rating != null || !metadata.creator.isNullOrBlank() || !metadata.copyright.isNullOrBlank()
+    if (!hasAnyField) return
+
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        RoomEyebrow("METADATA")
+        if (onSetRating != null || metadata.rating != null) {
+            RatingRow(rating = metadata.rating ?: 0, onSetRating = onSetRating)
+        }
+        if (onSetCreator != null || !metadata.creator.isNullOrBlank()) {
+            Text(text = "Creator", color = MUTED_TEXT, style = TextStyle(fontSize = 13.sp))
+            EditableCommitField(
+                fieldKey = photoId,
+                value = metadata.creator.orEmpty(),
+                placeholder = "Photographer or studio name",
+                onCommit = onSetCreator,
+            )
+        }
+        if (onSetCopyright != null || !metadata.copyright.isNullOrBlank()) {
+            Text(text = "Copyright", color = MUTED_TEXT, style = TextStyle(fontSize = 13.sp))
+            EditableCommitField(
+                fieldKey = photoId,
+                value = metadata.copyright.orEmpty(),
+                placeholder = "© 2026 your name",
+                onCommit = onSetCopyright,
+            )
+        }
+    }
+}
+
+/**
+ * Five tappable stars. Tapping the star that already sets the current rating clears it back to
+ * unrated rather than re-applying the same value — the standard rating-widget affordance, and the
+ * only way back to "no rating" once any star has been tapped, since there is no sixth "clear" star.
+ */
+@Composable
+private fun RatingRow(rating: Int, onSetRating: ((Int) -> Unit)?) {
+    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        for (star in 1..5) {
+            val filled = star <= rating
+            Icon(
+                imageVector = if (filled) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                contentDescription = null,
+                tint = if (filled) PRIMARY_TEXT else MUTED_TEXT,
+                modifier = Modifier
+                    .size(22.dp)
+                    .then(
+                        if (onSetRating != null) {
+                            Modifier.clickable { onSetRating(if (star == rating) 0 else star) }
+                        } else {
+                            Modifier
+                        },
+                    ),
             )
         }
     }
@@ -918,6 +1063,15 @@ data class ImageExifDetails(
     val longitude: Double? = null,
     /** Human-readable colour space, when the file names one. */
     val colorSpace: String? = null,
+    /**
+     * The photographer-grade fields this file already carries — caption, creator, copyright,
+     * rating, keywords — read from the SAME [ExifInterface] this whole block is built from
+     * rather than a second file open, since [com.fotoxplorr.app.metadata.MetadataWriter] writes
+     * exactly these fields and the details room needs to show the current value before anyone
+     * edits it.
+     */
+    val professionalMetadata: CurrentMetadata =
+        CurrentMetadata.EMPTY,
 )
 
 suspend fun readImageExifDetails(context: Context, asset: MediaAsset): ImageExifDetails {
@@ -957,6 +1111,12 @@ private fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
         latitude = latLong?.get(0),
         longitude = latLong?.get(1),
         colorSpace = colorSpaceName(exif.getAttributeInt(ExifInterface.TAG_COLOR_SPACE, -1)),
+        professionalMetadata = currentMetadataFrom(
+            xmp = exif.getAttribute(ExifInterface.TAG_XMP)?.let { XmpPacket.parse(it) },
+            exifImageDescription = exif.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION),
+            exifArtist = exif.getAttribute(ExifInterface.TAG_ARTIST),
+            exifCopyright = exif.getAttribute(ExifInterface.TAG_COPYRIGHT),
+        ),
     )
 }
 
