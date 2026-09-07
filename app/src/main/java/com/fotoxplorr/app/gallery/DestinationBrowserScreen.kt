@@ -53,10 +53,12 @@ import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
 
 /**
- * The nine primary destinations from the owner's mockups. These are the app's top-level
- * information architecture -- reached from the rail room, not from a route -- and have
- * replaced the retired four-tab bottom navigation (Photos / Albums / Discover / Library) as
- * the default IA.
+ * The primary destinations from the owner's mockups, plus Audio (added for standalone audio
+ * file browsing/playback — the one destination here with no [com.fotoxplorr.app.media.MediaAsset]
+ * behind it at all; see [destinationAssets] and [com.fotoxplorr.app.audio.LocalAudioLibrary]).
+ * These are the app's top-level information architecture -- reached from the rail room, not from
+ * a route -- and have replaced the retired four-tab bottom navigation (Photos / Albums / Discover
+ * / Library) as the default IA.
  *
  * A destination is a WORD, not a word and an icon.
  *
@@ -75,6 +77,7 @@ enum class HyleDestination(val label: String) {
     FAVOURITES("Favourites"),
     PLACES("Places"),
     PROTECTED("Protected"),
+    AUDIO("Audio"),
 }
 
 /** Which assets a destination shows. Kept separate from the UI so it is testable. */
@@ -109,8 +112,9 @@ fun destinationAssets(
         HyleDestination.PEOPLE -> everyday().filter { it.id in state.recognition.peopleMediaIds }
         HyleDestination.PETS -> everyday().filter { it.id in state.recognition.petMediaIds }
         HyleDestination.IDENTITY -> everyday().filter { it.id in state.recognition.identityMediaIds }
-        // Rendered by their own panes rather than a flat grid.
-        HyleDestination.PLACES, HyleDestination.PROTECTED -> emptyList()
+        // Rendered by their own panes rather than a flat grid. AUDIO has no MediaAsset behind it
+        // at all -- its own list comes from LocalAudioLibrary, read directly in DestinationContent.
+        HyleDestination.PLACES, HyleDestination.PROTECTED, HyleDestination.AUDIO -> emptyList()
     }
     if (query.isBlank()) return base
     return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds) }
@@ -272,6 +276,17 @@ fun DestinationContent(
             unlockedFolders = state.unlockedFolders,
             onOpenFolder = { key -> onRequestUnlock(key, key) },
         )
+        HyleDestination.AUDIO -> {
+            val audio = com.fotoxplorr.app.audio.LocalAudioLibrary.current
+            if (audio != null) {
+                com.fotoxplorr.app.audio.AudioLibraryScreen(
+                    assets = audio.assets,
+                    onPlay = { asset -> audio.onPlay(asset, audio.assets) },
+                )
+            } else {
+                DestinationMessage("Audio is unavailable here")
+            }
+        }
         else -> Column(Modifier.fillMaxSize()) {
             if (destination == HyleDestination.PEOPLE && state.recognition.people.isNotEmpty()) {
                 PeopleStrip(

@@ -124,6 +124,9 @@ class CatalogueCharacterisationTest {
          * the regeneration rule.
          */
         val GOLDENS: Map<String, String> = mapOf(
+            // AUDIO has no MediaAsset behind it at all (see destinationAssets' own comment) --
+            // always the empty projection, same fingerprint as PLACES/PROTECTED below.
+            "destination:AUDIO" to "0:cbf29ce484222325:-1:-1",
             "destination:FAVOURITES" to "1178:d2ef98cb77ff9028:7:9996",
             "destination:IDENTITY" to "258:989689564c45ee63:58:9860",
             "destination:PEOPLE" to "2999:395a1ed18e4a86c2:3:9996",

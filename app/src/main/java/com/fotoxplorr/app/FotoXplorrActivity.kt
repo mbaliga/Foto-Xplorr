@@ -37,6 +37,13 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.fotoxplorr.app.audio.AndroidAudioMediaStoreScanner
+import com.fotoxplorr.app.audio.AudioAsset
+import com.fotoxplorr.app.audio.AudioConversionWriter
+import com.fotoxplorr.app.audio.AudioIndexer
+import com.fotoxplorr.app.audio.AudioPlayerScreen
+import com.fotoxplorr.app.audio.InMemoryAudioRepository
+import com.fotoxplorr.app.audio.PrefsAudioScanWatermark
 import com.fotoxplorr.app.editor.EditedCopyWriter
 import com.fotoxplorr.app.editor.EditorScreen
 import com.fotoxplorr.app.favorites.FavoriteStore
@@ -160,6 +167,17 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             watermark = PrefsScanWatermark(applicationContext),
         )
     }
+    // Audio's own repository/indexer, parallel to the photo/video ones above rather than folded
+    // into them -- see AudioAsset's own doc for why the two asset types stay apart everywhere.
+    val audioRepository = remember { InMemoryAudioRepository() }
+    val audioIndexer = remember {
+        AudioIndexer(
+            scanner = AndroidAudioMediaStoreScanner(contentResolver),
+            repository = audioRepository,
+            watermark = PrefsAudioScanWatermark(applicationContext),
+        )
+    }
+    val audioConversionWriter = remember { AudioConversionWriter(applicationContext) }
     val scope = rememberCoroutineScope()
     // One geo index for the whole app: the gallery reads it for the map and compass, the viewer
     // writes hand-placed locations into it. Two instances over the same file would each hold
@@ -168,6 +186,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val geoState by geoRepository.observe().collectAsStateWithLifecycle()
 
     val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    val audioAssets by audioRepository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val sensitiveIds by sensitiveStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val lockedFolders by privateFolderStore.observeLockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
@@ -188,9 +207,16 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // A channel decouples "something changed" from "a scan is running": requests that arrive
     // mid-scan are collapsed into one follow-up pass instead of killing the current one.
     val scanRequests = remember { Channel<Boolean>(Channel.CONFLATED) }
+    // Audio's own conflated request channel -- kept separate from `scanRequests` above rather than
+    // shared, since a Kotlin Channel hands each element to exactly one collector: two independent
+    // `for` loops over the same channel would each only see some of the requests, not all of them.
+    val audioScanRequests = remember { Channel<Boolean>(Channel.CONFLATED) }
 
     var viewerAssets by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
     var selectedAssetId by remember { mutableStateOf<MediaId?>(null) }
+    var audioQueue by remember { mutableStateOf<List<AudioAsset>>(emptyList()) }
+    var selectedAudioAssetId by remember { mutableStateOf<MediaId?>(null) }
+    var convertingAudioId by remember { mutableStateOf<MediaId?>(null) }
     var slideshowActive by remember { mutableStateOf(false) }
     var pendingOperation by remember { mutableStateOf<PendingMediaOperation?>(null) }
     var pendingOperationIds by remember { mutableStateOf<Set<MediaId>>(emptySet()) }
@@ -224,6 +250,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
 
     val selectedIndex = selectedAssetId?.let { id -> viewerAssets.indexOfFirst { it.id == id } } ?: -1
     val activeAsset = viewerAssets.getOrNull(selectedIndex)
+    val activeAudioAsset = selectedAudioAssetId?.let { id -> audioQueue.firstOrNull { it.id == id } }
 
     DisposableEffect(unlockedFolders.isNotEmpty()) {
         if (unlockedFolders.isNotEmpty()) {
@@ -502,6 +529,23 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
     }
 
+    // AudioConversionWriter's own doc explains why this too needs no permission dance: like a
+    // video conversion, it inserts a brand-new MediaStore row this app owns rather than touching
+    // the source file.
+    fun requestAudioConversion(asset: AudioAsset) {
+        if (convertingAudioId != null) return
+        convertingAudioId = asset.id
+        scope.launch {
+            val outcome = audioConversionWriter.convertToAac(asset)
+            convertingAudioId = null
+            outcome.onSuccess { audioScanRequests.trySend(false) }
+            userMessage = outcome.fold(
+                onSuccess = { "Converted to AAC (M4A)." },
+                onFailure = { it.message ?: "Could not convert this audio file." },
+            )
+        }
+    }
+
     val treeLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
     ) { treeUri ->
@@ -713,6 +757,25 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
     }
 
+    // Audio's own change-triggered rescan, mirroring the two LaunchedEffects just above field for
+    // field. MediaStoreChangeObserver already watches the whole `Files` table (audio rows
+    // included), so no second observer is needed -- just this pipeline's own debounced trigger
+    // and its own consumer loop over `audioScanRequests`.
+    LaunchedEffect(permissionGranted) {
+        if (!permissionGranted) return@LaunchedEffect
+        changeObserver.changes()
+            .debounce(MEDIA_CHANGE_DEBOUNCE_MS)
+            .collect { audioScanRequests.trySend(false) }
+    }
+
+    LaunchedEffect(permissionGranted) {
+        if (!permissionGranted) return@LaunchedEffect
+        audioScanRequests.trySend(true) // first pass after a grant is a full one
+        for (userRequested in audioScanRequests) {
+            audioIndexer.refresh(userRequested = userRequested).collect { }
+        }
+    }
+
     LaunchedEffect(Unit) { recognitionStore.reload() }
 
     // Guarded on a generation counter rather than the asset list itself, so a recomposition
@@ -734,6 +797,13 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             selectedAssetId = null
             viewerAssets = emptyList()
             slideshowActive = false
+        }
+    }
+
+    LaunchedEffect(selectedAudioAssetId, activeAudioAsset) {
+        if (selectedAudioAssetId != null && activeAudioAsset == null) {
+            selectedAudioAssetId = null
+            audioQueue = emptyList()
         }
     }
 
@@ -935,9 +1005,30 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 }
             },
         )
+    } else if (activeAudioAsset != null) {
+        BackHandler {
+            selectedAudioAssetId = null
+            audioQueue = emptyList()
+        }
+        AudioPlayerScreen(
+            asset = activeAudioAsset,
+            queue = audioQueue,
+            onClose = {
+                selectedAudioAssetId = null
+                audioQueue = emptyList()
+            },
+            onSelect = { picked -> selectedAudioAssetId = picked.id },
+            isConverting = convertingAudioId == activeAudioAsset.id,
+            onConvertToAac = { requestAudioConversion(activeAudioAsset) },
+        )
     } else {
         GalleryScreen(
             geoRepository = geoRepository,
+            audioAssets = audioAssets,
+            onPlayAudio = { asset, queue ->
+                audioQueue = queue
+                selectedAudioAssetId = asset.id
+            },
             state = GalleryUiState(
                 assets = assets,
                 favoriteIds = favoriteIds,

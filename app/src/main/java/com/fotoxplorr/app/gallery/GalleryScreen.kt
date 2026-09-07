@@ -300,6 +300,12 @@ fun GalleryScreen(
      * appear on the map until the app was restarted.
      */
     geoRepository: GeoMetadataRepository = rememberGeoRepository(),
+    /** The Audio destination's own catalogue and its way to start playback — see
+     *  [com.fotoxplorr.app.audio.LocalAudioLibrary]'s own doc for why this rides a composition
+     *  local into [DestinationContent] rather than a parameter threaded through every
+     *  intermediate composable, the same shape [geoRepository] uses for Places. */
+    audioAssets: List<com.fotoxplorr.app.audio.AudioAsset> = emptyList(),
+    onPlayAudio: (com.fotoxplorr.app.audio.AudioAsset, List<com.fotoxplorr.app.audio.AudioAsset>) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     val geoState by geoRepository.observe().collectAsStateWithLifecycle()
@@ -307,6 +313,10 @@ fun GalleryScreen(
     val spatialAssets = remember(state.assets) { state.assets.filterNot { it.isTrashed } }
 
     CompositionLocalProvider(
+        com.fotoxplorr.app.audio.LocalAudioLibrary provides com.fotoxplorr.app.audio.AudioLibraryExperience(
+            assets = audioAssets,
+            onPlay = onPlayAudio,
+        ),
         LocalSpatialExperience provides SpatialExperience(
             assets = spatialAssets,
             geoState = geoState,
