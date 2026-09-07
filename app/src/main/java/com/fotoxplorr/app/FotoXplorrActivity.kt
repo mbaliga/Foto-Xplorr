@@ -69,6 +69,7 @@ import com.fotoxplorr.app.metadata.MetadataWriter
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.video.VideoConversionWriter
+import com.fotoxplorr.app.videoeditor.VideoEditorScreen
 import com.fotoxplorr.app.recognition.RecognitionIndexer
 import com.fotoxplorr.app.recognition.RecognitionStore
 import com.fotoxplorr.app.privacy.SensitiveStore
@@ -764,7 +765,22 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     }
 
     val editing = editingAsset
-    if (editing != null) {
+    if (editing != null && editing.isVideo) {
+        // A separate screen, not a branch inside EditorScreen: trim/speed share almost nothing
+        // with EditRecipe's crop/colour/rotate model (see VideoEditRecipe's own doc), and forcing
+        // both asset types through one composable would mean every future photo-only or
+        // video-only tool growing an "if (asset.isVideo)" branch somewhere inside it.
+        BackHandler { editingAsset = null }
+        VideoEditorScreen(
+            asset = editing,
+            onClose = { editingAsset = null },
+            onSaved = { message ->
+                editingAsset = null
+                userMessage = message
+                scanRequests.trySend(false)
+            },
+        )
+    } else if (editing != null) {
         BackHandler { editingAsset = null }
         EditorScreen(
             asset = editing,

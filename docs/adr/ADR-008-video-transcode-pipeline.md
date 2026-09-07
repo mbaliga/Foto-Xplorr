@@ -88,6 +88,21 @@ a green `verify.sh` as evidence the transcode itself produces a valid, correctly
   historical bug — `docs/TRAPS.md` #24) so both call sites use one tested implementation rather than
   two independently-written copies of the same easy mistake.
 
+## Addendum (2026-09-07) — Phase 4: trim and speed
+
+`VideoEditRecipe` threads a trim range and a speed factor through the same decode/encode loop
+described above, landing two of Phase 4's five named tools (trim, speed) on this pipeline. Trim
+seeks to the previous keyframe for correct decode state, same as `ClipExporter`, but discards
+frames before the exact requested start rather than snapping the whole export to a keyframe
+boundary the way `ClipExporter`'s stream-copy has to. Speed change scales presentation timestamps
+for video and relabels the encoded audio track's own declared sample rate — the same samples,
+called a different rate, which is the tape-speed mechanism and changes pitch along with tempo
+rather than preserving it. Text overlay, music replacement and filters remain a named follow-up —
+see `VideoEditRecipe`'s own doc for why each needs new pipeline capability of its own rather than a
+field on that recipe. The "not verified on a real device" caveat above applies to this addendum
+exactly as much as to the rest of the pipeline; nothing about landing more capability on top of it
+changes that.
+
 ## Reversal
 
 If a genuinely concurrent, streaming mux is ever needed (longer clips, lower peak memory), the

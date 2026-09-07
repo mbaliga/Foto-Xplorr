@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.videoeditor.VideoEditRecipe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -24,9 +25,24 @@ class VideoConversionWriter(context: Context) {
     private val appContext = context.applicationContext
     private val transcoder = VideoTranscoder(appContext)
 
-    suspend fun convertToH264Mp4(source: MediaAsset): Result<Uri> = withContext(Dispatchers.IO) {
+    suspend fun convertToH264Mp4(source: MediaAsset): Result<Uri> =
+        writeTranscoded(source, VideoEditRecipe(), marker = "converted")
+
+    /**
+     * Applies [recipe] (trim/speed — see its own doc for what this roadmap phase does and does not
+     * cover yet) and writes the result as a new file, named the same way
+     * [com.fotoxplorr.app.editor.editedName] names an edited photo.
+     */
+    suspend fun exportEdit(source: MediaAsset, recipe: VideoEditRecipe): Result<Uri> =
+        writeTranscoded(source, recipe, marker = "edited")
+
+    private suspend fun writeTranscoded(
+        source: MediaAsset,
+        recipe: VideoEditRecipe,
+        marker: String,
+    ): Result<Uri> = withContext(Dispatchers.IO) {
         runCatching {
-            val name = convertedName(source.displayName)
+            val name = convertedName(source.displayName, marker)
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, name)
                 put(MediaStore.Video.Media.MIME_TYPE, TARGET_MIME_TYPE)
@@ -54,7 +70,7 @@ class VideoConversionWriter(context: Context) {
                 // back and rewrites the container's index once every sample has been written
                 // rather than streaming a self-contained format start to finish.
                 resolver.openFileDescriptor(uri, "rw")?.use { descriptor ->
-                    transcoder.transcode(source, descriptor.fileDescriptor).getOrThrow()
+                    transcoder.transcode(source, descriptor.fileDescriptor, recipe).getOrThrow()
                 } ?: error("Could not open the new file for writing")
             } catch (t: Throwable) {
                 // A half-written or invalid row left behind is worse than nothing: it would show

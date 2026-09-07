@@ -12,6 +12,9 @@ import com.fotoxplorr.app.video.gl.DecoderOutputSurface
 import com.fotoxplorr.app.video.gl.EglCore
 import com.fotoxplorr.app.video.gl.InputSurface
 import com.fotoxplorr.app.video.gl.TextureRenderer
+import com.fotoxplorr.app.videoeditor.VideoEditRecipe
+import com.fotoxplorr.app.videoeditor.exportedPresentationTimeUs
+import com.fotoxplorr.app.videoeditor.isWithinTrim
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -44,12 +47,17 @@ import java.nio.ByteBuffer
  * bridge every MediaCodec-based transcoder uses for exactly this reason, this pipeline's
  * pass-through shader included — see [TextureRenderer].
  *
- * ## What this class does NOT attempt
- * No pixel processing (a future filters tool would replace [TextureRenderer]'s shader, not this
- * orchestration), no time remapping (a future speed-change tool), no trim
- * ([com.fotoxplorr.app.moments.ClipExporter] already does that far more cheaply by never
- * decoding at all). This is the pipeline those tools would build on, exercised here by the one
- * capability that specifically NEEDS a re-encode to exist: changing the codec itself.
+ * ## What [VideoEditRecipe] adds, and what still does NOT exist here
+ * Trim and speed change ([VideoEditRecipe]) are threaded through the same decode/encode loop —
+ * trim by only rendering frames inside the window (feeding the decoder from the previous keyframe
+ * for correct GOP state, same as [com.fotoxplorr.app.moments.ClipExporter]'s own seek, but
+ * discarding frames before the exact requested start rather than snapping to it), speed by
+ * scaling presentation timestamps ([exportedPresentationTimeUs]) and, for audio, relabelling the
+ * sample rate the encoded track claims ([com.fotoxplorr.app.videoeditor.speedAdjustedSampleRate]).
+ * No pixel processing exists yet — a future filters tool would replace [TextureRenderer]'s shader,
+ * not this orchestration — and no text overlay or music replacement either; see
+ * [VideoEditRecipe]'s own doc for why each is its own, separately-scoped follow-up rather than a
+ * new field on that recipe.
  *
  * ## A known limitation, stated rather than hidden
  * [EncodedTrack] buffers a whole track's compressed output in memory before muxing (see its own
@@ -63,15 +71,19 @@ import java.nio.ByteBuffer
 class VideoTranscoder(context: Context) {
     private val appContext = context.applicationContext
 
-    suspend fun transcode(asset: MediaAsset, outputFd: FileDescriptor): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun transcode(
+        asset: MediaAsset,
+        outputFd: FileDescriptor,
+        recipe: VideoEditRecipe = VideoEditRecipe(),
+    ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             require(asset.isVideo) { "${asset.displayName} is not a video" }
             check(deviceSupportsH264AacEncoding()) { "This device has no H.264/AAC encoder to convert into" }
-            runTranscode(asset, outputFd)
+            runTranscode(asset, outputFd, recipe)
         }
     }
 
-    private suspend fun runTranscode(asset: MediaAsset, outputFd: FileDescriptor) {
+    private suspend fun runTranscode(asset: MediaAsset, outputFd: FileDescriptor, recipe: VideoEditRecipe) {
         val extractor = MediaExtractor().apply { setDataSource(appContext, asset.contentUri, null) }
         try {
             val videoTrackIndex = findTrack(extractor, "video/") ?: error("${asset.displayName} has no video track")
@@ -81,7 +93,9 @@ class VideoTranscoder(context: Context) {
             // asset.durationMillis alone -- that value comes from this app's MediaStore scan and
             // is not always populated for every file MediaExtractor can otherwise open, which
             // would wrongly refuse a genuinely convertible video. Falls back to asset.durationMillis
-            // only when the track itself declares nothing either.
+            // only when the track itself declares nothing either. Checked against the SOURCE span
+            // (pre-trim, pre-speed): the cap exists to bound how much this app decodes and holds in
+            // memory at once, which trimming or speeding up the OUTPUT does nothing to reduce.
             val trackDurationMs = extractor.getTrackFormat(videoTrackIndex)
                 .let { format -> if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) / 1_000L else null }
                 ?: asset.durationMillis
@@ -90,17 +104,23 @@ class VideoTranscoder(context: Context) {
                     "(${trackDurationMs / 1_000}s, limit ${MAX_TRANSCODE_DURATION_MS / 1_000}s)"
             }
 
-            val videoTrack = encodeVideoTrack(extractor, videoTrackIndex)
+            val videoTrack = encodeVideoTrack(extractor, videoTrackIndex, recipe)
             val audioTrack = audioTrackIndex?.let { index ->
                 resetToStart(extractor, index)
                 val audioFormat = extractor.getTrackFormat(index)
-                if (audioFormat.getString(MediaFormat.KEY_MIME) == MediaFormat.MIMETYPE_AUDIO_AAC) {
-                    // Already the target codec: copy the compressed bytes as-is, exactly
-                    // ClipExporter's own stream-copy, rather than paying a decode+re-encode's
-                    // cost and a second generation of lossy compression for no format change.
-                    copyCompressedTrack(extractor, index, audioFormat)
+                val alreadyAac = audioFormat.getString(MediaFormat.KEY_MIME) == MediaFormat.MIMETYPE_AUDIO_AAC
+                if (alreadyAac && recipe.speedFactor == 1f) {
+                    // Already the target codec and no speed change: copy the compressed bytes
+                    // as-is (trimmed and rebased, but otherwise untouched), exactly ClipExporter's
+                    // own stream-copy, rather than paying a decode+re-encode's cost and a second
+                    // generation of lossy compression for no format change. A speed change cannot
+                    // take this path: it needs the encoder's OWN declared sample rate changed (see
+                    // speedAdjustedSampleRate's own doc), which a byte-for-byte copy has no way to
+                    // do without risking the container's declared rate disagreeing with the AAC
+                    // bitstream's own internal one.
+                    copyCompressedTrack(extractor, index, audioFormat, recipe)
                 } else {
-                    AudioTranscoder.transcodeTrack(extractor, index)
+                    AudioTranscoder.transcodeTrack(extractor, index, recipe)
                 }
             }
 
@@ -135,7 +155,14 @@ class VideoTranscoder(context: Context) {
         extractor: MediaExtractor,
         trackIndex: Int,
         format: MediaFormat,
+        recipe: VideoEditRecipe,
     ): EncodedTrack {
+        // Every AAC access unit is independently decodable (no P/B-frame chain the way video
+        // has), so the extractor lands very close to trimStartUs on its own -- the per-sample
+        // isWithinTrim check below is still what makes the boundary EXACT rather than
+        // "whichever frame the seek happened to land on".
+        if (recipe.trimStartUs > 0L) extractor.seekTo(recipe.trimStartUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+
         val declaredMax = if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
             runCatching { format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE) }.getOrDefault(0)
         } else {
@@ -148,11 +175,16 @@ class VideoTranscoder(context: Context) {
             buffer.clear()
             val size = extractor.readSampleData(buffer, 0)
             if (size < 0) break
-            val data = ByteArray(size)
-            buffer.limit(size)
-            buffer.position(0)
-            buffer.get(data)
-            samples += EncodedSample(data, extractor.sampleTime, muxerBufferFlagsFor(extractor.sampleFlags))
+            val sampleTimeUs = extractor.sampleTime
+            if (recipe.trimEndUs != null && sampleTimeUs >= recipe.trimEndUs) break
+            if (isWithinTrim(sampleTimeUs, recipe)) {
+                val data = ByteArray(size)
+                buffer.limit(size)
+                buffer.position(0)
+                buffer.get(data)
+                val exportedTimeUs = exportedPresentationTimeUs(sampleTimeUs, recipe)
+                samples += EncodedSample(data, exportedTimeUs, muxerBufferFlagsFor(extractor.sampleFlags))
+            }
             extractor.advance()
         }
         return EncodedTrack(format, samples)
@@ -168,8 +200,17 @@ class VideoTranscoder(context: Context) {
      * no deadline the async API's extra complexity would actually buy anything against, and a
      * synchronous loop is the shape every reference sample this class follows already uses.
      */
-    private suspend fun encodeVideoTrack(extractor: MediaExtractor, trackIndex: Int): EncodedTrack {
+    private suspend fun encodeVideoTrack(
+        extractor: MediaExtractor,
+        trackIndex: Int,
+        recipe: VideoEditRecipe,
+    ): EncodedTrack {
         resetToStart(extractor, trackIndex)
+        // The PREVIOUS sync point at or before the trim start, not the exact time -- a decoder
+        // needs every frame back to the last keyframe to correctly reconstruct the ones after it.
+        // Frames decoded between this seek point and the true trim start are still decoded (for
+        // correct GOP state) but never rendered to the encoder -- see isWithinTrim below.
+        if (recipe.trimStartUs > 0L) extractor.seekTo(recipe.trimStartUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
         val sourceFormat = extractor.getTrackFormat(trackIndex)
         val width = sourceFormat.getInteger(MediaFormat.KEY_WIDTH)
         val height = sourceFormat.getInteger(MediaFormat.KEY_HEIGHT)
@@ -223,7 +264,9 @@ class VideoTranscoder(context: Context) {
                         val inputBuffer = decoder.getInputBuffer(inputIndex)
                             ?: error("Decoder offered input buffer $inputIndex with no backing buffer")
                         val sampleSize = extractor.readSampleData(inputBuffer, 0)
-                        if (sampleSize < 0) {
+                        val pastTrimEnd = recipe.trimEndUs != null &&
+                            sampleSize >= 0 && extractor.sampleTime >= recipe.trimEndUs
+                        if (sampleSize < 0 || pastTrimEnd) {
                             decoder.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                             decoderInputDone = true
                         } else {
@@ -237,9 +280,14 @@ class VideoTranscoder(context: Context) {
                     val outputIndex = decoder.dequeueOutputBuffer(decoderBufferInfo, CODEC_TIMEOUT_US)
                     if (outputIndex >= 0) {
                         val isEos = decoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                        val hasFrame = decoderBufferInfo.size > 0
-                        decoder.releaseOutputBuffer(outputIndex, hasFrame)
-                        if (hasFrame) {
+                        // A decoded frame this app actually wants to keep -- as opposed to one
+                        // decoded only to give the decoder correct GOP state on the way to the
+                        // trim start (see the SEEK_TO_PREVIOUS_SYNC comment above), which must
+                        // still be released (to free the buffer) but never rendered or encoded.
+                        val isWantedFrame = decoderBufferInfo.size > 0 &&
+                            isWithinTrim(decoderBufferInfo.presentationTimeUs, recipe)
+                        decoder.releaseOutputBuffer(outputIndex, isWantedFrame)
+                        if (isWantedFrame) {
                             // Rendering a frame is a GPU-side, asynchronous consequence of
                             // releaseOutputBuffer(render = true) above -- awaitNewImage blocks
                             // until it has actually landed. See DecoderOutputSurface's own doc.
@@ -247,7 +295,8 @@ class VideoTranscoder(context: Context) {
                             inputSurface.makeCurrent()
                             decoderOutputSurface.transformMatrix(transformMatrix)
                             textureRenderer.draw(decoderOutputSurface.textureId, transformMatrix, width, height)
-                            inputSurface.setPresentationTime(decoderBufferInfo.presentationTimeUs * 1_000L)
+                            val exportedTimeUs = exportedPresentationTimeUs(decoderBufferInfo.presentationTimeUs, recipe)
+                            inputSurface.setPresentationTime(exportedTimeUs * 1_000L)
                             inputSurface.swapBuffers()
                         }
                         if (isEos) {
