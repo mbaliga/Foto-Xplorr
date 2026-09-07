@@ -96,6 +96,11 @@ fun ViewerScreen(
     onEdit: () -> Unit,
     onOpenWith: () -> Unit,
     onMoveToTrash: () -> Unit,
+    /** Video's own Save As — re-encodes [asset] to H.264/AAC/MP4. Null (the default) leaves the
+     *  action hidden; see [ViewerActionsRoom]'s own doc. Meaningless for a still photo, so a
+     *  caller need not check [MediaAsset.isVideo] itself before wiring this in. */
+    isConvertingToMp4: Boolean = false,
+    onConvertToMp4: (() -> Unit)? = null,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onClose: () -> Unit,
@@ -265,6 +270,9 @@ fun ViewerScreen(
                 onEdit = { shell.closeAll(); onEdit() },
                 onOpenWith = { shell.closeAll(); onOpenWith() },
                 onMoveToTrash = { shell.closeAll(); onMoveToTrash() },
+                isVideo = asset.isVideo,
+                isConvertingToMp4 = isConvertingToMp4,
+                onConvertToMp4 = onConvertToMp4?.let { convert -> { shell.closeAll(); convert() } },
             )
         },
         bottom = {

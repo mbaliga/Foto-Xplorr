@@ -68,6 +68,7 @@ import com.fotoxplorr.app.metadata.MetadataEdit
 import com.fotoxplorr.app.metadata.MetadataWriter
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
+import com.fotoxplorr.app.video.VideoConversionWriter
 import com.fotoxplorr.app.recognition.RecognitionIndexer
 import com.fotoxplorr.app.recognition.RecognitionStore
 import com.fotoxplorr.app.privacy.SensitiveStore
@@ -142,6 +143,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val fileOperations = remember { MediaFileOperations(applicationContext) }
     val metadataWriter = remember { MetadataWriter(applicationContext) }
     val editedCopyWriter = remember { EditedCopyWriter(applicationContext) }
+    val videoConversionWriter = remember { VideoConversionWriter(applicationContext) }
     val sharePreparer = remember { SharePreparer(applicationContext) }
     val zipExporter = remember { ZipExporter(applicationContext) }
     val changeObserver = remember { MediaStoreChangeObserver(contentResolver) }
@@ -199,6 +201,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     var pendingMetadataEdit by remember { mutableStateOf<MetadataEdit?>(null) }
     var pendingOverwriteAsset by remember { mutableStateOf<MediaAsset?>(null) }
     var pendingOverwriteBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    // Which video (if any) is mid-conversion, so the actions room can disable a second tap and
+    // show "Converting..." rather than starting the same video through the pipeline twice.
+    var convertingVideoId by remember { mutableStateOf<MediaId?>(null) }
     // Bumped on every metadata write that actually lands, so ViewerScreen's own EXIF/XMP cache
     // (which only reloads when the asset itself changes) knows to re-read the file it just wrote
     // into. See that parameter's own doc for why nothing else already covers this.
@@ -474,6 +479,25 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     finishOverwrite(outcome)
                 }
             }
+        }
+    }
+
+    // No permission dance needed here, unlike rename/metadata/overwrite above: a conversion
+    // always inserts a brand-new MediaStore row this app itself owns (see
+    // VideoConversionWriter's own doc for why it never touches the source video), and creating a
+    // new row this app owns needs no per-file consent the way writing into someone else's already
+    // needs.
+    fun requestVideoConversion(asset: MediaAsset) {
+        if (convertingVideoId != null) return
+        convertingVideoId = asset.id
+        scope.launch {
+            val outcome = videoConversionWriter.convertToH264Mp4(asset)
+            convertingVideoId = null
+            outcome.onSuccess { scanRequests.trySend(false) }
+            userMessage = outcome.fold(
+                onSuccess = { "Converted to MP4." },
+                onFailure = { it.message ?: "Could not convert this video." },
+            )
         }
     }
 
@@ -823,6 +847,12 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             onEdit = { editingAsset = activeAsset },
             onOpenWith = { openExternally(activeAsset, Intent.ACTION_VIEW) },
             onMoveToTrash = { requestMediaOperation(listOf(activeAsset), PendingMediaOperation.TRASH) },
+            isConvertingToMp4 = convertingVideoId == activeAsset.id,
+            onConvertToMp4 = if (activeAsset.isVideo) {
+                { requestVideoConversion(activeAsset) }
+            } else {
+                null
+            },
             onPrevious = {
                 viewerAssets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id }
             },

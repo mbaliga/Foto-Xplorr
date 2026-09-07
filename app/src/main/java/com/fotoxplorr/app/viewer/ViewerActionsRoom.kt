@@ -21,6 +21,7 @@ import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
@@ -65,6 +66,13 @@ fun ViewerActionsRoom(
     onEdit: () -> Unit,
     onOpenWith: () -> Unit,
     onMoveToTrash: () -> Unit,
+    /** Shows the row below at all — a still photo has no codec to convert. */
+    isVideo: Boolean = false,
+    isConvertingToMp4: Boolean = false,
+    /** Re-encodes this video into H.264/AAC/MP4 as a new file beside it — video's own Save As,
+     *  see [com.fotoxplorr.app.video.VideoTranscoder]. Null leaves the row hidden entirely, the
+     *  same shape [com.fotoxplorr.app.viewer.PhotoDetailRoom]'s optional actions already use. */
+    onConvertToMp4: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -85,6 +93,14 @@ fun ViewerActionsRoom(
         ActionRow(Icons.Outlined.Share, "Share", onShare)
         ActionRow(Icons.Outlined.Edit, "Edit", onEdit)
         ActionRow(Icons.Outlined.OpenInNew, "Open with", onOpenWith)
+        if (isVideo && onConvertToMp4 != null) {
+            ActionRow(
+                icon = Icons.Outlined.SwapHoriz,
+                label = if (isConvertingToMp4) "Converting…" else "Convert to MP4",
+                onClick = onConvertToMp4,
+                enabled = !isConvertingToMp4,
+            )
+        }
         ActionRow(
             icon = if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
             label = if (isFavorite) "Favourited" else "Favourite",
