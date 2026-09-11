@@ -28,8 +28,12 @@
          gate fails the build if any network permission reaches its merged manifest — from
          this file OR from a library AAR's manifest. ACCESS_NETWORK_STATE was dropped
          entirely: nothing in the app reads ConnectivityManager. -->
+    <!-- Current location is optional and used only by the explicitly opened relative
+         spatial-compass scene. ACCESS_MEDIA_LOCATION is separate: Android 10+ redacts
+         GPS embedded in the user's media unless it is granted. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />

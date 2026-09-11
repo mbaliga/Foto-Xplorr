@@ -157,6 +157,15 @@ fun SettingsTabsRoom(
                 }
 
                 SettingsTab.MEDIA -> {
+                    if (state.partialMediaAccess) {
+                        SectionLabel("MEDIA ACCESS")
+                        Text(
+                            "Foto Xplorr can only see the photos and videos you selected.",
+                            color = Color.White.copy(alpha = 0.65f),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        ActionText("Manage selected photos and videos", actions.onManageSelectedMedia)
+                    }
                     // WYSIWYG (owner, 2026-08-15: "I'd want settings to be as visual as
                     // possible"). The sample is drawn from the user's OWN library and rendered by
                     // the same MediaImage the grid uses, so "fit to tile" is demonstrated rather

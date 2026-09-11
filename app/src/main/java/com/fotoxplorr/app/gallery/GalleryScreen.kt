@@ -210,6 +210,8 @@ data class GalleryUiState(
     val unlockedFolders: Set<String>,
     val library: LibraryState,
     val permissionGranted: Boolean,
+    /** Android 14+ selected-photos grant rather than full-library access. */
+    val partialMediaAccess: Boolean = false,
     val scanState: ScanState,
     val preferences: GalleryPreferencesState,
     /** On-device recognition results backing the Pets / People / Identity destinations. */
@@ -288,6 +290,8 @@ data class GalleryActions(
      * dismiss the same items out of every time you open it.
      */
     val onRejectArchiveSuggestions: (Set<MediaId>) -> Unit,
+    /** Reopens Android's media grant sheet so a partial-access user can change selection. */
+    val onManageSelectedMedia: () -> Unit = {},
 )
 
 @Composable

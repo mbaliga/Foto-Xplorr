@@ -196,6 +196,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val recognitionProgress by recognitionStore.observeProgress().collectAsStateWithLifecycle()
 
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
+    var partialMediaAccess by remember { mutableStateOf(hasPartialMediaAccess()) }
     var scanState by remember { mutableStateOf<ScanState>(ScanState.Idle) }
 
     // Rescans are REQUESTS on a conflated channel, not a LaunchedEffect key.
@@ -583,9 +584,22 @@ private fun FotoXplorrActivity.FotoXplorrApp(
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
-    ) { result ->
-        permissionGranted = result.values.any { it } || hasMediaPermission()
+    ) {
+        // ACCESS_MEDIA_LOCATION can be granted independently; it must never make the
+        // gallery believe that image/video access itself was granted.
+        permissionGranted = hasMediaPermission()
+        partialMediaAccess = hasPartialMediaAccess()
         if (permissionGranted) scanRequests.trySend(false)
+    }
+
+    // Permission scope can change in system Settings while the process is backgrounded.
+    // Re-read it on return so the Settings affordance and scan state never describe a
+    // stale grant.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        val hadPermission = permissionGranted
+        permissionGranted = hasMediaPermission()
+        partialMediaAccess = hasPartialMediaAccess()
+        if (!hadPermission && permissionGranted) scanRequests.trySend(false)
     }
 
     val exportMetadataLauncher = rememberLauncherForActivityResult(
@@ -1037,6 +1051,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 unlockedFolders = unlockedFolders,
                 library = library,
                 permissionGranted = permissionGranted,
+                partialMediaAccess = partialMediaAccess,
                 scanState = scanState,
                 preferences = preferences,
                 recognition = recognition,
@@ -1125,17 +1140,40 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 },
                 onPendingSearchConsumed = { pendingSearch = null },
                 onRejectArchiveSuggestions = libraryStore::rejectArchiveSuggestions,
+                onManageSelectedMedia = { permissionLauncher.launch(requiredMediaPermissions()) },
             ),
         )
     }
 }
 
 private fun FotoXplorrActivity.hasMediaPermission(): Boolean =
-    requiredMediaPermissions().any { permission ->
+    mediaReadPermissions().any { permission ->
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
     }
 
-private fun requiredMediaPermissions(): Array<String> = when {
+private fun FotoXplorrActivity.hasPartialMediaAccess(): Boolean =
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+        ) == PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_MEDIA_IMAGES,
+        ) != PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_MEDIA_VIDEO,
+        ) != PackageManager.PERMISSION_GRANTED
+
+private fun requiredMediaPermissions(): Array<String> =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        mediaReadPermissions() + Manifest.permission.ACCESS_MEDIA_LOCATION
+    } else {
+        mediaReadPermissions()
+    }
+
+private fun mediaReadPermissions(): Array<String> = when {
     Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
         Manifest.permission.READ_MEDIA_IMAGES,
         Manifest.permission.READ_MEDIA_VIDEO,
