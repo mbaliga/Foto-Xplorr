@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Owner's own trash glyph, 34dp where the action glyphs are 30 — the mockup draws it larger, and
+  it is the one control here that cannot be undone.
+  fillType evenOdd carries the SVG's fill-rule; without it the lid and the bars fill solid.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="34dp"
+    android:height="34dp"
+    android:viewportWidth="34"
+    android:viewportHeight="34"
+    android:tint="?attr/colorControlNormal">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M12.9912 7.08073C13.5746 5.43004 15.1489 4.2474 16.9993 4.2474C18.8498 4.2474 20.4241 5.43004 21.0075 7.08073H12.9912ZM10.0577 7.08073C10.714 3.84756 13.5725 1.41406 16.9993 1.41406C20.4263 1.41406 23.2847 3.84756 23.941 7.08073H32.5827V9.91406H29.7493V32.5807H4.24935V9.91406H1.41602V7.08073H10.0577ZM10.6243 26.2057V14.8724H13.4577V26.2057H10.6243ZM20.541 14.8724V26.2057H23.3743V14.8724H20.541Z" />
+</vector>

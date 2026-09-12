@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Owner's own action-bar glyph: a file with a zip pull down its face.
+  Path data verbatim from the supplied SVG; only the SVG wrapper is translated.
+  Tinted at the call site, so the white here is a placeholder the theme overrides.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="30dp"
+    android:height="30dp"
+    android:viewportWidth="30"
+    android:viewportHeight="30"
+    android:tint="?attr/colorControlNormal">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M25 9.79492V27.5H5V2.5H17.7051L25 9.79492ZM12.5 25H15V22.5H12.5V25ZM10 22.5H12.5V20H10V22.5ZM12.5 20H15V17.5H12.5V20ZM10 17.5H12.5V15H10V17.5ZM12.5 15H15V12.5H12.5V15ZM10 12.5H12.5V10H10V12.5ZM12.5 10H15V7.5H12.5V10ZM10 7.5H12.5V5H10V7.5Z" />
+</vector>

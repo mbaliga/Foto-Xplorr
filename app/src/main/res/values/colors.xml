@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The launcher icon's background layer. Solid black to match the app's own black
+         ground: every room floor, viewer background and detail panel in the app already
+         reads from this same black, so the icon should not be the one surface that
+         disagrees with it. -->
+    <color name="ic_launcher_background">#000000</color>
+</resources>

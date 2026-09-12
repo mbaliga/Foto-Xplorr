@@ -36,13 +36,13 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          chmod +x ./gradlew
-          # lintDebug was previously absent from CI, which is how an
-          # UnusedBoxWithConstraintsScope error in app/src/main/.../ai was able to sit on the
-          # branch unnoticed -- `lintDebug` only ever got run by hand, so "lint passes" was a
-          # claim rather than a gate. It is part of the build now so it stays true.
-          ./gradlew --no-daemon --stacktrace \
-            :app:testDebugUnitTest :app:lintDebug :app:assembleDebug 2>&1 | tee build.log
+          chmod +x ./gradlew scripts/verify.sh
+          # CI runs the SAME script as local development (FX-002): scripts/verify.sh is
+          # the one definition of "builds clean", so the two gates cannot drift apart.
+          # (lintDebug lives in that script for the same reason it was added here: it was
+          # once absent from CI, a lint error sat on a branch unnoticed, and "lint passes"
+          # became a claim rather than a gate.)
+          ./scripts/verify.sh 2>&1 | tee build.log
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -50,23 +50,72 @@ jobs:
           name: foto-xplorr-build-log
           path: build.log
           if-no-files-found: error
-      - name: Upload lint report
+      - name: Upload lint reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: foto-xplorr-lint
-          path: app/build/reports/lint-results-debug.html
+          path: app/build/reports/lint-results-*.html
           if-no-files-found: warn
-      - name: Upload unit test report
+      - name: Upload unit test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: foto-xplorr-unit-tests
-          path: app/build/reports/tests/testDebugUnitTest
+          path: app/build/reports/tests/
           if-no-files-found: warn
-      - name: Upload debug APK
+      - name: Upload debug APKs
         uses: actions/upload-artifact@v4
         with:
+          # Both flavors: offline is the app's identity (and keeps the historical
+          # com.fotoxplorr.app.debug id); connect installs beside it as .connect.
           name: foto-xplorr-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            app/build/outputs/apk/offline/debug/app-offline-debug.apk
+            app/build/outputs/apk/connect/debug/app-connect-debug.apk
           if-no-files-found: error
+
+      # The debug APK above is ~187 MB, and the artifact holding both flavours is a ~225 MB
+      # download. That is a genuinely bad way to hand someone a build to try on a phone, so the
+      # sideloading path gets its own minified, resource-shrunk, per-ABI build. The release
+      # workflow publishes these to a Release when a tag is cut; this makes the same files
+      # available from an ordinary PR run, which is where they are actually wanted.
+      # The release build signs with the debug keystore so the artifact is installable. AGP
+      # generates that keystore on demand during a debug build, and verify.sh above happens to do
+      # one — but relying on a side effect of another step's ordering is exactly the kind of
+      # dependency that breaks silently later, so it is made explicit here.
+      - name: Ensure debug keystore exists
+        shell: bash
+        run: |
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            mkdir -p "$HOME/.android"
+            keytool -genkeypair -v \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -keypass android \
+              -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Build release APKs for sideloading
+        shell: bash
+        run: ./gradlew :app:assembleOfflineRelease -PabiSplits=true
+
+      # Uploaded as SEPARATE artifacts, one per architecture, because GitHub zips an artifact
+      # whole: bundling four ABIs would put the size straight back. arm64-v8a is the only one
+      # any current phone needs — it is the file to click.
+      - name: Upload arm64 release APK (most phones want this one)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fotoxplorr-arm64-INSTALL-THIS
+          path: app/build/outputs/apk/offline/release/app-offline-arm64-v8a-release.apk
+          if-no-files-found: error
+
+      - name: Upload other release APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: fotoxplorr-release-other-abis
+          path: |
+            app/build/outputs/apk/offline/release/app-offline-armeabi-v7a-release.apk
+            app/build/outputs/apk/offline/release/app-offline-x86_64-release.apk
+          if-no-files-found: warn

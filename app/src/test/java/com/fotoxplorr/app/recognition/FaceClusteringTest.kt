@@ -2,6 +2,7 @@ package com.fotoxplorr.app.recognition
 
 import com.fotoxplorr.app.media.MediaId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
@@ -200,5 +201,72 @@ class RecognitionIndexTest {
         val index = RecognitionIndex.from(rows)
         assertEquals(1, index.people.size)
         assertEquals(2, index.people.first().size)
+    }
+
+    @Test
+    fun `categoriesByMedia and mediaIn expose the stored per-photo categories`() {
+        val rows = listOf(
+            AssetRecognition(MediaId(1), 0, faceCount = 0, categories = setOf(SceneCategory.FLORA)),
+            AssetRecognition(
+                MediaId(2), 0, faceCount = 0,
+                categories = setOf(SceneCategory.FOOD, SceneCategory.EVENT),
+            ),
+            AssetRecognition(MediaId(3), 0, faceCount = 0),
+        )
+        val index = RecognitionIndex.from(rows)
+        assertEquals(setOf(SceneCategory.FLORA), index.categoriesByMedia[MediaId(1)])
+        assertEquals(setOf(SceneCategory.FOOD, SceneCategory.EVENT), index.categoriesByMedia[MediaId(2)])
+        // A photo with no categories is absent from the map, not mapped to an empty set.
+        assertFalse(index.categoriesByMedia.containsKey(MediaId(3)))
+
+        assertEquals(setOf(MediaId(1)), index.mediaIn(SceneCategory.FLORA))
+        assertEquals(setOf(MediaId(2)), index.mediaIn(SceneCategory.FOOD))
+        assertEquals(setOf(MediaId(2)), index.mediaIn(SceneCategory.EVENT))
+        assertEquals(emptySet<MediaId>(), index.mediaIn(SceneCategory.VEHICLE))
+    }
+
+    @Test
+    fun `friends-family is added once a person recurs across the library, never on the stored row itself`() {
+        val vector = FaceClustering.normalized(floatArrayOf(1f, 0f, 0f))
+        fun descriptor(mediaId: Long) = FaceDescriptor(MediaId(mediaId), 0, vector, 0.2f)
+
+        // Photo 3 alone: one face, nobody else in the library shares it yet.
+        val aloneIndex = RecognitionIndex.from(
+            listOf(AssetRecognition(MediaId(3), 0, faceCount = 1, faceDescriptors = listOf(descriptor(3)))),
+        )
+        assertFalse(SceneCategory.FRIENDS_FAMILY in aloneIndex.categoriesByMedia[MediaId(3)].orEmpty())
+
+        // The same person now also appears in photo 4 -- recurrence requirement satisfied.
+        val recurringRows = listOf(
+            AssetRecognition(MediaId(3), 0, faceCount = 1, faceDescriptors = listOf(descriptor(3))),
+            AssetRecognition(MediaId(4), 0, faceCount = 1, faceDescriptors = listOf(descriptor(4))),
+        )
+        val recurringIndex = RecognitionIndex.from(recurringRows)
+        assertTrue(SceneCategory.FRIENDS_FAMILY in recurringIndex.categoriesByMedia[MediaId(3)].orEmpty())
+        assertTrue(SceneCategory.FRIENDS_FAMILY in recurringIndex.categoriesByMedia[MediaId(4)].orEmpty())
+        assertEquals(setOf(MediaId(3), MediaId(4)), recurringIndex.mediaIn(SceneCategory.FRIENDS_FAMILY))
+
+        // AssetRecognition.categories itself -- the persisted row -- never contains it; only
+        // the derived RecognitionIndex does.
+        assertFalse(SceneCategory.FRIENDS_FAMILY in recurringRows[0].categories)
+    }
+
+    @Test
+    fun `friends-family respects the face-count band even with a recurring person`() {
+        val vector = FaceClustering.normalized(floatArrayOf(1f, 0f, 0f))
+        fun descriptor(mediaId: Long) = FaceDescriptor(MediaId(mediaId), 0, vector, 0.2f)
+
+        // Six faces in one frame, all the same descriptor (a contrived but valid way to assert
+        // the face-count gate independent of clustering realism): outside 1..4, so no
+        // FRIENDS_FAMILY even though the person recurs.
+        val rows = listOf(
+            AssetRecognition(
+                MediaId(5), 0, faceCount = 6,
+                faceDescriptors = (0 until 6).map { FaceDescriptor(MediaId(5), it, vector, 0.2f) },
+            ),
+            AssetRecognition(MediaId(6), 0, faceCount = 1, faceDescriptors = listOf(descriptor(6))),
+        )
+        val index = RecognitionIndex.from(rows)
+        assertFalse(SceneCategory.FRIENDS_FAMILY in index.categoriesByMedia[MediaId(5)].orEmpty())
     }
 }

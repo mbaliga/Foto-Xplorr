@@ -9,13 +9,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.security.MessageDigest
-import java.util.concurrent.TimeUnit
 
 sealed interface LocalModelState {
     data object NotInstalled : LocalModelState
@@ -39,7 +36,14 @@ data class DeviceAiCapability(
     val warning: String?,
 )
 
-class LocalModelManager(context: Context) {
+/**
+ * @param remoteAi where the recommended-model download comes from. The download is the one
+ *   network operation this class ever performed, and it now lives behind the bridge: the
+ *   offline flavor's bridge refuses it with a typed failure, and this class turns that
+ *   into honest UI state. Validation, hashing and atomic replacement stay here — they are
+ *   local work and identical for a downloaded or a side-loaded model.
+ */
+class LocalModelManager(context: Context, private val remoteAi: RemoteAiBridge) {
     private val appContext = context.applicationContext
     private val modelDirectory = File(appContext.filesDir, MODEL_DIRECTORY)
     private val modelFile = File(modelDirectory, MODEL_FILE_NAME)
@@ -82,31 +86,9 @@ class LocalModelManager(context: Context) {
             val temporary = File(modelDirectory, "$MODEL_FILE_NAME.download")
             temporary.delete()
 
-            val request = Request.Builder().url(RECOMMENDED_MODEL_URL).get().build()
-            val client = OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(5, TimeUnit.MINUTES)
-                .callTimeout(10, TimeUnit.MINUTES)
-                .build()
-            client.newCall(request).execute().use { response ->
-                check(response.isSuccessful) { "Model download returned HTTP ${response.code}" }
-                val body = response.body
-                val total = body.contentLength().takeIf { it > 0L }
-                body.byteStream().use { input ->
-                    FileOutputStream(temporary).buffered(DOWNLOAD_BUFFER_SIZE).use { output ->
-                        val buffer = ByteArray(DOWNLOAD_BUFFER_SIZE)
-                        var written = 0L
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            output.write(buffer, 0, read)
-                            written += read
-                            state.value = LocalModelState.Downloading(written, total)
-                        }
-                        output.flush()
-                    }
-                }
-            }
+            remoteAi.downloadFile(RECOMMENDED_MODEL_URL, temporary) { written, total ->
+                state.value = LocalModelState.Downloading(written, total)
+            }.getOrThrow()
 
             validateTflite(temporary)
             replaceAtomically(temporary, modelFile)

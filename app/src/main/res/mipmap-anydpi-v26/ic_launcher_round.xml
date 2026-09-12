@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  minSdk is 26, exactly the API adaptive icons were introduced in. Every supported
+  device reads this file, so there is no legacy ic_launcher.png fallback
+  anywhere in the mipmap folders. Only a foreground layer is provided; the background is
+  a plain colour resource rather than a second bitmap, so there is nothing to keep in
+  visual sync between the two layers as the artwork changes.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

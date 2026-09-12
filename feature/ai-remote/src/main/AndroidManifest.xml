@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Deliberately no permissions: the HOST app's connect flavor declares INTERNET. A library
+     that declared it here would silently re-add it to any consumer via manifest merge -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

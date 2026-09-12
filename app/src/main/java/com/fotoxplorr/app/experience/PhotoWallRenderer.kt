@@ -290,16 +290,18 @@ internal class PhotoWallRenderer(
                 val texture = IntArray(1)
                 GLES20.glGenTextures(1, texture, 0)
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture[0])
-                GLES20.glTexParameteri(
-                    GLES20.GL_TEXTURE_2D,
-                    GLES20.GL_TEXTURE_MIN_FILTER,
-                    GLES20.GL_LINEAR_MIPMAP_LINEAR,
-                )
+                // GL_LINEAR only, no mipmapping: these textures come from MediaStore thumbnails,
+                // which are never power-of-two (real photos aren't square, and the aspect-fit
+                // scale above keeps it that way). glGenerateMipmap on an NPOT texture is
+                // undefined behaviour in OpenGL ES 2.0 without the GL_OES_texture_npot
+                // extension -- some GPU drivers handle it fine, some crash natively deep in the
+                // driver with no Java stack trace and no GL error to catch. That is a plausible
+                // match for the native-crash reports with no trace at all.
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
                 GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
                 GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
                 GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
                 GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, decoded.bitmap, 0)
-                GLES20.glGenerateMipmap(GLES20.GL_TEXTURE_2D)
                 textureCache.put(decoded.mediaId, texture[0])
             } finally {
                 decoded.bitmap.recycle()

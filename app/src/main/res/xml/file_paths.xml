@@ -1,6 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Every directory FileProvider is allowed to hand out a content:// URI for.
+
+  This file and SharePreparer.SHARE_DIRECTORY are one fact in two places, and nothing in the
+  compiler connects them: getUriForFile throws IllegalArgumentException ("Failed to find configured
+  root that contains ...") at the moment of sharing, not at build time. Renaming the share
+  directory without editing here broke sharing outright. ShareDirectoryTest now asserts the two
+  agree, because a build cannot.
+-->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path
-        name="clean_share"
-        path="clean-share/" />
+        name="outgoing_share"
+        path="outgoing-share/" />
+    <!--
+      lift's own scratch directory. See StickerExporter.SHARE_DIRECTORY's KDoc for why this is
+      NOT the outgoing_share root above: that one is deleteRecursively()'d at the start of every
+      ordinary share, which would race a still-open sticker share chooser off the filesystem.
+    -->
+    <cache-path
+        name="lift_stickers"
+        path="lift-stickers/" />
+    <!--
+      Video key moments' own scratch directory: a saved frame (JPEG) or a trimmed clip (MP4).
+      See MomentExportStorage.DIRECTORY's KDoc. Same reasoning as lift_stickers just above: never
+      wiped, so it cannot race the outgoing_share root's deleteRecursively(), and shared between
+      the frame and clip exporters because neither of them ever deletes what the other wrote.
+    -->
+    <cache-path
+        name="moments_export"
+        path="moments-export/" />
 </paths>

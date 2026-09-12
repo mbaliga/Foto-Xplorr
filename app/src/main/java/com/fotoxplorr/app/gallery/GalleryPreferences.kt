@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.gallery
 
 import android.content.Context
+import com.fotoxplorr.app.editor.EditorSaveMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,6 +51,65 @@ data class GalleryPreferencesState(
      * equivalent of the old TIMELINE default.
      */
     val defaultDestination: HyleDestination = HyleDestination.PHOTOS,
+    /** Hold the screen awake while a photo is open. Off by default: it costs battery. */
+    val keepScreenOn: Boolean = false,
+    /** Play a slideshow in a random order rather than in the current sort order. */
+    val slideshowShuffle: Boolean = false,
+    /** Start a video as soon as it is opened, rather than waiting for a tap on play. */
+    val autoplayVideos: Boolean = false,
+    /**
+     * Show the filmstrip of neighbouring photos along the bottom of an open photo. On by default,
+     * which is the behaviour the viewer already had.
+     */
+    val showFilmstrip: Boolean = true,
+    // ---- media behaviour ----
+    /** Peek a photo large on long press, without leaving the grid. */
+    val longPressPreview: Boolean = true,
+    /** Play GIFs and animated images in the grid rather than showing a still frame. */
+    val loopAnimations: Boolean = false,
+    /**
+     * Crop grid thumbnails to fill a uniform square tile. Off switches the primary grid to a
+     * masonry layout instead -- each tile keeps the photo's own [aspect ratio]
+     * [com.fotoxplorr.app.media.MediaAsset.aspectRatio] rather than being forced square, per the
+     * owner's direction (2026-08-20) that the grid should "maintain aspect ratio". This used to
+     * only switch `ContentScale` between Crop and Fit inside a tile that stayed square either
+     * way -- see [com.fotoxplorr.app.gallery.MediaGridScreen] for why that approximation was not
+     * enough and what replaced it.
+     */
+    val fitToTile: Boolean = true,
+    /**
+     * The nine-destination rail is pinned open by default on a window wide enough to fit it
+     * beside the grid (tablet, foldable, desktop/ChromeOS); this lets the user fold it down to
+     * a narrow strip without losing the choice every time the window is resized or the app is
+     * relaunched. Meaningless -- and ignored -- on a phone-width window, which always gets the
+     * pull-out room; see [com.fotoxplorr.app.adaptive.navRailPresentation].
+     *
+     * Read and written through a [GalleryPreferences] constructed directly from `LocalContext`
+     * inside `GalleryScreen`, the same way [com.fotoxplorr.app.gallery.rememberGeoRepository]
+     * reaches its own store -- NOT through [com.fotoxplorr.app.gallery.GalleryActions], which is
+     * built outside this package and does not carry a setter for it. A second `GalleryPreferences`
+     * instance over the same `SharedPreferences` file is fine here specifically because this is
+     * the field's only reader anywhere in the app; a field anything else also consulted through
+     * the app-wide `GalleryUiState` would need the real round-trip instead, since two independent
+     * `MutableStateFlow`s over one file agree on what is saved but not on when each learns of it.
+     */
+    val navRailCollapsed: Boolean = false,
+    /**
+     * What the editor's Save does. ASK by default, which is the owner's choice and also the only
+     * default that cannot destroy a photograph before the user has understood the control.
+     */
+    val editorSaveMode: EditorSaveMode = EditorSaveMode.ASK,
+    // ---- share defaults, edited in the advanced share sheet ----
+    /**
+     * Strip GPS/camera/timestamp EXIF from shared copies. TRUE by default on owner direction:
+     * the safe thing should be what happens when nobody thinks about it.
+     */
+    val shareStripMetadata: Boolean = true,
+    val shareWatermark: Boolean = false,
+    /** Last frame chosen in the share sheet, remembered so a habit does not need re-picking. */
+    val shareFrame: String = "NONE",
+    /** The user's postmark, drawn on stamp-framed shares. */
+    val shareSeal: String = "",
 )
 
 class GalleryPreferences(context: Context) {
@@ -97,6 +157,59 @@ class GalleryPreferences(context: Context) {
         state.value.copy(defaultDestination = destination),
     ) { putString(KEY_DEFAULT_DESTINATION, destination.name) }
 
+    fun setKeepScreenOn(enabled: Boolean) = update(
+        state.value.copy(keepScreenOn = enabled),
+    ) { putBoolean(KEY_KEEP_SCREEN_ON, enabled) }
+
+    fun setSlideshowShuffle(enabled: Boolean) = update(
+        state.value.copy(slideshowShuffle = enabled),
+    ) { putBoolean(KEY_SLIDESHOW_SHUFFLE, enabled) }
+
+    fun setAutoplayVideos(enabled: Boolean) = update(
+        state.value.copy(autoplayVideos = enabled),
+    ) { putBoolean(KEY_AUTOPLAY_VIDEOS, enabled) }
+
+    fun setShowFilmstrip(enabled: Boolean) = update(
+        state.value.copy(showFilmstrip = enabled),
+    ) { putBoolean(KEY_SHOW_FILMSTRIP, enabled) }
+
+    fun setLongPressPreview(enabled: Boolean) = update(
+        state.value.copy(longPressPreview = enabled),
+    ) { putBoolean(KEY_LONG_PRESS_PREVIEW, enabled) }
+
+    fun setLoopAnimations(enabled: Boolean) = update(
+        state.value.copy(loopAnimations = enabled),
+    ) { putBoolean(KEY_LOOP_ANIMATIONS, enabled) }
+
+    fun setFitToTile(enabled: Boolean) = update(
+        state.value.copy(fitToTile = enabled),
+    ) { putBoolean(KEY_FIT_TO_TILE, enabled) }
+
+    fun setNavRailCollapsed(collapsed: Boolean) = update(
+        state.value.copy(navRailCollapsed = collapsed),
+    ) { putBoolean(KEY_NAV_RAIL_COLLAPSED, collapsed) }
+
+    fun setEditorSaveMode(mode: EditorSaveMode) = update(
+        state.value.copy(editorSaveMode = mode),
+    ) { putString(KEY_EDITOR_SAVE_MODE, mode.name) }
+
+    fun setShareStripMetadata(enabled: Boolean) = update(
+        state.value.copy(shareStripMetadata = enabled),
+    ) { putBoolean(KEY_SHARE_STRIP, enabled) }
+
+    fun setShareWatermark(enabled: Boolean) = update(
+        state.value.copy(shareWatermark = enabled),
+    ) { putBoolean(KEY_SHARE_WATERMARK, enabled) }
+
+    fun setShareFrame(frame: String) = update(
+        state.value.copy(shareFrame = frame),
+    ) { putString(KEY_SHARE_FRAME, frame) }
+
+    fun setShareSeal(seal: String) {
+        val trimmed = seal.trim().take(MAX_SEAL_CHARS)
+        update(state.value.copy(shareSeal = trimmed)) { putString(KEY_SHARE_SEAL, trimmed) }
+    }
+
     fun setSlideshowInterval(seconds: Int) {
         val safeSeconds = seconds.coerceIn(MIN_SLIDESHOW_INTERVAL_SECONDS, MAX_SLIDESHOW_INTERVAL_SECONDS)
         update(state.value.copy(slideshowIntervalSeconds = safeSeconds)) {
@@ -127,6 +240,23 @@ class GalleryPreferences(context: Context) {
             .getInt(KEY_SLIDESHOW_INTERVAL, DEFAULT_SLIDESHOW_INTERVAL_SECONDS)
             .coerceIn(MIN_SLIDESHOW_INTERVAL_SECONDS, MAX_SLIDESHOW_INTERVAL_SECONDS),
         defaultDestination = enumValue(KEY_DEFAULT_DESTINATION, HyleDestination.PHOTOS),
+        // Every one of these defaults to the behaviour the app already had, which is not a
+        // stylistic choice: CatalogueCharacterisationTest pins the projections by fingerprint,
+        // so a new preference whose default changed what a destination contains would move a
+        // golden -- and a golden that needs editing means the refactor changed behaviour.
+        keepScreenOn = preferences.getBoolean(KEY_KEEP_SCREEN_ON, false),
+        slideshowShuffle = preferences.getBoolean(KEY_SLIDESHOW_SHUFFLE, false),
+        autoplayVideos = preferences.getBoolean(KEY_AUTOPLAY_VIDEOS, false),
+        showFilmstrip = preferences.getBoolean(KEY_SHOW_FILMSTRIP, true),
+        longPressPreview = preferences.getBoolean(KEY_LONG_PRESS_PREVIEW, true),
+        loopAnimations = preferences.getBoolean(KEY_LOOP_ANIMATIONS, false),
+        fitToTile = preferences.getBoolean(KEY_FIT_TO_TILE, true),
+        navRailCollapsed = preferences.getBoolean(KEY_NAV_RAIL_COLLAPSED, false),
+        editorSaveMode = enumValue(KEY_EDITOR_SAVE_MODE, EditorSaveMode.ASK),
+        shareStripMetadata = preferences.getBoolean(KEY_SHARE_STRIP, true),
+        shareWatermark = preferences.getBoolean(KEY_SHARE_WATERMARK, false),
+        shareFrame = preferences.getString(KEY_SHARE_FRAME, null) ?: "NONE",
+        shareSeal = preferences.getString(KEY_SHARE_SEAL, null).orEmpty(),
     )
 
     private inline fun <reified T : Enum<T>> enumValue(key: String, fallback: T): T =
@@ -146,6 +276,20 @@ class GalleryPreferences(context: Context) {
         const val KEY_ACCENT_PALETTE = "accent_palette"
         const val KEY_SLIDESHOW_INTERVAL = "slideshow_interval"
         const val KEY_DEFAULT_DESTINATION = "default_destination"
+        const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
+        const val KEY_SLIDESHOW_SHUFFLE = "slideshow_shuffle"
+        const val KEY_AUTOPLAY_VIDEOS = "autoplay_videos"
+        const val KEY_SHOW_FILMSTRIP = "show_filmstrip"
+        const val KEY_LONG_PRESS_PREVIEW = "long_press_preview"
+        const val KEY_LOOP_ANIMATIONS = "loop_animations"
+        const val KEY_EDITOR_SAVE_MODE = "editor_save_mode"
+        const val KEY_FIT_TO_TILE = "fit_to_tile"
+        const val KEY_NAV_RAIL_COLLAPSED = "nav_rail_collapsed"
+        const val KEY_SHARE_STRIP = "share_strip_metadata"
+        const val KEY_SHARE_WATERMARK = "share_watermark"
+        const val KEY_SHARE_FRAME = "share_frame"
+        const val KEY_SHARE_SEAL = "share_seal"
+        const val MAX_SEAL_CHARS = 12
     }
 }
 
