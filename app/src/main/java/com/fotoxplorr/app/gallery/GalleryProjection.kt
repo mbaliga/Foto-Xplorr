@@ -33,6 +33,12 @@ data class AlbumSummary(
     val name: String,
     val count: Int,
     val cover: MediaAsset,
+    /**
+     * The top few photos, newest first, for the fanned album stack. [cover] is always the first
+     * of these; it is kept as its own field because plenty of callers want exactly one photo and
+     * should not have to reach into a list to get it.
+     */
+    val covers: List<MediaAsset> = listOf(cover),
 )
 
 data class TimelineGroup(
@@ -220,11 +226,15 @@ internal fun buildAlbumSummaries(
         .filterNot { it.isTrashed }
         .groupBy { folderIdentity(it).key.value }
         .map { (key, items) ->
+            // Sorted once and reused for both fields: `maxBy` followed by a separate sort would
+            // walk the album twice, and on a folder with thousands of photos that is not free.
+            val newestFirst = items.sortedByDescending { it.dateTakenMillis }
             AlbumSummary(
                 key = key,
                 name = folderIdentity(items.first()).displayName,
                 count = items.size,
-                cover = items.maxBy { it.dateTakenMillis },
+                cover = newestFirst.first(),
+                covers = newestFirst.take(ALBUM_STACK_COVERS),
             )
         }
         .filter { normalizedQuery.isEmpty() || it.name.lowercase().contains(normalizedQuery) }
@@ -294,7 +304,12 @@ private fun SmartAlbum.subtitle(): String = when (this) {
     SmartAlbum.UNTAGGED -> "Media without custom tags"
 }
 
-private fun MediaAsset.isPrivacyVisible(
+/**
+ * internal, not file-private, for the same reason [isScreenshot] is: the Tidy up queue must apply
+ * the exact rule every other browsing surface applies, or a locked folder's contents surface
+ * there with thumbnails and filenames.
+ */
+internal fun MediaAsset.isPrivacyVisible(
     lockedFolders: Set<String>,
     unlockedFolders: Set<String>,
 ): Boolean {
@@ -314,7 +329,12 @@ private fun MediaAsset.matchesQuery(query: String, tags: Set<String>): Boolean {
 private fun List<MediaAsset>.filterByQuery(query: String): List<MediaAsset> =
     filter { it.matchesQuery(query, emptySet()) }
 
-private fun MediaAsset.isScreenshot(): Boolean =
+/**
+ * internal, not file-private: the archive review queue asks the same question when deciding
+ * whether a photo is an old screenshot worth offering to tidy away, and two copies of "what
+ * counts as a screenshot" would eventually disagree about the same photo on two screens.
+ */
+internal fun MediaAsset.isScreenshot(): Boolean =
     displayName.contains("screenshot", ignoreCase = true) ||
         folderIdentity(this).displayName.contains("screenshot", ignoreCase = true)
 
@@ -327,3 +347,6 @@ private data class DuplicateKey(
 
 private const val RECENT_WINDOW_MILLIS = 30L * 24L * 60L * 60L * 1_000L
 private const val LARGE_FILE_THRESHOLD_BYTES = 20L * 1024L * 1024L
+
+/** How many photos an album stack fans out. Matches AlbumStack's own layer cap. */
+private const val ALBUM_STACK_COVERS = 3

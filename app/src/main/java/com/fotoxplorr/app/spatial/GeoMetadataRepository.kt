@@ -79,6 +79,35 @@ class GeoMetadataRepository(context: Context) {
         }
     }
 
+    /**
+     * Record a location the user placed by hand, for a photo whose file carries none.
+     *
+     * Written to Foto Xplorr's own index rather than into the photo's EXIF. Editing the user's
+     * original file to add a GPS tag is a destructive change to their data made on their behalf,
+     * and it needs a MediaStore write grant per file on modern Android; neither belongs behind a
+     * pin drag. The map, the compass and the detail room all read this index, so a hand-placed
+     * location behaves exactly like an embedded one everywhere it matters — it simply does not
+     * travel with the file if they copy it elsewhere, which the UI says.
+     */
+    suspend fun setManualLocation(
+        mediaId: MediaId,
+        latitude: Double,
+        longitude: Double,
+    ) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            helper.upsertManual(mediaId, latitude, longitude)
+            state.value = helper.readState().copy(totalCount = state.value.totalCount)
+        }
+    }
+
+    /** Forget a hand-placed location, returning the photo to whatever its file says (usually none). */
+    suspend fun clearManualLocation(mediaId: MediaId) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            helper.clearManual(mediaId)
+            state.value = helper.readState().copy(totalCount = state.value.totalCount)
+        }
+    }
+
     suspend fun clearAndReindex(assets: List<MediaAsset>) = withContext(Dispatchers.IO) {
         mutex.withLock {
             helper.clear()
@@ -161,13 +190,60 @@ private class GeoOpenHelper(context: Context) : SQLiteOpenHelper(
                 $COL_LATITUDE REAL,
                 $COL_LONGITUDE REAL,
                 $COL_ALTITUDE REAL,
-                $COL_DIRECTION REAL
+                $COL_DIRECTION REAL,
+                $COL_MANUAL INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent(),
         )
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    /**
+     * Adds the manual-location flag to an index built before it existed.
+     *
+     * `onUpgrade` used to be `= Unit`, which is the shape that silently breaks the first time
+     * anyone changes the schema: every existing install keeps a table without the new column and
+     * every query naming it throws. The ALTER is guarded because upgrade paths get replayed --
+     * a user on version 1 and a user on version 2 both arrive here on the next bump.
+     */
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            runCatching {
+                db.execSQL("ALTER TABLE $TABLE_GEO ADD COLUMN $COL_MANUAL INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+    }
+
+    fun upsertManual(mediaId: MediaId, latitude: Double, longitude: Double) {
+        val values = ContentValues(5).apply {
+            put(COL_MEDIA_ID, mediaId.value)
+            put(COL_SCANNED, 1)
+            put(COL_HAS_LOCATION, 1)
+            put(COL_LATITUDE, latitude)
+            put(COL_LONGITUDE, longitude)
+            put(COL_MANUAL, 1)
+        }
+        writableDatabase.insertWithOnConflict(
+            TABLE_GEO,
+            null,
+            values,
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+    }
+
+    fun clearManual(mediaId: MediaId) {
+        val values = ContentValues(3).apply {
+            put(COL_HAS_LOCATION, 0)
+            putNull(COL_LATITUDE)
+            putNull(COL_LONGITUDE)
+            put(COL_MANUAL, 0)
+        }
+        writableDatabase.update(
+            TABLE_GEO,
+            values,
+            "$COL_MEDIA_ID = ? AND $COL_MANUAL = 1",
+            arrayOf(mediaId.value.toString()),
+        )
+    }
 
     fun upsert(rows: List<GeoRow>) {
         writableDatabase.inTransaction { db ->
@@ -242,11 +318,12 @@ private class GeoOpenHelper(context: Context) : SQLiteOpenHelper(
 
     private companion object {
         const val DATABASE_NAME = "foto_xplorr_geo.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
         const val TABLE_GEO = "geo_metadata"
         const val COL_MEDIA_ID = "media_id"
         const val COL_SCANNED = "scanned"
         const val COL_HAS_LOCATION = "has_location"
+        const val COL_MANUAL = "manual"
         const val COL_LATITUDE = "latitude"
         const val COL_LONGITUDE = "longitude"
         const val COL_ALTITUDE = "altitude"

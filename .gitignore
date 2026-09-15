@@ -20,3 +20,6 @@ captures/
 
 # Log/output from ad-hoc local builds
 *.log
+
+# Kotlin compiler session cache
+.kotlin/

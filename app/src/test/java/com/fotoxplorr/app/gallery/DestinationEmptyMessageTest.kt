@@ -116,11 +116,11 @@ class DestinationEmptyMessageDistinctnessTest {
 class HyleDestinationTest {
 
     @Test
-    fun `the nine mockup destinations exist in the mockups order`() {
+    fun `the mockup destinations exist in the mockups order, plus Audio appended last`() {
         assertEquals(
             listOf(
                 "Pets", "People", "Identity", "Screenshots", "Photos",
-                "Videos", "Favourites", "Places", "Protected",
+                "Videos", "Favourites", "Places", "Protected", "Audio",
             ),
             HyleDestination.entries.map { it.label },
         )

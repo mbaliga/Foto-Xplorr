@@ -6,6 +6,7 @@ import android.app.RecoverableSecurityException
 import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -36,8 +37,21 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.fotoxplorr.app.audio.AndroidAudioMediaStoreScanner
+import com.fotoxplorr.app.audio.AudioAsset
+import com.fotoxplorr.app.audio.AudioConversionWriter
+import com.fotoxplorr.app.audio.AudioIndexer
+import com.fotoxplorr.app.audio.AudioPlayerScreen
+import com.fotoxplorr.app.audio.InMemoryAudioRepository
+import com.fotoxplorr.app.audio.PrefsAudioScanWatermark
+import com.fotoxplorr.app.editor.EditedCopyWriter
+import com.fotoxplorr.app.editor.EditorScreen
 import com.fotoxplorr.app.favorites.FavoriteStore
-import com.fotoxplorr.app.fileops.CleanShareExporter
+import com.fotoxplorr.app.share.SharePreparer
+import com.fotoxplorr.app.share.ZipExporter
+import com.fotoxplorr.app.share.ShareOptionsSheet
+import com.fotoxplorr.app.share.ShareOptions
+import com.fotoxplorr.app.share.ShareFrame
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.gallery.GalleryActions
 import com.fotoxplorr.app.gallery.GalleryPreferences
@@ -45,6 +59,7 @@ import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.GalleryScreen
 import com.fotoxplorr.app.gallery.GalleryUiState
 import com.fotoxplorr.app.gallery.folderIdentity
+import com.fotoxplorr.app.gallery.rememberGeoRepository
 import com.fotoxplorr.app.media.AndroidMediaStoreScanner
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
@@ -54,8 +69,14 @@ import com.fotoxplorr.app.media.PrefsScanWatermark
 import com.fotoxplorr.app.media.ScanEvent
 import com.fotoxplorr.app.media.ScanPlan
 import com.fotoxplorr.app.media.SqliteMediaRepository
+import com.fotoxplorr.app.curate.AutoCurationPass
+import com.fotoxplorr.app.metadata.GpsCoordinate
+import com.fotoxplorr.app.metadata.MetadataEdit
+import com.fotoxplorr.app.metadata.MetadataWriter
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
+import com.fotoxplorr.app.video.VideoConversionWriter
+import com.fotoxplorr.app.videoeditor.VideoEditorScreen
 import com.fotoxplorr.app.recognition.RecognitionIndexer
 import com.fotoxplorr.app.recognition.RecognitionStore
 import com.fotoxplorr.app.privacy.SensitiveStore
@@ -126,9 +147,13 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val favoriteStore = remember { FavoriteStore(applicationContext) }
     val sensitiveStore = remember { SensitiveStore(applicationContext) }
     val privateFolderStore = remember { PrivateFolderStore(applicationContext) }
-    val libraryStore = remember { LibraryStore(applicationContext) }
+    val libraryStore = remember { LibraryStore.get(applicationContext) }
     val fileOperations = remember { MediaFileOperations(applicationContext) }
-    val cleanShareExporter = remember { CleanShareExporter(applicationContext) }
+    val metadataWriter = remember { MetadataWriter(applicationContext) }
+    val editedCopyWriter = remember { EditedCopyWriter(applicationContext) }
+    val videoConversionWriter = remember { VideoConversionWriter(applicationContext) }
+    val sharePreparer = remember { SharePreparer(applicationContext) }
+    val zipExporter = remember { ZipExporter(applicationContext) }
     val changeObserver = remember { MediaStoreChangeObserver(contentResolver) }
     // On-device recognition backing the Pets / People / Identity destinations. Bundled ML
     // Kit models only -- nothing here can reach the network, so personal photos never leave
@@ -142,9 +167,26 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             watermark = PrefsScanWatermark(applicationContext),
         )
     }
+    // Audio's own repository/indexer, parallel to the photo/video ones above rather than folded
+    // into them -- see AudioAsset's own doc for why the two asset types stay apart everywhere.
+    val audioRepository = remember { InMemoryAudioRepository() }
+    val audioIndexer = remember {
+        AudioIndexer(
+            scanner = AndroidAudioMediaStoreScanner(contentResolver),
+            repository = audioRepository,
+            watermark = PrefsAudioScanWatermark(applicationContext),
+        )
+    }
+    val audioConversionWriter = remember { AudioConversionWriter(applicationContext) }
     val scope = rememberCoroutineScope()
+    // One geo index for the whole app: the gallery reads it for the map and compass, the viewer
+    // writes hand-placed locations into it. Two instances over the same file would each hold
+    // their own StateFlow and a pin dropped in the viewer would not reach the map.
+    val geoRepository = rememberGeoRepository()
+    val geoState by geoRepository.observe().collectAsStateWithLifecycle()
 
     val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    val audioAssets by audioRepository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val sensitiveIds by sensitiveStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val lockedFolders by privateFolderStore.observeLockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
@@ -154,6 +196,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val recognitionProgress by recognitionStore.observeProgress().collectAsStateWithLifecycle()
 
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
+    var partialMediaAccess by remember { mutableStateOf(hasPartialMediaAccess()) }
     var scanState by remember { mutableStateOf<ScanState>(ScanState.Idle) }
 
     // Rescans are REQUESTS on a conflated channel, not a LaunchedEffect key.
@@ -165,9 +208,16 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // A channel decouples "something changed" from "a scan is running": requests that arrive
     // mid-scan are collapsed into one follow-up pass instead of killing the current one.
     val scanRequests = remember { Channel<Boolean>(Channel.CONFLATED) }
+    // Audio's own conflated request channel -- kept separate from `scanRequests` above rather than
+    // shared, since a Kotlin Channel hands each element to exactly one collector: two independent
+    // `for` loops over the same channel would each only see some of the requests, not all of them.
+    val audioScanRequests = remember { Channel<Boolean>(Channel.CONFLATED) }
 
     var viewerAssets by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
     var selectedAssetId by remember { mutableStateOf<MediaId?>(null) }
+    var audioQueue by remember { mutableStateOf<List<AudioAsset>>(emptyList()) }
+    var selectedAudioAssetId by remember { mutableStateOf<MediaId?>(null) }
+    var convertingAudioId by remember { mutableStateOf<MediaId?>(null) }
     var slideshowActive by remember { mutableStateOf(false) }
     var pendingOperation by remember { mutableStateOf<PendingMediaOperation?>(null) }
     var pendingOperationIds by remember { mutableStateOf<Set<MediaId>>(emptySet()) }
@@ -175,11 +225,33 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     var pendingTreeItems by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
     var pendingRenameAsset by remember { mutableStateOf<MediaAsset?>(null) }
     var pendingRenameName by remember { mutableStateOf<String?>(null) }
+    var pendingMetadataAsset by remember { mutableStateOf<MediaAsset?>(null) }
+    var pendingMetadataEdit by remember { mutableStateOf<MetadataEdit?>(null) }
+    var pendingOverwriteAsset by remember { mutableStateOf<MediaAsset?>(null) }
+    var pendingOverwriteBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    // Which video (if any) is mid-conversion, so the actions room can disable a second tap and
+    // show "Converting..." rather than starting the same video through the pipeline twice.
+    var convertingVideoId by remember { mutableStateOf<MediaId?>(null) }
+    // Bumped on every metadata write that actually lands, so ViewerScreen's own EXIF/XMP cache
+    // (which only reloads when the asset itself changes) knows to re-read the file it just wrote
+    // into. See that parameter's own doc for why nothing else already covers this.
+    var metadataRevision by remember { mutableStateOf(0) }
     var userMessage by remember { mutableStateOf<String?>(null) }
+    var editingAsset by remember { mutableStateOf<MediaAsset?>(null) }
+    // Text handed over from the viewer's "Search inside this photo" card, on its way to the
+    // grid's search field. Lives here rather than in either screen because the two are siblings
+    // under this composable, not nested -- the viewer has no way to reach into the browser's own
+    // state, so the instruction has to pass through their nearest common ancestor. Cleared by
+    // GalleryActions.onPendingSearchConsumed as soon as the browser has acted on it; see
+    // GalleryUiState.pendingSearch for why it is a one-shot instruction and not the field itself.
+    var pendingSearch by remember { mutableStateOf<String?>(null) }
+    // Non-null while the advanced share sheet is up; holds what is being shared.
+    var pendingShare by remember { mutableStateOf<List<MediaAsset>?>(null) }
     var recognitionGeneration by remember { mutableStateOf(0) }
 
     val selectedIndex = selectedAssetId?.let { id -> viewerAssets.indexOfFirst { it.id == id } } ?: -1
     val activeAsset = viewerAssets.getOrNull(selectedIndex)
+    val activeAudioAsset = selectedAudioAssetId?.let { id -> audioQueue.firstOrNull { it.id == id } }
 
     DisposableEffect(unlockedFolders.isNotEmpty()) {
         if (unlockedFolders.isNotEmpty()) {
@@ -311,6 +383,170 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
     }
 
+    fun performPendingMetadataWrite() {
+        val asset = pendingMetadataAsset ?: return
+        val edit = pendingMetadataEdit ?: return
+        scope.launch {
+            val outcome = metadataWriter.write(asset, edit)
+            pendingMetadataAsset = null
+            pendingMetadataEdit = null
+            // Both a scan request (the write changed the file's own size/modified-date, which
+            // InformationBlock shows) and the revision bump (so ViewerScreen's own EXIF/XMP cache
+            // for THIS still-open photo re-reads immediately, rather than waiting on that scan).
+            outcome.onSuccess { metadataRevision++; scanRequests.trySend(false) }
+                .onFailure { userMessage = it.message ?: "Android did not allow this file's metadata to be updated." }
+        }
+    }
+
+    // Mirrors renamePermissionLauncher/requestRename immediately above, field for field: the same
+    // three-tier consent dance (direct write pre-Q, RecoverableSecurityException on Q, an upfront
+    // MediaStore.createWriteRequest on R+) applies to any write into a file this app did not
+    // itself create, and a caption/rating/keyword edit is exactly that kind of write.
+    val metadataPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            performPendingMetadataWrite()
+        } else {
+            pendingMetadataAsset = null
+            pendingMetadataEdit = null
+            userMessage = "Android cancelled the metadata update."
+        }
+    }
+
+    fun requestMetadataWrite(asset: MediaAsset, edit: MetadataEdit) {
+        if (edit.isEmpty) return
+        pendingMetadataAsset = asset
+        pendingMetadataEdit = edit
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching {
+                MediaStore.createWriteRequest(contentResolver, listOf(asset.contentUri))
+            }.onSuccess { request ->
+                metadataPermissionLauncher.launch(
+                    IntentSenderRequest.Builder(request.intentSender).build(),
+                )
+            }.onFailure { error ->
+                pendingMetadataAsset = null
+                pendingMetadataEdit = null
+                userMessage = error.message ?: "Could not request metadata write permission."
+            }
+        } else {
+            scope.launch {
+                val outcome = metadataWriter.write(asset, edit)
+                val error = outcome.exceptionOrNull()
+                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q && error is RecoverableSecurityException) {
+                    metadataPermissionLauncher.launch(
+                        IntentSenderRequest.Builder(error.userAction.actionIntent.intentSender).build(),
+                    )
+                } else {
+                    pendingMetadataAsset = null
+                    pendingMetadataEdit = null
+                    outcome.onSuccess { metadataRevision++; scanRequests.trySend(false) }
+                        .onFailure { userMessage = it.message ?: "Android did not allow this file's metadata to be updated." }
+                }
+            }
+        }
+    }
+
+    fun finishOverwrite(outcome: Result<Unit>) {
+        pendingOverwriteAsset = null
+        pendingOverwriteBitmap = null
+        userMessage = outcome.fold(
+            onSuccess = { "Replaced the original." },
+            onFailure = { it.message ?: "Could not replace the original photo." },
+        )
+        // The bytes at this Uri changed size and content; the library's cached size/date-modified
+        // (and any thumbnail) are stale until MediaStore is asked to look again.
+        scanRequests.trySend(false)
+    }
+
+    // Mirrors metadataPermissionLauncher/requestMetadataWrite immediately above, field for field:
+    // the same three-tier consent dance applies here too -- EditedCopyWriter.overwrite touches a
+    // file this app did not create, exactly like a metadata write does.
+    val overwritePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        val asset = pendingOverwriteAsset
+        val bitmap = pendingOverwriteBitmap
+        if (result.resultCode == Activity.RESULT_OK && asset != null && bitmap != null) {
+            scope.launch { finishOverwrite(editedCopyWriter.overwrite(asset, bitmap)) }
+        } else {
+            pendingOverwriteAsset = null
+            pendingOverwriteBitmap = null
+            userMessage = "Android cancelled replacing the original — nothing was saved."
+        }
+    }
+
+    // EditorScreen already rendered the edit at full size and decided OVERWRITE is even possible
+    // for this asset's format (see EditorScreen's own canOverwriteInPlace) before calling this --
+    // this function's only job is the consent dance and the actual write, the same division of
+    // labour requestMetadataWrite already has with MetadataWriter.
+    fun requestOverwrite(asset: MediaAsset, bitmap: Bitmap) {
+        pendingOverwriteAsset = asset
+        pendingOverwriteBitmap = bitmap
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching {
+                MediaStore.createWriteRequest(contentResolver, listOf(asset.contentUri))
+            }.onSuccess { request ->
+                overwritePermissionLauncher.launch(
+                    IntentSenderRequest.Builder(request.intentSender).build(),
+                )
+            }.onFailure { error ->
+                pendingOverwriteAsset = null
+                pendingOverwriteBitmap = null
+                userMessage = error.message ?: "Could not request permission to replace the original."
+            }
+        } else {
+            scope.launch {
+                val outcome = editedCopyWriter.overwrite(asset, bitmap)
+                val error = outcome.exceptionOrNull()
+                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q && error is RecoverableSecurityException) {
+                    overwritePermissionLauncher.launch(
+                        IntentSenderRequest.Builder(error.userAction.actionIntent.intentSender).build(),
+                    )
+                } else {
+                    finishOverwrite(outcome)
+                }
+            }
+        }
+    }
+
+    // No permission dance needed here, unlike rename/metadata/overwrite above: a conversion
+    // always inserts a brand-new MediaStore row this app itself owns (see
+    // VideoConversionWriter's own doc for why it never touches the source video), and creating a
+    // new row this app owns needs no per-file consent the way writing into someone else's already
+    // needs.
+    fun requestVideoConversion(asset: MediaAsset) {
+        if (convertingVideoId != null) return
+        convertingVideoId = asset.id
+        scope.launch {
+            val outcome = videoConversionWriter.convertToH264Mp4(asset)
+            convertingVideoId = null
+            outcome.onSuccess { scanRequests.trySend(false) }
+            userMessage = outcome.fold(
+                onSuccess = { "Converted to MP4." },
+                onFailure = { it.message ?: "Could not convert this video." },
+            )
+        }
+    }
+
+    // AudioConversionWriter's own doc explains why this too needs no permission dance: like a
+    // video conversion, it inserts a brand-new MediaStore row this app owns rather than touching
+    // the source file.
+    fun requestAudioConversion(asset: AudioAsset) {
+        if (convertingAudioId != null) return
+        convertingAudioId = asset.id
+        scope.launch {
+            val outcome = audioConversionWriter.convertToAac(asset)
+            convertingAudioId = null
+            outcome.onSuccess { audioScanRequests.trySend(false) }
+            userMessage = outcome.fold(
+                onSuccess = { "Converted to AAC (M4A)." },
+                onFailure = { it.message ?: "Could not convert this audio file." },
+            )
+        }
+    }
+
     val treeLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
     ) { treeUri ->
@@ -348,9 +584,22 @@ private fun FotoXplorrActivity.FotoXplorrApp(
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
-    ) { result ->
-        permissionGranted = result.values.any { it } || hasMediaPermission()
+    ) {
+        // ACCESS_MEDIA_LOCATION can be granted independently; it must never make the
+        // gallery believe that image/video access itself was granted.
+        permissionGranted = hasMediaPermission()
+        partialMediaAccess = hasPartialMediaAccess()
         if (permissionGranted) scanRequests.trySend(false)
+    }
+
+    // Permission scope can change in system Settings while the process is backgrounded.
+    // Re-read it on return so the Settings affordance and scan state never describe a
+    // stale grant.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        val hadPermission = permissionGranted
+        permissionGranted = hasMediaPermission()
+        partialMediaAccess = hasPartialMediaAccess()
+        if (!hadPermission && permissionGranted) scanRequests.trySend(false)
     }
 
     val exportMetadataLauncher = rememberLauncherForActivityResult(
@@ -426,28 +675,45 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             .onFailure { userMessage = "No compatible sharing app was found." }
     }
 
-    fun share(items: List<MediaAsset>) {
+    /**
+     * Prepare and hand off to the system share sheet.
+     *
+     * EVERY share goes through SharePreparer now, not just the one behind an opt-in menu item.
+     * Metadata stripping is the default (owner, 2026-08-15), so the ordinary path is the private
+     * one and the advanced sheet is where somebody deliberately chooses otherwise.
+     */
+    fun shareWith(items: List<MediaAsset>, options: ShareOptions) {
         if (items.isEmpty()) return
-        shareUris(
-            uris = items.map { it.contentUri },
-            mimeType = commonShareType(items),
-            title = "Share ${items.size} item${if (items.size == 1) "" else "s"}",
-        )
-    }
-
-    fun shareClean(items: List<MediaAsset>) {
         scope.launch {
-            userMessage = "Preparing metadata-clean ${if (items.size == 1) "copy" else "copies"}…"
-            cleanShareExporter.createCopies(items).fold(
+            userMessage = "Preparing ${if (items.size == 1) "your photo" else "your photos"}…"
+            sharePreparer.prepare(items, options).fold(
                 onSuccess = { uris ->
                     userMessage = null
-                    shareUris(uris, "image/*", "Share without common EXIF metadata")
+                    shareUris(
+                        uris = uris,
+                        // A stamp frame is a PNG (it has real transparency at the perforations),
+                        // so a blanket image/jpeg would misdescribe it to the receiving app.
+                        mimeType = if (options.requiresRender) "image/*" else commonShareType(items),
+                        title = "Share ${items.size} item${if (items.size == 1) "" else "s"}",
+                    )
                 },
                 onFailure = { error ->
-                    userMessage = error.message ?: "Could not prepare metadata-clean copies."
+                    userMessage = error.message ?: "Could not prepare the photos to share."
                 },
             )
         }
+    }
+
+    /** The plain Share action: uses the saved defaults, no sheet, one tap. */
+    fun share(items: List<MediaAsset>) {
+        if (items.isEmpty()) return
+        shareWith(items, preferences.toShareOptions())
+    }
+
+    /** The advanced trigger: opens the options sheet above the system share sheet. */
+    fun shareAdvanced(items: List<MediaAsset>) {
+        if (items.isEmpty()) return
+        pendingShare = items
     }
 
     fun openExternally(asset: MediaAsset, action: String) {
@@ -505,6 +771,25 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
     }
 
+    // Audio's own change-triggered rescan, mirroring the two LaunchedEffects just above field for
+    // field. MediaStoreChangeObserver already watches the whole `Files` table (audio rows
+    // included), so no second observer is needed -- just this pipeline's own debounced trigger
+    // and its own consumer loop over `audioScanRequests`.
+    LaunchedEffect(permissionGranted) {
+        if (!permissionGranted) return@LaunchedEffect
+        changeObserver.changes()
+            .debounce(MEDIA_CHANGE_DEBOUNCE_MS)
+            .collect { audioScanRequests.trySend(false) }
+    }
+
+    LaunchedEffect(permissionGranted) {
+        if (!permissionGranted) return@LaunchedEffect
+        audioScanRequests.trySend(true) // first pass after a grant is a full one
+        for (userRequested in audioScanRequests) {
+            audioIndexer.refresh(userRequested = userRequested).collect { }
+        }
+    }
+
     LaunchedEffect(Unit) { recognitionStore.reload() }
 
     // Guarded on a generation counter rather than the asset list itself, so a recomposition
@@ -513,6 +798,11 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     LaunchedEffect(recognitionGeneration) {
         if (recognitionGeneration > 0 && assets.isNotEmpty()) {
             recognitionIndexer.index(assets)
+            // Curate immediately after, on the results that pass just wrote, rather than leaving
+            // it for the next background wake -- someone who taps "index my library" and then
+            // opens a photo expects to see what it found, not to see it tomorrow morning. The
+            // pass is idempotent, so the background run doing this again costs nothing.
+            AutoCurationPass(libraryStore).run(assets, recognitionStore.observe().value, lockedFolders)
         }
     }
 
@@ -524,6 +814,13 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
     }
 
+    LaunchedEffect(selectedAudioAssetId, activeAudioAsset) {
+        if (selectedAudioAssetId != null && activeAudioAsset == null) {
+            selectedAudioAssetId = null
+            audioQueue = emptyList()
+        }
+    }
+
     userMessage?.let { message ->
         AlertDialog(
             onDismissRequest = { userMessage = null },
@@ -532,7 +829,57 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         )
     }
 
-    if (activeAsset != null) {
+    pendingShare?.let { items ->
+        ShareOptionsSheet(
+            // The first selected photo stands in for the batch: the preview is about the FRAME,
+            // and the frame is identical across every photo in one share.
+            sample = items.firstOrNull { !it.isVideo },
+            initial = preferences.toShareOptions(),
+            onDismiss = { pendingShare = null },
+            onShare = { chosen ->
+                pendingShare = null
+                // Remember the choices, so a habit does not have to be re-picked every time.
+                galleryPreferences.setShareFrame(chosen.frame.name)
+                galleryPreferences.setShareStripMetadata(chosen.stripMetadata)
+                galleryPreferences.setShareWatermark(chosen.watermark)
+                chosen.seal?.let(galleryPreferences::setShareSeal)
+                shareWith(items, chosen)
+            },
+        )
+    }
+
+    val editing = editingAsset
+    if (editing != null && editing.isVideo) {
+        // A separate screen, not a branch inside EditorScreen: trim/speed share almost nothing
+        // with EditRecipe's crop/colour/rotate model (see VideoEditRecipe's own doc), and forcing
+        // both asset types through one composable would mean every future photo-only or
+        // video-only tool growing an "if (asset.isVideo)" branch somewhere inside it.
+        BackHandler { editingAsset = null }
+        VideoEditorScreen(
+            asset = editing,
+            onClose = { editingAsset = null },
+            onSaved = { message ->
+                editingAsset = null
+                userMessage = message
+                scanRequests.trySend(false)
+            },
+        )
+    } else if (editing != null) {
+        BackHandler { editingAsset = null }
+        EditorScreen(
+            asset = editing,
+            saveMode = preferences.editorSaveMode,
+            onSetSaveMode = galleryPreferences::setEditorSaveMode,
+            onClose = { editingAsset = null },
+            onSaved = { message ->
+                editingAsset = null
+                userMessage = message
+                // The copy is a new file, so the library has to learn about it.
+                scanRequests.trySend(false)
+            },
+            onOverwrite = ::requestOverwrite,
+        )
+    } else if (activeAsset != null) {
         BackHandler {
             selectedAssetId = null
             viewerAssets = emptyList()
@@ -544,6 +891,50 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             total = viewerAssets.size,
             isFavorite = activeAsset.id in favoriteIds,
             isSensitive = activeAsset.id in sensitiveIds,
+            // Text the offline pass already read out of this photo. Looked up per asset rather
+            // than passed wholesale: the index holds every photo's text, and the viewer needs
+            // exactly one photo's worth.
+            liveTextBlocks = recognition.textByMedia[activeAsset.id].orEmpty(),
+            // What this photo carries in the library, as opposed to what its file says. Read
+            // from the same LibraryState the grid already renders, so a tag added in the grid's
+            // selection menu is on the photo the moment the viewer opens over it.
+            tags = library.tagsFor(activeAsset.id),
+            autoTags = library.autoTagsFor(activeAsset.id),
+            onRemoveTag = { tag -> libraryStore.removeTag(setOf(activeAsset.id), tag) },
+            caption = library.captionFor(activeAsset.id),
+            captionIsMachineWritten = library.isMachineCaption(activeAsset.id),
+            onSetCaption = { text -> libraryStore.setCaption(activeAsset.id, text) },
+            // MetadataWriter is built on ExifInterface, which this app relies on only for still
+            // images (see readImageExifDetails's own early return for asset.isVideo) -- so these
+            // stay null for a video rather than offering fields a tap on would just fail against.
+            // Video's own metadata story is Phase 3/4, not this one.
+            onSetRating = if (activeAsset.isVideo) null else { rating: Int ->
+                requestMetadataWrite(activeAsset, MetadataEdit(rating = rating))
+            },
+            onSetCreator = if (activeAsset.isVideo) null else { creator: String ->
+                requestMetadataWrite(activeAsset, MetadataEdit(creator = creator))
+            },
+            onSetCopyright = if (activeAsset.isVideo) null else { copyright: String ->
+                requestMetadataWrite(activeAsset, MetadataEdit(copyright = copyright))
+            },
+            onEmbedKeywords = if (activeAsset.isVideo) null else {
+                {
+                    val tags = library.tagsFor(activeAsset.id)
+                    if (tags.isNotEmpty()) {
+                        requestMetadataWrite(activeAsset, MetadataEdit(keywordsToAdd = tags.toList()))
+                    }
+                }
+            },
+            metadataRevision = metadataRevision,
+            // The Search pill in the details room. Closing the viewer is done HERE rather than
+            // inside ViewerScreen (see that parameter's own doc): the results land in the grid,
+            // and leaving the photo open on top of them would put the answer behind the question.
+            onSearchLibrary = { text ->
+                pendingSearch = text
+                selectedAssetId = null
+                viewerAssets = emptyList()
+                slideshowActive = false
+            },
             hasPrevious = selectedIndex > 0,
             hasNext = selectedIndex < viewerAssets.lastIndex,
             canMoveToTrash = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
@@ -553,14 +944,25 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
             onToggleSensitive = { sensitiveStore.toggle(activeAsset.id) },
             onShare = { share(listOf(activeAsset)) },
-            onEdit = { openExternally(activeAsset, Intent.ACTION_EDIT) },
+            onEdit = { editingAsset = activeAsset },
             onOpenWith = { openExternally(activeAsset, Intent.ACTION_VIEW) },
             onMoveToTrash = { requestMediaOperation(listOf(activeAsset), PendingMediaOperation.TRASH) },
+            isConvertingToMp4 = convertingVideoId == activeAsset.id,
+            onConvertToMp4 = if (activeAsset.isVideo) {
+                { requestVideoConversion(activeAsset) }
+            } else {
+                null
+            },
             onPrevious = {
                 viewerAssets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id }
             },
             onNext = {
                 val nextIndex = when {
+                    // Shuffle only applies to a running slideshow: a manual swipe means "the
+                    // next photo", and answering it with a random one would be a bug, not a
+                    // setting.
+                    slideshowActive && preferences.slideshowShuffle && viewerAssets.size > 1 ->
+                        randomOtherIndex(viewerAssets.size, selectedIndex)
                     selectedIndex < viewerAssets.lastIndex -> selectedIndex + 1
                     slideshowActive && viewerAssets.size > 1 -> 0
                     else -> -1
@@ -572,12 +974,44 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 viewerAssets = emptyList()
                 slideshowActive = false
             },
-            relatedAssets = viewerAssets,
-            onOpenRelated = { related ->
-                if (viewerAssets.any { it.id == related.id }) {
-                    selectedAssetId = related.id
+            // Hand-placed location for a photo whose file carries no GPS tag. Written to Foto
+            // Xplorr's own index, never into the user's file -- see setManualLocation.
+            manualLatitude = geoState.metadataById[activeAsset.id]?.latitude,
+            manualLongitude = geoState.metadataById[activeAsset.id]?.longitude,
+            onSetLocation = { latitude, longitude ->
+                scope.launch { geoRepository.setManualLocation(activeAsset.id, latitude, longitude) }
+                // PlaceBlock only ever offers this picker when the file itself carries no GPS
+                // tag (see its own KDoc), so writing this coordinate into the file's EXIF here
+                // can only ever be FILLING IN an absent location, never overwriting a real one.
+                // That is what turns a hand-placed pin from an app-only fact into one that
+                // travels with the file when it is copied, shared, or opened elsewhere. Skipped
+                // for a video for the same reason as the fields just above: MetadataWriter is an
+                // ExifInterface-on-still-images story, not (yet) a video one.
+                if (!activeAsset.isVideo) {
+                    requestMetadataWrite(activeAsset, MetadataEdit(setLocation = GpsCoordinate(latitude, longitude)))
                 }
             },
+            onClearLocation = {
+                scope.launch { geoRepository.clearManualLocation(activeAsset.id) }
+                if (!activeAsset.isVideo) {
+                    requestMetadataWrite(activeAsset, MetadataEdit(clearLocation = true))
+                }
+            },
+            // The viewer's own settings room edits these, so it needs the value and the setter.
+            blurSensitive = preferences.blurSensitive,
+            keepScreenOn = preferences.keepScreenOn,
+            showFilmstrip = preferences.showFilmstrip,
+            slideshowShuffle = preferences.slideshowShuffle,
+            loopAnimations = preferences.loopAnimations,
+            autoplayVideos = preferences.autoplayVideos,
+            onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
+            onSetBlurSensitive = galleryPreferences::setBlurSensitive,
+            onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
+            onSetKeepScreenOn = galleryPreferences::setKeepScreenOn,
+            onSetSlideshowShuffle = galleryPreferences::setSlideshowShuffle,
+            onSetLoopAnimations = galleryPreferences::setLoopAnimations,
+            onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
+            relatedAssets = viewerAssets,
             onSelectAsset = { picked ->
                 if (viewerAssets.any { it.id == picked.id }) {
                     selectedAssetId = picked.id
@@ -585,8 +1019,30 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 }
             },
         )
+    } else if (activeAudioAsset != null) {
+        BackHandler {
+            selectedAudioAssetId = null
+            audioQueue = emptyList()
+        }
+        AudioPlayerScreen(
+            asset = activeAudioAsset,
+            queue = audioQueue,
+            onClose = {
+                selectedAudioAssetId = null
+                audioQueue = emptyList()
+            },
+            onSelect = { picked -> selectedAudioAssetId = picked.id },
+            isConverting = convertingAudioId == activeAudioAsset.id,
+            onConvertToAac = { requestAudioConversion(activeAudioAsset) },
+        )
     } else {
         GalleryScreen(
+            geoRepository = geoRepository,
+            audioAssets = audioAssets,
+            onPlayAudio = { asset, queue ->
+                audioQueue = queue
+                selectedAudioAssetId = asset.id
+            },
             state = GalleryUiState(
                 assets = assets,
                 favoriteIds = favoriteIds,
@@ -595,10 +1051,12 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 unlockedFolders = unlockedFolders,
                 library = library,
                 permissionGranted = permissionGranted,
+                partialMediaAccess = partialMediaAccess,
                 scanState = scanState,
                 preferences = preferences,
                 recognition = recognition,
                 recognitionProgress = recognitionProgress,
+                pendingSearch = pendingSearch,
             ),
             actions = GalleryActions(
                 onRequestPermission = { permissionLauncher.launch(requiredMediaPermissions()) },
@@ -613,6 +1071,12 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onSetAccentPalette = galleryPreferences::setAccentPalette,
                 onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
                 onSetDefaultDestination = galleryPreferences::setDefaultDestination,
+                onSetKeepScreenOn = galleryPreferences::setKeepScreenOn,
+                onSetSlideshowShuffle = galleryPreferences::setSlideshowShuffle,
+                onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
+                onSetFitToTile = galleryPreferences::setFitToTile,
+                onSetLoopAnimations = galleryPreferences::setLoopAnimations,
+                onSetLongPressPreview = galleryPreferences::setLongPressPreview,
                 onIndexRecognition = { recognitionGeneration += 1 },
                 onProtectFolder = privateFolderStore::protect,
                 onUnlockFolder = privateFolderStore::unlock,
@@ -622,7 +1086,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onSetSensitive = sensitiveStore::setSensitive,
                 onSetArchived = libraryStore::setArchived,
                 onShare = ::share,
-                onShareClean = ::shareClean,
+                onShareClean = ::shareAdvanced,
                 onCopyToFolder = { items ->
                     pendingTreeOperation = PendingTreeOperation.COPY
                     pendingTreeItems = items
@@ -644,7 +1108,23 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onRemoveFromCollection = libraryStore::removeFromCollection,
                 onAddTag = libraryStore::addTag,
                 onRemoveTag = libraryStore::removeTag,
-                onExportMetadata = { exportMetadataLauncher.launch("foto-xplorr-metadata.json") },
+                onExportZip = { items ->
+                scope.launch {
+                    val result = zipExporter.export(items)
+                    result.fold(
+                        onSuccess = { uri ->
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "application/zip"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            startActivity(Intent.createChooser(intent, null))
+                        },
+                        onFailure = { userMessage = it.message ?: "Could not build the archive" },
+                    )
+                }
+            },
+            onExportMetadata = { exportMetadataLauncher.launch("foto-xplorr-metadata.json") },
                 onImportMetadata = { importMetadataLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
                 onOpenAsset = { asset, visible ->
                     viewerAssets = visible
@@ -658,17 +1138,42 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                         slideshowActive = true
                     }
                 },
+                onPendingSearchConsumed = { pendingSearch = null },
+                onRejectArchiveSuggestions = libraryStore::rejectArchiveSuggestions,
+                onManageSelectedMedia = { permissionLauncher.launch(requiredMediaPermissions()) },
             ),
         )
     }
 }
 
 private fun FotoXplorrActivity.hasMediaPermission(): Boolean =
-    requiredMediaPermissions().any { permission ->
+    mediaReadPermissions().any { permission ->
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
     }
 
-private fun requiredMediaPermissions(): Array<String> = when {
+private fun FotoXplorrActivity.hasPartialMediaAccess(): Boolean =
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+        ) == PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_MEDIA_IMAGES,
+        ) != PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_MEDIA_VIDEO,
+        ) != PackageManager.PERMISSION_GRANTED
+
+private fun requiredMediaPermissions(): Array<String> =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        mediaReadPermissions() + Manifest.permission.ACCESS_MEDIA_LOCATION
+    } else {
+        mediaReadPermissions()
+    }
+
+private fun mediaReadPermissions(): Array<String> = when {
     Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
         Manifest.permission.READ_MEDIA_IMAGES,
         Manifest.permission.READ_MEDIA_VIDEO,
@@ -711,3 +1216,34 @@ sealed interface ScanState {
     data class Complete(val total: Int, val incremental: Boolean = false) : ScanState
     data class Error(val message: String) : ScanState
 }
+
+/**
+ * A random index other than [current], for a shuffled slideshow.
+ *
+ * Drawing from the other [size] - 1 positions and stepping over [current] rather than retrying a
+ * uniform draw: a retry loop is unbounded in the worst case, and at size 2 it would spin on the
+ * one index it must not pick roughly half the time.
+ */
+internal fun randomOtherIndex(size: Int, current: Int): Int {
+    if (size <= 1) return 0
+    val drawn = kotlin.random.Random.nextInt(size - 1)
+    return if (drawn >= current) drawn + 1 else drawn
+}
+
+/**
+ * The saved share defaults, as the value the share pipeline actually consumes.
+ *
+ * Kept as an extension rather than a field on the preferences data class so that
+ * `GalleryPreferencesState` stays a plain record of what is stored, and the mapping from stored
+ * strings to the share package's own types lives next to the code that needs it.
+ *
+ * An unrecognised stored frame name falls back to NONE rather than throwing: the value comes from
+ * SharedPreferences, which can outlive a rename of the enum, and a crash on start because someone
+ * once picked a frame that no longer exists would be an absurd way to lose a library.
+ */
+private fun GalleryPreferencesState.toShareOptions(): ShareOptions = ShareOptions(
+    frame = ShareFrame.entries.firstOrNull { it.name == shareFrame } ?: ShareFrame.NONE,
+    stripMetadata = shareStripMetadata,
+    watermark = shareWatermark,
+    seal = shareSeal.takeIf { it.isNotBlank() },
+)

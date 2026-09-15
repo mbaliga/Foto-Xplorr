@@ -70,7 +70,19 @@ class MediaIndexer(
     }
 
     private companion object {
-        const val DEFAULT_BATCH_SIZE = 64
+        /**
+         * How many assets accumulate before the catalogue is updated and the UI is told.
+         *
+         * Every flush publishes a new catalogue to a StateFlow the gallery collects, so the batch
+         * size is really "how often does a scan interrupt the user". At 64 a large library
+         * produced hundreds of interruptions during one scan; 512 cuts that by 8x while still
+         * showing the first photos almost immediately, because the first flush happens as soon as
+         * 512 have been read, not at the end.
+         *
+         * Tests that assert on batching pass their own value explicitly rather than relying on
+         * this, so tuning it here cannot quietly rewrite what they check.
+         */
+        const val DEFAULT_BATCH_SIZE = 512
     }
 }
 

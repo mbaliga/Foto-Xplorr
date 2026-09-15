@@ -22,7 +22,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,6 +34,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.fileops.BulkRenameOutcome
+import com.fotoxplorr.app.fileops.RenamePattern
+import com.fotoxplorr.app.fileops.RenameSubject
+import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.organize.MediaCollection
 import kotlinx.coroutines.launch
 
@@ -195,6 +198,178 @@ fun PasswordDialog(
 }
 
 /**
+ * The pattern-input UI for bulk rename: one text pattern (see [RenamePattern] for the token
+ * language), a starting number for `{counter}`, and a live preview against the actual photos
+ * being renamed — so a typo in a token shows up as literal `{typo}` text in the preview *before*
+ * forty files are renamed to something wrong, not after.
+ */
+@Composable
+fun BulkRenameDialog(
+    assets: List<MediaAsset>,
+    onDismiss: () -> Unit,
+    onConfirm: (pattern: String, startAt: Int) -> Unit,
+) {
+    var pattern by remember { mutableStateOf("{orig}") }
+    var startAtText by remember { mutableStateOf("1") }
+    val startAt = startAtText.toIntOrNull()
+
+    // Only the first few previewed — the pattern is expanded fresh on every keystroke, and doing
+    // that for all of (potentially) hundreds of selected photos on every recomposition is work
+    // the dialog has no need to do just to show the user what the naming scheme looks like.
+    val preview = remember(pattern, startAt, assets) {
+        val at = startAt ?: return@remember emptyList()
+        if (pattern.isBlank()) return@remember emptyList()
+        val sample = assets.take(PREVIEW_COUNT)
+        val subjects = sample.map { RenameSubject(it.displayName, it.dateTakenMillis, it.dateModifiedSeconds) }
+        runCatching {
+            RenamePattern.expand(pattern, subjects, at).mapIndexed { index, stem ->
+                val extension = subjects[index].extension
+                if (extension.isEmpty()) stem else "$stem.$extension"
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename ${assets.size} photos") },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedTextField(
+                    value = pattern,
+                    onValueChange = { pattern = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Naming pattern") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = startAtText,
+                    onValueChange = { startAtText = it.filter(Char::isDigit).take(9) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Start counting at") },
+                    isError = startAt == null,
+                    singleLine = true,
+                )
+                Text(
+                    "{counter} {counter:3} {orig} {yyyy} {yy} {MM} {dd} {HH} {mm} {ss} — " +
+                        "the original extension is always kept.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (preview.isNotEmpty()) {
+                    Text("Preview", style = MaterialTheme.typography.labelMedium)
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        items(preview) { name ->
+                            Text(name, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                        }
+                        if (assets.size > preview.size) {
+                            item {
+                                Text(
+                                    "… and ${assets.size - preview.size} more",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = pattern.isNotBlank() && startAt != null,
+                onClick = { onConfirm(pattern.trim(), startAt ?: 1) },
+            ) { Text("Rename") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** How many expanded names [BulkRenameDialog] shows before collapsing the rest into "… and N more". */
+private const val PREVIEW_COUNT = 6
+
+/**
+ * Shown while `MediaFileOperations.renameBatch` is actually running.
+ *
+ * No dismiss and no cancel: by the time this is on screen, some renames in the batch may already
+ * be written to MediaStore, and offering a "Cancel" that does not actually stop in-flight
+ * `ContentResolver.update` calls would be a control that lies about what it does.
+ */
+@Composable
+fun BulkRenameProgressDialog(completed: Int, total: Int) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("Renaming photos") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                CircularProgressIndicator()
+                Text("$completed of $total")
+            }
+        },
+        confirmButton = {},
+    )
+}
+
+/**
+ * What actually happened, honestly — including the failures.
+ *
+ * A silent "Renamed!" toast that does not mention the six photos Android refused to touch would
+ * leave the user believing their whole selection was renamed when it was not; this lists exactly
+ * which ones failed and why, the same standard [MediaFileOperations.renameBatch] itself holds by
+ * returning [BulkRenameOutcome.failed] as a first-class result rather than an afterthought.
+ */
+@Composable
+fun BulkRenameResultDialog(outcome: BulkRenameOutcome, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                if (outcome.allSucceeded) {
+                    "Renamed ${outcome.succeeded.size} photos"
+                } else if (outcome.succeeded.isEmpty()) {
+                    "Could not rename these photos"
+                } else {
+                    "Renamed ${outcome.succeeded.size} of ${outcome.attempted}"
+                },
+            )
+        },
+        text = {
+            if (outcome.failed.isEmpty()) {
+                Text("Every photo in the selection was renamed.")
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        if (outcome.succeeded.isEmpty()) {
+                            "Android would not allow any of these to be renamed:"
+                        } else {
+                            "These could not be renamed:"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(outcome.failed, key = { it.first.id.value }) { (asset, reason) ->
+                            Column {
+                                Text(asset.displayName, style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    reason,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
+}
+
+/**
  * Every gallery setting, as a plain list.
  *
  * This used to be the body of a Material `AlertDialog`. The dialog is retired along with the
@@ -334,7 +509,11 @@ private fun SettingsSwitch(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(title, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        com.fotoxplorr.app.hyle.HyleToggle(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            description = title,
+        )
     }
 }
 

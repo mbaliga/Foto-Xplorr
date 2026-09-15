@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The offline flavor's manifest contribution: REMOVE the network permissions that
+     library AARs try to merge in. verifyOfflineManifest caught these on its first run:
+
+       com.google.mlkit:vision-internal-vkp        → INTERNET + ACCESS_NETWORK_STATE
+       com.google.android.datatransport:transport-* → INTERNET + ACCESS_NETWORK_STATE
+
+     That second group is Google's telemetry uploader, riding along inside the *bundled*
+     ML Kit artifacts whose models run entirely on-device. The models need no network;
+     the plumbing merely wants one. tools:node="remove" strips the permissions from the
+     merged manifest, so the OS itself refuses any network attempt by any code in this
+     APK — which is the strongest form of the offline promise: not "we don't call the
+     network", but "this process cannot".
+
+     (The connect flavor declares INTERNET normally in src/connect and is unaffected.) -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.ACCESS_NETWORK_STATE"
+        tools:node="remove" />
+</manifest>

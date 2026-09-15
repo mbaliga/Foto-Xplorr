@@ -109,6 +109,29 @@ object DetailFormatting {
     }
 
     /**
+     * "25,939 bytes (29 KB)" — the size as the owner's file-info screenshot writes it: the exact
+     * count first, the human-readable rounding second.
+     *
+     * Both halves are load-bearing. The rounded figure is the one anyone actually reads, and the
+     * exact one is the only figure that can be compared between two files that both round to
+     * "29 KB". Deliberately not "on disk": that is a filesystem allocation figure, and this app
+     * reads the logical size from MediaStore, so borrowing the phrasing would borrow a claim.
+     */
+    fun byteLine(bytes: Long, locale: Locale = Locale.getDefault()): String {
+        if (bytes <= 0L) return "Unknown size"
+        val exact = java.text.NumberFormat.getIntegerInstance(locale).format(bytes)
+        val rounded = formatBytes(bytes)
+        return if (rounded == null || bytes < 1024L) "$exact bytes" else "$exact bytes ($rounded)"
+    }
+
+    /** "1:04" — a video's running time, for the room's information block. */
+    fun durationLine(durationMillis: Long): String {
+        if (durationMillis <= 0L) return "Unknown"
+        val totalSeconds = durationMillis / 1_000L
+        return "%d:%02d".format(Locale.US, totalSeconds / 60L, totalSeconds % 60L)
+    }
+
+    /**
      * The dynamic-range badge on the mockup's EXIF card. Foto Xplorr has no HDR-gain-map
      * probe, so this reports the one thing it can actually establish from the file: whether
      * the container is one that can carry a gain map at all. "STANDARD" therefore means

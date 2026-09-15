@@ -76,7 +76,8 @@ fun SimilarityExplorerScreen(
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
-    val modelManager = remember(context) { LocalModelManager(context.applicationContext) }
+    val bindings = remember { AppConnectivityBindings() }
+    val modelManager = remember(context) { LocalModelManager(context.applicationContext, bindings.remoteAi) }
     val repository = remember(context) { EmbeddingRepository(context.applicationContext) }
     val indexer = remember(context, repository) { SimilarityIndexer(context.applicationContext, repository) }
     val modelState by modelManager.observe().collectAsStateWithLifecycle()
@@ -133,6 +134,7 @@ fun SimilarityExplorerScreen(
 
         when (val model = modelState) {
             LocalModelState.NotInstalled -> ModelRequiredPanel(
+                downloadAvailable = bindings.remoteAi.available,
                 onInstall = {
                     scope.launch {
                         modelManager.installRecommendedModel().onFailure {
@@ -157,6 +159,7 @@ fun SimilarityExplorerScreen(
                 )
             }
             is LocalModelState.Failed -> ModelRequiredPanel(
+                downloadAvailable = bindings.remoteAi.available,
                 error = model.message,
                 onInstall = { scope.launch { modelManager.installRecommendedModel() } },
                 onImport = { modelPicker.launch(arrayOf("application/octet-stream", "*/*")) },
@@ -233,6 +236,7 @@ fun SimilarityExplorerScreen(
 
 @Composable
 private fun ModelRequiredPanel(
+    downloadAvailable: Boolean,
     error: String? = null,
     onInstall: () -> Unit,
     onImport: () -> Unit,
@@ -245,11 +249,19 @@ private fun ModelRequiredPanel(
         Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(42.dp))
         Text("Install the local image model", style = MaterialTheme.typography.titleLarge)
         Text(
-            "The recommended MediaPipe model is downloaded once into app-private storage. Photos are embedded on-device and are not uploaded.",
+            if (downloadAvailable) {
+                "The recommended MediaPipe model is downloaded once into app-private storage. Photos are embedded on-device and are not uploaded."
+            } else {
+                // The offline build downloads nothing, by design. Saying so beats a button
+                // that can only fail — and the import path works identically in both builds.
+                "This offline build downloads nothing. Import a compatible .tflite embedding model; photos are embedded on-device and are not uploaded."
+            },
             style = MaterialTheme.typography.bodyMedium,
         )
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Button(onClick = onInstall) { Text("Install recommended model") }
+        if (downloadAvailable) {
+            Button(onClick = onInstall) { Text("Install recommended model") }
+        }
         OutlinedButton(onClick = onImport) { Text("Import compatible .tflite model") }
     }
 }

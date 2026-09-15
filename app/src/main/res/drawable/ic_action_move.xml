@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Owner's own glyph: four arrows out to the corners. Path data verbatim. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="30dp"
+    android:height="30dp"
+    android:viewportWidth="30"
+    android:viewportHeight="30"
+    android:tint="?attr/colorControlNormal">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M2 13.375L5.25 10.125L10.125 15L5.25 19.875L2 16.625V28H13.375L10.125 24.75L15 19.875L19.875 24.75L16.625 28H28V16.625L24.75 19.875L19.875 15L24.75 10.125L28 13.375V2H16.625L19.875 5.25L15 10.125L10.125 5.25L13.375 2H2V13.375Z" />
+</vector>

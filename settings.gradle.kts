@@ -16,6 +16,10 @@ dependencyResolutionManagement {
 
 rootProject.name = "FotoXplorr"
 include(":app")
+// The connect flavor's network engine (WP1). A plain project module of THIS build — it
+// does not resolve through either included build, so the dependencySubstitution rules
+// below are unaffected by it.
+include(":feature:ai-remote")
 
 // Hyle Design System (dev.aarso:hyle / dev.aarso:crash-recovery), pulled in via the
 // constellation's one sanctioned sharing mechanism (D-A): git submodule + Gradle

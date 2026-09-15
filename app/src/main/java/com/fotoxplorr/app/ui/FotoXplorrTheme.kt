@@ -44,7 +44,7 @@ fun FotoXplorrTheme(
             onSurface = Color(0xFF1D1A20),
         )
     }
-    MaterialTheme(colorScheme = scheme, content = content)
+    MaterialTheme(colorScheme = scheme, typography = HyleTypography, content = content)
 }
 
 private fun AccentPalette.accent(dark: Boolean): Color = when (this) {

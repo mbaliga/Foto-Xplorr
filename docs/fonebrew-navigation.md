@@ -32,6 +32,11 @@ navigation act and it happens **on the content**, not through chrome.
   why pull-to-refresh / pull-to-backup are banned everywhere in the constellation.
 - The top room is NOT yet required in any app (owner, 2026-08-05). What is required now is
   keeping its gesture unclaimed and its copy off the screen — no "PULL TO …" static text.
+- Foto Xplorr built the first one (2026-08-09), after the owner's third reference video showed
+  what belongs in it: a photo's own facts, and a plate of *where it was taken* that the photo
+  itself flies into. The flight is the argument for the room — the same content on a pushed
+  screen would just be a form. The video's ordering is the one to copy, and the implementation
+  does: the photo departs first, the ground resolves under it, the text settles last.
 
 **Refresh is a shake**, not a pull (`ShakeToRefresh`, now in `dev.aarso:cell-shell`). A
 deliberate physical gesture that needs no affordance copy and competes with no scroll.
@@ -68,7 +73,7 @@ These are the things the first test builds got wrong. Do not reintroduce them:
 | App | Has | Needs |
 |---|---|---|
 | fonebrew (IDE-core) | rooms implementation (`ui/rooms/`) | is the reference |
-| Foto Xplorr | **adopted.** Rail = left room, settings = right room, top reserved. Hamburger, app bar, `SlideInPanel` and the settings dialog all retired. Date-keyed edge scrubber over the grid | the top room itself, when there is something to put in it |
+| Foto Xplorr | **adopted.** Rail = left room, settings = right room. Hamburger, app bar, `SlideInPanel` and the settings dialog all retired. Date-keyed edge scrubber over the grid. **Top room built, in the viewer**: `PhotoDetailRoom` — the file's facts and a place plate the photo flies into. The `ImageDetailScreen` Material screen and the bottom `MetadataPanel` it duplicated are both retired | the top room on the *grid*, if something ever earns it |
 | Fylz | **adopted.** Locations = left room, Tools + settings = right room, Recovery = bottom room. Bottom tabs, workspace chips and the light Tools screen retired. Sort-keyed edge scrubber | as above |
 | csapp / assay | standard Material consoles | pattern adoption once the two testable apps validate it |
 
