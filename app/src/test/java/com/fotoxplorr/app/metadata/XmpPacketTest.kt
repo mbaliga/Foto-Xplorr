@@ -4,6 +4,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import javax.xml.parsers.DocumentBuilder
+import javax.xml.parsers.DocumentBuilderFactory
+import javax.xml.parsers.ParserConfigurationException
 
 /**
  * [XmpPacket] against real round trips, not just DOM-API calls in isolation -- the risk this
@@ -185,5 +188,54 @@ class XmpPacketTest {
         assertTrue(serialized.startsWith("<?xpacket begin="))
         assertTrue(serialized.trimEnd().endsWith("<?xpacket end=\"w\"?>"))
         assertTrue(serialized.contains("W5M0MpCehiHzreSzNTczkc9d"))
+    }
+
+    /**
+     * The bug a JVM/Robolectric test could otherwise never catch: Android's REAL
+     * `DocumentBuilderFactoryImpl` throws `ParserConfigurationException` for the
+     * load-external-dtd feature name [XmpPacket.parse] used to set unconditionally (any feature
+     * beyond namespace-awareness/validation, on the real device implementation) -- with that call
+     * unguarded, the exception propagated out of `parse`'s own `runCatching` and turned every
+     * parse of an existing packet into null on a real device, which downstream
+     * ([MetadataWriter.readExistingXmp]) reads as "leave XMP alone": ratings and keywords, which
+     * exist ONLY in XMP, would never be written into any file that already carried an XMP packet.
+     * [ThrowingSetFeatureFactory] reproduces that real behaviour on the JVM so this fix is
+     * actually exercised rather than merely inspected.
+     */
+    @Test
+    fun `parsing still succeeds when the factory's setFeature behaves like Android's real one`() {
+        val packet = XmpPacket.parse(
+            """
+            <x:xmpmeta xmlns:x="adobe:ns:meta/">
+             <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+              <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="4"/>
+             </rdf:RDF>
+            </x:xmpmeta>
+            """.trimIndent(),
+            factory = ThrowingSetFeatureFactory(),
+        )
+        assertTrue("setFeature throwing must not make the whole parse fail", packet != null)
+        assertEquals(4, packet!!.intValue(XmpPacket.XMP_NS, "Rating"))
+    }
+
+    /** A [DocumentBuilderFactory] whose `setFeature` always throws, exactly like Android's own
+     *  Harmony-derived `DocumentBuilderFactoryImpl` does for any feature name it does not
+     *  specifically recognise -- everything else delegates to a real JDK factory instance. */
+    private class ThrowingSetFeatureFactory : DocumentBuilderFactory() {
+        private val delegate = newInstance()
+
+        override fun newDocumentBuilder(): DocumentBuilder {
+            delegate.isNamespaceAware = isNamespaceAware
+            return delegate.newDocumentBuilder()
+        }
+
+        override fun setAttribute(name: String?, value: Any?) = delegate.setAttribute(name, value)
+        override fun getAttribute(name: String?): Any = delegate.getAttribute(name)
+
+        override fun setFeature(name: String?, value: Boolean) {
+            throw ParserConfigurationException("Unsupported feature: $name")
+        }
+
+        override fun getFeature(name: String?): Boolean = false
     }
 }
