@@ -394,6 +394,11 @@ private fun SelectionActions(
         onClick = { finish { actions.onShare(selectedAssets) } },
     )
     RoomRow(
+        label = "Share with options…",
+        caption = "Choose the frame, watermark and metadata handling for this share.",
+        onClick = { finish { actions.onShareClean(selectedAssets) } },
+    )
+    RoomRow(
         label = if (bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK) {
             "Add to favourites"
         } else {

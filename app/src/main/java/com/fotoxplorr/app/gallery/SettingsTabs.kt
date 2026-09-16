@@ -194,6 +194,18 @@ fun SettingsTabsRoom(
                         preferences.longPressPreview,
                         actions.onSetLongPressPreview,
                     )
+                    SectionLabel("SAVING EDITS")
+                    ChoiceRow(
+                        "Saving edits",
+                        com.fotoxplorr.app.editor.EditorSaveMode.entries.map { it to it.label },
+                        preferences.editorSaveMode,
+                        actions.onSetEditorSaveMode,
+                    )
+                    Text(
+                        preferences.editorSaveMode.description,
+                        color = Color.White.copy(alpha = 0.5f),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
 
                 SettingsTab.LIBRARY -> {
@@ -210,7 +222,7 @@ fun SettingsTabsRoom(
                         actions.onSetTimelineGrouping,
                     )
                     ChoiceRow(
-                        "Opens on",
+                        "Open the app on",
                         HyleDestination.entries.map { it to it.label },
                         preferences.defaultDestination,
                         actions.onSetDefaultDestination,
@@ -284,6 +296,12 @@ fun SettingsTabsRoom(
                         "Start a video as soon as it opens rather than waiting for play.",
                         preferences.autoplayVideos,
                         actions.onSetAutoplayVideos,
+                    )
+                    SwitchRow(
+                        "Filmstrip",
+                        "Neighbouring photos along the bottom of an open photo, for jumping between them without leaving the viewer.",
+                        preferences.showFilmstrip,
+                        actions.onSetShowFilmstrip,
                     )
                 }
 
@@ -607,7 +625,12 @@ private fun SwitchRow(
     enabled: Boolean = true,
 ) {
     Row(
-        Modifier.fillMaxWidth(),
+        Modifier
+            .fillMaxWidth()
+            // The whole row toggles, not just the 64x32dp control at its end -- the control's own
+            // hit area is already padded out to 48dp (see HyleToggle), but a label a person can
+            // read is also a label they expect to be able to tap.
+            .clickable(enabled = enabled, onClick = { onCheckedChange(!checked) }),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {

@@ -182,7 +182,12 @@ fun smartAlbumAssets(
         SmartAlbum.UNTAGGED -> nonTrash.filter { tagsByMediaId[it.id].isNullOrEmpty() }
     }
     return sortAssets(
-        scoped.filter { preferences.showVideos || !it.isVideo },
+        // "Show videos" hides videos from the PHOTO-flavoured views (Photos, an album, Recent,
+        // ...); it must not also empty the one destination whose entire subject IS video. The
+        // smart-album version of this filter used to apply to every album including this one, so
+        // turning that preference off silently hid the whole Videos destination -- exactly the
+        // "off empties Videos" defect this exemption exists to fix.
+        if (smartAlbum == SmartAlbum.VIDEOS) scoped else scoped.filter { preferences.showVideos || !it.isVideo },
         preferences.sort,
     )
 }

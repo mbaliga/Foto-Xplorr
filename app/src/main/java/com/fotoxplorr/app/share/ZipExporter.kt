@@ -63,7 +63,11 @@ class ZipExporter(context: Context) {
                 }
             }
 
-            FileProvider.getUriForFile(appContext, "${appContext.packageName}.fileprovider", archive)
+            // Must match the authority actually declared in the manifest -- every other exporter
+            // in this app already uses ".files" (see AndroidManifest.xml's FileProvider
+            // <provider>); ".fileprovider" was never declared anywhere, so a ZIP share crashed
+            // with an IllegalArgumentException the moment someone tapped the zip glyph.
+            FileProvider.getUriForFile(appContext, "${appContext.packageName}.files", archive)
         }
     }
 
