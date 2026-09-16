@@ -110,6 +110,24 @@
             android:permission="android.permission.BIND_JOB_SERVICE"
             android:exported="false" />
 
+        <!--
+          Background audio playback (androidx.media3.session.MediaSessionService). exported=true
+          and the MediaSessionService intent-filter are both required for a MediaController in
+          another process (Android Auto, the system media notification, an assistant) to bind to
+          this session at all: a MediaSessionService the system cannot see is indistinguishable
+          from having no session. This is the service element only: FOREGROUND_SERVICE,
+          FOREGROUND_SERVICE_MEDIA_PLAYBACK, POST_NOTIFICATIONS, WAKE_LOCK and READ_MEDIA_AUDIO
+          are declared elsewhere (see docs/audio-playback.md for exactly which and when).
+        -->
+        <service
+            android:name="com.fotoxplorr.app.playback.PlaybackService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+
         <activity
             android:name=".FotoXplorrActivity"
             android:exported="true"
