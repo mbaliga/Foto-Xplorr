@@ -33,7 +33,23 @@ data class AudioAsset(
     val sizeBytes: Long,
     val dateAddedSeconds: Long,
     val dateModifiedSeconds: Long,
+    /** MediaStore's `ALBUM_ID`, null when the row carries no album grouping at all (a bare
+     *  recording). Used only to derive [albumArtUri] — nothing here treats it as a stable
+     *  cross-app identifier. */
+    val albumId: Long? = null,
+    /** MediaStore's `TRACK` column, already stripped of the "discNumber * 1000 + track" packing
+     *  MediaStore itself uses internally (see [trackNumberFrom]) — null when the file carries no
+     *  track tag. */
+    val trackNumber: Int? = null,
 ) {
     val contentUri: Uri
         get() = Uri.parse(contentUriString)
+
+    /** The MediaStore-synthesised album-art image for [albumId], or null when there is no album
+     *  to look one up for. Resolves for a real album on every API level this app supports — see
+     *  [AudioLibraryScreen]'s own doc for why this Uri rather than `loadThumbnail`. Not every
+     *  album actually has embedded art; the resolver simply returns nothing for those and the
+     *  caller falls back to a glyph, exactly like a missing thumbnail anywhere else in this app. */
+    val albumArtUri: Uri?
+        get() = albumId?.let { Uri.parse("content://media/external/audio/albumart/$it") }
 }

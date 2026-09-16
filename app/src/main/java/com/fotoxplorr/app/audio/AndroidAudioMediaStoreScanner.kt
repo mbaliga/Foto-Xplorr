@@ -91,6 +91,8 @@ class AndroidAudioMediaStoreScanner(
         MediaStore.Audio.AudioColumns.TITLE,
         MediaStore.Audio.AudioColumns.ARTIST,
         MediaStore.Audio.AudioColumns.ALBUM,
+        MediaStore.Audio.AudioColumns.ALBUM_ID,
+        MediaStore.Audio.AudioColumns.TRACK,
         MediaStore.Audio.AudioColumns.MIME_TYPE,
         MediaStore.Audio.AudioColumns.DURATION,
         MediaStore.Audio.AudioColumns.SIZE,
@@ -104,6 +106,8 @@ class AndroidAudioMediaStoreScanner(
         private val title = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.TITLE)
         private val artist = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.ARTIST)
         private val album = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.ALBUM)
+        private val albumId = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.ALBUM_ID)
+        private val track = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.TRACK)
         private val mimeType = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.MIME_TYPE)
         private val duration = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.DURATION)
         private val size = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.SIZE)
@@ -130,6 +134,8 @@ class AndroidAudioMediaStoreScanner(
                 sizeBytes = cursor.longOrZero(size),
                 dateAddedSeconds = cursor.longOrZero(dateAdded),
                 dateModifiedSeconds = cursor.longOrZero(dateModified),
+                albumId = cursor.longOrNull(albumId),
+                trackNumber = trackNumberFrom(cursor.longOrNull(track)),
             )
         }
     }
@@ -146,17 +152,23 @@ class AndroidAudioMediaStoreScanner(
  * `MediaStore`'s own compile-time-inlined constants, so it needs no real `ContentResolver` (or
  * Robolectric) to test.
  *
- * `IS_MUSIC != 0` excludes ringtones, alarms and notification sounds MediaStore also indexes under
- * this same collection — a real, long-standing column (present since the very first MediaStore
- * audio table, not an API-level-gated addition), so this filter applies identically across every
- * API level this app supports. Without it, "Audio" would list every stock notification tone on the
- * device alongside actual music and recordings.
+ * Excludes ringtones, alarms and notification sounds by name (`IS_RINGTONE=0 AND IS_ALARM=0 AND
+ * IS_NOTIFICATION=0`) rather than requiring `IS_MUSIC!=0` — the filter this replaced. `IS_MUSIC`
+ * is MediaStore's own heuristic for "long enough and not a system sound to count as a song", and
+ * it silently drops exactly the rows this app's audio destination is supposed to show: voice
+ * memos, podcast episodes and audiobook chapters MediaStore does not consider "music" but which
+ * are still real personal recordings someone would open this app to find. The three ringtone-
+ * shaped booleans are the actual thing worth excluding, and are real columns since the same first
+ * MediaStore audio table `IS_MUSIC` is, so this applies identically across every API level this
+ * app supports.
  */
 internal fun buildAudioSelection(plan: ScanPlan): AudioSelectionQuery {
-    val musicClause = "${MediaStore.Audio.AudioColumns.IS_MUSIC}!=0"
+    val notARingtoneClause = "${MediaStore.Audio.AudioColumns.IS_RINGTONE}=0" +
+        " AND ${MediaStore.Audio.AudioColumns.IS_ALARM}=0" +
+        " AND ${MediaStore.Audio.AudioColumns.IS_NOTIFICATION}=0"
     val clause = when (plan) {
-        is ScanPlan.Full -> musicClause
-        is ScanPlan.Delta -> "$musicClause AND ${MediaStore.Audio.AudioColumns.DATE_MODIFIED}>=?"
+        is ScanPlan.Full -> notARingtoneClause
+        is ScanPlan.Delta -> "$notARingtoneClause AND ${MediaStore.Audio.AudioColumns.DATE_MODIFIED}>=?"
     }
     val args = when (plan) {
         is ScanPlan.Full -> emptyList()
@@ -168,8 +180,21 @@ internal fun buildAudioSelection(plan: ScanPlan): AudioSelectionQuery {
 /** [com.fotoxplorr.app.media.SelectionQuery]'s exact shape, for the audio query. */
 internal data class AudioSelectionQuery(val clause: String, val args: List<String>)
 
+/**
+ * MediaStore's `TRACK` column packs a disc number into the value as `discNumber * 1000 + track`
+ * once a file's tags carry a disc number at all (e.g. disc 2 track 3 reads back as `2003`) — see
+ * the column's own platform documentation. Every reader of [AudioAsset.trackNumber] wants the
+ * plain in-album track position, not that packed number, so this unpacks it once here rather than
+ * leaving every call site to rediscover the `% 1000` rule (or worse, not know it exists at all and
+ * show "2003" as a track number).
+ */
+internal fun trackNumberFrom(rawTrack: Long?): Int? = rawTrack?.let { (it % 1000).toInt() }
+
 private fun Cursor.stringOrNull(index: Int): String? =
     if (index >= 0 && !isNull(index)) getString(index) else null
 
 private fun Cursor.longOrZero(index: Int): Long =
     if (index >= 0 && !isNull(index)) getLong(index) else 0L
+
+private fun Cursor.longOrNull(index: Int): Long? =
+    if (index >= 0 && !isNull(index)) getLong(index) else null
