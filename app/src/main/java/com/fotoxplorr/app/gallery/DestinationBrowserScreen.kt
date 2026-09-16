@@ -74,10 +74,13 @@ enum class HyleDestination(val label: String) {
     SCREENSHOTS("Screenshots"),
     PHOTOS("Photos"),
     VIDEOS("Videos"),
+    // Right after Videos, not after Protected: Audio is the other media-TYPE destination (as
+    // opposed to Favourites/Places/Protected, which are cross-cutting views over the same photos
+    // and videos), so it reads naturally beside the destination it is most like.
+    AUDIO("Audio"),
     FAVOURITES("Favourites"),
     PLACES("Places"),
     PROTECTED("Protected"),
-    AUDIO("Audio"),
 }
 
 /** Which assets a destination shows. Kept separate from the UI so it is testable. */
@@ -278,7 +281,13 @@ fun DestinationContent(
         )
         HyleDestination.AUDIO -> {
             val audio = com.fotoxplorr.app.audio.LocalAudioLibrary.current
-            if (audio != null) {
+            if (!state.audioPermissionGranted) {
+                DestinationPermissionPrompt(
+                    message = "Foto Xplorr needs permission to see audio files on this device.",
+                    actionLabel = "Allow access",
+                    onAction = actions.onRequestAudioPermission,
+                )
+            } else if (audio != null) {
                 com.fotoxplorr.app.audio.AudioLibraryScreen(
                     assets = audio.assets,
                     onPlay = { asset -> audio.onPlay(asset, audio.assets) },
@@ -379,6 +388,22 @@ private fun DestinationMessage(message: String) {
     }
 }
 
+/** [DestinationMessage] plus a real way forward, for a destination that is empty because a
+ *  permission has not been granted rather than because there is genuinely nothing to show. */
+@Composable
+private fun DestinationPermissionPrompt(message: String, actionLabel: String, onAction: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier.padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(message, style = TextStyle(fontSize = 15.sp), color = Color.White.copy(alpha = 0.75f))
+            TextButton(onClick = onAction) { Text(actionLabel) }
+        }
+    }
+}
+
 @Composable
 private fun ProtectedFoldersPane(
     lockedFolders: Set<String>,
@@ -464,6 +489,10 @@ fun LegacyScreenHost(
     onOpenRoute: (BrowserRoute) -> Unit,
     onRequestUnlock: (String, String) -> Unit,
     onOpenSettings: () -> Unit,
+    /** Switches the primary rail to a top-level destination -- Protected is one of the nine, not
+     *  a drill-down [BrowserRoute], so "open Private folders" from here needs this rather than
+     *  [onOpenRoute]. */
+    onOpenDestination: (HyleDestination) -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize()) {
         when (screen) {
@@ -515,7 +544,7 @@ fun LegacyScreenHost(
                 onOpenTag = { onOpenRoute(BrowserRoute.Tag(it)) },
                 onOpenArchive = { onOpenRoute(BrowserRoute.Smart(SmartAlbum.ARCHIVED)) },
                 onOpenTrash = { onOpenRoute(BrowserRoute.Smart(SmartAlbum.TRASH)) },
-                onOpenPrivateFolders = { },
+                onOpenPrivateFolders = { onOpenDestination(HyleDestination.PROTECTED) },
                 onOpenSettings = onOpenSettings,
                 onExportMetadata = actions.onExportMetadata,
                 onImportMetadata = actions.onImportMetadata,

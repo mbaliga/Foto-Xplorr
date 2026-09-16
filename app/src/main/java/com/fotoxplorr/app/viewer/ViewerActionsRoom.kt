@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -14,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -22,6 +24,7 @@ import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SwapHoriz
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
@@ -66,6 +69,12 @@ fun ViewerActionsRoom(
     onEdit: () -> Unit,
     onOpenWith: () -> Unit,
     onMoveToTrash: () -> Unit,
+    /** "Share with options…" -- the advanced sheet (frame, watermark, strip metadata) that used
+     *  to be reachable from nowhere at all once the room replaced the old overlay's menu. */
+    onShareClean: (() -> Unit)? = null,
+    /** Rename, previously reachable only via Select -> one item -> the gallery's own actions
+     *  room. Null hides the row -- see [isExternal]. */
+    onRename: (() -> Unit)? = null,
     /** Shows the row below at all — a still photo has no codec to convert. */
     isVideo: Boolean = false,
     isConvertingToMp4: Boolean = false,
@@ -73,6 +82,11 @@ fun ViewerActionsRoom(
      *  see [com.fotoxplorr.app.video.VideoTranscoder]. Null leaves the row hidden entirely, the
      *  same shape [com.fotoxplorr.app.viewer.PhotoDetailRoom]'s optional actions already use. */
     onConvertToMp4: (() -> Unit)? = null,
+    /** True for an asset opened from another app (open-with/share-to) rather than this app's own
+     *  library -- see [com.fotoxplorr.app.media.MediaAsset.isExternal]. Hides favourite, mark
+     *  sensitive, rename and trash, none of which have anything to act on for a file this app
+     *  holds no library record for. */
+    isExternal: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -91,36 +105,44 @@ fun ViewerActionsRoom(
             onClick = onToggleSlideshow,
         )
         ActionRow(Icons.Outlined.Share, "Share", onShare)
+        if (onShareClean != null) {
+            ActionRow(Icons.Outlined.Tune, "Share with options…", onShareClean)
+        }
         ActionRow(Icons.Outlined.Edit, "Edit", onEdit)
         ActionRow(Icons.Outlined.OpenInNew, "Open with", onOpenWith)
+        if (!isExternal && onRename != null) {
+            ActionRow(Icons.Outlined.DriveFileRenameOutline, "Rename", onRename)
+        }
         if (isVideo && onConvertToMp4 != null) {
             ActionRow(
                 icon = Icons.Outlined.SwapHoriz,
-                label = if (isConvertingToMp4) "Converting…" else "Convert to MP4",
+                label = if (isConvertingToMp4) "Converting…" else "Convert to MP4 (H.264)",
                 onClick = onConvertToMp4,
                 enabled = !isConvertingToMp4,
             )
         }
-        ActionRow(
-            icon = if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
-            label = if (isFavorite) "Favourited" else "Favourite",
-            onClick = onToggleFavorite,
-            tint = if (isFavorite) MaterialTheme.colorScheme.primary else Color.White,
-        )
-        ActionRow(
-            icon = if (isSensitive) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-            label = if (isSensitive) "Marked sensitive" else "Mark sensitive",
-            onClick = onToggleSensitive,
-            tint = if (isSensitive) MaterialTheme.colorScheme.primary else Color.White,
-        )
-        ActionRow(
-            icon = Icons.Outlined.Delete,
-            // Says where it goes, because it does not delete: it hands the file to Android's own
-            // system trash, which is the only route that can be undone.
-            label = if (canMoveToTrash) "Move to trash" else "Trash unavailable",
-            onClick = onMoveToTrash,
-            enabled = canMoveToTrash,
-        )
+        if (!isExternal) {
+            ActionRow(
+                icon = if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                label = if (isFavorite) "Favourited" else "Favourite",
+                onClick = onToggleFavorite,
+                tint = if (isFavorite) MaterialTheme.colorScheme.primary else Color.White,
+            )
+            ActionRow(
+                icon = if (isSensitive) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                label = if (isSensitive) "Marked sensitive" else "Mark sensitive",
+                onClick = onToggleSensitive,
+                tint = if (isSensitive) MaterialTheme.colorScheme.primary else Color.White,
+            )
+            ActionRow(
+                icon = Icons.Outlined.Delete,
+                // Says where it goes, because it does not delete: it hands the file to Android's
+                // own system trash, which is the only route that can be undone.
+                label = if (canMoveToTrash) "Move to trash" else "Trash unavailable",
+                onClick = onMoveToTrash,
+                enabled = canMoveToTrash,
+            )
+        }
     }
 }
 
@@ -133,7 +155,10 @@ private fun ActionRow(
     tint: Color = Color.White,
 ) {
     val alpha = if (enabled) 1f else 0.38f
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.minimumInteractiveComponentSize(),
+    ) {
         IconButton(onClick = onClick, enabled = enabled) {
             Icon(
                 imageVector = icon,

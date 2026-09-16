@@ -345,18 +345,39 @@ class XmpPacket private constructor(private val document: Document) {
          * see [MetadataWriter]. Returning a blank packet instead would make a well-meaning
          * edit the exact mechanism that destroys metadata this class exists to protect: the
          * write would "succeed" and every field this class does not model would be gone.
+         *
+         * @param factory injectable so a test can prove parsing still succeeds on a
+         *   [DocumentBuilderFactory] whose `setFeature` behaves like Android's real Harmony
+         *   implementation -- see the `setFeature` call below for why that matters at all, and
+         *   [XmpPacketTest] for the fake factory that reproduces it on the JVM.
          */
-        fun parse(text: String): XmpPacket? = runCatching {
-            val factory = DocumentBuilderFactory.newInstance().apply {
-                isNamespaceAware = true
+        fun parse(text: String, factory: DocumentBuilderFactory = DocumentBuilderFactory.newInstance()): XmpPacket? =
+            runCatching {
+                factory.isNamespaceAware = true
                 // XMP packets are never expected to reference an external DTD; disabling entity
                 // resolution keeps a hostile or malformed file from making the parser reach out
                 // to a network address or the filesystem for a document type it names.
-                setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
-            }
-            val builder = factory.newDocumentBuilder()
-            XmpPacket(builder.parse(InputSource(StringReader(text))))
-        }.getOrNull()
+                //
+                // This call is a BEST EFFORT, not a requirement: Android's real
+                // `DocumentBuilderFactoryImpl` (the Harmony-derived XML stack every device ships,
+                // as opposed to the JDK's own factory this app's JVM unit tests otherwise run
+                // against) throws `ParserConfigurationException` for any feature name other than
+                // the two or three it recognises for namespaces/validation -- this exact one
+                // included. Before this fix, that exception propagated out of the surrounding
+                // `runCatching` below and turned EVERY parse of an existing packet into null on a
+                // real device, silently disabling every field (ratings, keywords) this app can
+                // only write into XMP -- a JVM/Robolectric test using the JDK's own factory could
+                // never see this, because the JDK's implementation quietly accepts the feature.
+                // The `EntityResolver` set just below is what actually keeps this parser from an
+                // external fetch when this call cannot.
+                runCatching { factory.setFeature(LOAD_EXTERNAL_DTD_FEATURE, false) }
+                val builder = factory.newDocumentBuilder()
+                builder.setEntityResolver { _, _ -> InputSource(StringReader("")) }
+                XmpPacket(builder.parse(InputSource(StringReader(text))))
+            }.getOrNull()
+
+        private const val LOAD_EXTERNAL_DTD_FEATURE =
+            "http://apache.org/xml/features/nonvalidating/load-external-dtd"
 
         private fun newDocument(): Document {
             val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
@@ -182,6 +183,7 @@ private fun ActivityRows(activities: List<BackgroundActivity>) {
                 modifier = Modifier.padding(start = 10.dp).weight(1f),
             )
             if (activity.error == null) CountReadout(activity)
+            activity.onCancel?.let { CancelGlyph(it) }
         }
     }
     if (activities.size > MAX_LISTED_ROWS) {
@@ -261,6 +263,7 @@ private fun HeroPanel(activity: BackgroundActivity) {
                 modifier = Modifier.weight(1f),
             )
             if (activity.error == null) CountReadout(activity, large = true)
+            activity.onCancel?.let { CancelGlyph(it) }
         }
         ProgressTrack(
             activity = activity,
@@ -341,6 +344,27 @@ private fun ProgressTrack(activity: BackgroundActivity, modifier: Modifier = Mod
             }
         }
     }
+}
+
+/**
+ * The one destructive control a shade row can carry: stop this job.
+ *
+ * A plain glyph rather than a full `IconButton` (whose default size claims more of the row's
+ * cramped horizontal space than the count and the name can spare), but padded out to a real
+ * 48dp target -- see `minimumInteractiveComponentSize` elsewhere in this task for the same
+ * reasoning applied to the room controls.
+ */
+@Composable
+private fun CancelGlyph(onCancel: () -> Unit) {
+    Text(
+        text = "✕",
+        color = Color.White.copy(alpha = 0.6f),
+        style = TextStyle(fontSize = 15.sp),
+        modifier = Modifier
+            .clickable(onClickLabel = "Cancel", onClick = onCancel)
+            .padding(start = 10.dp)
+            .minimumInteractiveComponentSize(),
+    )
 }
 
 /** The small turning disc beside an activity's name. */

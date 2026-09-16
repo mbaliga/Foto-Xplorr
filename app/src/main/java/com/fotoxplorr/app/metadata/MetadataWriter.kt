@@ -210,6 +210,15 @@ private fun clearGpsTags(exif: ExifInterface) {
  *    understands but that has lost everything it did not.
  */
 private fun readExistingXmp(exif: ExifInterface): XmpPacket? {
-    val existing = exif.getAttribute(ExifInterface.TAG_XMP)
+    // getAttributeBytes, NOT getAttribute: ExifInterface.getAttribute(TAG_XMP) decodes the tag's
+    // raw bytes as 7-bit ASCII, so any packet actually written in real UTF-8 -- which is how
+    // every other tool writes XMP, and how any packet with a name like "José" or a "©" must be
+    // written to be correct at all -- comes back with every byte above 127 replaced by U+FFFD,
+    // one replacement character per byte, not per character. This app's own XmpPacket.serialize()
+    // works around that same limitation by escaping to ASCII on the way OUT; reading with the
+    // matching UTF-8 decode is what makes a packet written by anyone ELSE round-trip correctly on
+    // the way IN. Confirmed against the real 1.4.1 jar: getAttributeBytes exists, decodes nothing,
+    // and returns the tag's exact bytes.
+    val existing = exif.getAttributeBytes(ExifInterface.TAG_XMP)?.toString(Charsets.UTF_8)
     return if (existing.isNullOrBlank()) XmpPacket.empty() else XmpPacket.parse(existing)
 }

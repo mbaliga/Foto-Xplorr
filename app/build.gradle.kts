@@ -17,8 +17,8 @@ android {
         applicationId = "com.fotoxplorr.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0-ai-spatial"
+        versionCode = 4
+        versionName = "0.4.0-pro-media"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -193,9 +193,42 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.1")
+    // ---- WS-D: app-shell state survival (rotation + process death) and background jobs ----
+    // ViewModel + its Compose accessor (`viewModel()`) and SavedStateHandle, so navigation state
+    // (the viewer's selection/asset list, the editor's open asset, pending operations, the job
+    // runner) survives rotation, and the ids that must survive process death round-trip through
+    // SavedStateHandle. Same 2.9.1 line as the lifecycle artifacts already above.
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.1")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.1")
+    implementation("androidx.lifecycle:lifecycle-service:2.9.1")
+    // ---- end WS-D block ----
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
+    // HEIC export
+    implementation("androidx.heifwriter:heifwriter:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+
+    // Media3 (ADR-008 rev. 2): ExoPlayer for the viewer and the editor's live preview,
+    // Transformer + Effect for exports (trim/speed/rotate/crop/mute, HDR tone-mapping) -- see
+    // docs/adr/ADR-008-video-transcode-pipeline.md for why this replaces the hand-written
+    // MediaCodec/EGL pipeline entirely rather than sitting beside it. All four AndroidX,
+    // Apache-2.0, no native code of our own, no networking: media3-common/media3-exoplayer
+    // declare ACCESS_NETWORK_STATE in their own manifests (for adaptive-streaming bandwidth
+    // signals this app never exercises, since every source here is a local content:// file),
+    // which src/offline/AndroidManifest.xml already strips with tools:node="remove" -- the
+    // verifyOfflineManifest gate passes on the MERGED manifest, not on what a library declares.
+    // media3-ui-compose is deliberately NOT used: at 1.9.0 it still requires an ExoPlayer
+    // instance driven by Compose state hoisting patterns this codebase does not otherwise use,
+    // and PlayerView inside AndroidView is one fewer moving part for a first Media3 landing --
+    // same reasoning that keeps the rest of this file's interop views (VideoView before this,
+    // PlayerView now) as thin AndroidView wrappers rather than reaching for a Compose-native
+    // widget the moment one exists.
+    val media3Version = "1.9.0"
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-ui:$media3Version")
+    implementation("androidx.media3:media3-transformer:$media3Version")
+    implementation("androidx.media3:media3-effect:$media3Version")
+    implementation("androidx.media3:media3-common:$media3Version")
 
     implementation("io.coil-kt.coil3:coil-compose:3.5.0")
     implementation("io.coil-kt.coil3:coil-gif:3.5.0")
@@ -265,7 +298,15 @@ dependencies {
     // their own version of it is precisely how that feel drifts apart.
     implementation("dev.aarso:cell-shell:0.1.0")
 
+    // Media3 session (audio playback service)
+    implementation("androidx.media3:media3-exoplayer:1.9.0")
+    implementation("androidx.media3:media3-session:1.9.0")
+    implementation("androidx.media3:media3-common:1.9.0")
+
     testImplementation("junit:junit:4.13.2")
+    // WS-D: JobRunner's state transitions run real coroutines (progress callbacks, cancellation)
+    // and need a deterministic test dispatcher rather than a real one.
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     // FX-005 JVM perf baseline only: times the catalogue read against a real SQLite file
     // without a device. android.database.* cannot run on the JVM, so the harness replicates
     // the media-table schema/queries over JDBC. Never shipped — test classpath only.

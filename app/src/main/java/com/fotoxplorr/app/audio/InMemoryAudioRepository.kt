@@ -10,16 +10,14 @@ import kotlinx.coroutines.sync.withLock
 /**
  * [com.fotoxplorr.app.media.InMemoryMediaRepository]'s exact shape, for [AudioAsset].
  *
- * Deliberately NOT backed by a persisted SQLite table the way
- * [com.fotoxplorr.app.media.SqliteMediaRepository] is for photos/videos: that persistence exists
- * to survive a 22,000-photo library needing THUMBNAILS decoded, which is genuinely expensive
- * enough to be worth caching across app restarts (see task history on the jank that persistence
- * fixed). A `MediaStore.Audio.Media` query returns plain rows — no thumbnail decode, no bitmap
- * work — so re-querying on every cold start costs a fraction of what the photo scan does even for
- * a large music collection, and a second SQLite schema/migration is not worth taking on just to
- * cache something already cheap to rebuild. A persisted cache is a reasonable future change if a
- * real device shows otherwise; this in-memory store is not a placeholder for one so much as a
- * scoped decision this class's own doc names rather than hides.
+ * [SqliteAudioRepository] is the persisted counterpart this app actually ships with now — see its
+ * own doc for why background playback ended up needing one after all, which this class's original
+ * doc (a `MediaStore.Audio.Media` re-query being cheap enough not to bother) reasoned about a
+ * different requirement than "a cold [com.fotoxplorr.app.playback.PlaybackService] needs a queue's
+ * assets before any scan has run". This class is kept anyway: it needs no [android.content.Context]
+ * and no real SQLite, which is exactly what a fast, hermetic unit test (see [AudioIndexer]'s own
+ * tests) wants, and it remains a perfectly correct [AudioRepository] for anything that genuinely
+ * does not need the state to survive a process restart.
  */
 class InMemoryAudioRepository : AudioRepository {
     private val mutex = Mutex()

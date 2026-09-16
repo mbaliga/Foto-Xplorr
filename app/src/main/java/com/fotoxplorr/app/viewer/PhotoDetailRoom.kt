@@ -166,6 +166,9 @@ fun PhotoDetailRoom(
     /** Null leaves the room read-only, which is what the "no location" line used to be. */
     onSetLocation: ((Double, Double) -> Unit)? = null,
     onClearLocation: (() -> Unit)? = null,
+    /** Embeds the hand-placed location into the file's own EXIF -- see
+     *  [com.fotoxplorr.app.spatial.LocationPicker]'s own doc. Null hides the action. */
+    onWriteLocationIntoFile: (() -> Unit)? = null,
     recognizedText: String = "",
     onSearchLibrary: ((String) -> Unit)? = null,
     /** Every tag on this photo, whoever or whatever put it there. */
@@ -248,6 +251,7 @@ fun PhotoDetailRoom(
             manualLongitude = manualLongitude,
             onSetLocation = onSetLocation,
             onClearLocation = onClearLocation,
+            onWriteIntoFile = onWriteLocationIntoFile,
         )
     }
 }
@@ -713,6 +717,7 @@ private fun PlaceBlock(
     manualLongitude: Double?,
     onSetLocation: ((Double, Double) -> Unit)?,
     onClearLocation: (() -> Unit)?,
+    onWriteIntoFile: (() -> Unit)? = null,
 ) {
     // A hand-placed location stands in for an absent embedded one. It never overrides a real GPS
     // tag: what the camera recorded is a fact about the photograph, and the picker is for photos
@@ -734,6 +739,7 @@ private fun PlaceBlock(
                     longitude = longitude,
                     onSet = onSetLocation,
                     onClear = { onClearLocation?.invoke() },
+                    onWriteIntoFile = onWriteIntoFile,
                 )
             }
         } else {

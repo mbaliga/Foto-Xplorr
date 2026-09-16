@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -63,9 +64,18 @@ import kotlin.math.roundToInt
  * number and the pin moves. Two controls over one fact, which is the only arrangement that does
  * not eventually disagree with itself.
  *
- * The location is written to Foto Xplorr's own index, not into the photo's EXIF — see
- * [GeoMetadataRepository.setManualLocation] for why, and the caption below says so plainly rather
- * than letting someone believe the file itself was changed.
+ * [onSet] fires once per gesture -- on drag END, not on every drag frame, and on a text field
+ * losing FOCUS, not on every keystroke. It used to fire on both of those continuously, and the
+ * host turned each call into a fresh `MediaStore.createWriteRequest` + system consent dialog (see
+ * `FotoXplorrActivity`'s own history here): dragging the pin across a room was a storm of Android
+ * permission prompts, one per frame. Committing on the gesture's end is what a "set a location"
+ * action actually means; everything in between is the pin following the finger, which the visible
+ * position tracks locally regardless of when [onSet] is told about it.
+ *
+ * The location [onSet] reports is written to Foto Xplorr's own index only -- see
+ * [GeoMetadataRepository.setManualLocation] -- never into the photo's EXIF. [onWriteIntoFile], when
+ * non-null, is the explicit, separate action for that: one tap, one consent dialog, not a side
+ * effect of moving a pin.
  */
 @Composable
 fun LocationPicker(
@@ -74,6 +84,10 @@ fun LocationPicker(
     onSet: (Double, Double) -> Unit,
     onClear: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Embeds the current location into the photo's own EXIF, with Android's one-time write
+     *  consent -- see this composable's own doc. Null hides the action (a video, say, whose
+     *  metadata story this app does not yet have). */
+    onWriteIntoFile: (() -> Unit)? = null,
 ) {
     val placed = latitude != null && longitude != null
     // The window the pin moves within. A whole-world span, so dragging can reach anywhere; typing
@@ -83,14 +97,21 @@ fun LocationPicker(
     var latitudeText by remember(latitude) { mutableStateOf(latitude?.let { trim(it) } ?: "") }
     var longitudeText by remember(longitude) { mutableStateOf(longitude?.let { trim(it) } ?: "") }
 
-    fun commit(lat: Float, lon: Float) {
+    // Moves the pin and the two text fields, WITHOUT reporting anything upward -- what every drag
+    // frame and every keystroke used to do. See this file's own doc for why that had to change.
+    fun moveLocally(lat: Float, lon: Float) {
         val clampedLat = lat.coerceIn(-MAX_LATITUDE, MAX_LATITUDE)
         val clampedLon = lon.coerceIn(-180f, 180f)
         pinLatitude = clampedLat
         pinLongitude = clampedLon
         latitudeText = trim(clampedLat.toDouble())
         longitudeText = trim(clampedLon.toDouble())
-        onSet(clampedLat.toDouble(), clampedLon.toDouble())
+    }
+
+    /** The one place [onSet] is actually called: a drag's `onDragEnd`, or a coordinate field
+     *  losing focus. */
+    fun commit() {
+        onSet(pinLatitude.toDouble(), pinLongitude.toDouble())
     }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -119,9 +140,15 @@ fun LocationPicker(
                     .offset { IntOffset((x - pinPx / 2f).roundToInt(), (y - pinPx / 2f).roundToInt()) }
                     .size(PIN_SIZE.dp)
                     .pointerInput(widthPx, heightPx) {
-                        detectDragGestures { change, drag ->
+                        detectDragGestures(
+                            // Both endings commit: a cancelled drag (a second finger landing, the
+                            // gesture being taken over) still leaves the pin somewhere, and that
+                            // somewhere should not silently fail to save.
+                            onDragEnd = ::commit,
+                            onDragCancel = ::commit,
+                        ) { change, drag ->
                             change.consume()
-                            commit(
+                            moveLocally(
                                 lat = pinLatitude - drag.y / heightPx * (2 * MAX_LATITUDE),
                                 lon = pinLongitude + drag.x / widthPx * 360f,
                             )
@@ -155,8 +182,12 @@ fun LocationPicker(
                 value = latitudeText,
                 onValueChange = { text ->
                     latitudeText = text
-                    text.toFloatOrNull()?.let { commit(it, pinLongitude) }
+                    text.toFloatOrNull()?.let { moveLocally(it, pinLongitude) }
                 },
+                // Typing "-3" is not a coordinate yet -- committing on every keystroke reported a
+                // half-typed number as though it were a deliberate placement. Focus loss (tabbing
+                // to Longitude, or dismissing the keyboard) is the actual "I am done typing" signal.
+                onFocusLost = ::commit,
                 modifier = Modifier.weight(1f),
             )
             CoordinateField(
@@ -164,15 +195,17 @@ fun LocationPicker(
                 value = longitudeText,
                 onValueChange = { text ->
                     longitudeText = text
-                    text.toFloatOrNull()?.let { commit(pinLatitude, it) }
+                    text.toFloatOrNull()?.let { moveLocally(pinLatitude, it) }
                 },
+                onFocusLost = ::commit,
                 modifier = Modifier.weight(1f),
             )
         }
 
         Text(
             text = if (placed) {
-                "Saved in Foto Xplorr, not written into the photo file itself."
+                "Saved in Foto Xplorr's own index. The photo file itself is unchanged unless you " +
+                    "choose to write into it below."
             } else {
                 "This photo carries no GPS tag. Photos saved from messaging apps and websites " +
                     "usually have theirs removed before they arrive."
@@ -180,6 +213,15 @@ fun LocationPicker(
             color = RoomStyle.InkFaint,
             style = RoomStyle.Caption,
         )
+
+        if (placed && onWriteIntoFile != null) {
+            Text(
+                text = "Also write into the photo file",
+                color = Color.White.copy(alpha = 0.75f),
+                style = RoomStyle.Caption,
+                modifier = Modifier.clickable(onClick = onWriteIntoFile).padding(vertical = 4.dp),
+            )
+        }
 
         if (placed) {
             Text(
@@ -244,8 +286,13 @@ private fun CoordinateField(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,
+    onFocusLost: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Tracked locally rather than derived from the FocusState transition alone: a FocusState
+    // callback fires on ATTACH as "not focused" too (nothing was ever focused to lose), which
+    // would call onFocusLost on first composition. Only a genuine focused-to-unfocused edge counts.
+    var wasFocused by remember { mutableStateOf(false) }
     Column(modifier) {
         Text(label, color = RoomStyle.InkFaint, style = RoomStyle.Caption)
         BasicTextField(
@@ -260,7 +307,11 @@ private fun CoordinateField(
                 .padding(top = 4.dp)
                 .border(1.dp, Color.White.copy(alpha = 0.22f))
                 .padding(horizontal = 10.dp, vertical = 10.dp)
-                .height(20.dp),
+                .height(20.dp)
+                .onFocusChanged { state ->
+                    if (wasFocused && !state.isFocused) onFocusLost()
+                    wasFocused = state.isFocused
+                },
         )
     }
 }

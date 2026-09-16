@@ -25,9 +25,10 @@ state and privacy flags are all keyed to catalogue rows and would have nowhere t
 Scanning is **incremental**. A full scan runs on first launch and on explicit refresh; everything
 else is a delta against a persisted watermark. See §4 for why this matters more than it sounds.
 
-### Nine destinations
+### Ten destinations
 
-The primary information axis. Each is a lens over the same catalogue, not a separate store:
+The primary information axis. Each is a lens over the same catalogue, not a separate store —
+except Audio, which has no `MediaAsset` behind it at all (see `audio/`'s own module doc):
 
 | Destination | What it shows |
 |---|---|
@@ -40,6 +41,7 @@ The primary information axis. Each is a lens over the same catalogue, not a sepa
 | **Favourites** | User-marked favourites |
 | **Places** | A map of geotagged media |
 | **Protected** | Password-protected folders |
+| **Audio** | Standalone audio files (music, recordings, podcasts) from `MediaStore.Audio` |
 
 ### Smart albums and organisation
 
@@ -203,7 +205,21 @@ Two rules hold this together:
 | `fileops/` | Media file operations and metadata-clean export |
 | `privacy/` | Sensitive-asset and password-protected-folder stores |
 | `favorites/`, `organize/` | Favourites; collections, tags and archive state |
-| `hyle/` | Design-system bridge, the alert banner, the floating pill |
+| `hyle/` | Design-system bridge, `ActivityShade` (background job/status surface), the floating pill |
+| `editor/` | The Simple/Pro photo editor: adjustments, HSL, curves, crop, spot heal, presets, undo history, persisted recipes, `EditedCopyWriter` (Save/Save As/Overwrite) |
+| `metadata/` | EXIF/XMP read and write: `MetadataWriter`, `XmpPacket`, `MetadataEdit` |
+| `video/` | Video export via Media3 Transformer: `VideoExporter`, `VideoConversionWriter`, export options and codec capability |
+| `videoeditor/` | The video editor screen and its `VideoEditPlan` (trim/speed/rotate/mirror/crop/mute/filters) |
+| `audio/` | Standalone audio: MediaStore scanning, `SqliteAudioRepository`, the library and player screens |
+| `audiotags/` | Pure ID3v2/MP4/FLAC tag codecs plus the Android-side tag writer |
+| `playback/` | `PlaybackService` (`MediaSessionService`) and the Compose audio-playback controller |
+| `jobs/` | `JobRunner` and `JobForegroundService`: progress-tracked, cancellable background work (conversion, export, copy/move) surfaced through `ActivityShade` |
+| `shell/` | `AppStateViewModel` — navigation and pending-consent state that survives rotation and process death |
+| `openwith/` | Handling this app being opened on an external file (View/Edit/Send) |
+| `share/` | Share preparation, frames, watermarking, ZIP export |
+| `moments/` | Key-moment detection and short clip/frame export |
+| `lift/`, `lens/` | Subject lift/stickers; the lens explorer tile |
+| `curate/`, `background/` | Auto-curation and archive suggestions; the background work scheduler |
 
 ### Data flow
 
@@ -288,8 +304,6 @@ hard-fail.
 
 ## 5. Known limits
 
-- **The top room is reserved but not built.** Pulling down does nothing yet. That is deliberate —
-  the direction was to keep the gesture unclaimed, not to fill it.
 - **The edge scrubber assumes a headerless grid.** Grid item *n* is asset *n*. Both surfaces that
   show the scrubber render headerless grids; a grid that drew date headers would insert items and
   shift everything below each one.
@@ -297,3 +311,10 @@ hard-fail.
   deleting media without the platform confirmation dialog.
 - **Remote AI is unverified against every provider.** The four provider shapes are implemented;
   only the ones the user configures are exercised.
+- **The Media3-based playback/export/editing pipeline (ADR-008 rev. 2) and the audio playback
+  service have not been run on a real device or emulator** — this environment has neither. They
+  are compile- and unit-test-verified only; see the device checklist each ADR names before
+  treating them as production-proven.
+- **The photo editor's Lightroom-style tools (HSL, curves, crop, spot heal) are unit-tested on
+  their pure geometry/colour math only** — gesture feel (dragging a curve point, a crop handle)
+  has not been exercised on a touchscreen.

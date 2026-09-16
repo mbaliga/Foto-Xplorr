@@ -69,6 +69,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.ui.Alignment
@@ -212,6 +213,17 @@ data class GalleryUiState(
     val permissionGranted: Boolean,
     /** Android 14+ selected-photos grant rather than full-library access. */
     val partialMediaAccess: Boolean = false,
+    /** READ_MEDIA_AUDIO (Android 13+) -- requested only when the Audio destination is first
+     *  opened, not upfront with the photo/video grant, so a person who never uses that
+     *  destination is never asked for a permission this app has not yet needed. True below API
+     *  33, where audio is already covered by the same grant as photos/video. */
+    val audioPermissionGranted: Boolean = true,
+    /** True once the media permission has been asked for and Android will not show its own
+     *  rationale again -- Android's own signal for "the user said no and checked don't ask
+     *  again" (or, on some OEM skins, no again at all). The empty state's button relabels itself
+     *  to "Open app settings" rather than requesting a permission Android will silently refuse
+     *  to even show a dialog for. */
+    val mediaPermissionPermanentlyDenied: Boolean = false,
     val scanState: ScanState,
     val preferences: GalleryPreferencesState,
     /** On-device recognition results backing the Pets / People / Identity destinations. */
@@ -251,6 +263,11 @@ data class GalleryActions(
     val onSetFitToTile: (Boolean) -> Unit,
     val onSetLoopAnimations: (Boolean) -> Unit,
     val onSetLongPressPreview: (Boolean) -> Unit,
+    /** Neighbouring photos along the bottom of an open photo -- surfaced in both the viewer's
+     *  own settings room and Settings › Viewer, so it needs to be reachable from here too. */
+    val onSetShowFilmstrip: (Boolean) -> Unit = {},
+    /** What the editor's Save does by default -- see [com.fotoxplorr.app.editor.EditorSaveMode]. */
+    val onSetEditorSaveMode: (com.fotoxplorr.app.editor.EditorSaveMode) -> Unit = {},
     /** Kick off (or resume) the on-device recognition pass. */
     val onIndexRecognition: () -> Unit,
     val onProtectFolder: suspend (String, CharArray) -> Result<Unit>,
@@ -292,6 +309,9 @@ data class GalleryActions(
     val onRejectArchiveSuggestions: (Set<MediaId>) -> Unit,
     /** Reopens Android's media grant sheet so a partial-access user can change selection. */
     val onManageSelectedMedia: () -> Unit = {},
+    /** Requests READ_MEDIA_AUDIO (and POST_NOTIFICATIONS) the first time the Audio destination is
+     *  opened -- see [GalleryUiState.audioPermissionGranted]. */
+    val onRequestAudioPermission: () -> Unit = {},
 )
 
 @Composable
@@ -333,8 +353,12 @@ fun GalleryScreen(
         when {
             !state.permissionGranted -> GalleryEmptyState(
                 title = "Your gallery stays on this device",
-                message = "Choose the photos and videos Foto Xplorr may index. Nothing is uploaded.",
-                actionLabel = "Choose media",
+                message = if (state.mediaPermissionPermanentlyDenied) {
+                    "Foto Xplorr was not allowed to see your photos and videos. Turn it on from Android's own app settings."
+                } else {
+                    "Choose the photos and videos Foto Xplorr may index. Nothing is uploaded."
+                },
+                actionLabel = if (state.mediaPermissionPermanentlyDenied) "Open app settings" else "Choose media",
                 onAction = actions.onRequestPermission,
             )
             state.assets.isEmpty() && state.scanState is ScanState.Scanning -> GalleryEmptyState(
@@ -411,11 +435,18 @@ private fun GalleryBrowser(
     state: GalleryUiState,
     actions: GalleryActions,
 ) {
-    var destination by remember { mutableStateOf(state.preferences.defaultDestination) }
-    var route by remember { mutableStateOf<BrowserRoute>(BrowserRoute.Root) }
-    var query by remember { mutableStateOf("") }
-    var searchVisible by remember { mutableStateOf(false) }
-    var selection by remember { mutableStateOf(GallerySelection()) }
+    // rememberSaveable, not remember: which destination and drill-down route you were looking at,
+    // what you had searched, and what was selected are exactly the kind of thing a process death
+    // (not just a rotation) must not silently discard -- reopening the app to a killed process
+    // used to always land back on the default destination with the selection gone, indistinguishable
+    // from having navigated there on purpose. BrowserRoute and GallerySelection need custom Savers
+    // (see BrowserRouteCodec.kt) since neither is one of rememberSaveable's built-in trusted types;
+    // HyleDestination (an enum, therefore Serializable), String and Boolean need none.
+    var destination by rememberSaveable { mutableStateOf(state.preferences.defaultDestination) }
+    var route by rememberSaveable(stateSaver = BrowserRouteSaver) { mutableStateOf<BrowserRoute>(BrowserRoute.Root) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var searchVisible by rememberSaveable { mutableStateOf(false) }
+    var selection by rememberSaveable(stateSaver = GallerySelectionSaver) { mutableStateOf(GallerySelection()) }
     var topMenuVisible by remember { mutableStateOf(false) }
     // The two rooms are the shell's state, not booleans here: a room is fractionally open for
     // most of its life (the finger is mid-drag), which a Boolean cannot express.
@@ -610,6 +641,17 @@ private fun GalleryBrowser(
     LaunchedEffect(currentIds) {
         if (selection.isActive) selection = selection.retainAvailable(currentIds)
     }
+    // Asked for lazily, the moment the destination whose content actually needs it is opened,
+    // rather than bundled into the upfront photo/video grant -- someone who never opens Audio is
+    // never asked for a permission this app has not yet needed. Re-firing on every visit is
+    // harmless: `onRequestAudioPermission`'s own launcher is a no-op once the grant already
+    // stands (see FotoXplorrActivity's audioPermissionLauncher).
+    LaunchedEffect(destination) {
+        if (destination == HyleDestination.AUDIO && !state.audioPermissionGranted) {
+            actions.onRequestAudioPermission()
+        }
+    }
+
     LaunchedEffect(destination, route) {
         selection = selection.clear()
         // A route change the seeding effect below made on purpose carries a search with it;
@@ -1022,6 +1064,11 @@ private fun GalleryBrowser(
                                 },
                                 // One depth now, so opening settings is just opening the room.
                                 onOpenSettings = { shell.open(RoomEdge.RIGHT) },
+                                onOpenDestination = {
+                                    destination = it
+                                    route = BrowserRoute.Root
+                                    legacyScreen = null
+                                },
                             )
                             // ---- the zoom ladder's two sparse ends (owner: "zoom out past the
                             // sparsest grid and you reach Calendar; further out, Map") ----
@@ -1081,6 +1128,14 @@ private fun GalleryBrowser(
                             ) {
                                 Column {
                                     ShakeToRefresh(onShake = actions.onRefresh)
+                                    // Android 14's own partial grant used to be invisible outside
+                                    // Settings › Media -- someone who picked "Selected photos"
+                                    // once had no way, short of hunting through settings, to
+                                    // notice they could add more without this strip naming it
+                                    // right where the gap actually shows up.
+                                    if (state.partialMediaAccess && destination != HyleDestination.PROTECTED) {
+                                        PartialAccessStrip(onChooseMore = actions.onManageSelectedMedia)
+                                    }
                                     DestinationContent(
                                         destination = destination,
                                         assets = destinationAssets,
@@ -1867,6 +1922,36 @@ private fun GalleryEmptyState(
                 TextButton(onClick = onAction) { Text(actionLabel) }
             }
         }
+    }
+}
+
+/**
+ * The strip naming Android's own partial-access grant, where the gap it describes actually shows
+ * up -- the grid that is missing photos -- rather than only in a Settings row nobody visits
+ * without already suspecting something is wrong.
+ */
+@Composable
+private fun PartialAccessStrip(onChooseMore: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF1C1C22))
+            .clickable(onClick = onChooseMore)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Only your selected photos and videos are visible.",
+            color = Color.White.copy(alpha = 0.8f),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            "Choose more",
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.labelLarge,
+        )
     }
 }
 
