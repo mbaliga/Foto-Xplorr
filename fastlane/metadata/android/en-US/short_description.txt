@@ -1,0 +1,1 @@
+A local-first gallery with a real photo/video editor, no cloud, no account.

@@ -1,0 +1,49 @@
+A gallery for the photos and videos already on your phone. It opens fast, it does
+not want an account, and it never uploads anything.
+
+BROWSE
+• Ten destinations: Pets, People, Identity, Screenshots, Photos, Videos, Audio,
+  Favourites, Places and Protected.
+• A timeline grouped by day or month, or ungrouped, with a scrubber.
+• Search by filename, folder, media type, tag, date range or camera.
+• Sort by newest, oldest, name or size, with an adjustable grid.
+• A full-screen viewer with EXIF/XMP details, swipe, zoom, pan and slideshow.
+• A full video/audio player with variable speed, subtitle and audio-track
+  selection, gestures, resume position, and Picture-in-Picture.
+• RAW (best effort), SVG, and animated GIF, WebP and AVIF.
+• System, light and dark themes with several accent palettes; tablet and
+  ChromeOS-friendly layouts.
+
+EDIT
+• A real photo editor: exposure, contrast, highlights/shadows, white balance,
+  HSL, per-channel curves, crop, straighten, spot heal, vignette, sharpen,
+  presets, and undo/redo with a saved edit history.
+• Save a copy, Save As to a chosen format and destination, or replace the
+  original — always behind Android's own confirmation for the last one.
+• A video editor: trim, speed, rotate, mirror, mute, crop and colour filters,
+  with a live preview and real export progress.
+• Read and write EXIF/XMP: rating, creator, copyright, keywords and location.
+• Convert a video to MP4 or an audio file to AAC, and edit MP3/MP4/FLAC tags.
+
+ORGANISE, REVERSIBLY
+• Favourites, an archive, a sensitive flag and your own tags, all persistent.
+• On-device recognition (no network) for pets, people and identity documents.
+• Collections that group media without moving the source files.
+• Bulk selection, multi-share and bulk organisation, with visible progress.
+• Copy to any folder through Android's storage access framework.
+• A safe move that copies first and only then asks Android to trash the original.
+
+DISCOVER
+• Smart albums for favourites, recents, videos, screenshots, animated media,
+  large files, possible duplicates, sensitive media, archive, trash and untagged.
+• Location metadata extracted from your own files, on demand, on device.
+• An offline coordinate map that downloads no tiles, plus an optional on-device
+  compass view.
+
+QUIET BY DESIGN
+• No ads, no accounts, no analytics, no tracking, no network permission at all
+  in this build.
+• Your photos are never uploaded, and never used to train anything.
+• Recognition, similarity and background playback all run locally.
+
+Foto Xplorr is open source.
