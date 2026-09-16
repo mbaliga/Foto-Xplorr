@@ -12,8 +12,15 @@
       Modifiers/AGSL shaders (still unreleased per its own README) end up calling any
       API gated above 26, that would need to be caught by lint/testing on a real device
       or emulator running API below 31, which this change could not do.
+
+      androidx.heifwriter declares minSdk=28 (its whole surface is a thin wrapper over the
+      MediaCodec HEIC encoder, which does not exist before API 28) for the same "keep the
+      app's own floor" reason: HEIC export itself is gated at the call site on
+      Build.VERSION.SDK_INT >= 28 AND a real HEVC encoder being present (see
+      isHeicExportSupported), so no code path below API 28 can reach it regardless of what
+      the manifest merger would otherwise refuse to build.
     -->
-    <uses-sdk tools:overrideLibrary="dev.aarso.hyle" />
+    <uses-sdk tools:overrideLibrary="dev.aarso.hyle,androidx.heifwriter" />
 
     <!--
       Lets the background work job survive a reboot (JobInfo.setPersisted, in
