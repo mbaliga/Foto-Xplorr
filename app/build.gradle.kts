@@ -17,8 +17,8 @@ android {
         applicationId = "com.fotoxplorr.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0-ai-spatial"
+        versionCode = 4
+        versionName = "0.4.0-pro-media"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

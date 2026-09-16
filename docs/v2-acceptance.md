@@ -1,5 +1,10 @@
 # Foto Xplorr v2 acceptance specification
 
+> **Superseded.** This was the implementation contract for the v2 milestone (four destinations,
+> no editor, no recognition, no audio/video pipeline). The app has since grown well past it —
+> see `docs/PRODUCT-AND-ARCHITECTURE.md` for the current architecture and `docs/adr/` for what
+> changed and why. Kept here as a historical record of what v2 committed to, not as a live spec.
+
 This document is the implementation contract for the v2 Android release. A feature counts as complete only when it is reachable in the app, handles empty/error/permission states, preserves user data, and is covered by build or test validation where practical.
 
 ## 1. Core library
