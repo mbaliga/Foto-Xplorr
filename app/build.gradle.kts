@@ -197,6 +197,28 @@ dependencies {
     implementation("androidx.exifinterface:exifinterface:1.4.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
+    // Media3 (ADR-008 rev. 2): ExoPlayer for the viewer and the editor's live preview,
+    // Transformer + Effect for exports (trim/speed/rotate/crop/mute, HDR tone-mapping) -- see
+    // docs/adr/ADR-008-video-transcode-pipeline.md for why this replaces the hand-written
+    // MediaCodec/EGL pipeline entirely rather than sitting beside it. All four AndroidX,
+    // Apache-2.0, no native code of our own, no networking: media3-common/media3-exoplayer
+    // declare ACCESS_NETWORK_STATE in their own manifests (for adaptive-streaming bandwidth
+    // signals this app never exercises, since every source here is a local content:// file),
+    // which src/offline/AndroidManifest.xml already strips with tools:node="remove" -- the
+    // verifyOfflineManifest gate passes on the MERGED manifest, not on what a library declares.
+    // media3-ui-compose is deliberately NOT used: at 1.9.0 it still requires an ExoPlayer
+    // instance driven by Compose state hoisting patterns this codebase does not otherwise use,
+    // and PlayerView inside AndroidView is one fewer moving part for a first Media3 landing --
+    // same reasoning that keeps the rest of this file's interop views (VideoView before this,
+    // PlayerView now) as thin AndroidView wrappers rather than reaching for a Compose-native
+    // widget the moment one exists.
+    val media3Version = "1.9.0"
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-ui:$media3Version")
+    implementation("androidx.media3:media3-transformer:$media3Version")
+    implementation("androidx.media3:media3-effect:$media3Version")
+    implementation("androidx.media3:media3-common:$media3Version")
+
     implementation("io.coil-kt.coil3:coil-compose:3.5.0")
     implementation("io.coil-kt.coil3:coil-gif:3.5.0")
     implementation("io.coil-kt.coil3:coil-svg:3.5.0")
