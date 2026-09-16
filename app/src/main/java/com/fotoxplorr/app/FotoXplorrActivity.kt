@@ -59,7 +59,7 @@ import com.fotoxplorr.app.audio.AudioAsset
 import com.fotoxplorr.app.audio.AudioConversionWriter
 import com.fotoxplorr.app.audio.AudioIndexer
 import com.fotoxplorr.app.audio.AudioPlayerScreen
-import com.fotoxplorr.app.audio.InMemoryAudioRepository
+import com.fotoxplorr.app.audio.SqliteAudioRepository
 import com.fotoxplorr.app.audio.PrefsAudioScanWatermark
 import com.fotoxplorr.app.editor.EditedCopyWriter
 import com.fotoxplorr.app.editor.EditorScreen
@@ -102,6 +102,7 @@ import com.fotoxplorr.app.shell.AppStateViewModel
 import com.fotoxplorr.app.shell.PendingMediaOperation
 import com.fotoxplorr.app.shell.PendingTreeOperation
 import com.fotoxplorr.app.video.VideoConversionWriter
+import com.fotoxplorr.app.video.VideoExportOptions
 import com.fotoxplorr.app.videoeditor.VideoEditorScreen
 import com.fotoxplorr.app.recognition.RecognitionIndexer
 import com.fotoxplorr.app.recognition.RecognitionStore
@@ -216,7 +217,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     }
     // Audio's own repository/indexer, parallel to the photo/video ones above rather than folded
     // into them -- see AudioAsset's own doc for why the two asset types stay apart everywhere.
-    val audioRepository = remember { InMemoryAudioRepository() }
+    val audioRepository = remember { SqliteAudioRepository(applicationContext) }
     val audioIndexer = remember {
         AudioIndexer(
             scanner = AndroidAudioMediaStoreScanner(contentResolver),
@@ -755,10 +756,11 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             title = "Converting ${asset.displayName}",
             kind = ActivityKind.EXPORTING,
         ) { onProgress ->
-            // VideoConversionWriter reports no progress today (agent A's own TODO); indeterminate
-            // is honest until it does.
-            onProgress(null)
-            videoConversionWriter.convertToH264Mp4(asset).also { outcome ->
+            videoConversionWriter.convertToH264Mp4(
+                asset,
+                VideoExportOptions(),
+                onProgress = { fraction -> onProgress(fraction) },
+            ).also { outcome ->
                 convertingVideoId = null
                 outcome.onSuccess { scanRequests.trySend(false) }
             }.map { "Converted to MP4 (H.264)." }
@@ -1190,6 +1192,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     scanRequests.trySend(false)
                 },
                 onOverwrite = ::requestOverwrite,
+                onSavedUri = ::openViewerForSavedUri,
             )
             // Android's own consent sheet said no to replacing the original -- the editor stays
             // open (this whole branch is still `editing != null`) rather than the edit being
