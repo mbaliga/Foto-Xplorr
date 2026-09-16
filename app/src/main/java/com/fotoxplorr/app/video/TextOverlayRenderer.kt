@@ -12,6 +12,7 @@ import androidx.media3.effect.TextureOverlay
  * from [VideoExporter] itself: the anchor-point arithmetic below is the only part of "add a text
  * caption" that is worth reading in isolation from the rest of the export pipeline.
  */
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 internal fun buildTextOverlay(overlay: TextOverlay): TextureOverlay {
     val spanned = SpannableString(overlay.text).apply {
         setSpan(ForegroundColorSpan(overlay.colorArgb), 0, overlay.text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)

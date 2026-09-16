@@ -46,6 +46,7 @@ import androidx.media3.session.MediaSessionService
  * `LocalConfiguration`, so the default `onSetMediaItems`/`onAddMediaItems` resolution — which only
  * exists to resolve items that do NOT already carry a URI — never needs overriding here.
  */
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 class PlaybackService : MediaSessionService() {
 
     private var player: ExoPlayer? = null

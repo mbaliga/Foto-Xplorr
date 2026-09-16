@@ -12,6 +12,7 @@ import com.fotoxplorr.app.media.MediaAsset
  * [VideoExporter], which the video editor's export path shares; this class is a thin,
  * signature-stable front door for [com.fotoxplorr.app.FotoXplorrActivity]'s existing call site.
  */
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 class VideoConversionWriter(context: Context) {
     private val exporter = VideoExporter(context.applicationContext)
 

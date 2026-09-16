@@ -110,7 +110,7 @@ import kotlinx.coroutines.withContext
  * exactly that (`if (event.changes.any { it.isConsumed }) break`) and backs off gracefully rather
  * than also trying to page or pinch-zoom the same drag.
  */
-@OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 @Composable
 fun VideoPlayer(
     asset: MediaAsset,
@@ -633,6 +633,7 @@ private fun trackOptionsFor(tracks: Tracks, trackType: Int, includeOff: Boolean)
     return options
 }
 
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 private fun videoTrackInfoFrom(player: ExoPlayer, tracks: Tracks): VideoTrackInfo {
     val videoFormat = player.videoFormat
     val audioFormat = player.audioFormat

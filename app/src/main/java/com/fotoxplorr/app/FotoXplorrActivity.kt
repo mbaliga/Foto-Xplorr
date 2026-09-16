@@ -185,6 +185,7 @@ private enum class PendingMediaOperation { TRASH, RESTORE, DELETE }
 private enum class PendingTreeOperation { COPY, MOVE }
 
 @Composable
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 private fun FotoXplorrActivity.FotoXplorrApp(
     galleryPreferences: GalleryPreferences,
     preferences: GalleryPreferencesState,
