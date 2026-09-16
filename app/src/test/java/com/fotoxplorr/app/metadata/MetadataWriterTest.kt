@@ -158,4 +158,76 @@ class MetadataWriterTest {
 
         assertTrue("a no-op edit rewrote the file", before.contentEquals(file.readBytes()))
     }
+
+    @Test
+    fun `keywordsToRemove takes a keyword off without touching the rest`() {
+        val file = realJpeg()
+        applyMetadataEdit(exif(file), MetadataEdit(keywordsToAdd = listOf("beach", "sunset", "family")))
+
+        applyMetadataEdit(exif(file), MetadataEdit(keywordsToRemove = listOf("sunset")))
+
+        val xmp = XmpPacket.parse(exif(file).getAttributeBytes(ExifInterface.TAG_XMP)!!.toString(Charsets.UTF_8))!!
+        assertEquals(listOf("beach", "family"), xmp.bag(XmpPacket.DC_NS, "subject"))
+    }
+
+    /** [MetadataEdit.keywordsToRemove]'s own doc: removal wins over addition for the same keyword
+     *  named in both lists of the same edit. */
+    @Test
+    fun `removing and adding the same keyword in one edit removes it`() {
+        val file = realJpeg()
+        applyMetadataEdit(exif(file), MetadataEdit(keywordsToAdd = listOf("draft")))
+
+        applyMetadataEdit(exif(file), MetadataEdit(keywordsToAdd = listOf("draft"), keywordsToRemove = listOf("draft")))
+
+        val xmp = XmpPacket.parse(exif(file).getAttributeBytes(ExifInterface.TAG_XMP)!!.toString(Charsets.UTF_8))!!
+        assertEquals(emptyList<String>(), xmp.bag(XmpPacket.DC_NS, "subject"))
+    }
+
+    /**
+     * The property [readExistingXmp]'s fix is actually about: an existing packet's non-ASCII
+     * bytes, written the way every OTHER tool writes XMP (raw UTF-8, not this app's own
+     * character-reference escaping), must survive an edit to an unrelated field untouched.
+     * `getAttribute` (the pre-fix path) decodes the tag as 7-bit ASCII and turns every byte above
+     * 127 into a separate U+FFFD, so a 2-byte UTF-8 character like "é" would come back as TWO
+     * replacement characters -- this patches the real bytes of an otherwise-valid file rather
+     * than going through this app's own [XmpPacket], which always escapes to ASCII on the way out
+     * and therefore could never reproduce the bug it is proving fixed.
+     */
+    @Test
+    fun `an existing packet's real UTF-8 bytes survive an unrelated metadata edit`() {
+        val file = realJpeg()
+        val placeholder = "CafXX"
+        val packet = XmpPacket.empty()
+        packet.setLangAlt(XmpPacket.DC_NS, "dc", "description", placeholder)
+        exif(file).apply { setAttribute(ExifInterface.TAG_XMP, packet.serialize()); saveAttributes() }
+
+        // Same byte length as the two-ASCII-char placeholder above ("XX" = 2 bytes), so the
+        // JPEG's APP1 segment length stays correct after this raw byte-level substitution --
+        // "é" is 2 bytes in UTF-8 (0xC3 0xA9), giving "Café" (5 bytes) in place of "CafXX" (5
+        // bytes).
+        val bytes = file.readBytes()
+        val needle = placeholder.toByteArray(Charsets.US_ASCII)
+        val at = indexOfSubarray(bytes, needle)
+        assertTrue("could not find the placeholder to patch", at >= 0)
+        val replacement = "Caf".toByteArray(Charsets.US_ASCII) + byteArrayOf(0xC3.toByte(), 0xA9.toByte())
+        assertEquals(needle.size, replacement.size)
+        System.arraycopy(replacement, 0, bytes, at, replacement.size)
+        file.writeBytes(bytes)
+
+        applyMetadataEdit(exif(file), MetadataEdit(rating = 3))
+
+        val xmp = XmpPacket.parse(exif(file).getAttributeBytes(ExifInterface.TAG_XMP)!!.toString(Charsets.UTF_8))!!
+        assertEquals("Café", xmp.langAlt(XmpPacket.DC_NS, "description"))
+        assertEquals(3, xmp.intValue(XmpPacket.XMP_NS, "Rating"))
+    }
+
+    private fun indexOfSubarray(haystack: ByteArray, needle: ByteArray): Int {
+        outer@ for (start in 0..haystack.size - needle.size) {
+            for (i in needle.indices) {
+                if (haystack[start + i] != needle[i]) continue@outer
+            }
+            return start
+        }
+        return -1
+    }
 }
