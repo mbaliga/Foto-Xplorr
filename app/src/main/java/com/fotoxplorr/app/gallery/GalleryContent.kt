@@ -971,7 +971,10 @@ fun LibraryScreen(
 
         item { SectionHeading("Collections", "${library.collections.size} virtual albums") }
         if (library.collections.isEmpty()) {
-            item { Text("Use the + button to create a collection.", style = MaterialTheme.typography.bodyMedium) }
+            // Not "use the + button": that FAB only exists on the Albums screen, not here --
+            // this screen has none, so the old copy pointed at a control the reader could not
+            // see.
+            item { Text("Create your first collection from Albums.", style = MaterialTheme.typography.bodyMedium) }
         } else {
             items(library.collections, key = { it.id }) { collection ->
                 Card(onClick = { onOpenCollection(collection) }, modifier = Modifier.fillMaxWidth()) {

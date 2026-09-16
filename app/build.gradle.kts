@@ -193,6 +193,15 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.1")
+    // ---- WS-D: app-shell state survival (rotation + process death) and background jobs ----
+    // ViewModel + its Compose accessor (`viewModel()`) and SavedStateHandle, so navigation state
+    // (the viewer's selection/asset list, the editor's open asset, pending operations, the job
+    // runner) survives rotation, and the ids that must survive process death round-trip through
+    // SavedStateHandle. Same 2.9.1 line as the lifecycle artifacts already above.
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.1")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.1")
+    implementation("androidx.lifecycle:lifecycle-service:2.9.1")
+    // ---- end WS-D block ----
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
     // HEIC export
@@ -295,6 +304,9 @@ dependencies {
     implementation("androidx.media3:media3-common:1.9.0")
 
     testImplementation("junit:junit:4.13.2")
+    // WS-D: JobRunner's state transitions run real coroutines (progress callbacks, cancellation)
+    // and need a deterministic test dispatcher rather than a real one.
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     // FX-005 JVM perf baseline only: times the catalogue read against a real SQLite file
     // without a device. android.database.* cannot run on the JVM, so the harness replicates
     // the media-table schema/queries over JDBC. Never shipped — test classpath only.

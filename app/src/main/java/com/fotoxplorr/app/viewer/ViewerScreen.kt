@@ -96,6 +96,12 @@ fun ViewerScreen(
     onEdit: () -> Unit,
     onOpenWith: () -> Unit,
     onMoveToTrash: () -> Unit,
+    /** "Share with options…" -- see [ViewerActionsRoom]'s own doc. Null hides the row. */
+    onShareClean: (() -> Unit)? = null,
+    /** Renames this photo/video, previously reachable only from the gallery's own selection. */
+    onRename: (() -> Unit)? = null,
+    /** See [com.fotoxplorr.app.media.MediaAsset.isExternal]. */
+    isExternal: Boolean = false,
     /** Video's own Save As — re-encodes [asset] to H.264/AAC/MP4. Null (the default) leaves the
      *  action hidden; see [ViewerActionsRoom]'s own doc. Meaningless for a still photo, so a
      *  caller need not check [MediaAsset.isVideo] itself before wiring this in. */
@@ -115,6 +121,9 @@ fun ViewerScreen(
     manualLongitude: Double? = null,
     onSetLocation: ((Double, Double) -> Unit)? = null,
     onClearLocation: (() -> Unit)? = null,
+    /** Embeds the hand-placed location into the file's own EXIF -- see
+     *  [com.fotoxplorr.app.spatial.LocationPicker]'s own doc. Null hides the action. */
+    onWriteLocationIntoFile: (() -> Unit)? = null,
     /** Play a slideshow in a random order rather than the browsing order. */
     slideshowShuffle: Boolean = false,
     /**
@@ -267,12 +276,15 @@ fun ViewerScreen(
                 onToggleFavorite = onToggleFavorite,
                 onToggleSensitive = onToggleSensitive,
                 onShare = { shell.closeAll(); onShare() },
+                onShareClean = onShareClean?.let { clean -> { shell.closeAll(); clean() } },
                 onEdit = { shell.closeAll(); onEdit() },
                 onOpenWith = { shell.closeAll(); onOpenWith() },
+                onRename = onRename?.let { rename -> { shell.closeAll(); rename() } },
                 onMoveToTrash = { shell.closeAll(); onMoveToTrash() },
                 isVideo = asset.isVideo,
                 isConvertingToMp4 = isConvertingToMp4,
                 onConvertToMp4 = onConvertToMp4?.let { convert -> { shell.closeAll(); convert() } },
+                isExternal = isExternal,
             )
         },
         bottom = {
@@ -285,6 +297,7 @@ fun ViewerScreen(
                 manualLongitude = manualLongitude,
                 onSetLocation = onSetLocation,
                 onClearLocation = onClearLocation,
+                onWriteLocationIntoFile = onWriteLocationIntoFile,
                 // Derived from the blocks this screen already receives rather than taken as a
                 // second parameter: two sources for the same text is how they drift apart, and
                 // the overlay and the details card must never disagree about what the photo says.
@@ -644,9 +657,12 @@ private fun ViewerPositionChip(
     ) {
         IconButton(
             onClick = onClose,
+            // 48dp, not the 36dp this used to be clipped to: below the platform's own minimum
+            // touch target, a close button in the corner of a full-bleed photo is exactly the
+            // kind of tap that misses.
             modifier = Modifier
                 .background(Color.Black.copy(alpha = 0.55f), CircleShape)
-                .size(36.dp),
+                .size(48.dp),
         ) {
             Icon(Icons.Outlined.Close, contentDescription = "Close", tint = Color.White)
         }

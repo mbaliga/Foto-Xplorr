@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -199,14 +200,21 @@ fun RoomStepper(
 
 @Composable
 private fun StepperArrow(glyph: String, enabled: Boolean, onClick: () -> Unit, description: String) {
-    Text(
-        text = glyph,
-        color = if (enabled) RoomStyle.Ink else RoomStyle.InkFaint,
-        style = RoomStyle.Title,
+    Box(
+        // The glyph itself is drawn at the room's own type size, well under 48dp either way --
+        // this is what gives it a real touch target without changing how it looks.
         modifier = Modifier
-            .clickable(enabled = enabled, onClick = onClick, onClickLabel = description)
-            .padding(horizontal = 10.dp, vertical = 2.dp),
-    )
+            .minimumInteractiveComponentSize()
+            .clickable(enabled = enabled, onClick = onClick, onClickLabel = description),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = glyph,
+            color = if (enabled) RoomStyle.Ink else RoomStyle.InkFaint,
+            style = RoomStyle.Title,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+        )
+    }
 }
 
 /** A hairline between groups, at the opacity the rail uses for its dimmest text. */

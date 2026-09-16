@@ -23,6 +23,13 @@ data class BackgroundActivity(
     val total: Int = 0,
     /** Set when the job failed; the shade shows this instead of a count and stops the bar. */
     val error: String? = null,
+    /**
+     * Stops the job, if it can be. Null (the default) hides the control entirely -- the scan and
+     * the recognition pass have never offered one and still do not; a [com.fotoxplorr.app.jobs.JobRunner]
+     * job (a conversion, an export, a copy or move) always does, because [com.fotoxplorr.app.jobs.JobHandle.cancel]
+     * exists for exactly that.
+     */
+    val onCancel: (() -> Unit)? = null,
 ) {
     /** 0..1, or null when the total is not yet known and the bar should run indeterminate. */
     val fraction: Float?
