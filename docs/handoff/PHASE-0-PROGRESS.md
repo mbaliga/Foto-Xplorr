@@ -13,7 +13,7 @@ other instruction in the brief (one commit per item, draft PR, etc.) is followed
 | Item | Status | Commit SHA | Notes |
 |---|---|---|---|
 | P0-00 | done | 406d41a | brief + progress log |
-| P0-01 | done | (this commit) | `browsableAssets` added; Places/map, Calendar, Settings preview, People strip and Collections fixed — see audit table below |
+| P0-01 | done | ce17766, 08b842a | `browsableAssets` added; Places/map, Calendar, Settings preview, People strip, Collections, Tag view and AlbumsScreen's Collections cover fixed — see audit table below. `GalleryProjectionV2Test` (8/8, including 3 new cases) confirmed passing against the final HEAD; `lintOfflineDebug` retrying in the background past Maven's rate limit. |
 | P0-02 | todo | | |
 | P0-03 | todo | | |
 | P0-04 | todo | | |
