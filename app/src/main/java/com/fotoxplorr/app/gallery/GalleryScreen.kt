@@ -346,7 +346,12 @@ fun GalleryScreen(
             assets = spatialDisplayAssets,
             geoState = geoState,
             onIndexLocations = {
-                spatialScope.launch { geoRepository.indexMissing(spatialIndexInput) }
+                spatialScope.launch {
+                    geoRepository.indexMissing(spatialIndexInput)
+                    // Trashed included (pruneTo's own contract): a trashed-but-not-yet-purged
+                    // photo is still in the catalogue and must keep its location row.
+                    geoRepository.pruneTo(state.assets.mapTo(mutableSetOf()) { it.id })
+                }
             },
             onOpenAsset = actions.onOpenAsset,
         ),

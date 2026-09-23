@@ -67,6 +67,8 @@ import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.media.openForLocationRead
+import com.fotoxplorr.app.media.uriForLocationRead
 import com.fotoxplorr.app.metadata.CurrentMetadata
 import com.fotoxplorr.app.metadata.XmpPacket
 import com.fotoxplorr.app.metadata.currentMetadataFrom
@@ -727,6 +729,23 @@ private fun PlaceBlock(
                 longitude = longitude,
                 reveal = reveal,
             )
+        } else if (!exif.readOk) {
+            // A failed read is not evidence the file has no GPS tag (P0-02) -- only that this
+            // attempt couldn't see it. Never the picker here: offering to hand-place a location
+            // would invite overwriting one that may already be in the file.
+            Column(
+                modifier = Modifier
+                    .graphicsLayer { alpha = PlaceMorph.textAlpha(reveal()) }
+                    .padding(vertical = 6.dp),
+            ) {
+                RoomEyebrow("PLACE")
+                Text(
+                    text = "Couldn't read this photo's details",
+                    color = RoomStyle.InkMuted,
+                    style = RoomStyle.Row,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
         } else if (onSetLocation != null) {
             Box(Modifier.graphicsLayer { alpha = PlaceMorph.textAlpha(reveal()) }) {
                 com.fotoxplorr.app.spatial.LocationPicker(
@@ -1072,16 +1091,32 @@ data class ImageExifDetails(
      */
     val professionalMetadata: CurrentMetadata =
         CurrentMetadata.EMPTY,
+    /**
+     * Whether this file's EXIF was actually read. False means the open or the parse failed --
+     * [PlaceBlock] must never show the "set a location by hand" picker in that case (P0-02): a
+     * read failure is not evidence the file has no GPS tag, only that this attempt couldn't see
+     * it, and offering the picker would invite the user to overwrite a location that may already
+     * be there. A video (no EXIF to read) counts as ok: there is nothing this field would be
+     * warning about.
+     */
+    val readOk: Boolean = true,
 )
 
 suspend fun readImageExifDetails(context: Context, asset: MediaAsset): ImageExifDetails {
-    if (asset.isVideo) return ImageExifDetails()
+    if (asset.isVideo) return ImageExifDetails(readOk = true)
     return withContext(Dispatchers.IO) {
-        runCatching {
-            context.contentResolver.openInputStream(asset.contentUri)?.use { input ->
-                exifDetailsFrom(ExifInterface(input))
-            } ?: ImageExifDetails()
-        }.getOrDefault(ImageExifDetails())
+        val requested = context.uriForLocationRead(asset.contentUri)
+        val opened = openForLocationRead(requested, asset.contentUri) { uri ->
+            context.contentResolver.openInputStream(uri)
+        }
+        if (opened == null) {
+            ImageExifDetails(readOk = false)
+        } else {
+            val (input, _) = opened
+            runCatching { input.use { exifDetailsFrom(ExifInterface(it)) } }
+                .map { it.copy(readOk = true) }
+                .getOrDefault(ImageExifDetails(readOk = false))
+        }
     }
 }
 
