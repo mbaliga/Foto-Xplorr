@@ -44,11 +44,10 @@ class SqliteMediaRepository(context: Context) : MediaRepository {
         return state.value
     }
 
-    override suspend fun replaceAll(items: List<MediaAsset>) = withContext(Dispatchers.IO) {
+    override suspend fun removeAllExcept(keep: Set<MediaId>) = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val normalized = normalize(items)
-            helper.replaceAll(normalized)
-            state.value = normalized
+            helper.removeAllExcept(keep)
+            state.value = state.value.filter { it.id in keep }
         }
     }
 
@@ -71,9 +70,6 @@ class SqliteMediaRepository(context: Context) : MediaRepository {
     // Reads the in-memory mirror rather than the database: it is populated from disk at
     // construction and kept in step by every mutation above, so it is authoritative and free.
     override suspend fun count(): Int = state.value.size
-
-    private fun normalize(items: Collection<MediaAsset>): List<MediaAsset> =
-        normalizeCatalogue(items)
 }
 
 /**
@@ -213,12 +209,35 @@ private class CatalogueOpenHelper(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    fun replaceAll(items: List<MediaAsset>) {
+    /**
+     * Deletes every row whose id is not in [keep].
+     *
+     * A `WHERE id NOT IN (...)` cannot be chunked the way [remove]'s `WHERE id IN (...)` is --
+     * each chunk's own `NOT IN` would delete rows another chunk means to keep, since it has no
+     * way to see the rest of [keep]. Reading every id currently held and computing the complement
+     * in Kotlin instead means the actual delete is an ordinary `id IN (...)` over that complement,
+     * reusing exactly [remove]'s own proven chunking.
+     */
+    fun removeAllExcept(keep: Set<MediaId>) {
         writableDatabase.inTransaction { db ->
-            db.delete(TABLE_MEDIA, null, null)
-            items.forEach { db.insertOrThrow(TABLE_MEDIA, null, it.toValues()) }
+            val toRemove = allIds(db) - keep
+            toRemove.chunked(SQLITE_BIND_LIMIT).forEach { chunk ->
+                val placeholders = chunk.joinToString(",") { "?" }
+                db.delete(
+                    TABLE_MEDIA,
+                    "$COL_ID IN ($placeholders)",
+                    chunk.map { it.value.toString() }.toTypedArray(),
+                )
+            }
         }
     }
+
+    private fun allIds(db: SQLiteDatabase): Set<MediaId> =
+        db.query(TABLE_MEDIA, arrayOf(COL_ID), null, null, null, null, null).use { cursor ->
+            buildSet(cursor.count) {
+                while (cursor.moveToNext()) add(MediaId(cursor.getLong(0)))
+            }
+        }
 
     fun upsert(items: List<MediaAsset>) {
         writableDatabase.inTransaction { db ->

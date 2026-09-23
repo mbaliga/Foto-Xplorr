@@ -12,11 +12,9 @@ class InMemoryMediaRepository : MediaRepository {
 
     override fun observeAll(): Flow<List<MediaAsset>> = state.asStateFlow()
 
-    override suspend fun replaceAll(items: List<MediaAsset>) {
+    override suspend fun removeAllExcept(keep: Set<MediaId>) {
         mutex.withLock {
-            state.value = items
-                .distinctBy { it.id }
-                .sortedWith(assetOrdering)
+            state.value = state.value.filter { it.id in keep }
         }
     }
 

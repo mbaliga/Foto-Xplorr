@@ -35,9 +35,17 @@ interface MediaScanner {
 
 interface MediaRepository {
     fun observeAll(): Flow<List<MediaAsset>>
-    suspend fun replaceAll(items: List<MediaAsset>)
     suspend fun upsert(items: List<MediaAsset>)
     suspend fun remove(ids: Set<MediaId>)
+
+    /**
+     * Deletes every row whose id is NOT in [keep] -- the sweep half of a full scan's deletion
+     * reconciliation (TRAPS #1/#8). Replaces the delete-everything-then-reinsert-everything
+     * `replaceAll` this interface used to require: only a completed full pass ever needs to
+     * remove anything at all, and every row it DID see was already upserted during the scan, so
+     * removing is all a sweep ever has left to do.
+     */
+    suspend fun removeAllExcept(keep: Set<MediaId>)
 
     /**
      * How many assets are held. Used to decide between a full and a delta scan: a delta over

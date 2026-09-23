@@ -6,9 +6,11 @@ change that needs saying out loud. Source: the 6 Aug 2026 handoff plus plan FX-I
 
 ## Long-standing
 
-1. **A delta scan must never call `replaceAll`.** One line away from deleting the
+1. **A delta scan must never call `removeAllExcept`.** One line away from deleting the
    library's index. The delta branch is deliberately `Unit` with a comment saying exactly
-   that; `MediaIndexerTest` pins it.
+   that; `MediaIndexerTest` pins it. (P0-09: replaces the old `replaceAll` — same invariant,
+   new name, since a full pass's own deletion reconciliation is no longer a wholesale
+   delete-and-reinsert.)
 2. **Never squash-merge `shared-libraries` (or `hyle-design-system`) while this app pins
    it.** A squash mints a new SHA and orphans the submodule pin; a fresh
    `clone --recurse-submodules` fails weeks later with `fatal: reference is not a tree`,

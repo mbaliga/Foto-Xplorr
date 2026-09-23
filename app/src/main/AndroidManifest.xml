@@ -112,7 +112,16 @@
 
         <activity
             android:name=".FotoXplorrActivity"
-            android:exported="true">
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density">
+            <!-- P0-09: Compose reacts to every one of these through LocalConfiguration without
+                 needing the Activity recreated: confirmed no values-night/values-land/locale-
+                 qualified resource directories exist in res/ (only density-qualified mipmaps,
+                 resolved per request regardless of recreation) and onCreate() itself reads no
+                 resource directly outside setContent {}. This covers rotation, folding, external
+                 keyboards/hubs and desktop mode; it does NOT cover process death, which
+                 FotoXplorrActivity.kt's own rememberSaveable viewer/editor state (P0-09 item 6)
+                 handles separately. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
