@@ -8,6 +8,8 @@ import android.media.MediaMuxer
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import com.fotoxplorr.app.media.MediaKind
+import com.fotoxplorr.app.media.mediaStoreRelativePath
 import com.fotoxplorr.app.video.EncodedTrack
 import com.fotoxplorr.app.video.writeSamples
 import com.fotoxplorr.app.videoeditor.VideoEditRecipe
@@ -39,6 +41,14 @@ class AudioConversionWriter(context: Context) {
                 put(MediaStore.Audio.Media.IS_MUSIC, 1)
                 put(MediaStore.Audio.Media.DATE_ADDED, System.currentTimeMillis() / 1_000)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    // Alongside the source when its own folder is one MediaProvider still accepts
+                    // an insert into, otherwise this app's own fallback folder — see
+                    // mediaStoreRelativePath's own doc for why a WhatsApp or Download source
+                    // cannot just reuse its source path verbatim here.
+                    put(
+                        MediaStore.Audio.Media.RELATIVE_PATH,
+                        mediaStoreRelativePath(source.relativePath, MediaKind.AUDIO),
+                    )
                     put(MediaStore.Audio.Media.IS_PENDING, 1)
                 }
             }

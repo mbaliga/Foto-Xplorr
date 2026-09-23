@@ -85,18 +85,21 @@ class AndroidAudioMediaStoreScanner(
         }
     }
 
-    private fun projection(): Array<String> = arrayOf(
-        MediaStore.Audio.AudioColumns._ID,
-        MediaStore.Audio.AudioColumns.DISPLAY_NAME,
-        MediaStore.Audio.AudioColumns.TITLE,
-        MediaStore.Audio.AudioColumns.ARTIST,
-        MediaStore.Audio.AudioColumns.ALBUM,
-        MediaStore.Audio.AudioColumns.MIME_TYPE,
-        MediaStore.Audio.AudioColumns.DURATION,
-        MediaStore.Audio.AudioColumns.SIZE,
-        MediaStore.Audio.AudioColumns.DATE_ADDED,
-        MediaStore.Audio.AudioColumns.DATE_MODIFIED,
-    )
+    private fun projection(): Array<String> = buildList {
+        add(MediaStore.Audio.AudioColumns._ID)
+        add(MediaStore.Audio.AudioColumns.DISPLAY_NAME)
+        add(MediaStore.Audio.AudioColumns.TITLE)
+        add(MediaStore.Audio.AudioColumns.ARTIST)
+        add(MediaStore.Audio.AudioColumns.ALBUM)
+        add(MediaStore.Audio.AudioColumns.MIME_TYPE)
+        add(MediaStore.Audio.AudioColumns.DURATION)
+        add(MediaStore.Audio.AudioColumns.SIZE)
+        add(MediaStore.Audio.AudioColumns.DATE_ADDED)
+        add(MediaStore.Audio.AudioColumns.DATE_MODIFIED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            add(MediaStore.Audio.AudioColumns.RELATIVE_PATH)
+        }
+    }.toTypedArray()
 
     private class CursorColumns(cursor: Cursor) {
         private val id = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns._ID)
@@ -109,6 +112,7 @@ class AndroidAudioMediaStoreScanner(
         private val size = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.SIZE)
         private val dateAdded = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.DATE_ADDED)
         private val dateModified = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.DATE_MODIFIED)
+        private val relativePath = cursor.getColumnIndex(MediaStore.Audio.AudioColumns.RELATIVE_PATH)
 
         fun toAsset(cursor: Cursor): AudioAsset {
             val rawId = cursor.getLong(id)
@@ -130,6 +134,7 @@ class AndroidAudioMediaStoreScanner(
                 sizeBytes = cursor.longOrZero(size),
                 dateAddedSeconds = cursor.longOrZero(dateAdded),
                 dateModifiedSeconds = cursor.longOrZero(dateModified),
+                relativePath = cursor.stringOrNull(relativePath),
             )
         }
     }

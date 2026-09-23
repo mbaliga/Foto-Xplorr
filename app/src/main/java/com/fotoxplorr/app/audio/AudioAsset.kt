@@ -33,6 +33,10 @@ data class AudioAsset(
     val sizeBytes: Long,
     val dateAddedSeconds: Long,
     val dateModifiedSeconds: Long,
+    /** MediaStore's `RELATIVE_PATH` for this file, null below API 29 (the column does not exist)
+     *  or when MediaStore has none recorded. Used by [com.fotoxplorr.app.media.mediaStoreRelativePath]
+     *  to decide where a converted copy of this file should be saved (P0-07). */
+    val relativePath: String? = null,
 ) {
     val contentUri: Uri
         get() = Uri.parse(contentUriString)

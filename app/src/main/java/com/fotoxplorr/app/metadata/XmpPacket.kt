@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.metadata
 
+import androidx.exifinterface.media.ExifInterface
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import org.w3c.dom.Node
@@ -310,6 +311,7 @@ class XmpPacket private constructor(private val document: Document) {
         const val RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
         const val DC_NS = "http://purl.org/dc/elements/1.1/"
         const val XMP_NS = "http://ns.adobe.com/xap/1.0/"
+        const val TIFF_NS = "http://ns.adobe.com/tiff/1.0/"
         private const val XML_NS = "http://www.w3.org/XML/1998/namespace"
         private const val XMLNS_NS = "http://www.w3.org/2000/xmlns/"
         private const val DEFAULT_LANG = "x-default"
@@ -367,4 +369,18 @@ class XmpPacket private constructor(private val document: Document) {
             return document
         }
     }
+}
+
+/**
+ * [exif]'s own [ExifInterface.TAG_XMP], ready to be read or mutated -- or null when it is not
+ * safe to touch: existing XMP this app's parser cannot understand. NOT null for "no XMP at all"
+ * ([ExifInterface.TAG_XMP] blank or absent), which is a blank [XmpPacket.empty] slate instead --
+ * see [XmpPacket.parse]'s own doc for why a genuine parse failure and "nothing here yet" are
+ * different states a caller must treat differently. Shared by [MetadataWriter] (P0-08) and the
+ * edited-copy save/overwrite flow (P0-07); both need the identical "copy through untouched
+ * bytes I don't understand rather than silently replace them" contract.
+ */
+fun readXmpAttribute(exif: ExifInterface): XmpPacket? {
+    val existing = exif.getAttribute(ExifInterface.TAG_XMP)
+    return if (existing.isNullOrBlank()) XmpPacket.empty() else XmpPacket.parse(existing)
 }

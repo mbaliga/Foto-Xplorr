@@ -29,7 +29,7 @@ import java.io.IOException
  * [XmpPacket]'s whole design is "never destroy a property this app has no model for" -- see its
  * own class doc. This file extends that same caution one level up: a file whose EXISTING XMP
  * fails to parse gets its EXIF fields updated and its XMP left byte-for-byte alone, rather than
- * inventing a fresh, empty packet that would discard everything already there. See [readExistingXmp].
+ * inventing a fresh, empty packet that would discard everything already there. See [readXmpAttribute].
  *
  * ## What this class does NOT attempt
  * Camera-proprietary RAW files Android cannot decode (CR2, NEF, ARW and the rest --
@@ -125,10 +125,10 @@ internal fun applyMetadataEdit(exif: ExifInterface, edit: MetadataEdit) {
     applyMetadataToExif(exif, edit)
 
     // Only when there is an existing packet worth preserving OR nothing at all -- see
-    // readExistingXmp's own doc for why a packet that failed to parse is neither of those and
+    // readXmpAttribute's own doc for why a packet that failed to parse is neither of those and
     // must not reach applyToXmp, which would otherwise "successfully" overwrite it with a
     // packet missing everything this app has no model for.
-    readExistingXmp(exif)?.let { packet ->
+    readXmpAttribute(exif)?.let { packet ->
         applyToXmp(packet, edit)
         exif.setAttribute(ExifInterface.TAG_XMP, packet.serialize())
     }
@@ -196,20 +196,4 @@ private fun clearGpsTags(exif: ExifInterface) {
         ExifInterface.TAG_GPS_ALTITUDE, ExifInterface.TAG_GPS_ALTITUDE_REF,
         ExifInterface.TAG_GPS_TIMESTAMP, ExifInterface.TAG_GPS_DATESTAMP,
     ).forEach { exif.setAttribute(it, null) }
-}
-
-/**
- * The file's existing XMP, ready to be mutated -- or null when it is not safe to touch.
- *
- * "Not safe to touch" covers two different states on purpose:
- *  - no XMP at all ([ExifInterface.TAG_XMP] blank or absent), which is NOT this: a blank slate is
- *    exactly what [XmpPacket.empty] is for, and this returns that fresh packet for it.
- *  - existing XMP this app's parser cannot understand, which very much IS this: [XmpPacket.parse]
- *    returning null is a deliberate signal (see its own doc) to leave those bytes exactly as they
- *    are rather than let [applyMetadataEdit] "successfully" replace them with a packet this app
- *    understands but that has lost everything it did not.
- */
-private fun readExistingXmp(exif: ExifInterface): XmpPacket? {
-    val existing = exif.getAttribute(ExifInterface.TAG_XMP)
-    return if (existing.isNullOrBlank()) XmpPacket.empty() else XmpPacket.parse(existing)
 }
