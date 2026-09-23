@@ -59,9 +59,16 @@ class SharePreparer(
 ) {
     private val appContext = context.applicationContext
     private val resolver = appContext.contentResolver
-    private val authority = "${appContext.packageName}.files"
+    private val authority = fileProviderAuthority(appContext)
 
     /**
+     * @param allowRender when false, every item takes the plain copy/strip path regardless of
+     *   [options] or Pro status -- never a frame, never a watermark. This is the one seam that
+     *   *can* override the watermark decision the class doc above says no caller can argue its way
+     *   out of: it exists for [ZipExporter] alone (P0-06's own explicit "plain path only: never a
+     *   frame or watermark" requirement for an archive export, which is a faithful copy of the
+     *   user's own files, not a branded, shared-to-the-world artifact the way a plain share is),
+     *   not exposed through [ShareOptions] itself where an ordinary caller could reach it.
      * @return one [PreparedItem] per input item, in order -- never throws for an individual
      *   item's own failure; only [Result.failure] for something that stops the whole batch before
      *   any item is even attempted (no items, or the share cache directory itself is unusable).
@@ -69,6 +76,7 @@ class SharePreparer(
     suspend fun prepare(
         items: List<MediaAsset>,
         options: ShareOptions,
+        allowRender: Boolean = true,
     ): Result<List<PreparedItem>> = withContext(Dispatchers.IO) {
         runCatching {
             require(items.isNotEmpty()) { "No photos selected" }
@@ -87,7 +95,7 @@ class SharePreparer(
                 check(mkdirs() || isDirectory) { "Could not prepare share storage" }
             }
 
-            items.map { asset -> prepareOne(asset, resolvedOptions, directory) }
+            items.map { asset -> prepareOne(asset, resolvedOptions, directory, allowRender) }
         }
     }
 
@@ -97,7 +105,7 @@ class SharePreparer(
      * here rather than aborting [prepare] for every other item in the batch. [CancellationException]
      * is the one thing let through -- a cancelled share should stop, not "fail" item by item.
      */
-    private suspend fun prepareOne(asset: MediaAsset, options: ShareOptions, directory: File): PreparedItem {
+    private suspend fun prepareOne(asset: MediaAsset, options: ShareOptions, directory: File, allowRender: Boolean): PreparedItem {
         // Video cannot be framed or stripped by this path, so it is shared as-is rather than
         // failed. Refusing to share a video because a frame was selected for the photos beside it
         // would be the app being clever at the user's expense.
@@ -107,7 +115,7 @@ class SharePreparer(
         // frame or watermark: baking one static frame over the top would silently destroy the
         // animation on every viewer that respects it. They are still stripped like any other
         // image, just never routed through prepareRendered.
-        val renderable = strippable && !asset.isAnimated
+        val renderable = strippable && !asset.isAnimated && allowRender
         return try {
             when {
                 renderable && options.requiresRender -> prepareRendered(asset, options, directory)

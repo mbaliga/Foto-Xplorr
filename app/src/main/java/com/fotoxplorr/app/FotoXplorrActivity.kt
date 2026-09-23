@@ -1128,12 +1128,13 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onRemoveTag = libraryStore::removeTag,
                 onExportZip = { items ->
                 scope.launch {
-                    val result = zipExporter.export(items)
+                    val result = zipExporter.export(items, preferences.toShareOptions().stripMetadata)
                     result.fold(
-                        onSuccess = { uri ->
+                        onSuccess = { export ->
+                            userMessage = unpreparedShareItemsMessage(export.failed)
                             val intent = Intent(Intent.ACTION_SEND).apply {
                                 type = "application/zip"
-                                putExtra(Intent.EXTRA_STREAM, uri)
+                                putExtra(Intent.EXTRA_STREAM, export.uri)
                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }
                             startActivity(Intent.createChooser(intent, null))
@@ -1211,7 +1212,8 @@ internal fun commonShareType(mimeTypes: List<String>): String = when {
 }
 
 /** @return null when nothing failed, else a message naming the first failed item and, when there
- * is more than one, how many others -- for [FotoXplorrActivity.FotoXplorrApp.shareWith]. */
+ * is more than one, how many others -- for [FotoXplorrActivity.FotoXplorrApp.shareWith] and, since
+ * P0-06, the zip export path (`onExportZip`), which reports its own skipped items the same way. */
 internal fun unpreparedShareItemsMessage(failed: List<PreparedItem.Failed>): String? {
     if (failed.isEmpty()) return null
     val first = failed.first().asset.displayName

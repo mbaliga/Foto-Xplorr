@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.share.fileProviderAuthority
 import com.fotoxplorr.app.video.RemuxResult
 import com.fotoxplorr.app.video.findRotationDegrees
 import com.fotoxplorr.app.video.remux
@@ -24,7 +25,7 @@ import java.util.UUID
  */
 class ClipExporter(context: Context) {
     private val appContext = context.applicationContext
-    private val authority = "${appContext.packageName}.files"
+    private val authority = fileProviderAuthority(appContext)
 
     suspend fun exportClip(asset: MediaAsset, startMs: Long, endMs: Long): Result<Uri> =
         withContext(Dispatchers.IO) {
