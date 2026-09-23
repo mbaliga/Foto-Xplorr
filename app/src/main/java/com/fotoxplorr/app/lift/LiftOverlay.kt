@@ -1,7 +1,6 @@
 package com.fotoxplorr.app.lift
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -37,7 +36,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.decodeUpright
 import com.fotoxplorr.app.viewer.fittedImageRect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -91,7 +92,7 @@ fun LiftOverlay(
     // stay small enough to run on a background thread without the user noticing, at some cost to
     // how finely a hair-fine edge can be resolved -- see the file KDoc's honest-limits note.
     LaunchedEffect(asset.id) {
-        source = withContext(Dispatchers.IO) { decodeBoundedForLift(context, asset) }
+        source = decodeUpright(context, asset.contentUri, LIFT_DECODE_LIMITS)?.bitmap
     }
 
     // A transient status line for save/share feedback, self-contained rather than routed through
@@ -321,24 +322,11 @@ private fun InstructionBanner(text: String, onCancel: () -> Unit, modifier: Modi
     }
 }
 
-/**
- * Decode [asset] at a bound suitable for segmentation: big enough that a cut-out looks sharp at
- * the sticker sizes people actually use, small enough that flood fill -- an O(pixels) pass
- * regardless of the subject's size -- stays interactive on a background thread.
- */
-private fun decodeBoundedForLift(context: android.content.Context, asset: MediaAsset): Bitmap? = runCatching {
-    context.contentResolver.openInputStream(asset.contentUri)?.use { stream ->
-        val bytes = stream.readBytes()
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        val longest = maxOf(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
-        var sample = 1
-        while (longest / sample > LIFT_DECODE_EDGE_PX) sample *= 2
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-    }
-}.getOrNull()
-
-/** See [decodeBoundedForLift]. Deliberately smaller than the editor's preview budget. */
+/** The bound for [decodeUpright] when decoding for segmentation: big enough that a cut-out looks
+ * sharp at the sticker sizes people actually use, small enough that flood fill -- an O(pixels)
+ * pass regardless of the subject's size -- stays interactive on a background thread. Deliberately
+ * smaller than the editor's preview budget. */
+private val LIFT_DECODE_LIMITS = DecodeLimits(maxLongEdge = LIFT_DECODE_EDGE_PX, maxPixels = LIFT_DECODE_EDGE_PX.toLong() * LIFT_DECODE_EDGE_PX)
 private const val LIFT_DECODE_EDGE_PX = 1024
 
 private const val STATUS_MESSAGE_MS = 2600L

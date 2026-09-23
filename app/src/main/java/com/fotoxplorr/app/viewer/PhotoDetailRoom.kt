@@ -1,8 +1,6 @@
 package com.fotoxplorr.app.viewer
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -64,9 +62,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.exifinterface.media.ExifInterface
+import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.media.decodeUpright
 import com.fotoxplorr.app.media.openForLocationRead
 import com.fotoxplorr.app.media.uriForLocationRead
 import com.fotoxplorr.app.metadata.CurrentMetadata
@@ -974,7 +974,9 @@ internal suspend fun readImagePalette(
     if (asset.isVideo) return emptyList()
     return withContext(Dispatchers.IO) {
         runCatching {
-            val bitmap = decodeSampledBitmap(context, asset) ?: return@runCatching emptyList()
+            val decoded = decodeUpright(context, asset.contentUri, PALETTE_DECODE_LIMITS)
+                ?: return@runCatching emptyList()
+            val bitmap = decoded.bitmap
             try {
                 val pixels = IntArray(bitmap.width * bitmap.height)
                 bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
@@ -987,41 +989,16 @@ internal suspend fun readImagePalette(
 }
 
 /**
- * Decode [asset] with its longest edge no greater than [PALETTE_SAMPLE_DIMENSION].
- *
- * Bytes are read into memory once and decoded from that byte array twice — first with
- * `inJustDecodeBounds` to learn the real size without allocating any pixels, then for real with
- * `inSampleSize` set — rather than opening the content stream twice. Re-opening a `content://`
- * stream a second time is not guaranteed cheap: for a cloud-backed provider it can mean a second
- * network fetch of the original file, which is exactly the cost this function exists to avoid.
- * `inSampleSize` only takes powers of two, so this lands at or below the target rather than
- * exactly on it — decoding above budget and scaling down afterwards would mean holding the
- * oversized bitmap first, which is the allocation this whole function is written to avoid.
- */
-private fun decodeSampledBitmap(context: Context, asset: MediaAsset): Bitmap? {
-    val bytes = context.contentResolver.openInputStream(asset.contentUri)?.use { it.readBytes() }
-        ?: return null
-
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    val longestEdge = maxOf(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
-
-    var sample = 1
-    while (longestEdge / sample > PALETTE_SAMPLE_DIMENSION) sample *= 2
-
-    return BitmapFactory.decodeByteArray(
-        bytes, 0, bytes.size,
-        BitmapFactory.Options().apply { inSampleSize = sample },
-    )
-}
-
-/**
  * The target longest edge for palette sampling. A segmented bar only ever shows up to
  * [PaletteExtractor.DEFAULT_MAX_COLORS] swatches, and 100px on the long edge is already tens of
  * thousands of sample pixels for the quantiser to work with — far more than five colours need to
  * be measured accurately, and small enough that decoding it costs milliseconds, not seconds.
  */
 private const val PALETTE_SAMPLE_DIMENSION = 100
+private val PALETTE_DECODE_LIMITS = DecodeLimits(
+    maxLongEdge = PALETTE_SAMPLE_DIMENSION,
+    maxPixels = PALETTE_SAMPLE_DIMENSION.toLong() * PALETTE_SAMPLE_DIMENSION,
+)
 
 /** `2.0 MP`, or null when the file never recorded its own size. */
 internal fun megapixels(width: Int, height: Int): String? {

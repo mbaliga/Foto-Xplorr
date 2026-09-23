@@ -2,13 +2,12 @@ package com.fotoxplorr.app.recognition
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Rect
-import android.os.Build
-import android.util.Size
 import androidx.core.graphics.get
+import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.decodeUpright
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceContour
@@ -298,27 +297,10 @@ class RecognitionIndexer(
         return out
     }
 
-    private fun loadBitmap(asset: MediaAsset): Bitmap {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            runCatching {
-                return appContext.contentResolver
-                    .loadThumbnail(asset.contentUri, Size(ANALYSIS_SIZE, ANALYSIS_SIZE), null)
-                    .ensureArgb8888()
-            }
-        }
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        appContext.contentResolver.openInputStream(asset.contentUri)?.use {
-            BitmapFactory.decodeStream(it, null, bounds)
-        }
-        val sample = maxOf(
-            1,
-            maxOf(bounds.outWidth, bounds.outHeight) / ANALYSIS_SIZE,
-        )
-        val options = BitmapFactory.Options().apply { inSampleSize = Integer.highestOneBit(sample) }
-        val decoded = appContext.contentResolver.openInputStream(asset.contentUri)?.use {
-            BitmapFactory.decodeStream(it, null, options)
-        } ?: error("Unable to decode ${asset.displayName}")
-        return decoded.ensureArgb8888()
+    private suspend fun loadBitmap(asset: MediaAsset): Bitmap {
+        val decoded = decodeUpright(appContext, asset.contentUri, ANALYSIS_LIMITS)
+            ?: error("Unable to decode ${asset.displayName}")
+        return decoded.bitmap.ensureArgb8888()
     }
 
     private fun Bitmap.ensureArgb8888(): Bitmap {
@@ -329,6 +311,7 @@ class RecognitionIndexer(
     private companion object {
         /** Analysis resolution. Large enough for ML Kit's contours, small enough to be quick. */
         const val ANALYSIS_SIZE = 640
+        val ANALYSIS_LIMITS = DecodeLimits(maxLongEdge = ANALYSIS_SIZE, maxPixels = ANALYSIS_SIZE.toLong() * ANALYSIS_SIZE)
 
         /** Must be a multiple of FaceDescriptorBuilder.APPEARANCE_GRID. */
         const val PATCH_SIDE = 32

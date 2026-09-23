@@ -2,11 +2,12 @@ package com.fotoxplorr.app.share
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
+import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.decodeUpright
 import com.fotoxplorr.app.pro.LocalProEntitlement
 import com.fotoxplorr.app.pro.ProEntitlement
 import kotlinx.coroutines.Dispatchers
@@ -69,7 +70,7 @@ class SharePreparer(
         }
     }
 
-    private fun prepareOne(asset: MediaAsset, options: ShareOptions, directory: File): Uri {
+    private suspend fun prepareOne(asset: MediaAsset, options: ShareOptions, directory: File): Uri {
         // Video cannot be framed or stripped by this path, so it is shared as-is rather than
         // failed. Refusing to share a video because a frame was selected for the photos beside it
         // would be the app being clever at the user's expense.
@@ -98,8 +99,9 @@ class SharePreparer(
      * less. When the user asked to KEEP metadata, the handful of tags worth carrying are copied
      * back onto the output explicitly rather than being silently lost.
      */
-    private fun renderFramed(asset: MediaAsset, options: ShareOptions, target: File) {
-        val source = decodeBounded(asset) ?: throw IOException("Could not read ${asset.displayName}")
+    private suspend fun renderFramed(asset: MediaAsset, options: ShareOptions, target: File) {
+        val source = decodeUpright(appContext, asset.contentUri, SHARE_FRAME_LIMITS)?.bitmap
+            ?: throw IOException("Could not read ${asset.displayName}")
         try {
             val framed = FrameRenderer.render(source, options)
             try {
@@ -125,29 +127,6 @@ class SharePreparer(
             source.recycle()
         }
     }
-
-    /**
-     * Decode at a bounded size.
-     *
-     * A framed share of a 48-megapixel original would allocate hundreds of megabytes for a picture
-     * that is about to be posted to a chat app. [MAX_SHARE_EDGE] is generous enough that the
-     * result is still a good print-ish size and small enough that it cannot OOM the app.
-     */
-    private fun decodeBounded(asset: MediaAsset): Bitmap? =
-        resolver.openInputStream(asset.contentUri)?.use { stream ->
-            val bytes = stream.readBytes()
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-            val longest = maxOf(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
-            var sample = 1
-            while (longest / sample > MAX_SHARE_EDGE) sample *= 2
-            BitmapFactory.decodeByteArray(
-                bytes,
-                0,
-                bytes.size,
-                BitmapFactory.Options().apply { inSampleSize = sample },
-            )
-        }
 
     private fun copyRaw(asset: MediaAsset, target: File) {
         resolver.openInputStream(asset.contentUri)?.use { input ->
@@ -175,7 +154,17 @@ class SharePreparer(
         }
     }
 
-    /** Orientation and date only -- enough that a kept-metadata share is not visibly broken. */
+    /**
+     * Date only, plus an explicit upright orientation -- enough that a kept-metadata share is not
+     * visibly broken.
+     *
+     * [renderFramed] now decodes through [decodeUpright] (P0-03), so the pixels it renders and
+     * writes to [target] are already upright; copying the source's own `Orientation` tag onto
+     * [target], as this used to do, would tell an EXIF-respecting viewer to rotate an already-
+     * rotated image a second time. Writing `Orientation = 1` here, rather than just leaving the
+     * tag unset, follows [decodeUpright]'s own documented contract for every caller that writes
+     * EXIF at all.
+     */
     private fun copyBackKeptExif(asset: MediaAsset, target: File) {
         runCatching {
             val outputExif = ExifInterface(target.absolutePath)
@@ -185,6 +174,7 @@ class SharePreparer(
                     sourceExif.getAttribute(tag)?.let { outputExif.setAttribute(tag, it) }
                 }
             }
+            outputExif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
             outputExif.saveAttributes()
         }
     }
@@ -204,6 +194,7 @@ class SharePreparer(
 
         /** Longest edge of a re-rendered share, in pixels. */
         const val MAX_SHARE_EDGE = 3200
+        val SHARE_FRAME_LIMITS = DecodeLimits(maxLongEdge = MAX_SHARE_EDGE, maxPixels = MAX_SHARE_EDGE.toLong() * MAX_SHARE_EDGE)
 
         val STRIPPED_EXIF_TAGS = listOf(
             ExifInterface.TAG_GPS_LATITUDE,
@@ -224,8 +215,8 @@ class SharePreparer(
             ExifInterface.TAG_IMAGE_UNIQUE_ID,
         )
 
+        /** Orientation is deliberately not in this list -- see [copyBackKeptExif]. */
         val KEPT_EXIF_TAGS = listOf(
-            ExifInterface.TAG_ORIENTATION,
             ExifInterface.TAG_DATETIME_ORIGINAL,
         )
     }
