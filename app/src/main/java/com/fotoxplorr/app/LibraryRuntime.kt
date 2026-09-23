@@ -171,7 +171,11 @@ class LibraryRuntime private constructor(context: Context) {
             // metadata). Debouncing collapses that burst into a single delta pass.
             observer.changes().debounce(MEDIA_CHANGE_DEBOUNCE_MS).collect {
                 requestScan(false)
-                requestAudioScan(false)
+                // Audio permission is granted independently and later than photo/video access
+                // (P0-10) -- querying MediaStore.Audio before it is granted would fail, so this
+                // checks the SAME way ensureInitialAudioScan's own callers in the Activity do,
+                // rather than assuming a change worth rescanning for also means audio is readable.
+                if (hasAudioPermission(appContext)) requestAudioScan(false)
             }
         }
     }
@@ -217,3 +221,27 @@ internal fun hasPartialMediaAccess(context: Context): Boolean =
             context,
             Manifest.permission.READ_MEDIA_VIDEO,
         ) != PackageManager.PERMISSION_GRANTED
+
+/**
+ * Whether the app can currently query `MediaStore.Audio` (P0-10). `READ_MEDIA_AUDIO` (API 33+)
+ * is requested separately from [FotoXplorrActivity]'s photo/video permissions, only when the user
+ * opens the Audio library — granting it must never count as "media access granted" for the
+ * photo/video gallery, so it is deliberately not part of `mediaReadPermissions()`. Below API 33,
+ * `MediaStore.Audio` queries are covered by the same `READ_EXTERNAL_STORAGE` permission the
+ * photo/video flow already requests pre-Tiramisu, so there is nothing audio-specific to check.
+ *
+ * A top-level, [Context]-based function for the same reason [hasPartialMediaAccess] is one:
+ * [LibraryRuntime]'s own change-observer callback needs to check it too, and it is not an Activity.
+ */
+internal fun hasAudioPermission(context: Context): Boolean =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_MEDIA_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+    } else {
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_EXTERNAL_STORAGE,
+        ) == PackageManager.PERMISSION_GRANTED
+    }

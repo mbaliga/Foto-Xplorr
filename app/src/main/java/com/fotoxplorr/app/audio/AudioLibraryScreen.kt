@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,7 +39,40 @@ import androidx.compose.ui.unit.sp
  * music app converges on for exactly this reason.
  */
 @Composable
-fun AudioLibraryScreen(assets: List<AudioAsset>, onPlay: (AudioAsset) -> Unit) {
+fun AudioLibraryScreen(
+    assets: List<AudioAsset>,
+    onPlay: (AudioAsset) -> Unit,
+    /** `READ_MEDIA_AUDIO` (or its pre-Tiramisu equivalent) — granted separately from, and often
+     *  later than, the photo/video permission that gates every other destination (P0-10). Checked
+     *  before the "no audio files found" empty state so a denial and a genuinely empty library
+     *  read as two different things. */
+    permissionGranted: Boolean,
+    onRequestPermission: () -> Unit,
+) {
+    if (!permissionGranted) {
+        Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+            Column(
+                modifier = Modifier.padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    "Allow access to audio",
+                    color = Color.White,
+                    style = TextStyle(fontSize = 17.sp),
+                )
+                Text(
+                    "Foto Xplorr can list the voice recordings, podcasts and music stored on " +
+                        "this device. Nothing is uploaded.",
+                    modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+                    color = Color.White.copy(alpha = 0.55f),
+                    style = TextStyle(fontSize = 14.sp),
+                )
+                TextButton(onClick = onRequestPermission) { Text("Allow access to audio") }
+            }
+        }
+        return
+    }
+
     if (assets.isEmpty()) {
         Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
             Text(

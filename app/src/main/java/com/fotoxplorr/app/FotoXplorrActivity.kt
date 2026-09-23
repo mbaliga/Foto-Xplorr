@@ -183,6 +183,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
 
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
     var partialMediaAccess by remember { mutableStateOf(hasPartialMediaAccess(applicationContext)) }
+    // Independent of permissionGranted above and requested separately, only once the user opens
+    // the Audio library (P0-10) -- see hasAudioPermission's own KDoc for why.
+    var audioPermissionGranted by remember { mutableStateOf(hasAudioPermission(applicationContext)) }
     // P0-09: the scan itself, and the request channel driving it, now live entirely in
     // LibraryRuntime -- this is a read-only view onto its process-wide state, so recomposing (or
     // recreating) this Activity never resets progress or re-triggers a full scan.
@@ -628,6 +631,13 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         if (permissionGranted) runtime.requestScan(false)
     }
 
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        audioPermissionGranted = hasAudioPermission(applicationContext)
+        if (audioPermissionGranted) runtime.ensureInitialAudioScan()
+    }
+
     // Permission scope can change in system Settings while the process is backgrounded.
     // Re-read it on return so the Settings affordance and scan state never describe a
     // stale grant.
@@ -636,6 +646,10 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         permissionGranted = hasMediaPermission()
         partialMediaAccess = hasPartialMediaAccess(applicationContext)
         if (!hadPermission && permissionGranted) runtime.requestScan(false)
+
+        val hadAudioPermission = audioPermissionGranted
+        audioPermissionGranted = hasAudioPermission(applicationContext)
+        if (!hadAudioPermission && audioPermissionGranted) runtime.ensureInitialAudioScan()
     }
 
     val exportMetadataLauncher = rememberLauncherForActivityResult(
@@ -798,13 +812,20 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // scan-state reducer all now live in LibraryRuntime, a process-wide singleton -- this effect
     // only has to ask it to make sure the once-per-process work has actually started. Re-running
     // on every Activity recreation is fine (and, since permissionGranted itself starts fresh
-    // each time, unavoidable): ensureInitialScan/ensureInitialAudioScan/ensureChangeObserverRegistered
-    // are each no-ops after their first real call.
+    // each time, unavoidable): ensureInitialScan/ensureChangeObserverRegistered are each no-ops
+    // after their first real call.
     LaunchedEffect(permissionGranted) {
         if (!permissionGranted) return@LaunchedEffect
         runtime.ensureChangeObserverRegistered()
         runtime.ensureInitialScan()
-        runtime.ensureInitialAudioScan()
+    }
+
+    // Kept separate from the effect above (P0-10): audio permission is granted independently, and
+    // often much later -- the Audio library is unreachable until permissionGranted is already
+    // true (see GalleryScreen's own top-level `when`), so this fires on its own key rather than
+    // waiting for another change to permissionGranted that may never come again.
+    LaunchedEffect(audioPermissionGranted) {
+        if (audioPermissionGranted) runtime.ensureInitialAudioScan()
     }
 
     LaunchedEffect(Unit) { recognitionStore.reload() }
@@ -1060,6 +1081,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 audioQueue = queue
                 selectedAudioAssetId = asset.id
             },
+            audioPermissionGranted = audioPermissionGranted,
+            onRequestAudioPermission = { audioPermissionLauncher.launch(requiredAudioPermissions()) },
             state = GalleryUiState(
                 assets = assets,
                 favoriteIds = favoriteIds,
@@ -1191,6 +1214,15 @@ private fun mediaReadPermissions(): Array<String> = when {
     )
     else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
 }
+
+/** [requiredMediaPermissions]'s own shape, for the Audio library's separate grant (P0-10) --
+ *  see [hasAudioPermission]'s KDoc for why this is never folded into [mediaReadPermissions]. */
+private fun requiredAudioPermissions(): Array<String> =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        arrayOf(Manifest.permission.READ_MEDIA_AUDIO)
+    } else {
+        arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    }
 
 internal fun commonShareType(mimeTypes: List<String>): String = when {
     mimeTypes.all { it.startsWith("image/") } -> "image/*"

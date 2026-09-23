@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.audio.AudioLibraryScreen
 import com.fotoxplorr.app.curate.ArchiveAdvisor
 import com.fotoxplorr.app.curate.ArchiveReviewItem
 import com.fotoxplorr.app.curate.ArchiveSuggestionsReview
@@ -200,6 +201,20 @@ class NewSurfaceRenderTest {
         check(items.isNotEmpty()) { "The advisor offered nothing for a fixture built to trip all three signals" }
         render("tidy-up-1-review") {
             ArchiveSuggestionsReview(items = items, onAccept = {}, onReject = {})
+        }
+    }
+
+    /** The Audio library's permission-gated empty state (P0-10): distinct from "no audio files
+     *  found" (assets empty but granted), with the request button actually visible. */
+    @Test
+    fun `audio library permission prompt`() {
+        render("audio-1-permission-prompt") {
+            AudioLibraryScreen(
+                assets = emptyList(),
+                onPlay = {},
+                permissionGranted = false,
+                onRequestPermission = {},
+            )
         }
     }
 

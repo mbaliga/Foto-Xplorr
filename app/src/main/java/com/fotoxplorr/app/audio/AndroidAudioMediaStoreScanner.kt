@@ -151,17 +151,23 @@ class AndroidAudioMediaStoreScanner(
  * `MediaStore`'s own compile-time-inlined constants, so it needs no real `ContentResolver` (or
  * Robolectric) to test.
  *
- * `IS_MUSIC != 0` excludes ringtones, alarms and notification sounds MediaStore also indexes under
- * this same collection — a real, long-standing column (present since the very first MediaStore
- * audio table, not an API-level-gated addition), so this filter applies identically across every
- * API level this app supports. Without it, "Audio" would list every stock notification tone on the
- * device alongside actual music and recordings.
+ * Excludes ringtones, alarms and notification sounds MediaStore also indexes under this same
+ * collection by name (`IS_RINGTONE=0 AND IS_NOTIFICATION=0 AND IS_ALARM=0`), not by requiring
+ * `IS_MUSIC!=0` (P0-10): the old clause also excluded voice recordings, podcasts and audiobooks,
+ * every one of which is real audio a user would expect this library to list, despite none of them
+ * being "music". All three columns are real, long-standing ones (present since the very first
+ * MediaStore audio table, not an API-level-gated addition), so this filter applies identically
+ * across every API level this app supports. Without it, "Audio" would list every stock
+ * notification tone on the device alongside actual recordings and music.
  */
 internal fun buildAudioSelection(plan: ScanPlan): AudioSelectionQuery {
-    val musicClause = "${MediaStore.Audio.AudioColumns.IS_MUSIC}!=0"
+    val notASystemSoundClause = "${MediaStore.Audio.AudioColumns.IS_RINGTONE}=0 AND " +
+        "${MediaStore.Audio.AudioColumns.IS_NOTIFICATION}=0 AND " +
+        "${MediaStore.Audio.AudioColumns.IS_ALARM}=0"
     val clause = when (plan) {
-        is ScanPlan.Full -> musicClause
-        is ScanPlan.Delta -> "$musicClause AND ${MediaStore.Audio.AudioColumns.DATE_MODIFIED}>=?"
+        is ScanPlan.Full -> notASystemSoundClause
+        is ScanPlan.Delta ->
+            "$notASystemSoundClause AND ${MediaStore.Audio.AudioColumns.DATE_MODIFIED}>=?"
     }
     val args = when (plan) {
         is ScanPlan.Full -> emptyList()

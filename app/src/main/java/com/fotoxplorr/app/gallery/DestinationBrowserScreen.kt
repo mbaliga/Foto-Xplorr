@@ -282,6 +282,8 @@ fun DestinationContent(
                 com.fotoxplorr.app.audio.AudioLibraryScreen(
                     assets = audio.assets,
                     onPlay = { asset -> audio.onPlay(asset, audio.assets) },
+                    permissionGranted = audio.permissionGranted,
+                    onRequestPermission = audio.onRequestPermission,
                 )
             } else {
                 DestinationMessage("Audio is unavailable here")

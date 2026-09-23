@@ -310,6 +310,11 @@ fun GalleryScreen(
      *  intermediate composable, the same shape [geoRepository] uses for Places. */
     audioAssets: List<com.fotoxplorr.app.audio.AudioAsset> = emptyList(),
     onPlayAudio: (com.fotoxplorr.app.audio.AudioAsset, List<com.fotoxplorr.app.audio.AudioAsset>) -> Unit = { _, _ -> },
+    /** Whether `READ_MEDIA_AUDIO` (or its pre-Tiramisu equivalent) is granted -- independent of
+     *  [audioAssets] being non-empty, so the Audio pane can tell "denied" apart from "granted but
+     *  no audio files exist" (P0-10). */
+    audioPermissionGranted: Boolean = false,
+    onRequestAudioPermission: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val geoState by geoRepository.observe().collectAsStateWithLifecycle()
@@ -341,6 +346,8 @@ fun GalleryScreen(
         com.fotoxplorr.app.audio.LocalAudioLibrary provides com.fotoxplorr.app.audio.AudioLibraryExperience(
             assets = audioAssets,
             onPlay = onPlayAudio,
+            permissionGranted = audioPermissionGranted,
+            onRequestPermission = onRequestAudioPermission,
         ),
         LocalSpatialExperience provides SpatialExperience(
             assets = spatialDisplayAssets,
