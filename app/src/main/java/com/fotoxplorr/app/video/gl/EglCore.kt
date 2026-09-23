@@ -6,6 +6,7 @@ import android.opengl.EGLContext
 import android.opengl.EGLDisplay
 import android.opengl.EGLExt
 import android.opengl.EGLSurface
+import android.util.Log
 import android.view.Surface
 
 /**
@@ -25,20 +26,31 @@ internal class EglCore {
         check(EGL14.eglInitialize(d, version, 0, version, 1)) { "Unable to initialize EGL" }
     }
 
-    private val config: EGLConfig = run {
-        val attributes = intArrayOf(
-            EGL14.EGL_RED_SIZE, 8,
-            EGL14.EGL_GREEN_SIZE, 8,
-            EGL14.EGL_BLUE_SIZE, 8,
-            EGL14.EGL_ALPHA_SIZE, 8,
-            EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
-            EGL14.EGL_NONE,
-        )
+    // EGL_RECORDABLE_ANDROID (P0-11) hints the platform that this surface feeds a video encoder,
+    // which some GPU drivers use to pick a config their encode path actually supports -- without
+    // it, a handful of devices silently hand back a config the encoder then can't consume. Not
+    // every device reports a config that supports it, so this tries WITH the attribute first, then
+    // retries without it (logging when that happens) rather than failing a device that would
+    // otherwise transcode just fine.
+    private val config: EGLConfig = chooseConfig(withRecordable = true) ?: run {
+        Log.w(TAG, "No EGL config supports EGL_RECORDABLE_ANDROID; retrying without it")
+        checkNotNull(chooseConfig(withRecordable = false)) { "Unable to find a matching EGL config" }
+    }
+
+    private fun chooseConfig(withRecordable: Boolean): EGLConfig? {
+        val attributes = buildList {
+            add(EGL14.EGL_RED_SIZE); add(8)
+            add(EGL14.EGL_GREEN_SIZE); add(8)
+            add(EGL14.EGL_BLUE_SIZE); add(8)
+            add(EGL14.EGL_ALPHA_SIZE); add(8)
+            add(EGL14.EGL_RENDERABLE_TYPE); add(EGL14.EGL_OPENGL_ES2_BIT)
+            if (withRecordable) { add(EGLExt.EGL_RECORDABLE_ANDROID); add(1) }
+            add(EGL14.EGL_NONE)
+        }.toIntArray()
         val configs = arrayOfNulls<EGLConfig>(1)
         val numConfigs = IntArray(1)
         val found = EGL14.eglChooseConfig(display, attributes, 0, configs, 0, configs.size, numConfigs, 0)
-        check(found && numConfigs[0] > 0) { "Unable to find a matching EGL config" }
-        checkNotNull(configs[0])
+        return if (found && numConfigs[0] > 0) configs[0] else null
     }
 
     val context: EGLContext = EGL14.eglCreateContext(
@@ -79,5 +91,9 @@ internal class EglCore {
             EGL14.eglReleaseThread()
             EGL14.eglTerminate(display)
         }
+    }
+
+    private companion object {
+        const val TAG = "EglCore"
     }
 }

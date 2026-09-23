@@ -85,22 +85,66 @@ class VideoEditRecipeTest {
     }
 
     @Test
-    fun `a doubled speed doubles the labelled sample rate`() {
-        assertEquals(88_200, speedAdjustedSampleRate(44_100, 2f))
+    fun `1x speed returns the same number of frames unchanged`() {
+        val mono = shortArrayOf(10, 20, 30, 40)
+        assertEquals(listOf(10.toShort(), 20.toShort(), 30.toShort(), 40.toShort()), resamplePcm16(mono, 1, 1f).toList())
     }
 
     @Test
-    fun `a halved speed halves the labelled sample rate`() {
-        assertEquals(22_050, speedAdjustedSampleRate(44_100, 0.5f))
+    fun `doubling speed halves the frame count`() {
+        val mono = shortArrayOf(0, 100, 200, 300, 400, 500, 600, 700)
+        val resampled = resamplePcm16(mono, 1, 2f)
+        assertEquals(4, resampled.size)
     }
 
     @Test
-    fun `1x speed leaves the sample rate exactly as it was`() {
-        assertEquals(44_100, speedAdjustedSampleRate(44_100, 1f))
+    fun `halving speed doubles the frame count`() {
+        val mono = shortArrayOf(0, 100, 200, 300)
+        val resampled = resamplePcm16(mono, 1, 0.5f)
+        assertEquals(8, resampled.size)
     }
 
     @Test
-    fun `a speed low enough to zero out the sample rate is refused rather than producing invalid audio`() {
-        assertThrows(IllegalArgumentException::class.java) { speedAdjustedSampleRate(10, 0.01f) }
+    fun `the first and last frames are preserved`() {
+        val mono = shortArrayOf(1_000, 2_000, 3_000, 4_000, 5_000)
+        val resampled = resamplePcm16(mono, 1, 0.5f)
+        assertEquals(1_000.toShort(), resampled.first())
+        assertEquals(5_000.toShort(), resampled.last())
+    }
+
+    @Test
+    fun `a constant signal stays constant after resampling at any speed`() {
+        val constant = ShortArray(50) { 1_234 }
+        assertTrue(resamplePcm16(constant, 1, 1.7f).all { it == 1_234.toShort() })
+        assertTrue(resamplePcm16(constant, 1, 0.3f).all { it == 1_234.toShort() })
+    }
+
+    @Test
+    fun `stereo channels are resampled independently, never bleeding into each other`() {
+        // Left channel counts up, right channel counts down -- if the two ever swapped or mixed,
+        // this would no longer hold after resampling.
+        val stereo = shortArrayOf(
+            0, 100,
+            10, 90,
+            20, 80,
+            30, 70,
+        )
+        val resampled = resamplePcm16(stereo, 2, 2f)
+        for (frame in resampled.indices step 2) {
+            val left = resampled[frame]
+            val right = resampled[frame + 1]
+            assertTrue("left ($left) must never exceed right ($right) for this fixture", left <= right)
+        }
+    }
+
+    @Test
+    fun `an empty source resamples to empty, not a divide-by-zero crash`() {
+        assertEquals(0, resamplePcm16(ShortArray(0), 1, 2f).size)
+    }
+
+    @Test
+    fun `a non-positive speed is refused rather than producing invalid or infinite output`() {
+        assertThrows(IllegalArgumentException::class.java) { resamplePcm16(shortArrayOf(1, 2), 1, 0f) }
+        assertThrows(IllegalArgumentException::class.java) { resamplePcm16(shortArrayOf(1, 2), 1, -1f) }
     }
 }

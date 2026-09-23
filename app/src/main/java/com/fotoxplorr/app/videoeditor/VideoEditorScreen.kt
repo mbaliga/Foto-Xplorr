@@ -196,7 +196,7 @@ fun VideoEditorScreen(
                 }
             }
             // Honest about the one real trade-off in this first pass -- see
-            // speedAdjustedSampleRate's own doc for exactly why.
+            // resamplePcm16's own doc for exactly why.
             if (speedFactor != 1f) {
                 Text(
                     "Changes pitch along with speed.",
