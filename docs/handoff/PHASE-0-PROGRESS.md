@@ -8,6 +8,12 @@ four others; a different branch name would leave the work unpushable through the
 The branch already exists at the `main` baseline, so this is a naming substitution only — every
 other instruction in the brief (one commit per item, draft PR, etc.) is followed as written.
 
+**Master plan note (24 Sep 2026):** `docs/handoff/MASTER-PLAN.md` was added this run. Its own
+kickoff line and §3 ("Phase 0 — finish the defect brief (in progress)") say to finish Phase 0 from
+this brief first and that "nothing below starts until the owner merges Phase 0" — so this run
+continues exactly where it was (P0-09 onward) and stops at this brief's own Phase 0 gate; Phase 1
+of the master plan (the KMP core migration) is not started.
+
 ## Items
 
 | Item | Status | Commit SHA | Notes |
