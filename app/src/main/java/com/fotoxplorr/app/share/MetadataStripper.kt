@@ -59,13 +59,18 @@ object MetadataStripper {
         else -> StripResult.Unsupported("Unrecognized image format")
     }
 
-    private fun isJpeg(bytes: ByteArray) =
+    // internal, not private: com.fotoxplorr.app.metadata.isMetadataWritable (P0-08) sniffs the
+    // exact same three writable-by-ExifInterface formats by the exact same magic bytes, and
+    // reusing these rather than a second hand-typed copy is what keeps the two decisions ("can
+    // this app strip metadata from it" and "can this app write metadata into it") from silently
+    // drifting apart on a future format addition to only one of them.
+    internal fun isJpeg(bytes: ByteArray) =
         bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()
 
-    private fun isPng(bytes: ByteArray) =
+    internal fun isPng(bytes: ByteArray) =
         bytes.size >= 8 && (0 until 8).all { bytes[it] == PNG_MAGIC[it] }
 
-    private fun isWebp(bytes: ByteArray) =
+    internal fun isWebp(bytes: ByteArray) =
         bytes.size >= 12 && isAscii(bytes, 0, "RIFF") && isAscii(bytes, 8, "WEBP")
 
     private fun isGif(bytes: ByteArray) =

@@ -74,6 +74,7 @@ import com.fotoxplorr.app.curate.AutoCurationPass
 import com.fotoxplorr.app.metadata.GpsCoordinate
 import com.fotoxplorr.app.metadata.MetadataEdit
 import com.fotoxplorr.app.metadata.MetadataWriter
+import com.fotoxplorr.app.metadata.isMetadataWritable
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.video.VideoConversionWriter
@@ -228,6 +229,14 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     var pendingRenameName by remember { mutableStateOf<String?>(null) }
     var pendingMetadataAsset by remember { mutableStateOf<MediaAsset?>(null) }
     var pendingMetadataEdit by remember { mutableStateOf<MetadataEdit?>(null) }
+    // P0-08 item 6: true from the moment requestMetadataWrite actually starts a write (or its
+    // consent round trip) until it lands, so a second edit arriving in that window (the detail
+    // room commits creator and copyright as two independent field commits, not one) is queued and
+    // merged rather than clobbering pendingMetadataEdit outright -- seedable to be non-null and
+    // still have the *other* field's edit silently discarded, exactly the loss the brief names.
+    var metadataWriteInFlight by remember { mutableStateOf(false) }
+    var queuedMetadataAsset by remember { mutableStateOf<MediaAsset?>(null) }
+    var queuedMetadataEdit by remember { mutableStateOf<MetadataEdit?>(null) }
     var pendingOverwriteAsset by remember { mutableStateOf<MediaAsset?>(null) }
     var pendingOverwriteBitmap by remember { mutableStateOf<Bitmap?>(null) }
     // Which video (if any) is mid-conversion, so the actions room can disable a second tap and
@@ -384,18 +393,37 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
     }
 
+    // Declared with `lateinit`-style forward reference via a plain var so requestMetadataWrite and
+    // finishMetadataWrite can call each other (a queued edit's follow-up write is just another
+    // requestMetadataWrite call) without a circular local-function definition order problem.
+    lateinit var requestMetadataWrite: (MediaAsset, MetadataEdit) -> Unit
+
+    fun finishMetadataWrite() {
+        pendingMetadataAsset = null
+        pendingMetadataEdit = null
+        metadataWriteInFlight = false
+        val nextAsset = queuedMetadataAsset
+        val nextEdit = queuedMetadataEdit
+        queuedMetadataAsset = null
+        queuedMetadataEdit = null
+        // Fires the queued edit as a brand new write, exactly as if the caller had called
+        // requestMetadataWrite itself just now -- it goes through the same isEmpty check and the
+        // same three-tier consent dance, since a write finishing is not consent granted in advance
+        // for a DIFFERENT write.
+        if (nextAsset != null && nextEdit != null) requestMetadataWrite(nextAsset, nextEdit)
+    }
+
     fun performPendingMetadataWrite() {
         val asset = pendingMetadataAsset ?: return
         val edit = pendingMetadataEdit ?: return
         scope.launch {
             val outcome = metadataWriter.write(asset, edit)
-            pendingMetadataAsset = null
-            pendingMetadataEdit = null
             // Both a scan request (the write changed the file's own size/modified-date, which
             // InformationBlock shows) and the revision bump (so ViewerScreen's own EXIF/XMP cache
             // for THIS still-open photo re-reads immediately, rather than waiting on that scan).
             outcome.onSuccess { metadataRevision++; scanRequests.trySend(false) }
                 .onFailure { userMessage = it.message ?: "Android did not allow this file's metadata to be updated." }
+            finishMetadataWrite()
         }
     }
 
@@ -409,30 +437,53 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         if (result.resultCode == Activity.RESULT_OK) {
             performPendingMetadataWrite()
         } else {
-            pendingMetadataAsset = null
-            pendingMetadataEdit = null
             userMessage = "Android cancelled the metadata update."
+            finishMetadataWrite()
         }
     }
 
-    fun requestMetadataWrite(asset: MediaAsset, edit: MetadataEdit) {
-        if (edit.isEmpty) return
-        pendingMetadataAsset = asset
-        pendingMetadataEdit = edit
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            runCatching {
-                MediaStore.createWriteRequest(contentResolver, listOf(asset.contentUri))
-            }.onSuccess { request ->
-                metadataPermissionLauncher.launch(
-                    IntentSenderRequest.Builder(request.intentSender).build(),
-                )
-            }.onFailure { error ->
-                pendingMetadataAsset = null
-                pendingMetadataEdit = null
-                userMessage = error.message ?: "Could not request metadata write permission."
+    requestMetadataWrite = requestMetadataWrite@{ asset, edit ->
+        if (edit.isEmpty) return@requestMetadataWrite
+        if (metadataWriteInFlight) {
+            // P0-08 item 6: a write for some asset is already running (or waiting on consent) --
+            // never start a second one concurrently, which is how the old code lost an edit
+            // (PhotoDetailRoom.kt commits creator and copyright as two independent field commits,
+            // each calling this). Queue it, merged with anything already queued for the SAME
+            // asset (MetadataEdit.merge: later non-null fields win, keywords union); a queued edit
+            // for a DIFFERENT asset simply replaces the queue slot, since only one write is ever
+            // in flight and this app has no multi-asset batch metadata editor today.
+            queuedMetadataEdit = if (queuedMetadataAsset == asset) queuedMetadataEdit?.merge(edit) ?: edit else edit
+            queuedMetadataAsset = asset
+            return@requestMetadataWrite
+        }
+        metadataWriteInFlight = true
+        // P0-08 item 1: checked BEFORE anything else -- including before pendingMetadataAsset/Edit
+        // are even set -- so a HEIC/RAW edit never opens the system consent screen only to fail
+        // once it's granted. The whole dispatch below is inside this one coroutine (rather than
+        // just the check) so the R+ branch's own createWriteRequest call happens after the check
+        // resolves, not racing it.
+        scope.launch {
+            if (!isMetadataWritable(contentResolver, asset)) {
+                userMessage = "Foto Xplorr can't write metadata into ${asset.mimeType} files yet"
+                finishMetadataWrite()
+                return@launch
             }
-        } else {
-            scope.launch {
+            pendingMetadataAsset = asset
+            pendingMetadataEdit = edit
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                runCatching {
+                    MediaStore.createWriteRequest(contentResolver, listOf(asset.contentUri))
+                }.onSuccess { request ->
+                    metadataPermissionLauncher.launch(
+                        IntentSenderRequest.Builder(request.intentSender).build(),
+                    )
+                }.onFailure { error ->
+                    userMessage = error.message ?: "Could not request metadata write permission."
+                    finishMetadataWrite()
+                }
+                return@launch
+            }
+            run {
                 val outcome = metadataWriter.write(asset, edit)
                 val error = outcome.exceptionOrNull()
                 if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q && error is RecoverableSecurityException) {
@@ -440,10 +491,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                         IntentSenderRequest.Builder(error.userAction.actionIntent.intentSender).build(),
                     )
                 } else {
-                    pendingMetadataAsset = null
-                    pendingMetadataEdit = null
                     outcome.onSuccess { metadataRevision++; scanRequests.trySend(false) }
                         .onFailure { userMessage = it.message ?: "Android did not allow this file's metadata to be updated." }
+                    finishMetadataWrite()
                 }
             }
         }

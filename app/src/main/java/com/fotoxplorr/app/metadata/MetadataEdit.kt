@@ -44,6 +44,32 @@ data class MetadataEdit(
     val isEmpty: Boolean
         get() = caption == null && creator == null && copyright == null && rating == null &&
             keywordsToAdd.isEmpty() && setLocation == null && !clearLocation
+
+    /**
+     * Combines this edit with a LATER one arriving before this one has been written (P0-08 item
+     * 6) -- `other`'s non-null fields win over this edit's for the same reason a second keystroke
+     * always wins over a first for the SAME field, and [keywordsToAdd] unions rather than picking
+     * one side, since two field commits adding different keywords (or the same photo tagged from
+     * two different UI surfaces) should not make either add silently disappear.
+     *
+     * [setLocation]/[clearLocation] are merged as ONE combined intent, not two independent fields:
+     * `other` only overrides this edit's location intent when `other` actually expresses one
+     * (a non-null [setLocation] or `clearLocation = true`) -- an `other` that touched neither must
+     * not silently cancel a location change THIS edit queued, the same "null means leave alone"
+     * rule every other field on this type already follows.
+     */
+    fun merge(other: MetadataEdit): MetadataEdit {
+        val otherTouchesLocation = other.setLocation != null || other.clearLocation
+        return MetadataEdit(
+            caption = other.caption ?: caption,
+            creator = other.creator ?: creator,
+            copyright = other.copyright ?: copyright,
+            rating = other.rating ?: rating,
+            keywordsToAdd = (keywordsToAdd + other.keywordsToAdd).distinct(),
+            setLocation = if (otherTouchesLocation) other.setLocation else setLocation,
+            clearLocation = if (otherTouchesLocation) other.clearLocation else clearLocation,
+        )
+    }
 }
 
 data class GpsCoordinate(val latitude: Double, val longitude: Double) {
@@ -110,4 +136,41 @@ fun applyToXmp(packet: XmpPacket, edit: MetadataEdit) {
         val merged = (packet.bag(XmpPacket.DC_NS, "subject") + edit.keywordsToAdd).distinct()
         packet.setBag(XmpPacket.DC_NS, "dc", "subject", merged)
     }
+    // setLocation wins over clearLocation if a caller somehow asks for both in one edit -- the
+    // same precedence applyMetadataToExif's own identical comment documents for the EXIF side.
+    if (edit.clearLocation && edit.setLocation == null) clearXmpLocation(packet)
 }
+
+/**
+ * Removes [packet]'s own GPS-bearing properties (P0-08 item 5): every `exif:GPS*` property (the
+ * XMP EXIF schema's mirror of the classic EXIF GPS IFD -- [XMP_GPS_PROPERTIES]) plus the two
+ * structured IPTC location properties, `Iptc4xmpExt:LocationShown` (where a photo was published as
+ * depicting) and `Iptc4xmpExt:LocationCreated` (where it was actually shot) -- both bag-of-structure
+ * properties this class has no typed model for, cleared with [XmpPacket.clearProperty] rather than
+ * read/modified, since all "Clear location" ever needs from them is gone.
+ *
+ * Deliberately does NOT touch `photoshop:City`/`photoshop:State`/`photoshop:Country`: the brief
+ * this app follows for this feature says to clear them "only if they came with GPS", and this app
+ * has no way to tell a value a geocoder derived from GPS apart from one a photographer typed in by
+ * hand describing a place they remember, not where a receiver reads coordinates from -- with no XMP
+ * field recording that provenance, the fail-closed choice (see this repo's own brief, 0.5 "keep
+ * data rather than delete it") is to leave all three alone unconditionally, not guess.
+ */
+private fun clearXmpLocation(packet: XmpPacket) {
+    XMP_GPS_PROPERTIES.forEach { packet.clearProperty(XmpPacket.EXIF_NS, it) }
+    packet.clearProperty(XmpPacket.IPTC4XMPEXT_NS, "LocationShown")
+    packet.clearProperty(XmpPacket.IPTC4XMPEXT_NS, "LocationCreated")
+}
+
+/** Every property in the XMP EXIF schema's GPS group (Adobe XMP Specification Part 2, the EXIF
+ *  schema's GPS Info IFD section) that this app's own GPS write path ([applyMetadataToExif]'s
+ *  `exif.setLatLong`) could plausibly have a counterpart for, or that a camera/GPS receiver
+ *  commonly populates alongside coordinates -- not a partial guess at "the important ones". */
+private val XMP_GPS_PROPERTIES = listOf(
+    "GPSLatitude", "GPSLongitude", "GPSAltitude", "GPSAltitudeRef", "GPSTimeStamp",
+    "GPSSatellites", "GPSStatus", "GPSMeasureMode", "GPSDOP", "GPSSpeedRef", "GPSSpeed",
+    "GPSTrackRef", "GPSTrack", "GPSImgDirectionRef", "GPSImgDirection", "GPSMapDatum",
+    "GPSDestLatitude", "GPSDestLongitude", "GPSDestBearingRef", "GPSDestBearing",
+    "GPSDestDistanceRef", "GPSDestDistance", "GPSProcessingMethod", "GPSAreaInformation",
+    "GPSDifferential", "GPSHPositioningError", "GPSVersionID",
+)

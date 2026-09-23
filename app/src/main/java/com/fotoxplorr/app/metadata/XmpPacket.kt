@@ -160,6 +160,20 @@ class XmpPacket private constructor(private val document: Document) {
         target.setAttributeNS(namespaceUri, "$prefix:$localName", value.toString())
     }
 
+    /**
+     * Removes (namespaceUri, localName) in either shape it might exist in -- an element-form
+     * property or an attribute-shorthand one ([intValue]'s own note on why a property can be
+     * either) -- without needing to know or read its value first. A property that was never
+     * present is a silent no-op. For a property this class has no dedicated typed read/write pair
+     * for (P0-08: a handful of plain-Text `exif:GPS*`/`Iptc4xmpExt:Location*` properties this app
+     * only ever needs to CLEAR, never read or set to a new value) this is the whole contract a
+     * caller needs -- "gone", not a value back.
+     */
+    fun clearProperty(namespaceUri: String, localName: String) {
+        removeProperty(namespaceUri, localName)
+        removeAttributeEverywhere(firstDescriptionOrNull(), namespaceUri, localName)
+    }
+
     // ---------------------------------------------------------------------
     // Serialization
     // ---------------------------------------------------------------------
@@ -312,6 +326,8 @@ class XmpPacket private constructor(private val document: Document) {
         const val DC_NS = "http://purl.org/dc/elements/1.1/"
         const val XMP_NS = "http://ns.adobe.com/xap/1.0/"
         const val TIFF_NS = "http://ns.adobe.com/tiff/1.0/"
+        const val EXIF_NS = "http://ns.adobe.com/exif/1.0/"
+        const val IPTC4XMPEXT_NS = "http://iptc.org/std/Iptc4xmpExt/2008-02-29/"
         private const val XML_NS = "http://www.w3.org/XML/1998/namespace"
         private const val XMLNS_NS = "http://www.w3.org/2000/xmlns/"
         private const val DEFAULT_LANG = "x-default"
@@ -381,6 +397,20 @@ class XmpPacket private constructor(private val document: Document) {
  * bytes I don't understand rather than silently replace them" contract.
  */
 fun readXmpAttribute(exif: ExifInterface): XmpPacket? {
-    val existing = exif.getAttribute(ExifInterface.TAG_XMP)
+    val existing = exif.xmpAttributeUtf8()
     return if (existing.isNullOrBlank()) XmpPacket.empty() else XmpPacket.parse(existing)
 }
+
+/**
+ * [ExifInterface.TAG_XMP]'s raw bytes, decoded as UTF-8 -- NOT [ExifInterface.getAttribute], which
+ * this app confirmed empirically (P0-08, [Utf8XmpPreservationTest]) decodes an XMP segment's bytes
+ * with the wrong charset: a real packet containing genuine (non-entity-escaped) UTF-8, exactly what
+ * a Lightroom or Capture One export writes, comes back through `getAttribute` with every non-ASCII
+ * character replaced by U+FFFD. XMP packets are UTF-8 by spec, so this decodes the raw bytes
+ * [ExifInterface.getAttributeBytes] does provide (with no matching String-returning counterpart of
+ * its own) correctly instead of trusting androidx's own conversion. Every reader of
+ * [ExifInterface.TAG_XMP] in this app -- [readXmpAttribute] and [com.fotoxplorr.app.metadata.ExifCopier.copy]
+ * alike -- goes through this, not `getAttribute`, for exactly that reason.
+ */
+fun ExifInterface.xmpAttributeUtf8(): String? =
+    getAttributeBytes(ExifInterface.TAG_XMP)?.toString(Charsets.UTF_8)?.takeIf { it.isNotBlank() }

@@ -2,10 +2,15 @@ package com.fotoxplorr.app.metadata
 
 import android.content.ContentResolver
 import android.content.Context
+import android.graphics.BitmapFactory
+import android.os.Build
 import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.uriForLocationRead
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 
 /**
@@ -48,9 +53,30 @@ import java.io.IOException
  * rename. A third copy of that dance existing here, instead of this class reaching for its own
  * launcher, is what keeps consent-handling in the one layer of the app that can actually show a
  * system UI for it.
+ *
+ * ## Original access, staging, and verification (P0-08)
+ * [write] never opens [MediaAsset.contentUri] directly for read-modify-write the way it once did.
+ * Two real risks that shape: opening a REDACTED view for a "rw" edit means `ExifInterface`'s own
+ * read-modify-write cycle (it reads every existing attribute into memory before
+ * [ExifInterface.saveAttributes] rewrites the whole segment) would silently erase GPS tags this
+ * edit never meant to touch, the moment they read back absent -- confirmed as a real platform
+ * mechanism, not assumed, via `RedactingFileDescriptor`'s own javadoc (see Decisions in
+ * `docs/handoff/PHASE-0-PROGRESS.md`); and a bare in-place rewrite leaves nothing to recover from
+ * if the process dies mid-write. So: on API 29+, a write refuses outright unless
+ * `ACCESS_MEDIA_LOCATION` is granted (this app cannot safely edit a file it cannot read
+ * unredacted); otherwise it reads through [com.fotoxplorr.app.media.uriForLocationRead] into a
+ * temp file under `cacheDir/metadata-staging/`, edits and verifies THAT copy (same bounds before
+ * and after, and a fresh, independent [ExifInterface] re-read confirms every field [edit] asked
+ * for actually landed), and only then streams the verified bytes into the original with `"wt"`.
+ * The one risk this does NOT close: an interruption during that final stream-in still leaves the
+ * original file truncated or half-written, exactly as a direct in-place edit would have -- staging
+ * moves where corruption CAN happen away from "while reading and editing", not away from "while
+ * the final bytes are landing", which has no read-then-verify equivalent for the original file
+ * itself without a second, redundant round trip this task's own scope does not ask for.
  */
 class MetadataWriter(context: Context) {
-    private val resolver: ContentResolver = context.applicationContext.contentResolver
+    private val appContext: Context = context.applicationContext
+    private val resolver: ContentResolver = appContext.contentResolver
 
     /**
      * Applies [edit] to [asset]'s own file. A no-op edit ([MetadataEdit.isEmpty]) is a no-op
@@ -61,11 +87,100 @@ class MetadataWriter(context: Context) {
     suspend fun write(asset: MediaAsset, edit: MetadataEdit): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             if (edit.isEmpty) return@runCatching
-            resolver.openFileDescriptor(asset.contentUri, "rw")?.use { descriptor ->
-                applyMetadataEdit(ExifInterface(descriptor.fileDescriptor), edit)
-            } ?: throw IOException("Could not open ${asset.displayName} for writing")
+
+            val requested = appContext.uriForLocationRead(asset.contentUri)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !requested.original) {
+                error("Allow access to photo locations to edit metadata safely")
+            }
+
+            val tempFile = stageOriginalBytes(requested.uri, asset)
+            try {
+                val boundsBefore = decodeBounds(tempFile)
+                applyMetadataEdit(ExifInterface(tempFile.absolutePath), edit)
+                verifyStagedEdit(tempFile, edit, boundsBefore)
+
+                resolver.openFileDescriptor(asset.contentUri, "wt")?.use { descriptor ->
+                    FileOutputStream(descriptor.fileDescriptor).use { output ->
+                        tempFile.inputStream().use { it.copyTo(output) }
+                    }
+                } ?: throw IOException("Could not open ${asset.displayName} for writing")
+            } finally {
+                tempFile.delete()
+            }
         }
     }
+
+    /** Copies [readUri]'s bytes -- the original, unredacted view [write] already confirmed it can
+     *  read -- into a fresh file under this app's own cache, never the asset's own storage. */
+    private fun stageOriginalBytes(readUri: android.net.Uri, asset: MediaAsset): File {
+        val stagingDir = File(appContext.cacheDir, "metadata-staging").apply { mkdirs() }
+        val tempFile = File.createTempFile("metadata-", ".tmp", stagingDir)
+        resolver.openInputStream(readUri)?.use { input ->
+            tempFile.outputStream().use { output -> input.copyTo(output) }
+        } ?: run {
+            tempFile.delete()
+            throw IOException("Could not read ${asset.displayName} to prepare a metadata edit")
+        }
+        return tempFile
+    }
+
+    private fun decodeBounds(file: File): android.graphics.Point {
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, options)
+        return android.graphics.Point(options.outWidth, options.outHeight)
+    }
+
+    /**
+     * The two checks the brief names: the temp file still decodes to the same pixel size it had
+     * before [edit] touched only its metadata, and a FRESH, independently-opened [ExifInterface]
+     * (never the same instance [applyMetadataEdit] just wrote through, which would only prove the
+     * in-memory write succeeded, not that it reached disk) reads back every field [edit] asked
+     * for. A verification failure throws, which [write]'s own `runCatching` turns into a
+     * [Result.failure] -- the temp file is discarded ([write]'s `finally`) and the original is
+     * never touched.
+     */
+    private fun verifyStagedEdit(file: File, edit: MetadataEdit, boundsBefore: android.graphics.Point) {
+        val boundsAfter = decodeBounds(file)
+        check(boundsBefore == boundsAfter) {
+            "Editing metadata changed this photo's own pixel dimensions from $boundsBefore to $boundsAfter"
+        }
+
+        val fresh = ExifInterface(file.absolutePath)
+        val xmp = readXmpAttribute(fresh)
+        val current = currentMetadataFrom(
+            xmp = xmp,
+            exifImageDescription = fresh.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION),
+            exifArtist = fresh.getAttribute(ExifInterface.TAG_ARTIST),
+            exifCopyright = fresh.getAttribute(ExifInterface.TAG_COPYRIGHT),
+        )
+        edit.caption?.let { check(fieldVerifies(it, current.caption)) { "Caption did not verify after writing" } }
+        edit.creator?.let { check(fieldVerifies(it, current.creator)) { "Creator did not verify after writing" } }
+        edit.copyright?.let { check(fieldVerifies(it, current.copyright)) { "Copyright did not verify after writing" } }
+        edit.rating?.let { requested ->
+            val expected = requested.coerceIn(0, 5).takeIf { it != 0 }
+            check(current.rating == expected) { "Rating did not verify after writing" }
+        }
+        if (edit.keywordsToAdd.isNotEmpty()) {
+            check(current.keywords.containsAll(edit.keywordsToAdd)) { "Keywords did not verify after writing" }
+        }
+        if (edit.setLocation != null) {
+            val latLong = FloatArray(2)
+            check(fresh.getLatLong(latLong)) { "Location did not verify after writing" }
+            check(
+                kotlin.math.abs(latLong[0] - edit.setLocation.latitude) < 0.0001 &&
+                    kotlin.math.abs(latLong[1] - edit.setLocation.longitude) < 0.0001,
+            ) { "Location did not verify after writing" }
+        } else if (edit.clearLocation) {
+            check(fresh.latLong == null) { "Location did not verify as cleared after writing" }
+        }
+    }
+
+    /** `null`/blank in [edit] means "clear" ([MetadataEdit]'s own convention), so the field
+     *  verifies as long as the fresh read back is also blank/absent -- not necessarily null, since
+     *  a value EXIF could not represent at all ([setAsciiAttributeOrLeave]) legitimately reads
+     *  back as null from EXIF while XMP (which [currentMetadataFrom] prefers) still has it. */
+    private fun fieldVerifies(edited: String, actual: String?): Boolean =
+        if (edited.isBlank()) actual.isNullOrBlank() else actual == edited
 
     /**
      * Applies [edit] across every asset in [assets], in order, collecting a per-asset outcome

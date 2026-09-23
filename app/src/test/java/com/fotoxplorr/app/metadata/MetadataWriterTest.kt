@@ -148,6 +148,54 @@ class MetadataWriterTest {
         assertEquals(listOf("José García"), xmp.seq(XmpPacket.DC_NS, "creator"))
     }
 
+    /**
+     * P0-08 item 5: clearing location must also remove XMP's own GPS properties, not just EXIF's
+     * -- the defect this app had before this task ("Clear location removes only EXIF GPS and
+     * leaves XMP GPS").
+     */
+    @Test
+    fun `clearing location removes XMP GPS properties too, not just EXIF's`() {
+        val file = realJpeg()
+        applyMetadataEdit(exif(file), MetadataEdit(setLocation = GpsCoordinate(1.0, 2.0)))
+        check(exif(file).latLong != null) { "test setup: EXIF GPS was not actually written" }
+
+        // This app's own "set location" path does not itself populate XMP GPS (P0-08's own brief
+        // only asks for the "clear" side to reach XMP) -- manually inject an XMP GPS property as
+        // if another tool had written it, to prove "clear" removes it regardless of who wrote it.
+        val withXmpGps = exif(file)
+        val xmp = XmpPacket.parse(withXmpGps.getAttribute(ExifInterface.TAG_XMP) ?: "") ?: XmpPacket.empty()
+        xmp.setIntValue(XmpPacket.EXIF_NS, "exif", "GPSAltitude", 100)
+        withXmpGps.setAttribute(ExifInterface.TAG_XMP, xmp.serialize())
+        withXmpGps.saveAttributes()
+        check(XmpPacket.parse(exif(file).getAttribute(ExifInterface.TAG_XMP)!!)!!.intValue(XmpPacket.EXIF_NS, "GPSAltitude") == 100) {
+            "test setup: XMP GPSAltitude was not actually written"
+        }
+
+        applyMetadataEdit(exif(file), MetadataEdit(clearLocation = true))
+
+        val latLong = FloatArray(2)
+        assertTrue("EXIF GPS should be gone", !exif(file).getLatLong(latLong))
+        val afterClear = XmpPacket.parse(exif(file).getAttribute(ExifInterface.TAG_XMP)!!)!!
+        assertNull("XMP GPSAltitude should be gone too", afterClear.intValue(XmpPacket.EXIF_NS, "GPSAltitude"))
+    }
+
+    /** photoshop:City/State/Country are deliberately left untouched by "Clear location" -- see
+     *  [clearXmpLocation]'s own doc for why this app cannot tell whether they came from GPS. */
+    @Test
+    fun `clearing location does not touch photoshop City, State or Country`() {
+        val file = realJpeg()
+        val exifWithCity = exif(file)
+        val xmp = XmpPacket.empty()
+        xmp.setLangAlt("http://ns.adobe.com/photoshop/1.0/", "photoshop", "City", "Paris")
+        exifWithCity.setAttribute(ExifInterface.TAG_XMP, xmp.serialize())
+        exifWithCity.saveAttributes()
+
+        applyMetadataEdit(exif(file), MetadataEdit(clearLocation = true))
+
+        val afterClear = XmpPacket.parse(exif(file).getAttribute(ExifInterface.TAG_XMP)!!)!!
+        assertEquals("Paris", afterClear.langAlt("http://ns.adobe.com/photoshop/1.0/", "City"))
+    }
+
     @Test
     fun `an edit with nothing set touches neither EXIF nor XMP`() {
         val file = realJpeg()

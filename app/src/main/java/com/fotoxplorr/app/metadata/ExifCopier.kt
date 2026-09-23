@@ -35,7 +35,9 @@ object ExifCopier {
             source.getAttribute(tag)?.let { target.setAttribute(tag, it) }
         }
         target.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
-        copiedXmpValue(source.getAttribute(ExifInterface.TAG_XMP))?.let {
+        // xmpAttributeUtf8(), not getAttribute(TAG_XMP) -- see that function's own doc (P0-08):
+        // getAttribute decodes an XMP packet's bytes with the wrong charset.
+        copiedXmpValue(source.xmpAttributeUtf8())?.let {
             target.setAttribute(ExifInterface.TAG_XMP, it)
         }
     }
