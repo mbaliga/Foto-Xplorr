@@ -2,6 +2,7 @@ package com.fotoxplorr.app.share
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
@@ -10,6 +11,9 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.decodeUpright
 import com.fotoxplorr.app.pro.LocalProEntitlement
 import com.fotoxplorr.app.pro.ProEntitlement
+import com.fotoxplorr.app.video.RemuxResult
+import com.fotoxplorr.app.video.findRotationDegrees
+import com.fotoxplorr.app.video.remux
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -108,6 +112,7 @@ class SharePreparer(
             when {
                 renderable && options.requiresRender -> prepareRendered(asset, options, directory)
                 strippable && options.stripMetadata -> prepareStripped(asset, directory)
+                asset.isVideo && options.stripMetadata -> prepareRemuxedVideo(asset, directory)
                 else -> prepareRawCopy(asset, directory)
             }
         } catch (error: CancellationException) {
@@ -145,6 +150,63 @@ class SharePreparer(
             throw error
         }
         return PreparedItem.Ready(FileProvider.getUriForFile(appContext, authority, target), asset.mimeType)
+    }
+
+    /**
+     * P0-05: a video's location lives in the container, not any track's own samples, so removing
+     * it means writing a new container without ever copying that tag across -- [remux] never calls
+     * `MediaMuxer.setLocation`. A codec [containerFor] cannot place, or any muxer exception, means
+     * the same thing to a sharer: this video cannot be shared with its location removed today, so
+     * it becomes [PreparedItem.Failed] with an actionable reason (turn stripping off to send the
+     * original) rather than silently going out with the location intact.
+     */
+    private suspend fun prepareRemuxedVideo(asset: MediaAsset, directory: File): PreparedItem {
+        var target = File(directory, "${UUID.randomUUID()}.tmp")
+        return try {
+            val rotation = findRotationDegrees(appContext, asset.contentUri)
+            val result = remux(appContext, asset.contentUri, target, rangeUs = null, rotationDegrees = rotation)
+            val container = when (result) {
+                is RemuxResult.Unsupported -> {
+                    target.delete()
+                    return PreparedItem.Failed(asset, VIDEO_LOCATION_STRIP_UNSUPPORTED)
+                }
+                is RemuxResult.Remuxed -> result.container
+            }
+            val renamed = File(directory, "${target.nameWithoutExtension}.${container.extension}")
+            check(target.renameTo(renamed)) { "Could not finish preparing ${asset.displayName}" }
+            target = renamed
+
+            if (!isFreeOfLocation(target)) {
+                target.delete()
+                return PreparedItem.Failed(asset, VIDEO_LOCATION_STRIP_UNSUPPORTED)
+            }
+            PreparedItem.Ready(FileProvider.getUriForFile(appContext, authority, target), container.mimeType)
+        } catch (error: CancellationException) {
+            target.delete()
+            throw error
+        } catch (error: Throwable) {
+            // A muxer exception (a corrupt source, an edge case containerFor's own check didn't
+            // catch) means the same thing to a sharer as Unsupported: this video's location can't
+            // be removed today.
+            target.delete()
+            PreparedItem.Failed(asset, VIDEO_LOCATION_STRIP_UNSUPPORTED)
+        }
+    }
+
+    /** [android.media.MediaMetadataRetriever.METADATA_KEY_LOCATION] on the remuxed output is null
+     * -- re-checked here rather than merely trusted from [remux] never having called
+     * `setLocation`, the same "never hand out unverified" contract [verifyNoLocationMetadata]
+     * holds images to. A read failure counts as "not clean": fail closed, same as there. */
+    private fun isFreeOfLocation(file: File): Boolean {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(file.absolutePath)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION) == null
+        } catch (error: Throwable) {
+            false
+        } finally {
+            runCatching { retriever.release() }
+        }
     }
 
     /**
@@ -352,6 +414,12 @@ class SharePreparer(
         const val SHARE_DIRECTORY = "outgoing-share"
         const val COPY_BUFFER_SIZE = 128 * 1024
         const val JPEG_QUALITY = 92
+
+        /** P0-05: shown when a video's codec can't be remuxed into a container this class knows
+         * carries no location, or the remux itself throws. */
+        const val VIDEO_LOCATION_STRIP_UNSUPPORTED =
+            "This video's format can't be shared without its location yet — turn off " +
+                "\"Remove location and camera data\" to send the original."
 
         /** Longest edge of a re-rendered share, in pixels. */
         const val MAX_SHARE_EDGE = 3200
