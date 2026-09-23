@@ -46,7 +46,9 @@ class SimilarityIndexer(
     ): Result<Int> = withContext(Dispatchers.Default) {
         runCatching {
             val imageAssets = assets.filterNot { it.isVideo || it.isTrashed }
-            repository.removeMissing(imageAssets.mapTo(linkedSetOf()) { it.id })
+            // P0-12: every catalogue id, trashed included -- see RecognitionIndexer's own note;
+            // `missing` below still excludes trashed items.
+            repository.removeMissing(assets.mapTo(linkedSetOf()) { it.id })
             val missing = repository.missingAssets(imageAssets, model.sha256)
             val existing = imageAssets.size - missing.size
             state.value = SimilarityIndexingState.Preparing(existing, missing.size)
@@ -67,7 +69,11 @@ class SimilarityIndexer(
                     val embedding = runCatching { embedAsset(embedder, asset, model.sha256) }.getOrNull()
                     if (embedding == null) {
                         failed += 1
+                        // P0-12: bounds retries the same way RecognitionIndexer.index() does --
+                        // see EmbeddingRepository.missingAssets's own exclusion.
+                        repository.recordFailure(asset.id, model.sha256, asset.sourceRevision())
                     } else {
+                        repository.clearFailure(asset.id, model.sha256)
                         batch += embedding
                         if (batch.size >= BATCH_SIZE) {
                             repository.upsertBatch(batch.toList())

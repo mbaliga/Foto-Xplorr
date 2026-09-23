@@ -46,14 +46,36 @@ class EmbeddingRepository(context: Context) {
 
     fun observe(): StateFlow<EmbeddingIndexState> = state.asStateFlow()
 
+    /**
+     * Assets missing an embedding for [modelSha256] or computed from an older file revision --
+     * excluding one whose last [MAX_FAILURE_ATTEMPTS] embedding attempts, at its CURRENT
+     * revision and for THIS model, all failed (P0-12; the same rule and bound
+     * [RecognitionStore.pendingAssets] applies, scoped per model since an embedding itself is).
+     */
     suspend fun missingAssets(
         assets: List<MediaAsset>,
         modelSha256: String,
     ): List<MediaAsset> = withContext(Dispatchers.IO) {
         val revisions = helper.revisions(modelSha256)
+        val failures = helper.failures(modelSha256)
         assets.filter { asset ->
-            !asset.isVideo && revisions[asset.id] != asset.sourceRevision()
+            if (asset.isVideo) return@filter false
+            val revision = asset.sourceRevision()
+            if (revisions[asset.id] == revision) return@filter false
+            val failure = failures[asset.id]
+            !(failure != null && failure.revision == revision && failure.attempts >= MAX_FAILURE_ATTEMPTS)
         }
+    }
+
+    /** Records that embedding [mediaId] with [modelSha256] failed at [revision] (P0-12). */
+    suspend fun recordFailure(mediaId: MediaId, modelSha256: String, revision: Long) =
+        withContext(Dispatchers.IO) {
+            mutex.withLock { helper.recordFailure(mediaId, modelSha256, revision, System.currentTimeMillis()) }
+        }
+
+    /** Clears any recorded failure for [mediaId]/[modelSha256] -- called once embedding succeeds. */
+    suspend fun clearFailure(mediaId: MediaId, modelSha256: String) = withContext(Dispatchers.IO) {
+        mutex.withLock { helper.clearFailure(mediaId, modelSha256) }
     }
 
     suspend fun upsertBatch(embeddings: List<StoredEmbedding>) = withContext(Dispatchers.IO) {
@@ -176,8 +198,12 @@ class EmbeddingRepository(context: Context) {
         private const val SIGNATURE_SAMPLE_STEP = 7
         private const val SIGNATURE_BUCKET_SHIFT = 16
         private const val MIN_NEIGHBOUR_CANDIDATES = 256
+        private const val MAX_FAILURE_ATTEMPTS = 3
     }
 }
+
+/** A recorded embedding failure (P0-12): see [EmbeddingRepository.recordFailure]. */
+internal data class EmbeddingFailure(val revision: Long, val attempts: Int)
 
 private class EmbeddingOpenHelper(context: Context) : SQLiteOpenHelper(
     context,
@@ -201,9 +227,29 @@ private class EmbeddingOpenHelper(context: Context) : SQLiteOpenHelper(
         )
         db.execSQL("CREATE INDEX embedding_model_idx ON $TABLE_EMBEDDINGS($COL_MODEL_SHA)")
         db.execSQL("CREATE INDEX embedding_signature_idx ON $TABLE_EMBEDDINGS($COL_MODEL_SHA, $COL_SIGNATURE)")
+        createFailureTable(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    /** v2 (P0-12) added [TABLE_FAILURES] -- this DB's first real migration; additive, since a
+     *  failure needs to survive a process restart and every existing embedding stays valid. */
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) createFailureTable(db)
+    }
+
+    private fun createFailureTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_FAILURES (
+                $COL_MEDIA_ID INTEGER NOT NULL,
+                $COL_MODEL_SHA TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                attempts INTEGER NOT NULL,
+                last_attempt_ms INTEGER NOT NULL,
+                PRIMARY KEY ($COL_MEDIA_ID, $COL_MODEL_SHA)
+            )
+            """.trimIndent(),
+        )
+    }
 
     fun revisions(modelSha: String): Map<MediaId, Long> = readableDatabase.query(
         TABLE_EMBEDDINGS,
@@ -219,6 +265,49 @@ private class EmbeddingOpenHelper(context: Context) : SQLiteOpenHelper(
             val revision = cursor.getColumnIndexOrThrow(COL_SOURCE_REVISION)
             while (cursor.moveToNext()) put(MediaId(cursor.getLong(id)), cursor.getLong(revision))
         }
+    }
+
+    fun failures(modelSha: String): Map<MediaId, EmbeddingFailure> = readableDatabase.query(
+        TABLE_FAILURES,
+        arrayOf(COL_MEDIA_ID, "revision", "attempts"),
+        "$COL_MODEL_SHA=?",
+        arrayOf(modelSha),
+        null,
+        null,
+        null,
+    ).use { cursor ->
+        buildMap(cursor.count) {
+            while (cursor.moveToNext()) {
+                put(MediaId(cursor.getLong(0)), EmbeddingFailure(cursor.getLong(1), cursor.getInt(2)))
+            }
+        }
+    }
+
+    fun recordFailure(mediaId: MediaId, modelSha: String, revision: Long, atMs: Long) {
+        val previous = readableDatabase.query(
+            TABLE_FAILURES, arrayOf("revision", "attempts"),
+            "$COL_MEDIA_ID=? AND $COL_MODEL_SHA=?", arrayOf(mediaId.value.toString(), modelSha),
+            null, null, null,
+        ).use { cursor -> if (cursor.moveToFirst()) EmbeddingFailure(cursor.getLong(0), cursor.getInt(1)) else null }
+        val attempts = if (previous?.revision == revision) previous.attempts + 1 else 1
+        writableDatabase.insertWithOnConflict(
+            TABLE_FAILURES, null,
+            ContentValues().apply {
+                put(COL_MEDIA_ID, mediaId.value)
+                put(COL_MODEL_SHA, modelSha)
+                put("revision", revision)
+                put("attempts", attempts)
+                put("last_attempt_ms", atMs)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+    }
+
+    fun clearFailure(mediaId: MediaId, modelSha: String) {
+        writableDatabase.delete(
+            TABLE_FAILURES, "$COL_MEDIA_ID=? AND $COL_MODEL_SHA=?",
+            arrayOf(mediaId.value.toString(), modelSha),
+        )
     }
 
     fun upsert(embeddings: List<StoredEmbedding>) {
@@ -299,28 +388,25 @@ private class EmbeddingOpenHelper(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    private fun distinctMediaIds(table: String): Set<MediaId> = readableDatabase.query(
+        table, arrayOf(COL_MEDIA_ID), null, null, null, null, null,
+    ).use { cursor ->
+        val id = cursor.getColumnIndexOrThrow(COL_MEDIA_ID)
+        buildSet(cursor.count) { while (cursor.moveToNext()) add(MediaId(cursor.getLong(id))) }
+    }
+
     fun removeMissing(availableIds: Set<MediaId>) {
-        val existing = readableDatabase.query(
-            TABLE_EMBEDDINGS,
-            arrayOf(COL_MEDIA_ID),
-            null,
-            null,
-            null,
-            null,
-            null,
-        ).use { cursor ->
-            val id = cursor.getColumnIndexOrThrow(COL_MEDIA_ID)
-            buildSet(cursor.count) { while (cursor.moveToNext()) add(MediaId(cursor.getLong(id))) }
-        }
+        // Union with TABLE_FAILURES (P0-12): an asset that has ONLY ever failed has no row in
+        // TABLE_EMBEDDINGS at all, so that table alone would never see it as "known" and its
+        // failure bookkeeping would never be cleaned up even once the asset itself is long gone.
+        val existing = distinctMediaIds(TABLE_EMBEDDINGS) + distinctMediaIds(TABLE_FAILURES)
         val stale = existing - availableIds
         writableDatabase.transaction { db ->
             stale.chunked(SQLITE_BIND_LIMIT).forEach { batch ->
                 val placeholders = batch.joinToString(",") { "?" }
-                db.delete(
-                    TABLE_EMBEDDINGS,
-                    "$COL_MEDIA_ID IN ($placeholders)",
-                    batch.map { it.value.toString() }.toTypedArray(),
-                )
+                val args = batch.map { it.value.toString() }.toTypedArray()
+                db.delete(TABLE_EMBEDDINGS, "$COL_MEDIA_ID IN ($placeholders)", args)
+                db.delete(TABLE_FAILURES, "$COL_MEDIA_ID IN ($placeholders)", args)
             }
         }
     }
@@ -339,12 +425,14 @@ private class EmbeddingOpenHelper(context: Context) : SQLiteOpenHelper(
 
     fun clear() {
         writableDatabase.delete(TABLE_EMBEDDINGS, null, null)
+        writableDatabase.delete(TABLE_FAILURES, null, null)
     }
 
     private companion object {
         const val DATABASE_NAME = "foto_xplorr_embeddings.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
         const val TABLE_EMBEDDINGS = "embeddings"
+        const val TABLE_FAILURES = "embedding_failure"
         const val COL_MEDIA_ID = "media_id"
         const val COL_SOURCE_REVISION = "source_revision"
         const val COL_MODEL_SHA = "model_sha"

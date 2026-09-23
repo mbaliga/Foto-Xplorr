@@ -270,3 +270,52 @@ class RecognitionIndexTest {
         assertFalse(SceneCategory.FRIENDS_FAMILY in index.categoriesByMedia[MediaId(5)].orEmpty())
     }
 }
+
+class RecognitionIndexPlusTest {
+
+    private val vector = FaceClustering.normalized(floatArrayOf(1f, 0f, 0f))
+    private fun descriptor(mediaId: Long) = FaceDescriptor(MediaId(mediaId), 0, vector, 0.2f)
+    private fun row(mediaId: Long, sourceRevision: Long = 0, faceCount: Int = 1) = AssetRecognition(
+        MediaId(mediaId), sourceRevision, faceCount,
+        faceDescriptors = if (faceCount > 0) listOf(descriptor(mediaId)) else emptyList(),
+    )
+
+    @Test
+    fun `plus with no previous rows equals from(newRows)`() {
+        val newRows = listOf(row(1), row(2))
+        assertEquals(RecognitionIndex.from(newRows), RecognitionIndex.plus(emptyList(), newRows))
+    }
+
+    @Test
+    fun `plus with no new rows equals from(previousRows)`() {
+        val previousRows = listOf(row(1), row(2))
+        assertEquals(RecognitionIndex.from(previousRows), RecognitionIndex.plus(previousRows, emptyList()))
+    }
+
+    @Test
+    fun `plus appends new rows and equals from(allRows)`() {
+        val previousRows = listOf(row(1), row(2))
+        val newRows = listOf(row(3), row(4))
+        val combined = RecognitionIndex.plus(previousRows, newRows)
+        assertEquals(RecognitionIndex.from(previousRows + newRows), combined)
+        // Exercises real clustering/recurring-person behaviour, not just set membership: all
+        // four rows share the same descriptor, so they must all cluster together.
+        assertEquals(1, combined.people.size)
+        assertEquals(4, combined.people.first().faceCount)
+    }
+
+    @Test
+    fun `a new row for an existing media id replaces the old one, not duplicates it`() {
+        // Photo 1 was indexed with 0 faces; a re-run (e.g. after a failure was retried) now
+        // finds 1 face. plus() must treat this as a REPLACEMENT -- matching RecognitionStore's
+        // own CONFLICT_REPLACE upsert semantics -- not add a second row for the same photo,
+        // which would double-count its descriptor in FaceClustering.cluster.
+        val previousRows = listOf(row(1, sourceRevision = 0, faceCount = 0), row(2))
+        val updatedRow1 = row(1, sourceRevision = 5, faceCount = 1)
+        val combined = RecognitionIndex.plus(previousRows, listOf(updatedRow1))
+
+        assertEquals(RecognitionIndex.from(listOf(updatedRow1, previousRows[1])), combined)
+        assertEquals(1, combined.people.size)
+        assertEquals(2, combined.people.first().faceCount)
+    }
+}

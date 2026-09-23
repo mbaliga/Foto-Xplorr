@@ -246,5 +246,37 @@ data class RecognitionIndex(
                     .associate { it.mediaId to it.caption },
             )
         }
+
+        /**
+         * Equality-only "incremental" update (P0-12): merges [newRows] into [previousRows] --
+         * a row in [newRows] replaces any existing row with the same [AssetRecognition.mediaId],
+         * matching [RecognitionStore]'s own `CONFLICT_REPLACE` upsert semantics -- then
+         * recomputes the WHOLE index via [from] over the combined set.
+         *
+         * This exists to satisfy the brief's own instruction ("add a `plus(rows)` and test it
+         * against `from(allRows)` for equality"), proven by `RecognitionIndexPlusTest`. It is
+         * deliberately **not** wired into [RecognitionStore]'s hot path, because it is not a
+         * performance optimisation: [FaceClustering.cluster] is a single global agglomerative
+         * pass over every descriptor in the library sorted together, and [categoriesByMedia]'s
+         * [SceneCategory.FRIENDS_FAMILY] entries depend on a library-wide recurring-person count
+         * -- both can change for rows this call never touched, so there is no way to derive a
+         * correct result from [newRows] alone without also holding [previousRows], which still
+         * means re-deriving everything -- the same cost [from] already pays, just without a
+         * disk read first. The actual fix for "the database reloads every 24 photos" is
+         * [RecognitionStore.upsert]'s own reload throttle: the defect was in how OFTEN a new
+         * index gets published to `GalleryScreen`'s projection memo, not in how expensive
+         * computing one is.
+         */
+        fun plus(
+            previousRows: Collection<AssetRecognition>,
+            newRows: Collection<AssetRecognition>,
+            maxCosineDistance: Float = FaceClustering.DEFAULT_MAX_COSINE_DISTANCE,
+        ): RecognitionIndex {
+            if (newRows.isEmpty()) return from(previousRows, maxCosineDistance)
+            val merged = LinkedHashMap<MediaId, AssetRecognition>(previousRows.size + newRows.size)
+            previousRows.forEach { merged[it.mediaId] = it }
+            newRows.forEach { merged[it.mediaId] = it }
+            return from(merged.values, maxCosineDistance)
+        }
     }
 }

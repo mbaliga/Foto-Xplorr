@@ -56,7 +56,10 @@ class RecognitionIndexer(
     suspend fun index(assets: List<MediaAsset>): Result<Int> = withContext(Dispatchers.Default) {
         runCatching {
             val images = assets.filterNot { it.isVideo || it.isTrashed }
-            store.removeMissing(images.mapTo(linkedSetOf()) { it.id })
+            // P0-12: every catalogue id, trashed included -- a trashed photo's faces/labels/OCR
+            // must survive a trash-then-restore, not be deleted and redone. `pending` below still
+            // excludes trashed items; only the "is this row's asset still real" check widens.
+            store.removeMissing(assets.mapTo(linkedSetOf()) { it.id })
             val pending = store.pendingAssets(images)
             if (pending.isEmpty()) {
                 store.publishProgress(RecognitionProgress(running = false, indexedCount = images.size))
@@ -102,9 +105,15 @@ class RecognitionIndexer(
                         .getOrElse { error ->
                             if (error is CancellationException) throw error
                             failed += 1
+                            // P0-12: previously nothing was recorded on failure, so an
+                            // unreadable file stayed "pending" forever and was retried on every
+                            // pass; recordFailure bounds that to MAX_FAILURE_ATTEMPTS via
+                            // RecognitionStore.pendingAssets's own exclusion.
+                            store.recordFailure(asset.id, asset.recognitionRevision())
                             null
                         }
                     if (row != null) {
+                        store.clearFailure(asset.id)
                         batch += row
                         if (batch.size >= BATCH_SIZE) {
                             store.upsert(batch.toList())
