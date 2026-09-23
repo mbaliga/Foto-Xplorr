@@ -89,6 +89,11 @@ object ArchiveAdvisor {
         val heightPx: Int,
         val mimeType: String,
         /**
+         * Mirrors [com.fotoxplorr.app.media.MediaAsset.dateModifiedSeconds]. Only consulted as
+         * [bestOfGroup]'s second tie-break, after capture time and before [mediaId] -- see there.
+         */
+        val dateModifiedSeconds: Long = 0L,
+        /**
          * [BlurDetector.sharpness] for this photo, or `null` when it was never computed --
          * running it costs a bitmap decode, and a caller is free to skip that for, say, a video
          * or a photo it has already ruled out on a cheaper signal. `null` never matches
@@ -137,7 +142,7 @@ object ArchiveAdvisor {
             if (keeper.mediaId != candidate.mediaId) {
                 val others = duplicateGroup.size - 1
                 return ArchiveReasonCategory.DUPLICATE to
-                    "Near-duplicate of $others other${if (others == 1) "" else "s"}"
+                    "Possible duplicate of $others other${if (others == 1) "" else "s"}"
             }
             // This candidate IS the keeper of its group -- fall through, it may still qualify on
             // a completely different signal (an old screenshot that also happens to be the
@@ -174,14 +179,20 @@ object ArchiveAdvisor {
      *
      * Oldest capture time wins: an unmodified original predates any copy a share, a backup
      * round-trip or a "save image" produces, so the earliest [ArchiveCandidate.ageMillis] --
-     * the LARGEST value, since age counts backwards from now -- is read as the original. Ties
-     * (genuinely identical capture times, or a caller that could not populate one) fall back to
+     * the LARGEST value, since age counts backwards from now -- is read as the original. A
+     * capture-time tie falls back to the earliest [ArchiveCandidate.dateModifiedSeconds], then to
      * the lower [MediaId], which has no real-world meaning but is stable across calls -- what
      * matters for a review queue is that running this twice on the same input always names the
-     * same photo as the keeper, not that the tie-break itself is meaningful.
+     * same photo as the keeper, not that the tie-break itself is meaningful. Mirrors
+     * [com.fotoxplorr.app.gallery.GalleryProjection.duplicateCandidateIds]'s own keeper rule, so
+     * the Duplicates album and this review queue never name a different photo as "the original".
      */
     private fun bestOfGroup(group: List<ArchiveCandidate>): ArchiveCandidate =
-        group.sortedWith(compareByDescending<ArchiveCandidate> { it.ageMillis }.thenBy { it.mediaId.value }).first()
+        group.sortedWith(
+            compareByDescending<ArchiveCandidate> { it.ageMillis }
+                .thenBy { it.dateModifiedSeconds }
+                .thenBy { it.mediaId.value },
+        ).first()
 
     private fun ArchiveCandidate.duplicateKey() = DuplicateKey(sizeBytes, widthPx, heightPx, mimeType.lowercase())
 

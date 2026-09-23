@@ -69,12 +69,36 @@ class GalleryProjectionV2Test {
     }
 
     @Test
-    fun `duplicate candidates require same size dimensions and mime`() {
-        val first = asset(1, 100, size = 2_000, width = 800, height = 600)
+    fun `duplicate candidates require same size dimensions and mime, and exclude the keeper`() {
+        val first = asset(1, 100, size = 2_000, width = 800, height = 600) // earliest taken -> keeper
         val second = asset(2, 200, size = 2_000, width = 800, height = 600)
         val differentDimensions = asset(3, 300, size = 2_000, width = 600, height = 800)
 
-        assertEquals(setOf(first.id, second.id), duplicateCandidateIds(listOf(first, second, differentDimensions)))
+        assertEquals(setOf(second.id), duplicateCandidateIds(listOf(first, second, differentDimensions)))
+    }
+
+    @Test
+    fun `a group of three duplicates keeps only the oldest, and ties break by the smallest id`() {
+        val oldest = asset(2, taken = 50, size = 2_000, width = 800, height = 600)
+        val middle = asset(1, taken = 100, size = 2_000, width = 800, height = 600)
+        val newest = asset(3, taken = 300, size = 2_000, width = 800, height = 600)
+
+        assertEquals(setOf(middle.id, newest.id), duplicateCandidateIds(listOf(oldest, middle, newest)))
+
+        // A capture-time tie between the two lowest-taken assets breaks by the lower id, not
+        // input order: swapping which one is "oldest" by id alone must flip which is excluded.
+        val tiedA = asset(2, taken = 50, size = 2_000, width = 800, height = 600)
+        val tiedB = asset(1, taken = 50, size = 2_000, width = 800, height = 600)
+        assertEquals(setOf(tiedA.id, newest.id), duplicateCandidateIds(listOf(tiedA, tiedB, newest)))
+    }
+
+    @Test
+    fun `a capture-time tie within a duplicate group breaks by the earliest modified time`() {
+        val a = asset(2, taken = 100, modified = 500, size = 2_000, width = 800, height = 600)
+        val keeper = asset(1, taken = 100, modified = 100, size = 2_000, width = 800, height = 600)
+        val c = asset(3, taken = 100, modified = 900, size = 2_000, width = 800, height = 600)
+
+        assertEquals(setOf(a.id, c.id), duplicateCandidateIds(listOf(a, keeper, c)))
     }
 
     @Test
@@ -200,6 +224,7 @@ class GalleryProjectionV2Test {
         width: Int = 100,
         height: Int = 100,
         trashed: Boolean = false,
+        modified: Long = taken / 1_000,
     ) = MediaAsset(
         id = MediaId(id),
         contentUriString = "content://media/$id",
@@ -208,7 +233,7 @@ class GalleryProjectionV2Test {
         bucketName = path.trimEnd('/').substringAfterLast('/'),
         bucketId = id,
         dateTakenMillis = taken,
-        dateModifiedSeconds = taken / 1_000,
+        dateModifiedSeconds = modified,
         width = width,
         height = height,
         sizeBytes = size,

@@ -66,7 +66,21 @@ class ArchiveAdvisorTest {
 
         assertEquals(setOf(MediaId(2), MediaId(3)), result.map { it.mediaId }.toSet())
         assertTrue(result.all { it.category == ArchiveReasonCategory.DUPLICATE })
-        assertTrue(result.all { it.reason == "Near-duplicate of 2 others" })
+        assertTrue(result.all { it.reason == "Possible duplicate of 2 others" })
+    }
+
+    @Test
+    fun `a capture-time tie within a duplicate group breaks by the earliest modified time, then id`() {
+        val a = candidate(
+            id = 2, ageMillis = 100 * DAY, dateModifiedSeconds = 500,
+            sizeBytes = 5_000_000L, widthPx = 3000, heightPx = 2000,
+        )
+        val keeper = a.copy(mediaId = MediaId(1), dateModifiedSeconds = 100)
+        val c = a.copy(mediaId = MediaId(3), dateModifiedSeconds = 900)
+
+        val result = ArchiveAdvisor.suggestions(listOf(a, keeper, c))
+
+        assertEquals(setOf(MediaId(2), MediaId(3)), result.map { it.mediaId }.toSet())
     }
 
     @Test
@@ -85,7 +99,7 @@ class ArchiveAdvisorTest {
         val result = ArchiveAdvisor.suggestions(listOf(trueOriginal, ordinaryCopy, anotherCopy))
 
         assertEquals(setOf(MediaId(2), MediaId(3)), result.map { it.mediaId }.toSet())
-        assertTrue(result.all { it.reason == "Near-duplicate of 2 others" })
+        assertTrue(result.all { it.reason == "Possible duplicate of 2 others" })
     }
 
     @Test
@@ -159,7 +173,7 @@ class ArchiveAdvisorTest {
         assertEquals(1, result.size)
         assertEquals(MediaId(2), result[0].mediaId)
         assertEquals(ArchiveReasonCategory.DUPLICATE, result[0].category)
-        assertEquals("Near-duplicate of 1 other", result[0].reason)
+        assertEquals("Possible duplicate of 1 other", result[0].reason)
     }
 
     @Test
@@ -191,6 +205,7 @@ class ArchiveAdvisorTest {
         widthPx: Int = 4000,
         heightPx: Int = 3000,
         mimeType: String = "image/jpeg",
+        dateModifiedSeconds: Long = 0L,
         sharpness: Float? = null,
     ) = ArchiveCandidate(
         mediaId = MediaId(id),
@@ -203,6 +218,7 @@ class ArchiveAdvisorTest {
         widthPx = widthPx,
         heightPx = heightPx,
         mimeType = mimeType,
+        dateModifiedSeconds = dateModifiedSeconds,
         sharpness = sharpness,
     )
 

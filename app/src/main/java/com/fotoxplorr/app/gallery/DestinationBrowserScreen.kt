@@ -600,6 +600,7 @@ private fun archiveReviewItems(state: GalleryUiState): List<ArchiveReviewItem> {
                 widthPx = asset.width,
                 heightPx = asset.height,
                 mimeType = asset.mimeType,
+                dateModifiedSeconds = asset.dateModifiedSeconds,
                 sharpness = null,
             )
         }

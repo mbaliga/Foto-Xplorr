@@ -262,13 +262,28 @@ internal fun buildAlbumSummaries(
         .sortedWith(compareByDescending<AlbumSummary> { it.count }.thenBy { it.name.lowercase() })
 }
 
+/**
+ * Every member of a same-size/dimensions/type group EXCEPT one deterministic keeper per group --
+ * "select all -> trash" in the Duplicates album must delete only the redundant extra copies, never
+ * every copy including the one worth keeping. The keeper is the earliest [MediaAsset.dateTakenMillis],
+ * then the earliest [MediaAsset.dateModifiedSeconds], then the smallest [MediaId] -- the same order
+ * [com.fotoxplorr.app.curate.ArchiveAdvisor.bestOfGroup] uses, so the two surfaces never disagree
+ * about which copy of a group is "the original".
+ */
 fun duplicateCandidateIds(assets: List<MediaAsset>): Set<MediaId> = assets
     .asSequence()
     .filter { it.sizeBytes > 0L && it.width > 0 && it.height > 0 }
     .groupBy { DuplicateKey(it.sizeBytes, it.width, it.height, it.mimeType.lowercase()) }
     .values
     .filter { it.size > 1 }
-    .flatten()
+    .flatMap { group ->
+        val keeper = group.minWithOrNull(
+            compareBy<MediaAsset> { it.dateTakenMillis }
+                .thenBy { it.dateModifiedSeconds }
+                .thenBy { it.id.value },
+        )
+        group.filterNot { it.id == keeper?.id }
+    }
     .mapTo(linkedSetOf()) { it.id }
 
 fun sortAssets(assets: List<MediaAsset>, sort: GallerySort): List<MediaAsset> = when (sort) {
@@ -318,7 +333,7 @@ private fun SmartAlbum.subtitle(): String = when (this) {
     SmartAlbum.SCREENSHOTS -> "Detected by name or folder"
     SmartAlbum.ANIMATED -> "GIF, animated WebP and AVIF"
     SmartAlbum.LARGE_FILES -> "20 MB and above"
-    SmartAlbum.DUPLICATES -> "Exact size and dimensions"
+    SmartAlbum.DUPLICATES -> "Extra copies; one of each is kept out"
     SmartAlbum.SENSITIVE -> "Content marked sensitive"
     SmartAlbum.ARCHIVED -> "Hidden from the timeline"
     SmartAlbum.TRASH -> "Android system trash"

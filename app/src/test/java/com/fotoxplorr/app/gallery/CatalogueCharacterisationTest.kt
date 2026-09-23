@@ -138,7 +138,7 @@ class CatalogueCharacterisationTest {
             "destination:VIDEOS" to "1650:ecf841907be24c96:3:9945",
             "smart:ANIMATED" to "286:98c7726b2a5558fd:46:9775",
             "smart:ARCHIVED" to "750:9d837fdd8653a6e6:22:9724",
-            "smart:DUPLICATES" to "39:30036af67ca13eb4:250:8500",
+            "smart:DUPLICATES" to "38:6469bbe790e9753b:250:4250",
             "smart:FAVORITES" to "1178:d2ef98cb77ff9028:7:9996",
             "smart:LARGE_FILES" to "1478:2e612f216c4d1bce:328:9996",
             "smart:RECENT" to "271:abe7cd03844df0bb:1:348",
