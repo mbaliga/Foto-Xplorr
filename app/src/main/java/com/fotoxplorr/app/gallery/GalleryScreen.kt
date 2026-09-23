@@ -609,6 +609,9 @@ private fun GalleryBrowser(
             state.assets.filter { asset ->
                 current.tag in state.library.tagsFor(asset.id) &&
                     !asset.isTrashed &&
+                    // Same rule as BrowserRoute.Collection just above: a tag view is a curated
+                    // list too, but a locked folder is still never optional.
+                    asset.isPrivacyVisible(state.lockedFolders, state.unlockedFolders) &&
                     asset.matchesGallerySearch(query, state.library.tagsFor(asset.id), state.recognition, state.favoriteIds)
             },
             state.preferences.sort,

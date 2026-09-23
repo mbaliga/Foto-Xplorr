@@ -493,8 +493,10 @@ fun LegacyScreenHost(
                 assets = state.assets,
                 collections = state.library.collections,
                 archivedIds = state.library.archivedIds,
+                sensitiveIds = state.sensitiveIds,
                 lockedFolders = state.lockedFolders,
                 unlockedFolders = state.unlockedFolders,
+                hideSensitive = state.preferences.hideSensitive,
                 showVideos = state.preferences.showVideos,
                 query = query,
                 onOpenAlbum = { album ->

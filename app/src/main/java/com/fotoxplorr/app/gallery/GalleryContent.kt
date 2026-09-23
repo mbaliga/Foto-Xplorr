@@ -692,16 +692,24 @@ fun AlbumsScreen(
     assets: List<MediaAsset>,
     collections: List<MediaCollection>,
     archivedIds: Set<MediaId>,
+    sensitiveIds: Set<MediaId>,
     lockedFolders: Set<String>,
     unlockedFolders: Set<String>,
+    hideSensitive: Boolean,
     showVideos: Boolean,
     query: String,
     onOpenAlbum: (AlbumSummary) -> Unit,
     onOpenCollection: (MediaCollection) -> Unit,
 ) {
+    // Device folders keep their own locked-folder handling below (a locked album still shows its
+    // name and count, just no cover), so archived/locked/sensitive items stay in `available` for
+    // that grouping to see -- but the Collections cover lookup below must use the fully filtered
+    // browsableAssets list, or a collection can leak a cover thumbnail that shouldn't be shown.
     val available = assets.filter { asset ->
         !asset.isTrashed && asset.id !in archivedIds && (showVideos || !asset.isVideo)
     }
+    val browsable = browsableAssets(assets, archivedIds, sensitiveIds, lockedFolders, unlockedFolders, hideSensitive)
+        .filter { showVideos || !it.isVideo }
     val albums = buildAlbumSummaries(available, query)
     val normalized = query.trim().lowercase()
     val matchingCollections = collections.filter {
@@ -720,7 +728,7 @@ fun AlbumsScreen(
                 SectionHeading("Collections", "Virtual albums that never move your files")
             }
             items(matchingCollections, key = { "collection:${it.id}" }) { collection ->
-                val cover = collection.mediaIds.firstNotNullOfOrNull { id -> assets.firstOrNull { it.id == id } }
+                val cover = collection.mediaIds.firstNotNullOfOrNull { id -> browsable.firstOrNull { it.id == id } }
                 AlbumCard(
                     name = collection.name,
                     count = collection.mediaIds.size,
