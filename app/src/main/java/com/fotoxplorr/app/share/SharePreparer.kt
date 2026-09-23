@@ -10,11 +10,26 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.decodeUpright
 import com.fotoxplorr.app.pro.LocalProEntitlement
 import com.fotoxplorr.app.pro.ProEntitlement
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.util.UUID
+
+/**
+ * The outcome of preparing one shared item.
+ *
+ * [SharePreparer.prepare] returns one of these per input item rather than throwing on the first
+ * one that can't be prepared (P0-04) -- an undecodable photo in a 20-item share used to fail the
+ * whole share with no indication which item was the problem.
+ */
+sealed interface PreparedItem {
+    /** @param note a short, user-facing caveat -- e.g. that this item was converted to a
+     * different format to remove its location -- or null when nothing is worth mentioning. */
+    data class Ready(val uri: Uri, val mimeType: String, val note: String? = null) : PreparedItem
+    data class Failed(val asset: MediaAsset, val reason: String) : PreparedItem
+}
 
 /**
  * Turns the photos a user chose to share into files that are safe and branded to send.
@@ -43,12 +58,14 @@ class SharePreparer(
     private val authority = "${appContext.packageName}.files"
 
     /**
-     * @return content URIs for the prepared copies, ready to hand to a share Intent.
+     * @return one [PreparedItem] per input item, in order -- never throws for an individual
+     *   item's own failure; only [Result.failure] for something that stops the whole batch before
+     *   any item is even attempted (no items, or the share cache directory itself is unusable).
      */
     suspend fun prepare(
         items: List<MediaAsset>,
         options: ShareOptions,
-    ): Result<List<Uri>> = withContext(Dispatchers.IO) {
+    ): Result<List<PreparedItem>> = withContext(Dispatchers.IO) {
         runCatching {
             require(items.isNotEmpty()) { "No photos selected" }
 
@@ -70,25 +87,187 @@ class SharePreparer(
         }
     }
 
-    private suspend fun prepareOne(asset: MediaAsset, options: ShareOptions, directory: File): Uri {
+    /**
+     * One item's own failure (an undecodable file, a format [MetadataStripper] can't parse at
+     * all, a strip this class can't then verify is actually clean) becomes a [PreparedItem.Failed]
+     * here rather than aborting [prepare] for every other item in the batch. [CancellationException]
+     * is the one thing let through -- a cancelled share should stop, not "fail" item by item.
+     */
+    private suspend fun prepareOne(asset: MediaAsset, options: ShareOptions, directory: File): PreparedItem {
         // Video cannot be framed or stripped by this path, so it is shared as-is rather than
         // failed. Refusing to share a video because a frame was selected for the photos beside it
         // would be the app being clever at the user's expense.
-        val renderable = !asset.isVideo && asset.mimeType.startsWith("image/")
-        val target = File(directory, "${UUID.randomUUID()}.${outputExtension(asset, options, renderable)}")
-
-        try {
-            if (renderable && options.requiresRender) {
-                renderFramed(asset, options, target)
-            } else {
-                copyRaw(asset, target)
-                if (renderable && options.stripMetadata) stripCommonExif(target)
+        val strippable = !asset.isVideo && asset.mimeType.startsWith("image/")
+        // Animated images (GIF, animated WebP/AVIF -- MIME-based until P0-14's animation index
+        // exists to tell an actually-animated WebP from a still one) are never rendered with a
+        // frame or watermark: baking one static frame over the top would silently destroy the
+        // animation on every viewer that respects it. They are still stripped like any other
+        // image, just never routed through prepareRendered.
+        val renderable = strippable && !asset.isAnimated
+        return try {
+            when {
+                renderable && options.requiresRender -> prepareRendered(asset, options, directory)
+                strippable && options.stripMetadata -> prepareStripped(asset, directory)
+                else -> prepareRawCopy(asset, directory)
             }
-            return FileProvider.getUriForFile(appContext, authority, target)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            PreparedItem.Failed(asset, error.message ?: "Could not prepare ${asset.displayName}")
+        }
+    }
+
+    private suspend fun prepareRendered(asset: MediaAsset, options: ShareOptions, directory: File): PreparedItem {
+        val extension = if (options.frame == ShareFrame.STAMP) "png" else "jpg"
+        val target = File(directory, "${UUID.randomUUID()}.$extension")
+        try {
+            renderFramed(asset, options, target)
         } catch (error: Throwable) {
             target.delete()
             throw error
         }
+        val mimeType = if (options.frame == ShareFrame.STAMP) "image/png" else "image/jpeg"
+        return PreparedItem.Ready(FileProvider.getUriForFile(appContext, authority, target), mimeType)
+    }
+
+    /** Video, a non-image, or the user deliberately chose to keep metadata -- copied through with
+     * nothing touched, same as before P0-04. */
+    private fun prepareRawCopy(asset: MediaAsset, directory: File): PreparedItem {
+        val extension = asset.displayName.substringAfterLast('.', "jpg")
+            .lowercase()
+            .takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }
+            ?: "jpg"
+        val target = File(directory, "${UUID.randomUUID()}.$extension")
+        try {
+            copyRaw(asset, target)
+        } catch (error: Throwable) {
+            target.delete()
+            throw error
+        }
+        return PreparedItem.Ready(FileProvider.getUriForFile(appContext, authority, target), asset.mimeType)
+    }
+
+    /**
+     * The default share path: stream the source through [MetadataStripper] rather than decoding
+     * and re-encoding it, so a plain share stays cheap and pixel-lossless. A format
+     * [MetadataStripper] does not have a parser for falls back to [reencodeToRemoveLocation]
+     * rather than going out unstripped -- the P0-04 defect this whole file exists to close.
+     */
+    private suspend fun prepareStripped(asset: MediaAsset, directory: File): PreparedItem {
+        var activeFile = File(directory, "${UUID.randomUUID()}.tmp")
+        try {
+            val result = resolver.openInputStream(asset.contentUri)?.use { input ->
+                activeFile.outputStream().buffered().use { output -> MetadataStripper.strip(input, output) }
+            } ?: throw IOException("Could not read ${asset.displayName}")
+
+            when (result) {
+                is MetadataStripper.StripResult.Unsupported -> {
+                    activeFile.delete()
+                    return reencodeToRemoveLocation(asset, directory)
+                }
+                is MetadataStripper.StripResult.Stripped -> {
+                    val target = File(directory, "${UUID.randomUUID()}.${result.format.extension}")
+                    check(activeFile.renameTo(target)) { "Could not finish preparing ${asset.displayName}" }
+                    activeFile = target
+                    if (result.format == MetadataStripper.Format.JPEG) restoreOrientationOnly(asset, target)
+                    val failure = verifyNoLocationMetadata(target, result.format)
+                    if (failure != null) {
+                        target.delete()
+                        return PreparedItem.Failed(asset, failure)
+                    }
+                    return PreparedItem.Ready(
+                        FileProvider.getUriForFile(appContext, authority, target),
+                        result.format.mimeType,
+                    )
+                }
+            }
+        } catch (error: CancellationException) {
+            activeFile.delete()
+            throw error
+        } catch (error: Throwable) {
+            activeFile.delete()
+            throw error
+        }
+    }
+
+    /**
+     * [MetadataStripper] found a format it has no verified-safe parser for (HEIC/HEIF, TIFF, a RAW
+     * variant, ...). Rather than sending it out unstripped -- the exact defect P0-04 closes -- this
+     * decodes it (through [decodeUpright], so it comes out upright regardless of source EXIF),
+     * re-encodes it as a format this class knows carries no metadata of its own, and verifies that
+     * output exactly like a streamed strip. PNG only when the source has real transparency to
+     * preserve; JPEG otherwise, since it is dramatically smaller for a photo.
+     */
+    private suspend fun reencodeToRemoveLocation(asset: MediaAsset, directory: File): PreparedItem {
+        val decoded = decodeUpright(appContext, asset.contentUri, UNSUPPORTED_FORMAT_REENCODE_LIMITS)?.bitmap
+            ?: return PreparedItem.Failed(asset, "Could not read ${asset.displayName}")
+        val hasAlpha = decoded.hasAlpha()
+        val compressFormat = if (hasAlpha) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
+        val extension = if (hasAlpha) "png" else "jpg"
+        val mimeType = if (hasAlpha) "image/png" else "image/jpeg"
+        val target = File(directory, "${UUID.randomUUID()}.$extension")
+        try {
+            try {
+                target.outputStream().buffered().use { out ->
+                    check(decoded.compress(compressFormat, REENCODE_JPEG_QUALITY, out)) {
+                        "Could not encode ${asset.displayName}"
+                    }
+                }
+            } catch (error: Throwable) {
+                target.delete()
+                throw error
+            }
+        } finally {
+            decoded.recycle()
+        }
+        val verifyFormat = if (hasAlpha) MetadataStripper.Format.PNG else MetadataStripper.Format.JPEG
+        val failure = verifyNoLocationMetadata(target, verifyFormat)
+        if (failure != null) {
+            target.delete()
+            return PreparedItem.Failed(asset, failure)
+        }
+        val note = "Converted to ${if (hasAlpha) "PNG" else "JPEG"} to remove its location"
+        return PreparedItem.Ready(FileProvider.getUriForFile(appContext, authority, target), mimeType, note)
+    }
+
+    /**
+     * [MetadataStripper] drops a JPEG's APP1 segment whole, which is where `Orientation` lives --
+     * and unlike [renderFramed], this path streams the source's own pixels through unchanged, so a
+     * sideways source needs its `Orientation` written back or the shared copy displays rotated in
+     * an EXIF-respecting viewer. [ExifInterface] can add a fresh APP1 to a JPEG that has none.
+     * Best-effort, matching [copyBackKeptExif] below: a failure here is cosmetic, not a privacy
+     * problem, so it must not fail an otherwise-clean, already-verified share.
+     */
+    private fun restoreOrientationOnly(asset: MediaAsset, target: File) {
+        val orientation = resolver.openInputStream(asset.contentUri)?.use { input ->
+            ExifInterface(input).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+        } ?: ExifInterface.ORIENTATION_NORMAL
+        if (orientation == ExifInterface.ORIENTATION_NORMAL || orientation == ExifInterface.ORIENTATION_UNDEFINED) {
+            return
+        }
+        runCatching {
+            val exif = ExifInterface(target.absolutePath)
+            exif.setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString())
+            exif.saveAttributes()
+        }
+    }
+
+    /**
+     * The check that makes [prepareStripped] and [reencodeToRemoveLocation] trustworthy rather
+     * than merely hopeful: re-reads the exact bytes this class is about to hand to another app and
+     * confirms they are actually clean, instead of assuming the pass above did its job. Never
+     * skipped, never soft-failed -- see the class doc's "never hand out unverified" contract.
+     *
+     * @return a user-facing failure reason, or null when [target] is clean.
+     */
+    private fun verifyNoLocationMetadata(target: File, format: MetadataStripper.Format): String? {
+        if (format !in VERIFIABLE_FORMATS) return null
+        val clean = runCatching {
+            val hasGpsTag = ExifInterface(target.absolutePath).latLong != null
+            val bytes = target.readBytes()
+            !hasGpsTag && LOCATION_MARKERS.none(bytes::containsAscii)
+        }.getOrDefault(false)
+        return if (clean) null else "Could not confirm this copy was free of its location"
     }
 
     /**
@@ -136,24 +315,6 @@ class SharePreparer(
         } ?: throw IOException("Could not read ${asset.displayName}")
     }
 
-    private fun outputExtension(asset: MediaAsset, options: ShareOptions, renderable: Boolean): String {
-        if (renderable && options.requiresRender) {
-            return if (options.frame == ShareFrame.STAMP) "png" else "jpg"
-        }
-        return asset.displayName.substringAfterLast('.', "jpg")
-            .lowercase()
-            .takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }
-            ?: "jpg"
-    }
-
-    private fun stripCommonExif(file: File) {
-        runCatching {
-            val exif = ExifInterface(file.absolutePath)
-            STRIPPED_EXIF_TAGS.forEach { tag -> exif.setAttribute(tag, null) }
-            exif.saveAttributes()
-        }
-    }
-
     /**
      * Date only, plus an explicit upright orientation -- enough that a kept-metadata share is not
      * visibly broken.
@@ -196,28 +357,49 @@ class SharePreparer(
         const val MAX_SHARE_EDGE = 3200
         val SHARE_FRAME_LIMITS = DecodeLimits(maxLongEdge = MAX_SHARE_EDGE, maxPixels = MAX_SHARE_EDGE.toLong() * MAX_SHARE_EDGE)
 
-        val STRIPPED_EXIF_TAGS = listOf(
-            ExifInterface.TAG_GPS_LATITUDE,
-            ExifInterface.TAG_GPS_LATITUDE_REF,
-            ExifInterface.TAG_GPS_LONGITUDE,
-            ExifInterface.TAG_GPS_LONGITUDE_REF,
-            ExifInterface.TAG_GPS_ALTITUDE,
-            ExifInterface.TAG_GPS_ALTITUDE_REF,
-            ExifInterface.TAG_GPS_TIMESTAMP,
-            ExifInterface.TAG_GPS_DATESTAMP,
-            ExifInterface.TAG_MAKE,
-            ExifInterface.TAG_MODEL,
-            ExifInterface.TAG_SOFTWARE,
-            ExifInterface.TAG_DATETIME,
-            ExifInterface.TAG_DATETIME_ORIGINAL,
-            ExifInterface.TAG_DATETIME_DIGITIZED,
-            ExifInterface.TAG_USER_COMMENT,
-            ExifInterface.TAG_IMAGE_UNIQUE_ID,
-        )
+        /** Limits for [reencodeToRemoveLocation]'s decode of a format [MetadataStripper] can't
+         * parse -- generous, since this is the one path where re-encoding is the only option at
+         * all, not a size-driven downscale like [SHARE_FRAME_LIMITS]. */
+        const val MAX_REENCODE_EDGE = 8192
+        const val MAX_REENCODE_PIXELS = 48_000_000L
+        val UNSUPPORTED_FORMAT_REENCODE_LIMITS =
+            DecodeLimits(maxLongEdge = MAX_REENCODE_EDGE, maxPixels = MAX_REENCODE_PIXELS)
+        const val REENCODE_JPEG_QUALITY = 95
 
         /** Orientation is deliberately not in this list -- see [copyBackKeptExif]. */
         val KEPT_EXIF_TAGS = listOf(
             ExifInterface.TAG_DATETIME_ORIGINAL,
         )
+
+        /** Formats [ExifInterface] can itself read GPS from, and so the only ones
+         * [verifyNoLocationMetadata] can check that way. */
+        val VERIFIABLE_FORMATS = setOf(
+            MetadataStripper.Format.JPEG,
+            MetadataStripper.Format.PNG,
+            MetadataStripper.Format.WEBP,
+        )
+
+        /** Scanned for as a belt-and-suspenders check alongside [ExifInterface]'s own GPS read --
+         * these are the ASCII substrings XMP location fields are written as, which a structured
+         * EXIF-tag read alone would not catch if a strip left an XMP packet behind. */
+        val LOCATION_MARKERS = listOf(
+            "GPSLatitude",
+            "GPSLongitude",
+            "exif:GPS",
+            "LocationShown",
+            "LocationCreated",
+        )
     }
+}
+
+private fun ByteArray.containsAscii(needle: String): Boolean {
+    val pattern = needle.toByteArray(Charsets.US_ASCII)
+    if (pattern.isEmpty() || pattern.size > size) return false
+    outer@ for (i in 0..size - pattern.size) {
+        for (j in pattern.indices) {
+            if (this[i + j] != pattern[j]) continue@outer
+        }
+        return true
+    }
+    return false
 }

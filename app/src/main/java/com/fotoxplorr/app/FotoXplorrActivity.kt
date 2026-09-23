@@ -47,6 +47,7 @@ import com.fotoxplorr.app.audio.PrefsAudioScanWatermark
 import com.fotoxplorr.app.editor.EditedCopyWriter
 import com.fotoxplorr.app.editor.EditorScreen
 import com.fotoxplorr.app.favorites.FavoriteStore
+import com.fotoxplorr.app.share.PreparedItem
 import com.fotoxplorr.app.share.SharePreparer
 import com.fotoxplorr.app.share.ZipExporter
 import com.fotoxplorr.app.share.ShareOptionsSheet
@@ -681,20 +682,36 @@ private fun FotoXplorrActivity.FotoXplorrApp(
      * EVERY share goes through SharePreparer now, not just the one behind an opt-in menu item.
      * Metadata stripping is the default (owner, 2026-08-15), so the ordinary path is the private
      * one and the advanced sheet is where somebody deliberately chooses otherwise.
+     *
+     * P0-04: [SharePreparer.prepare] reports a [PreparedItem] per item rather than failing the
+     * whole share the first time one photo can't be safely prepared -- everything that succeeded
+     * still goes out, and [userMessage] names what did not, rather than the sharer silently
+     * getting nothing with no explanation.
      */
     fun shareWith(items: List<MediaAsset>, options: ShareOptions) {
         if (items.isEmpty()) return
         scope.launch {
             userMessage = "Preparing ${if (items.size == 1) "your photo" else "your photos"}…"
             sharePreparer.prepare(items, options).fold(
-                onSuccess = { uris ->
-                    userMessage = null
+                onSuccess = { prepared ->
+                    val ready = prepared.filterIsInstance<PreparedItem.Ready>()
+                    val failed = prepared.filterIsInstance<PreparedItem.Failed>()
+                    if (ready.isEmpty()) {
+                        userMessage = if (failed.size == 1) {
+                            failed.first().reason
+                        } else {
+                            "None of the ${failed.size} photos could be prepared to share."
+                        }
+                        return@fold
+                    }
+                    userMessage = unpreparedShareItemsMessage(failed)
                     shareUris(
-                        uris = uris,
-                        // A stamp frame is a PNG (it has real transparency at the perforations),
-                        // so a blanket image/jpeg would misdescribe it to the receiving app.
-                        mimeType = if (options.requiresRender) "image/*" else commonShareType(items),
-                        title = "Share ${items.size} item${if (items.size == 1) "" else "s"}",
+                        uris = ready.map { it.uri },
+                        // Derived from what was actually produced, not the original assets or a
+                        // render flag: a stamp frame comes out as PNG, an unsupported source may
+                        // have been re-encoded to JPEG, and a raw copy keeps its own MIME type.
+                        mimeType = commonShareType(ready.map { it.mimeType }),
+                        title = "Share ${ready.size} item${if (ready.size == 1) "" else "s"}",
                     )
                 },
                 onFailure = { error ->
@@ -703,6 +720,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             )
         }
     }
+
 
     /** The plain Share action: uses the saved defaults, no sheet, one tap. */
     fun share(items: List<MediaAsset>) {
@@ -1186,10 +1204,22 @@ private fun mediaReadPermissions(): Array<String> = when {
     else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
 }
 
-private fun commonShareType(items: List<MediaAsset>): String = when {
-    items.all { it.mimeType.startsWith("image/") } -> "image/*"
-    items.all { it.mimeType.startsWith("video/") } -> "video/*"
+internal fun commonShareType(mimeTypes: List<String>): String = when {
+    mimeTypes.all { it.startsWith("image/") } -> "image/*"
+    mimeTypes.all { it.startsWith("video/") } -> "video/*"
     else -> "*/*"
+}
+
+/** @return null when nothing failed, else a message naming the first failed item and, when there
+ * is more than one, how many others -- for [FotoXplorrActivity.FotoXplorrApp.shareWith]. */
+internal fun unpreparedShareItemsMessage(failed: List<PreparedItem.Failed>): String? {
+    if (failed.isEmpty()) return null
+    val first = failed.first().asset.displayName
+    return if (failed.size == 1) {
+        "\"$first\" couldn't be prepared without its location and wasn't shared."
+    } else {
+        "\"$first\" and ${failed.size - 1} more couldn't be prepared without their location and weren't shared."
+    }
 }
 
 private fun List<Uri>.toClipData(
