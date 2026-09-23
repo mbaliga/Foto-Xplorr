@@ -95,6 +95,84 @@ class GalleryProjectionV2Test {
         assertEquals(listOf(normal), visible)
     }
 
+    @Test
+    fun `browsableAssets excludes locked archived and hidden sensitive media`() {
+        val normal = asset(1, 100)
+        val archived = asset(2, 200)
+        val locked = asset(3, 300, path = "Pictures/Private/")
+        val sensitive = asset(4, 400)
+        val lockedKey = folderIdentity(locked).key.value
+        val all = listOf(normal, archived, locked, sensitive)
+
+        val visible = browsableAssets(
+            assets = all,
+            archivedIds = setOf(archived.id),
+            sensitiveIds = setOf(sensitive.id),
+            lockedFolders = setOf(lockedKey),
+            unlockedFolders = emptySet(),
+            hideSensitive = true,
+        )
+
+        assertEquals(listOf(normal), visible)
+    }
+
+    @Test
+    fun `browsableAssets returns each item once it is unlocked un-archived or un-hidden`() {
+        val archived = asset(1, 100)
+        val locked = asset(2, 200, path = "Pictures/Private/")
+        val sensitive = asset(3, 300)
+        val lockedKey = folderIdentity(locked).key.value
+        val all = listOf(archived, locked, sensitive)
+
+        val unarchived = browsableAssets(
+            assets = all,
+            archivedIds = emptySet(),
+            sensitiveIds = setOf(sensitive.id),
+            lockedFolders = setOf(lockedKey),
+            unlockedFolders = emptySet(),
+            hideSensitive = true,
+        )
+        assertTrue(archived in unarchived)
+
+        val unlocked = browsableAssets(
+            assets = all,
+            archivedIds = setOf(archived.id),
+            sensitiveIds = setOf(sensitive.id),
+            lockedFolders = setOf(lockedKey),
+            unlockedFolders = setOf(lockedKey),
+            hideSensitive = true,
+        )
+        assertTrue(locked in unlocked)
+
+        val unhidden = browsableAssets(
+            assets = all,
+            archivedIds = setOf(archived.id),
+            sensitiveIds = setOf(sensitive.id),
+            lockedFolders = setOf(lockedKey),
+            unlockedFolders = emptySet(),
+            hideSensitive = false,
+        )
+        assertTrue(sensitive in unhidden)
+    }
+
+    @Test
+    fun `browsableAssets keeps input order`() {
+        val a = asset(1, 100)
+        val b = asset(2, 200)
+        val c = asset(3, 300)
+
+        val visible = browsableAssets(
+            assets = listOf(c, a, b),
+            archivedIds = emptySet(),
+            sensitiveIds = emptySet(),
+            lockedFolders = emptySet(),
+            unlockedFolders = emptySet(),
+            hideSensitive = false,
+        )
+
+        assertEquals(listOf(c, a, b), visible)
+    }
+
     private fun smart(
         album: SmartAlbum,
         assets: List<MediaAsset>,

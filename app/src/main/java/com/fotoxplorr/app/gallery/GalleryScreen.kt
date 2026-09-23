@@ -314,7 +314,28 @@ fun GalleryScreen(
     val context = LocalContext.current
     val geoState by geoRepository.observe().collectAsStateWithLifecycle()
     val spatialScope = rememberCoroutineScope()
-    val spatialAssets = remember(state.assets) { state.assets.filterNot { it.isTrashed } }
+    // Index input: every non-trashed asset, so a still-locked or hidden photo's location is
+    // already indexed and unlocking the folder never needs a re-index of its own (P0-01).
+    val spatialIndexInput = remember(state.assets) { state.assets.filterNot { it.isTrashed } }
+    // Display list: what Places, the map, the compass and the 3D scenes actually draw. Must go
+    // through the one visibility filter, or a locked, archived or hidden photo leaks onto them.
+    val spatialDisplayAssets = remember(
+        state.assets,
+        state.library.archivedIds,
+        state.sensitiveIds,
+        state.lockedFolders,
+        state.unlockedFolders,
+        state.preferences.hideSensitive,
+    ) {
+        browsableAssets(
+            assets = state.assets,
+            archivedIds = state.library.archivedIds,
+            sensitiveIds = state.sensitiveIds,
+            lockedFolders = state.lockedFolders,
+            unlockedFolders = state.unlockedFolders,
+            hideSensitive = state.preferences.hideSensitive,
+        )
+    }
 
     CompositionLocalProvider(
         com.fotoxplorr.app.audio.LocalAudioLibrary provides com.fotoxplorr.app.audio.AudioLibraryExperience(
@@ -322,10 +343,10 @@ fun GalleryScreen(
             onPlay = onPlayAudio,
         ),
         LocalSpatialExperience provides SpatialExperience(
-            assets = spatialAssets,
+            assets = spatialDisplayAssets,
             geoState = geoState,
             onIndexLocations = {
-                spatialScope.launch { geoRepository.indexMissing(spatialAssets) }
+                spatialScope.launch { geoRepository.indexMissing(spatialIndexInput) }
             },
             onOpenAsset = actions.onOpenAsset,
         ),
@@ -565,6 +586,10 @@ private fun GalleryBrowser(
             state.assets.filter { asset ->
                 asset.id in state.library.collections.firstOrNull { it.id == current.id }?.mediaIds.orEmpty() &&
                     !asset.isTrashed &&
+                    // A collection is a curated list, not the timeline, so archived/sensitive
+                    // items the user put there on purpose still show -- but a locked folder is
+                    // never optional, so that part of the one visibility filter still applies.
+                    asset.isPrivacyVisible(state.lockedFolders, state.unlockedFolders) &&
                     asset.matchesGallerySearch(query, state.library.tagsFor(asset.id), state.recognition, state.favoriteIds)
             },
             state.preferences.sort,
@@ -1369,7 +1394,7 @@ private fun GalleryBrowser(
  * [PlacesScreen] lives in `com.fotoxplorr.app.spatial`, a package this task may CALL into but not
  * edit, and it needs exactly what [SpatialExperience] already carries -- assets, the geo index,
  * how to index missing coordinates, how to open a photo. Rather than re-deriving any of that here
- * (which would mean duplicating `GalleryScreen`'s own `spatialAssets`/`geoRepository` plumbing,
+ * (which would mean duplicating `GalleryScreen`'s own `spatialDisplayAssets`/`geoRepository` plumbing,
  * or worse, hacking a second copy of it), this reads the SAME `LocalSpatialExperience` composition
  * local that [GalleryScreen] already provides for [DiscoverScreen]'s Places card -- the data this
  * needs is already reachable through composition, with nothing new to thread past a file boundary.

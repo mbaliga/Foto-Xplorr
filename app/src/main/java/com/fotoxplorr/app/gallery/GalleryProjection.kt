@@ -81,6 +81,30 @@ internal fun visibleAssets(
     return sortAssets(scoped.filterByQuery(query), sort)
 }
 
+/**
+ * The single definition of "may be shown right now": not trashed, not archived, not hidden by a
+ * locked folder, and — when [hideSensitive] is set — not flagged sensitive either. Every screen
+ * that draws photos to the user (as opposed to an indexer, which must see everything so that
+ * unlocking a folder or turning off "hide sensitive" doesn't require a re-index) filters through
+ * this, so a locked, archived or hidden photo can never leak onto the map, the calendar or a
+ * preview by drifting out of sync with [everydayAssets]'s own copy of these same rules.
+ *
+ * Keeps [assets]' input order; callers sort afterward if they need to.
+ */
+fun browsableAssets(
+    assets: List<MediaAsset>,
+    archivedIds: Set<MediaId>,
+    sensitiveIds: Set<MediaId>,
+    lockedFolders: Set<String>,
+    unlockedFolders: Set<String>,
+    hideSensitive: Boolean,
+): List<MediaAsset> = assets.filter { asset ->
+    !asset.isTrashed &&
+        asset.id !in archivedIds &&
+        asset.isPrivacyVisible(lockedFolders, unlockedFolders) &&
+        (!hideSensitive || asset.id !in sensitiveIds)
+}
+
 fun everydayAssets(
     assets: List<MediaAsset>,
     archivedIds: Set<MediaId>,
@@ -91,12 +115,9 @@ fun everydayAssets(
     query: String,
     tagsByMediaId: Map<MediaId, Set<String>> = emptyMap(),
 ): List<MediaAsset> = sortAssets(
-    assets.asSequence()
-        .filterNot { it.isTrashed }
-        .filterNot { it.id in archivedIds }
+    browsableAssets(assets, archivedIds, sensitiveIds, lockedFolders, unlockedFolders, preferences.hideSensitive)
+        .asSequence()
         .filter { preferences.showVideos || !it.isVideo }
-        .filter { !preferences.hideSensitive || it.id !in sensitiveIds }
-        .filter { it.isPrivacyVisible(lockedFolders, unlockedFolders) }
         .filter { it.matchesQuery(query, tagsByMediaId[it.id].orEmpty()) }
         .toList(),
     preferences.sort,
