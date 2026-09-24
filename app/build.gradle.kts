@@ -52,6 +52,22 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("sideload")
         }
+        // WP1.8 (FX-005): OPT-IN via `-Pfotoz.benchmarks`, matching `-Pfotoz.native`'s own
+        // pattern -- see benchmarks/README.md for the full story. Kept out of the default variant
+        // matrix so the everyday offline/connect x debug/release grid stays exactly as small as
+        // it's always been; only present at all when :benchmarks itself is (settings.gradle.kts
+        // gates that module on the same property), so a plain build never even sees this build
+        // type declared. Macrobenchmark refuses a debuggable target -- its numbers lie -- so this
+        // initializes from release (minified, shrunk) but signs with the same debug-backed
+        // "sideload" config release itself uses, so it installs on any device with no release
+        // keys present.
+        if (providers.gradleProperty("fotoz.benchmarks").isPresent) {
+            create("benchmark") {
+                initWith(getByName("release"))
+                signingConfig = signingConfigs.getByName("sideload")
+                matchingFallbacks += listOf("release")
+            }
+        }
     }
 
     // One APK per ABI instead of one fat APK carrying every native library.
