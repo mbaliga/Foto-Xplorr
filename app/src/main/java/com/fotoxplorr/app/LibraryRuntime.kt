@@ -10,6 +10,7 @@ import com.fotoxplorr.app.audio.AndroidAudioMediaStoreScanner
 import com.fotoxplorr.app.audio.AudioIndexer
 import com.fotoxplorr.app.audio.InMemoryAudioRepository
 import com.fotoxplorr.app.audio.PrefsAudioScanWatermark
+import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.formats.AnimationIndex
 import com.fotoxplorr.app.media.AndroidMediaStoreScanner
 import com.fotoxplorr.app.media.MediaIndexer
@@ -18,6 +19,8 @@ import com.fotoxplorr.app.media.PrefsScanWatermark
 import com.fotoxplorr.app.media.ScanEvent
 import com.fotoxplorr.app.media.ScanPlan
 import com.fotoxplorr.app.media.SqliteMediaRepository
+import com.fotoxplorr.app.organize.LegacyCatalogMigration
+import com.fotoxplorr.app.organize.LibraryStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -113,6 +116,10 @@ class LibraryRuntime private constructor(context: Context) {
     private var changeObserverRegistered = false
 
     init {
+        // P0-17: one-shot, guarded by its own flag -- see LegacyCatalogMigration's own KDoc for
+        // why this runs here rather than lazily from wherever a caller first touches favourites,
+        // tags or collections.
+        LegacyCatalogMigration(appContext, LibraryStore.get(appContext), FavoriteStore(appContext)).run()
         scope.launch {
             for (userRequested in scanRequests) {
                 indexer.refresh(userRequested = userRequested, partialAccess = hasPartialMediaAccess(appContext))
