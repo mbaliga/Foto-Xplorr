@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.RecoverableSecurityException
 import android.content.ClipData
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -74,6 +75,7 @@ import com.fotoxplorr.app.recognition.RecognitionIndexer
 import com.fotoxplorr.app.recognition.RecognitionStore
 import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.app.viewer.ExternalViewerActivity
 import com.fotoxplorr.app.viewer.ViewerScreen
 import dev.aarso.crashrecovery.CrashRecovery
 import dev.aarso.crashrecovery.CrashRecoveryStyle
@@ -100,6 +102,18 @@ class FotoXplorrActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    companion object {
+        /**
+         * A `MediaId.value` to open straight into the viewer for, with every normal catalogue
+         * action available (P0-18). Set by `viewer.ExternalViewerActivity` when an incoming
+         * `ACTION_VIEW` URI turns out to already be a catalogued photo -- redirecting here rather
+         * than reimplementing favourite/sensitive/trash/tags/caption/location a second time is
+         * what "open that asset with all its normal actions instead" (the brief's own words)
+         * actually means: the real actions, not a lookalike set of them.
+         */
+        const val EXTRA_OPEN_MEDIA_ID = "com.fotoxplorr.app.EXTRA_OPEN_MEDIA_ID"
     }
 }
 
@@ -205,6 +219,27 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         viewerAssetIds = list.map { it.id.value }.toLongArray()
     }
     var selectedAssetId by rememberSaveable(stateSaver = MediaIdSaver) { mutableStateOf<MediaId?>(null) }
+
+    // P0-18: ExternalViewerActivity redirects here, rather than reimplementing the catalogue
+    // actions itself, when an incoming "Open with" URI turns out to already be a photo this app
+    // has scanned. `assets` is empty on the very first composition and fills in asynchronously
+    // (P0-09), so this waits for a real match rather than firing once and giving up; the
+    // `rememberSaveable` guard is what stops a LATER background rescan (which also changes
+    // `assets`) from reopening the viewer out from under someone who has since closed it.
+    var consumedOpenMediaIdExtra by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(assets) {
+        if (consumedOpenMediaIdExtra) return@LaunchedEffect
+        val requestedId = intent.getLongExtra(FotoXplorrActivity.EXTRA_OPEN_MEDIA_ID, NO_MEDIA_ID)
+        if (requestedId == NO_MEDIA_ID) {
+            consumedOpenMediaIdExtra = true
+            return@LaunchedEffect
+        }
+        val match = assets.firstOrNull { it.id.value == requestedId } ?: return@LaunchedEffect
+        setViewerAssets(listOf(match))
+        selectedAssetId = match.id
+        consumedOpenMediaIdExtra = true
+    }
+
     var audioQueue by remember { mutableStateOf<List<AudioAsset>>(emptyList()) }
     var selectedAudioAssetId by remember { mutableStateOf<MediaId?>(null) }
     var convertingAudioId by remember { mutableStateOf<MediaId?>(null) }
@@ -791,14 +826,21 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             setDataAndType(asset.contentUri, asset.mimeType.ifBlank { "*/*" })
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        runCatching {
-            startActivity(
-                Intent.createChooser(
-                    intent,
-                    if (action == Intent.ACTION_EDIT) "Edit with" else "Open with",
-                ),
+        val chooser = Intent.createChooser(
+            intent,
+            if (action == Intent.ACTION_EDIT) "Edit with" else "Open with",
+        ).apply {
+            // P0-18: never offer this app back to itself here. Without this, ACTION_VIEW's
+            // chooser would list ExternalViewerActivity, which -- for a catalogued asset -- just
+            // redirects straight back to this exact activity/photo, a round trip through a
+            // picker that answers nothing: the person is already looking at this photo, in this
+            // app, right now.
+            putExtra(
+                Intent.EXTRA_EXCLUDE_COMPONENTS,
+                arrayOf(ComponentName(this@FotoXplorrApp, ExternalViewerActivity::class.java)),
             )
-        }.onFailure { userMessage = "No compatible app was found." }
+        }
+        runCatching { startActivity(chooser) }.onFailure { userMessage = "No compatible app was found." }
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {

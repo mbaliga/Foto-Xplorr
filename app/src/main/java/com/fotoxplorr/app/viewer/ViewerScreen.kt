@@ -183,6 +183,15 @@ fun ViewerScreen(
     relatedAssets: List<MediaAsset> = emptyList(),
     /** Jump straight to an asset in [relatedAssets], from the filmstrip. */
     onSelectAsset: (MediaAsset) -> Unit = {},
+    /**
+     * False for an ad-hoc asset opened from outside this app's own library (P0-18's
+     * `ExternalViewerActivity`, for a file this app never scanned and must never write anything
+     * about to any store -- catalogue, geo, recognition or favourites). Hides or disables
+     * favourite, sensitive, trash, tags, captions, location set/clear, edit, convert-to-MP4 and
+     * moments export; Share (through `SharePreparer`, which works on any readable URI) and "Open
+     * with" both stay, since neither depends on the asset being catalogued.
+     */
+    catalogueActions: Boolean = true,
 ) {
     // Chrome starts HIDDEN and stays hidden across a swipe.
     //
@@ -281,6 +290,7 @@ fun ViewerScreen(
                 isVideo = asset.isVideo,
                 isConvertingToMp4 = isConvertingToMp4,
                 onConvertToMp4 = onConvertToMp4?.let { convert -> { shell.closeAll(); convert() } },
+                catalogueActions = catalogueActions,
             )
         },
         bottom = {
@@ -291,19 +301,19 @@ fun ViewerScreen(
                 isSensitive = isSensitive,
                 manualLatitude = manualLatitude,
                 manualLongitude = manualLongitude,
-                onSetLocation = onSetLocation,
-                onClearLocation = onClearLocation,
+                onSetLocation = if (catalogueActions) onSetLocation else null,
+                onClearLocation = if (catalogueActions) onClearLocation else null,
                 // Derived from the blocks this screen already receives rather than taken as a
                 // second parameter: two sources for the same text is how they drift apart, and
                 // the overlay and the details card must never disagree about what the photo says.
                 recognizedText = liveTextBlocks.joinToString("\n") { it.text },
                 onSearchLibrary = onSearchLibrary,
-                tags = tags,
-                autoTags = autoTags,
-                onRemoveTag = onRemoveTag,
-                caption = caption,
+                tags = if (catalogueActions) tags else emptySet(),
+                autoTags = if (catalogueActions) autoTags else emptySet(),
+                onRemoveTag = if (catalogueActions) onRemoveTag else null,
+                caption = if (catalogueActions) caption else "",
                 captionIsMachineWritten = captionIsMachineWritten,
-                onSetCaption = onSetCaption,
+                onSetCaption = if (catalogueActions) onSetCaption else null,
                 onSetRating = onSetRating,
                 onSetCreator = onSetCreator,
                 onSetCopyright = onSetCopyright,
@@ -425,6 +435,7 @@ fun ViewerScreen(
                         modifier = Modifier.fillMaxSize(),
                         chromeVisible = chromeVisible,
                         autoplayVideos = autoplayVideos,
+                        catalogueActions = catalogueActions,
                     )
                 }
             } else {

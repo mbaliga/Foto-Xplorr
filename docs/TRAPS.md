@@ -190,3 +190,14 @@ beneath it field for field — including focal length and aperture twice within 
 `ScreenRenderTest`/`NewSurfaceRenderTest` draw the real composables to PNG on the JVM in seconds.
 Use them; a layout you have only read is a layout you have not checked.
 
+## 31. `ExifInterface.getDateTimeOriginal()` compiles, and Lint fails the build on it anyway
+
+It is a public Kotlin property accessor on `androidx.exifinterface.media.ExifInterface`, resolves
+fine, no deprecation warning — and is annotated `@RestrictTo(LIBRARY)` upstream. Android Lint's
+`RestrictedApi` check treats that as a hard error, not a warning: `"ExifInterface
+.getDateTimeOriginal can only be called from within the same library"`. A green compile and a red
+`lintOfflineDebug` for the same line is not a flaky gate; it means Lint saw an annotation the
+compiler doesn't enforce. Read the raw tag with the ordinary public `getAttribute
+(ExifInterface.TAG_DATETIME_ORIGINAL)` and parse the `"yyyy:MM:dd HH:mm:ss"` string yourself instead
+of calling the restricted accessor.
+

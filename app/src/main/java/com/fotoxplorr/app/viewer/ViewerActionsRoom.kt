@@ -73,6 +73,14 @@ fun ViewerActionsRoom(
      *  see [com.fotoxplorr.app.video.VideoTranscoder]. Null leaves the row hidden entirely, the
      *  same shape [com.fotoxplorr.app.viewer.PhotoDetailRoom]'s optional actions already use. */
     onConvertToMp4: (() -> Unit)? = null,
+    /**
+     * False for an ad-hoc asset opened from outside this app's own library (P0-18's
+     * `ExternalViewerActivity`): hides every row that would read or write this app's own
+     * catalogue -- Edit, Convert to MP4, Favourite, Mark sensitive and Move to trash. Slideshow,
+     * Share and Open with all stay, since none of the three depends on the photo being
+     * catalogued.
+     */
+    catalogueActions: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -91,9 +99,11 @@ fun ViewerActionsRoom(
             onClick = onToggleSlideshow,
         )
         ActionRow(Icons.Outlined.Share, "Share", onShare)
-        ActionRow(Icons.Outlined.Edit, "Edit", onEdit)
+        if (catalogueActions) {
+            ActionRow(Icons.Outlined.Edit, "Edit", onEdit)
+        }
         ActionRow(Icons.Outlined.OpenInNew, "Open with", onOpenWith)
-        if (isVideo && onConvertToMp4 != null) {
+        if (catalogueActions && isVideo && onConvertToMp4 != null) {
             ActionRow(
                 icon = Icons.Outlined.SwapHoriz,
                 label = if (isConvertingToMp4) "Converting…" else "Convert to MP4",
@@ -101,26 +111,28 @@ fun ViewerActionsRoom(
                 enabled = !isConvertingToMp4,
             )
         }
-        ActionRow(
-            icon = if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
-            label = if (isFavorite) "Favourited" else "Favourite",
-            onClick = onToggleFavorite,
-            tint = if (isFavorite) MaterialTheme.colorScheme.primary else Color.White,
-        )
-        ActionRow(
-            icon = if (isSensitive) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-            label = if (isSensitive) "Marked sensitive" else "Mark sensitive",
-            onClick = onToggleSensitive,
-            tint = if (isSensitive) MaterialTheme.colorScheme.primary else Color.White,
-        )
-        ActionRow(
-            icon = Icons.Outlined.Delete,
-            // Says where it goes, because it does not delete: it hands the file to Android's own
-            // system trash, which is the only route that can be undone.
-            label = if (canMoveToTrash) "Move to trash" else "Trash unavailable",
-            onClick = onMoveToTrash,
-            enabled = canMoveToTrash,
-        )
+        if (catalogueActions) {
+            ActionRow(
+                icon = if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                label = if (isFavorite) "Favourited" else "Favourite",
+                onClick = onToggleFavorite,
+                tint = if (isFavorite) MaterialTheme.colorScheme.primary else Color.White,
+            )
+            ActionRow(
+                icon = if (isSensitive) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                label = if (isSensitive) "Marked sensitive" else "Mark sensitive",
+                onClick = onToggleSensitive,
+                tint = if (isSensitive) MaterialTheme.colorScheme.primary else Color.White,
+            )
+            ActionRow(
+                icon = Icons.Outlined.Delete,
+                // Says where it goes, because it does not delete: it hands the file to Android's
+                // own system trash, which is the only route that can be undone.
+                label = if (canMoveToTrash) "Move to trash" else "Trash unavailable",
+                onClick = onMoveToTrash,
+                enabled = canMoveToTrash,
+            )
+        }
     }
 }
 

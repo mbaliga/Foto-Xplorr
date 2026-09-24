@@ -132,5 +132,25 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          "Open with" (P0-18): the only entry point besides the launcher. A photo or video tapped
+          in another app — the Files app, including on a USB drive — reaches this instead of
+          FotoXplorrActivity, since it needs no gallery, no permission grant beyond what the
+          incoming content:// URI already carries, and never touches this app's own catalogue.
+          Same configChanges as FotoXplorrActivity, per P0-09, and for the identical reason: every
+          value here is one Compose already reacts to on its own.
+        -->
+        <activity
+            android:name=".viewer.ExternalViewerActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" android:mimeType="image/*" />
+                <data android:scheme="content" android:mimeType="video/*" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

@@ -96,6 +96,14 @@ fun VideoPlayer(
      *  composable, so the setting had no effect on a video at all. Wiring it is a one-parameter,
      *  same-branch fix directly adjacent to the play/pause control this file already owns. */
     autoplayVideos: Boolean = false,
+    /**
+     * False for an ad-hoc asset opened from outside this app's own library (P0-18). Key moments
+     * are both read from AND written to `moments.VideoMomentStore` -- indexing one would be
+     * exactly the catalogue write this app must never make for an external asset -- so this skips
+     * indexing entirely rather than merely hiding the bar afterward, and [KeyMomentBar] never
+     * renders since [moments] stays empty.
+     */
+    catalogueActions: Boolean = true,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -157,8 +165,9 @@ fun VideoPlayer(
     }
 
     val momentStore = remember { VideoMomentStore(context) }
-    LaunchedEffect(Unit) { momentStore.reload() }
-    LaunchedEffect(asset.id) {
+    LaunchedEffect(catalogueActions) { if (catalogueActions) momentStore.reload() }
+    LaunchedEffect(asset.id, catalogueActions) {
+        if (!catalogueActions) return@LaunchedEffect
         // Fire-and-forget: see this file's own KDoc ("Key moments, end to end") for why this is
         // safe to call unconditionally and why no result is surfaced here. A failure here must
         // never interrupt playback, which is already under way by the time this coroutine starts.
@@ -166,7 +175,7 @@ fun VideoPlayer(
     }
     val momentsByAsset by momentStore.observe().collectAsState()
     val feedbackByMoment by momentStore.observeFeedback().collectAsState()
-    val moments = momentsByAsset[asset.id].orEmpty()
+    val moments = if (catalogueActions) momentsByAsset[asset.id].orEmpty() else emptyList()
     val activeMoment = remember(moments, positionMs) {
         activeMomentAt(moments, positionMs, MOMENT_PILL_TOLERANCE_MS)
     }
