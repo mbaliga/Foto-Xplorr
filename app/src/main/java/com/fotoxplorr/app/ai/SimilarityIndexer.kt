@@ -2,10 +2,9 @@ package com.fotoxplorr.app.ai
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.os.Build
-import android.util.Size
+import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.decodeUpright
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.vision.imageembedder.ImageEmbedder
 import kotlinx.coroutines.CancellationException
@@ -47,7 +46,9 @@ class SimilarityIndexer(
     ): Result<Int> = withContext(Dispatchers.Default) {
         runCatching {
             val imageAssets = assets.filterNot { it.isVideo || it.isTrashed }
-            repository.removeMissing(imageAssets.mapTo(linkedSetOf()) { it.id })
+            // P0-12: every catalogue id, trashed included -- see RecognitionIndexer's own note;
+            // `missing` below still excludes trashed items.
+            repository.removeMissing(assets.mapTo(linkedSetOf()) { it.id })
             val missing = repository.missingAssets(imageAssets, model.sha256)
             val existing = imageAssets.size - missing.size
             state.value = SimilarityIndexingState.Preparing(existing, missing.size)
@@ -68,7 +69,11 @@ class SimilarityIndexer(
                     val embedding = runCatching { embedAsset(embedder, asset, model.sha256) }.getOrNull()
                     if (embedding == null) {
                         failed += 1
+                        // P0-12: bounds retries the same way RecognitionIndexer.index() does --
+                        // see EmbeddingRepository.missingAssets's own exclusion.
+                        repository.recordFailure(asset.id, model.sha256, asset.sourceRevision())
                     } else {
+                        repository.clearFailure(asset.id, model.sha256)
                         batch += embedding
                         if (batch.size >= BATCH_SIZE) {
                             repository.upsertBatch(batch.toList())
@@ -94,7 +99,7 @@ class SimilarityIndexer(
         }
     }
 
-    private fun embedAsset(
+    private suspend fun embedAsset(
         embedder: ImageEmbedder,
         asset: MediaAsset,
         modelSha: String,
@@ -128,23 +133,22 @@ class SimilarityIndexer(
         }
     }
 
-    private fun loadThumbnail(asset: MediaAsset): Bitmap {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            return appContext.contentResolver.loadThumbnail(
-                asset.contentUri,
-                Size(EMBED_SIZE, EMBED_SIZE),
-                null,
-            ).ensureArgb8888()
-        }
-
-        val decoded = appContext.contentResolver.openInputStream(asset.contentUri)?.use { input ->
-            BitmapFactory.decodeStream(input)
-        } ?: error("Unable to decode ${asset.displayName}")
-        val scaled = if (decoded.width == EMBED_SIZE && decoded.height == EMBED_SIZE) {
-            decoded
+    /**
+     * P0-03: previously the pre-Q fallback here decoded the source at full resolution with no
+     * [BitmapFactory.Options] at all before force-fitting down to [EMBED_SIZE] -- "the fallback
+     * has no bound today", per the brief. [decodeUpright] now bounds the decode itself; the
+     * embedding model still wants an exact [EMBED_SIZE] x [EMBED_SIZE] square (not this app's
+     * usual aspect-preserving budget), so the force-fit stretch below is unchanged.
+     */
+    private suspend fun loadThumbnail(asset: MediaAsset): Bitmap {
+        val decoded = decodeUpright(appContext, asset.contentUri, EMBED_DECODE_LIMITS)
+            ?: error("Unable to decode ${asset.displayName}")
+        val bitmap = decoded.bitmap
+        val scaled = if (bitmap.width == EMBED_SIZE && bitmap.height == EMBED_SIZE) {
+            bitmap
         } else {
-            Bitmap.createScaledBitmap(decoded, EMBED_SIZE, EMBED_SIZE, true).also {
-                if (it !== decoded) decoded.recycle()
+            Bitmap.createScaledBitmap(bitmap, EMBED_SIZE, EMBED_SIZE, true).also {
+                if (it !== bitmap) bitmap.recycle()
             }
         }
         return scaled.ensureArgb8888()
@@ -160,6 +164,7 @@ class SimilarityIndexer(
 
     private companion object {
         const val EMBED_SIZE = 224
+        val EMBED_DECODE_LIMITS = DecodeLimits(maxLongEdge = EMBED_SIZE, maxPixels = EMBED_SIZE.toLong() * EMBED_SIZE)
         const val BATCH_SIZE = 32
     }
 }

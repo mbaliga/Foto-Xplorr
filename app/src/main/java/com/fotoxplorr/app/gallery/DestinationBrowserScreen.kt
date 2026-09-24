@@ -89,7 +89,7 @@ fun destinationAssets(
     fun smart(album: SmartAlbum) = smartAlbumAssets(
         album, state.assets, state.favoriteIds, state.sensitiveIds,
         state.library.archivedIds, state.library.tagsByMediaId, state.lockedFolders,
-        state.unlockedFolders, state.preferences,
+        state.unlockedFolders, state.preferences, state.animatedIds,
     )
 
     fun everyday() = everydayAssets(
@@ -117,7 +117,7 @@ fun destinationAssets(
         HyleDestination.PLACES, HyleDestination.PROTECTED, HyleDestination.AUDIO -> emptyList()
     }
     if (query.isBlank()) return base
-    return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds) }
+    return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds, state.animatedIds, state.library.archivedIds) }
 }
 
 /**
@@ -282,6 +282,8 @@ fun DestinationContent(
                 com.fotoxplorr.app.audio.AudioLibraryScreen(
                     assets = audio.assets,
                     onPlay = { asset -> audio.onPlay(asset, audio.assets) },
+                    permissionGranted = audio.permissionGranted,
+                    onRequestPermission = audio.onRequestPermission,
                 )
             } else {
                 DestinationMessage("Audio is unavailable here")
@@ -291,7 +293,9 @@ fun DestinationContent(
             if (destination == HyleDestination.PEOPLE && state.recognition.people.isNotEmpty()) {
                 PeopleStrip(
                     clusters = state.recognition.people,
-                    assets = state.assets,
+                    // The already-filtered destination list, not raw state.assets: a cluster's
+                    // cover photo must obey the same visibility rule as the grid right below it.
+                    assets = assets,
                     onOpenPerson = { ids ->
                         val personAssets = assets.filter { it.id in ids }
                         personAssets.firstOrNull()?.let { actions.onOpenAsset(it, personAssets) }
@@ -321,6 +325,7 @@ fun DestinationContent(
                     gridState = gridState,
                     fitToTile = state.preferences.fitToTile,
                     loopAnimations = state.preferences.loopAnimations,
+                    animatedIds = state.animatedIds,
                     longPressPreview = state.preferences.longPressPreview,
                 )
             }
@@ -465,14 +470,36 @@ fun LegacyScreenHost(
     onRequestUnlock: (String, String) -> Unit,
     onOpenSettings: () -> Unit,
 ) {
+    // The Calendar's display list: the one visibility filter (P0-01), so a locked, archived or
+    // hidden-sensitive photo can never surface by date even though it isn't trashed.
+    val calendarAssets = remember(
+        state.assets,
+        state.library.archivedIds,
+        state.sensitiveIds,
+        state.lockedFolders,
+        state.unlockedFolders,
+        state.preferences.hideSensitive,
+    ) {
+        browsableAssets(
+            assets = state.assets,
+            archivedIds = state.library.archivedIds,
+            sensitiveIds = state.sensitiveIds,
+            lockedFolders = state.lockedFolders,
+            unlockedFolders = state.unlockedFolders,
+            hideSensitive = state.preferences.hideSensitive,
+        )
+    }
+
     Column(Modifier.fillMaxSize()) {
         when (screen) {
             LegacyScreen.ALBUMS -> AlbumsScreen(
                 assets = state.assets,
                 collections = state.library.collections,
                 archivedIds = state.library.archivedIds,
+                sensitiveIds = state.sensitiveIds,
                 lockedFolders = state.lockedFolders,
                 unlockedFolders = state.unlockedFolders,
+                hideSensitive = state.preferences.hideSensitive,
                 showVideos = state.preferences.showVideos,
                 query = query,
                 onOpenAlbum = { album ->
@@ -487,7 +514,7 @@ fun LegacyScreenHost(
                 },
             )
             LegacyScreen.CALENDAR -> CalendarScreen(
-                assets = state.assets,
+                assets = calendarAssets,
                 // A day opens as a route rather than a nested grid, so the calendar hands off to
                 // exactly the same browsing surface everything else uses.
                 onOpenDay = { dayAssets ->
@@ -504,12 +531,16 @@ fun LegacyScreenHost(
                     lockedFolders = state.lockedFolders,
                     unlockedFolders = state.unlockedFolders,
                     preferences = state.preferences,
+                    animatedIds = state.animatedIds,
                 ),
                 onOpen = { onOpenRoute(BrowserRoute.Smart(it.album)) },
             )
             LegacyScreen.LIBRARY -> LibraryScreen(
                 library = state.library,
                 privateAlbumCount = state.lockedFolders.size,
+                // A count, not a display of content: trashed items in a locked folder still count
+                // toward "how many things are in Trash", so this deliberately reads state.assets
+                // rather than a filtered list.
                 trashCount = state.assets.count { it.isTrashed },
                 onOpenCollection = { onOpenRoute(BrowserRoute.Collection(it.id, it.name)) },
                 onOpenTag = { onOpenRoute(BrowserRoute.Tag(it)) },
@@ -571,6 +602,7 @@ private fun archiveReviewItems(state: GalleryUiState): List<ArchiveReviewItem> {
                 widthPx = asset.width,
                 heightPx = asset.height,
                 mimeType = asset.mimeType,
+                dateModifiedSeconds = asset.dateModifiedSeconds,
                 sharpness = null,
             )
         }

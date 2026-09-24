@@ -81,6 +81,30 @@ internal fun visibleAssets(
     return sortAssets(scoped.filterByQuery(query), sort)
 }
 
+/**
+ * The single definition of "may be shown right now": not trashed, not archived, not hidden by a
+ * locked folder, and — when [hideSensitive] is set — not flagged sensitive either. Every screen
+ * that draws photos to the user (as opposed to an indexer, which must see everything so that
+ * unlocking a folder or turning off "hide sensitive" doesn't require a re-index) filters through
+ * this, so a locked, archived or hidden photo can never leak onto the map, the calendar or a
+ * preview by drifting out of sync with [everydayAssets]'s own copy of these same rules.
+ *
+ * Keeps [assets]' input order; callers sort afterward if they need to.
+ */
+fun browsableAssets(
+    assets: List<MediaAsset>,
+    archivedIds: Set<MediaId>,
+    sensitiveIds: Set<MediaId>,
+    lockedFolders: Set<String>,
+    unlockedFolders: Set<String>,
+    hideSensitive: Boolean,
+): List<MediaAsset> = assets.filter { asset ->
+    !asset.isTrashed &&
+        asset.id !in archivedIds &&
+        asset.isPrivacyVisible(lockedFolders, unlockedFolders) &&
+        (!hideSensitive || asset.id !in sensitiveIds)
+}
+
 fun everydayAssets(
     assets: List<MediaAsset>,
     archivedIds: Set<MediaId>,
@@ -91,12 +115,9 @@ fun everydayAssets(
     query: String,
     tagsByMediaId: Map<MediaId, Set<String>> = emptyMap(),
 ): List<MediaAsset> = sortAssets(
-    assets.asSequence()
-        .filterNot { it.isTrashed }
-        .filterNot { it.id in archivedIds }
+    browsableAssets(assets, archivedIds, sensitiveIds, lockedFolders, unlockedFolders, preferences.hideSensitive)
+        .asSequence()
         .filter { preferences.showVideos || !it.isVideo }
-        .filter { !preferences.hideSensitive || it.id !in sensitiveIds }
-        .filter { it.isPrivacyVisible(lockedFolders, unlockedFolders) }
         .filter { it.matchesQuery(query, tagsByMediaId[it.id].orEmpty()) }
         .toList(),
     preferences.sort,
@@ -163,6 +184,7 @@ fun smartAlbumAssets(
     lockedFolders: Set<String>,
     unlockedFolders: Set<String>,
     preferences: GalleryPreferencesState,
+    animatedIds: Set<MediaId> = emptySet(),
     nowMillis: Long = System.currentTimeMillis(),
 ): List<MediaAsset> {
     val privacyVisible = assets.filter { it.isPrivacyVisible(lockedFolders, unlockedFolders) }
@@ -173,7 +195,7 @@ fun smartAlbumAssets(
         SmartAlbum.RECENT -> nonTrash.filter { it.dateTakenMillis >= nowMillis - RECENT_WINDOW_MILLIS }
         SmartAlbum.VIDEOS -> nonTrash.filter { it.isVideo }
         SmartAlbum.SCREENSHOTS -> nonTrash.filter(MediaAsset::isScreenshot)
-        SmartAlbum.ANIMATED -> nonTrash.filter { it.isAnimated }
+        SmartAlbum.ANIMATED -> nonTrash.filter { it.id in animatedIds }
         SmartAlbum.LARGE_FILES -> nonTrash.filter { it.sizeBytes >= LARGE_FILE_THRESHOLD_BYTES }
         SmartAlbum.DUPLICATES -> nonTrash.filter { it.id in duplicateIds }
         SmartAlbum.SENSITIVE -> nonTrash.filter { it.id in sensitiveIds }
@@ -196,6 +218,7 @@ fun smartAlbumSummaries(
     lockedFolders: Set<String>,
     unlockedFolders: Set<String>,
     preferences: GalleryPreferencesState,
+    animatedIds: Set<MediaId> = emptySet(),
 ): List<SmartAlbumSummary> = SmartAlbum.entries.map { album ->
     val items = smartAlbumAssets(
         smartAlbum = album,
@@ -207,6 +230,7 @@ fun smartAlbumSummaries(
         lockedFolders = lockedFolders,
         unlockedFolders = unlockedFolders,
         preferences = preferences,
+        animatedIds = animatedIds,
     )
     SmartAlbumSummary(
         album = album,
@@ -241,13 +265,28 @@ internal fun buildAlbumSummaries(
         .sortedWith(compareByDescending<AlbumSummary> { it.count }.thenBy { it.name.lowercase() })
 }
 
+/**
+ * Every member of a same-size/dimensions/type group EXCEPT one deterministic keeper per group --
+ * "select all -> trash" in the Duplicates album must delete only the redundant extra copies, never
+ * every copy including the one worth keeping. The keeper is the earliest [MediaAsset.dateTakenMillis],
+ * then the earliest [MediaAsset.dateModifiedSeconds], then the smallest [MediaId] -- the same order
+ * [com.fotoxplorr.app.curate.ArchiveAdvisor.bestOfGroup] uses, so the two surfaces never disagree
+ * about which copy of a group is "the original".
+ */
 fun duplicateCandidateIds(assets: List<MediaAsset>): Set<MediaId> = assets
     .asSequence()
     .filter { it.sizeBytes > 0L && it.width > 0 && it.height > 0 }
     .groupBy { DuplicateKey(it.sizeBytes, it.width, it.height, it.mimeType.lowercase()) }
     .values
     .filter { it.size > 1 }
-    .flatten()
+    .flatMap { group ->
+        val keeper = group.minWithOrNull(
+            compareBy<MediaAsset> { it.dateTakenMillis }
+                .thenBy { it.dateModifiedSeconds }
+                .thenBy { it.id.value },
+        )
+        group.filterNot { it.id == keeper?.id }
+    }
     .mapTo(linkedSetOf()) { it.id }
 
 fun sortAssets(assets: List<MediaAsset>, sort: GallerySort): List<MediaAsset> = when (sort) {
@@ -297,7 +336,7 @@ private fun SmartAlbum.subtitle(): String = when (this) {
     SmartAlbum.SCREENSHOTS -> "Detected by name or folder"
     SmartAlbum.ANIMATED -> "GIF, animated WebP and AVIF"
     SmartAlbum.LARGE_FILES -> "20 MB and above"
-    SmartAlbum.DUPLICATES -> "Exact size and dimensions"
+    SmartAlbum.DUPLICATES -> "Extra copies; one of each is kept out"
     SmartAlbum.SENSITIVE -> "Content marked sensitive"
     SmartAlbum.ARCHIVED -> "Hidden from the timeline"
     SmartAlbum.TRASH -> "Android system trash"

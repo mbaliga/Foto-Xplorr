@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
+import com.fotoxplorr.app.share.fileProviderAuthority
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -45,7 +46,7 @@ import java.util.UUID
  */
 class StickerExporter(context: Context) {
     private val appContext = context.applicationContext
-    private val authority = "${appContext.packageName}.files"
+    private val authority = fileProviderAuthority(appContext)
 
     /**
      * Save [bitmap] as a new PNG in the device's Pictures, alongside where every other saved

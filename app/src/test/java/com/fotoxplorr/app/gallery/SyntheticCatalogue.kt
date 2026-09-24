@@ -123,6 +123,12 @@ object SyntheticCatalogue {
         // characterisation must go through the same folderIdentity the app uses.
         val vault = assets.first { it.bucketName == "Vault" }
         val lockedFolders = setOf(folderIdentity(vault).key.value)
+        // P0-14: animatedIds replaces the deleted MIME-blanket MediaAsset.isAnimated. This
+        // generator never produces a WebP/AVIF/PNG asset that isAnimated would have matched
+        // anyway (see asset()'s own mimeType branches -- only "image/gif" ever qualified), so
+        // "every GIF this catalogue generated" is both the brief's own suggested deterministic
+        // rule AND exactly the old rule's real membership here, not a narrower stand-in for it.
+        val animatedIds = assets.filterTo(linkedSetOf()) { it.mimeType == "image/gif" }.mapTo(linkedSetOf()) { it.id }
         return GalleryUiState(
             assets = assets,
             favoriteIds = favoriteIds,
@@ -143,6 +149,7 @@ object SyntheticCatalogue {
                 petMediaIds = ids.filterTo(linkedSetOf()) { it.value % 19L == 0L },
                 identityMediaIds = ids.filterTo(linkedSetOf()) { it.value % 29L == 0L },
             ),
+            animatedIds = animatedIds,
         )
     }
 

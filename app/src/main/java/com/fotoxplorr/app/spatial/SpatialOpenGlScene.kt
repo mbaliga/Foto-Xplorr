@@ -7,16 +7,16 @@ import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
 import android.opengl.Matrix
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.util.Size
 import android.view.GestureDetector
 import android.view.MotionEvent
 import com.fotoxplorr.app.experience.PhotoSceneCard
 import com.fotoxplorr.app.experience.SceneOrientationController
 import com.fotoxplorr.app.experience.SceneOrientationMode
+import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.decodeUpright
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -30,6 +30,7 @@ import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.runBlocking
 
 internal class SpatialSceneSurfaceView(
     context: Context,
@@ -262,17 +263,17 @@ private class SpatialSceneRenderer(
         GLES20.glDisableVertexAttribArray(uv)
     }
 
+    /** P0-03: bounded via [decodeUpright], which also applies EXIF orientation (this path
+     * previously had no bound at all beyond whatever `Q+`'s `loadThumbnail` chose, and never
+     * corrected orientation on any API level). Runs on [executor]'s own background thread, not a
+     * coroutine, hence [runBlocking]. */
     private fun requestTexture(asset: MediaAsset) {
         val id = asset.id.value
         if (!pending.add(id)) return
         executor.execute {
             val bitmap = runCatching {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    context.contentResolver.loadThumbnail(asset.contentUri, Size(TEXTURE_SIZE, TEXTURE_SIZE), null)
-                } else {
-                    context.contentResolver.openInputStream(asset.contentUri)?.use(android.graphics.BitmapFactory::decodeStream)
-                        ?: error("Unable to decode media")
-                }
+                runBlocking { decodeUpright(context, asset.contentUri, TEXTURE_DECODE_LIMITS) }?.bitmap
+                    ?: error("Unable to decode media")
             }.getOrNull()
             if (bitmap == null) {
                 pending.remove(id)
@@ -358,6 +359,7 @@ private class SpatialSceneRenderer(
         const val MAX_TEXTURES = 72
         const val TEXTURE_WORKERS = 2
         const val TEXTURE_SIZE = 384
+        val TEXTURE_DECODE_LIMITS = DecodeLimits(maxLongEdge = TEXTURE_SIZE, maxPixels = TEXTURE_SIZE.toLong() * TEXTURE_SIZE)
         const val MAX_VISIBLE_CARDS = 180
         const val FIELD_OF_VIEW = 62f
         const val VIEWPORT_MARGIN = 1.4f

@@ -6,9 +6,11 @@ change that needs saying out loud. Source: the 6 Aug 2026 handoff plus plan FX-I
 
 ## Long-standing
 
-1. **A delta scan must never call `replaceAll`.** One line away from deleting the
+1. **A delta scan must never call `removeAllExcept`.** One line away from deleting the
    library's index. The delta branch is deliberately `Unit` with a comment saying exactly
-   that; `MediaIndexerTest` pins it.
+   that; `MediaIndexerTest` pins it. (P0-09: replaces the old `replaceAll` — same invariant,
+   new name, since a full pass's own deletion reconciliation is no longer a wholesale
+   delete-and-reinsert.)
 2. **Never squash-merge `shared-libraries` (or `hyle-design-system`) while this app pins
    it.** A squash mints a new SHA and orphans the submodule pin; a fresh
    `clone --recurse-submodules` fails weeks later with `fatal: reference is not a tree`,
@@ -20,8 +22,14 @@ change that needs saying out loud. Source: the 6 Aug 2026 handoff plus plan FX-I
    Declaring ANY explicit substitution for an included build disables AUTOMATIC
    substitution for that build — a module you forget to declare is silently not
    substituted. The inline reasoning stays with the block.
-5. **The scrubber assumes a headerless grid.** Grid item *n* is asset *n*. Date headers,
-   stacks or any non-1:1 grid item silently desync the edge timeline strip from the list.
+5. **The scrubber, pill and arrow keys must agree with the grid through `GridIndexMap`,
+   never grid-item-*n*-is-asset-*n*.** Fixed for date headers by P0-15
+   (`gallery/GridIndexMap.kt`): `GalleryScreen` now converts every grid index through it
+   before it reaches `pillCaption`/`gridState.scrollToItem`, and `renderedAssets` (not
+   `scrubberAssets`) is the one asset list all four agree on. Still true in masonry mode,
+   where the staggered grid keeps a `LazyStaggeredGridState` this screen cannot reach at
+   all — the scrubber and the pill's position text are hidden there instead of tracking a
+   position nothing on screen agrees with (see `MediaGridScreen`'s own doc).
 6. **`local.properties` (with `sdk.dir`) is needed in every included build** on a fresh
    clone — the root's copy does not propagate. `scripts/verify.sh` creates them if absent
    and never clobbers an existing file.
@@ -32,9 +40,10 @@ change that needs saying out loud. Source: the 6 Aug 2026 handoff plus plan FX-I
 
 8. **A partial scan never sweeps.** The generalisation of #1 to every future source: a
    scan that did not fully enumerate its root must not remove anything it failed to see.
-9. **Nothing that changes grid item count ships before `GridIndexMap`.** Conflict stacks,
-   duplicate stacks, grouping and headers all break #5 through different doors. (WP3
-   ticket FX-044; nothing on the current branch stacks yet.)
+9. **Nothing that changes grid item count ships before `GridIndexMap`.** `GridIndexMap`
+   now exists (P0-15) and Timeline's date headers go through it; conflict stacks and
+   duplicate stacks still don't exist yet and must go through it too, the day they do.
+   (WP3 ticket FX-044.)
 10. **Foreign keys are enabled in `SQLiteOpenHelper.onConfigure` only.** Anywhere else
     is a silent no-op (inside a transaction) or a throw (`setForeignKeyConstraintsEnabled`
     mid-transaction). Every `ON DELETE CASCADE` is decorative until this is done.
@@ -180,4 +189,83 @@ bare unlabelled line that read as a mystery word, and a camera card repeating th
 beneath it field for field — including focal length and aperture twice within the card itself.
 `ScreenRenderTest`/`NewSurfaceRenderTest` draw the real composables to PNG on the JVM in seconds.
 Use them; a layout you have only read is a layout you have not checked.
+
+## 31. A location read may ask for the unredacted original; nothing else may
+
+`Context.uriForLocationRead` exists so this app can show a user their own photo's real GPS —
+`MediaStore.setRequireOriginal`, gated behind the `ACCESS_MEDIA_LOCATION` permission, is how a
+reader asks the platform to skip the Android 10+ location redaction (P0-02: before this, the
+permission was requested but the method was never called, so every location read silently saw no
+GPS and the absence was then cached forever). Reusing that call, or its already-original uri, on a
+share, zip or export path would launder a redacted uri into one that leaks a location the user
+never consented to send to another app. Only `GeoMetadataRepository` and the detail room's own EXIF
+read call it; every share/zip/export path keeps reading the plain uri exactly as before P0-02.
+
+## 32. A metadata read failure is not an absence
+
+Three places distinguish "there is genuinely nothing here" from "the read itself failed":
+`GeoMetadataRepository`'s `LocationReadOutcome` (`Located`/`NoLocation`/`Unreadable`, P0-02 — a
+denied permission or a transient open failure used to be persisted as "no location", forever), the
+detail room's own metadata display (a failed read must not render as an unfilled field the user is
+invited to fill in themselves), and `RecognitionStore`/`EmbeddingRepository`'s per-attempt failure
+tables (P0-12 — an unreadable file used to be retried forever with nothing recorded, while a
+genuinely faceless photo is recorded once and correctly left alone). Collapsing "failed" into
+"empty" either hides a real problem forever or retries it forever; keep the failure a first-class
+outcome and act on it once.
+
+## 33. One visibility filter for anything that draws photos
+
+`browsableAssets(...)` (`GalleryProjection.kt`) is the one "may be shown right now" rule — it
+excludes trashed, archived, hidden-sensitive and locked-folder assets. Every screen that lists
+photos filters through it, or a name built on top of it (`everydayAssets`); a screen that instead
+writes its own `filterNot { it.isTrashed }` will silently leak locked or hidden photos onto a map, a
+calendar, or a strip of cover thumbnails the moment it diverges from whatever the other screens
+happen to filter on that week (P0-01: five separate leaks, three named in the original brief and
+two more found only by auditing every consumer of `state.assets`).
+
+## 34. Pixels come from `decodeUpright`, never a raw `BitmapFactory`/`ImageDecoder` call
+
+`media/BitmapDecoding.kt`'s `decodeUpright(context, uri, DecodeLimits)` is the app's one decode
+entry point: it applies EXIF orientation and samples to the exact requested bound, not the nearest
+power of two under it. Nine call sites decoded independently before P0-03, each ignoring
+orientation and under-shooting its own target size. A new decode path that calls `BitmapFactory` or
+`ImageDecoder` directly reintroduces both bugs at once.
+
+## 35. A metadata write goes temp → verify → original, never through a redacted view
+
+`MetadataWriter.write` (P0-08) stages the source into `cacheDir/metadata-staging/`, edits and
+independently re-reads the temp file to confirm every field actually landed and its bounds are
+unchanged, and only then streams the verified copy into the original with `"wt"`. Writing through a
+location-redacted file descriptor risks `ExifInterface`'s own read-modify-write cycle silently
+erasing GPS tags the edit never touched (see `RedactingFileDescriptor`'s own AOSP javadoc) — so a
+metadata write never opens through `uriForLocationRead`, and never writes straight to the original
+without a verified intermediate copy.
+
+## 36. A share output is verified clean or it is not sent
+
+`MetadataStripper`'s stripped bytes are re-parsed and confirmed to carry no GPS before
+`SharePreparer` ever hands them to the caller (P0-04); `StreamCopyRemuxer` re-verifies a remuxed
+video's own location is null the same way (P0-05). A stripper that trusts its own output without
+re-reading it is one parsing bug away from "removed" quietly meaning "attempted to remove."
+
+## 37. `ExifInterface.getDateTimeOriginal()` compiles, and Lint fails the build on it anyway
+
+It is a public Kotlin property accessor on `androidx.exifinterface.media.ExifInterface`, resolves
+fine, no deprecation warning — and is annotated `@RestrictTo(LIBRARY)` upstream. Android Lint's
+`RestrictedApi` check treats that as a hard error, not a warning: `"ExifInterface
+.getDateTimeOriginal can only be called from within the same library"`. A green compile and a red
+`lintOfflineDebug` for the same line is not a flaky gate; it means Lint saw an annotation the
+compiler doesn't enforce. Read the raw tag with the ordinary public `getAttribute
+(ExifInterface.TAG_DATETIME_ORIGINAL)` and parse the `"yyyy:MM:dd HH:mm:ss"` string yourself instead
+of calling the restricted accessor.
+
+## 38. A KDoc naming a glob or a bare `*/*` mime type can close its own comment
+
+`/** ... */` closes at the first `*/` it finds, with no awareness of Markdown backticks or intent —
+a doc comment naming the wildcard mime type `"*/*"` (P0-20, writing down `matchesRequestedMimeType`'s
+own contract) closes itself two characters in, and every word after that point becomes code the
+compiler tries to parse, surfacing as a wall of unrelated syntax errors far from the real cause. The
+same shape bites over a glob path (`*/*.jpg`) just as easily. Reword around the literal instead of
+trying to escape it — a backslash has no escape meaning inside a Kotlin comment and only makes the
+rendered doc uglier for no safety.
 

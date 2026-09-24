@@ -7,7 +7,12 @@ class MediaIndexer(
     private val scanner: MediaScanner,
     private val repository: MediaRepository,
     private val watermark: ScanWatermark,
+    private val sweepPolicy: SweepPolicy = SweepPolicy,
     private val batchSize: Int = DEFAULT_BATCH_SIZE,
+    /** Told about a sweep the [sweepPolicy] refused, so a caller that can log (this class
+     * deliberately can't -- see its own doc) still gets to know. A no-op by default so every
+     * plain-JUnit test here stays exactly that: plain JUnit, no Android framework involved. */
+    private val onSweepRefused: (catalogueSize: Int, missingCount: Int) -> Unit = { _, _ -> },
 ) {
     init {
         require(batchSize > 0) { "batchSize must be positive" }
@@ -16,15 +21,21 @@ class MediaIndexer(
     /**
      * Bring the repository up to date.
      *
-     * A full pass replaces everything; a delta pass upserts only what changed and leaves
-     * every untouched row alone. Deletion reconciliation is therefore only possible on a
-     * full pass — a delta cannot tell "absent because unchanged" from "absent because
-     * deleted" — so deletions are picked up by the next full pass or by the repository's own
-     * removal calls when the user trashes something in-app.
+     * A full pass reconciles deletions; a delta pass upserts only what changed and leaves every
+     * untouched row alone. Deletion reconciliation is therefore only possible on a full pass — a
+     * delta cannot tell "absent because unchanged" from "absent because deleted" — so deletions
+     * are picked up by the next full pass or by the repository's own removal calls when the user
+     * trashes something in-app.
+     *
+     * A full pass's own deletion reconciliation ("sweep") is itself gated by [sweepPolicy]
+     * (TRAPS #8): every row this pass discovered was already upserted above, so [sweepPolicy]
+     * only ever has to decide whether it is safe to remove the rest.
      *
      * @param userRequested a human asked for this; always runs a full pass.
+     * @param partialAccess true when this app currently holds only a limited "selected photos"
+     *   grant rather than full media access — see [SweepPolicy] for why that refuses a sweep.
      */
-    fun refresh(userRequested: Boolean = false): Flow<ScanEvent> = channelFlow {
+    fun refresh(userRequested: Boolean = false, partialAccess: Boolean = false): Flow<ScanEvent> = channelFlow {
         val plan = ScanPlan.decide(
             lastCompletedSeconds = watermark.lastCompletedSeconds(),
             knownAssetCount = repository.count(),
@@ -51,11 +62,21 @@ class MediaIndexer(
                         pending.clear()
                     }
                     when (plan) {
-                        // Full pass: `discovered` is the whole truth, so anything not in it
-                        // is genuinely gone.
-                        is ScanPlan.Full -> repository.replaceAll(discovered)
-                        // Delta pass: the upserts above already applied every change. A
-                        // replaceAll here would delete the entire untouched library.
+                        // Full pass: `discovered` is the whole truth this pass saw, so anything
+                        // else the repository holds is either genuinely gone or, under partial
+                        // access, simply never in scope — sweepPolicy tells the two apart.
+                        is ScanPlan.Full -> {
+                            val keep = discovered.mapTo(mutableSetOf()) { it.id }
+                            val catalogueSize = repository.count()
+                            val missingCount = (catalogueSize - keep.size).coerceAtLeast(0)
+                            if (sweepPolicy.shouldSweep(catalogueSize, missingCount, userRequested, partialAccess)) {
+                                repository.removeAllExcept(keep)
+                            } else {
+                                onSweepRefused(catalogueSize, missingCount)
+                            }
+                        }
+                        // Delta pass: the upserts above already applied every change. Sweeping
+                        // here would delete the entire untouched library.
                         is ScanPlan.Delta -> Unit
                     }
                     // Advance the watermark only on a pass that actually completed, and only

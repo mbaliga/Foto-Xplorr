@@ -6,6 +6,8 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.MediaKind
+import com.fotoxplorr.app.media.mediaStoreRelativePath
 import com.fotoxplorr.app.videoeditor.VideoEditRecipe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -47,13 +49,16 @@ class VideoConversionWriter(context: Context) {
                 put(MediaStore.Video.Media.DISPLAY_NAME, name)
                 put(MediaStore.Video.Media.MIME_TYPE, TARGET_MIME_TYPE)
                 put(MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1_000)
+                put(MediaStore.Video.Media.DATE_TAKEN, source.dateTakenMillis)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    // Alongside the source rather than in a folder of our own — same reasoning as
-                    // EditedCopyWriter's identical choice for edited photos: a conversion is a
-                    // version of this video, not a new thing living somewhere else.
-                    source.relativePath?.takeIf { it.isNotBlank() }?.let {
-                        put(MediaStore.Video.Media.RELATIVE_PATH, it)
-                    }
+                    // Alongside the source when its own folder is one MediaProvider still accepts
+                    // an insert into, otherwise this app's own fallback folder — see
+                    // mediaStoreRelativePath's own doc for why a WhatsApp or Download source
+                    // cannot just reuse its source path verbatim here.
+                    put(
+                        MediaStore.Video.Media.RELATIVE_PATH,
+                        mediaStoreRelativePath(source.relativePath, MediaKind.VIDEO),
+                    )
                     // Keeps the half-written file out of every other gallery on the device until
                     // the transcode actually finishes — see EditedCopyWriter's identical use for
                     // why this matters even more here, given how much longer a video encode runs.

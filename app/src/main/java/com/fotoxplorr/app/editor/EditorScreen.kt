@@ -1,7 +1,6 @@
 package com.fotoxplorr.app.editor
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,7 +35,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
+import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.decodeUpright
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -168,9 +169,8 @@ fun EditorScreen(
     // Decode once, at a bounded size. Full resolution would mean the whole pipeline over tens of
     // megapixels on every slider frame.
     LaunchedEffect(asset.id) {
-        source = withContext(Dispatchers.IO) {
-            decodeBounded(context, asset, EditRenderer.previewEdge(PREVIEW_VIEWPORT_EDGE_PX))
-        }
+        val edge = EditRenderer.previewEdge(PREVIEW_VIEWPORT_EDGE_PX)
+        source = decodeUpright(context, asset.contentUri, DecodeLimits(maxLongEdge = edge, maxPixels = Long.MAX_VALUE))?.bitmap
     }
 
     // Auto-fix offers, measured from the UNEDITED source so they describe the photograph rather
@@ -250,12 +250,13 @@ fun EditorScreen(
             saveRequested = false
             saving = true
             scope.launch {
-                val full = renderFullSize(context, asset, recipe)
-                if (full == null) {
+                val rendered = renderFullSize(context, asset, recipe)
+                if (rendered == null) {
                     saving = false
                     onSaved("Could not read the photo at full size")
                     return@launch
                 }
+                val full = rendered.bitmap
 
                 if (mode == EditorSaveMode.OVERWRITE && canOverwriteInPlace) {
                     saving = false
@@ -279,6 +280,8 @@ fun EditorScreen(
                                 mode == EditorSaveMode.OVERWRITE ->
                                     "Saved a copy — ${asset.mimeType} can't be replaced in place"
                                 format != null -> "Saved a copy as ${resolvedFormat.label}"
+                                rendered.downscaled ->
+                                    "Saved a copy at reduced size (${rendered.bitmap.width} × ${rendered.bitmap.height})"
                                 else -> "Saved a copy at full resolution"
                             }
                         },
@@ -665,6 +668,11 @@ private fun FormatChip(label: String, selected: Boolean, onClick: () -> Unit) {
     )
 }
 
+/** The bitmap actually written on save, plus whether decoding it had to downscale below the
+ * source's own resolution (P0-03) -- [EditorScreen]'s save-result message reports this rather
+ * than always claiming "full resolution". */
+private data class FullSizeRender(val bitmap: Bitmap, val downscaled: Boolean)
+
 /**
  * Render at FULL resolution and write the result.
  *
@@ -674,44 +682,21 @@ private fun FormatChip(label: String, selected: Boolean, onClick: () -> Unit) {
  * the crop is normalised and the colour work is per-pixel — so the same description renders
  * correctly at either size.
  *
- * Capped at [MAX_EXPORT_PIXELS] because a 108-megapixel phone photo is 432 MB as ARGB_8888 and
- * several copies of that exist at once inside the pipeline. Above the cap the export is downscaled
- * rather than the app being killed mid-save, and the caller says so.
+ * Capped at [MAX_EXPORT_EDGE] / [MAX_EXPORT_PIXELS] because a 108-megapixel phone photo is 432 MB
+ * as ARGB_8888 and several copies of that exist at once inside the pipeline. Above the cap the
+ * export is downscaled rather than the app being killed mid-save, and the caller says so.
  */
 private suspend fun renderFullSize(
     context: android.content.Context,
     asset: MediaAsset,
     recipe: EditRecipe,
-): Bitmap? = withContext(Dispatchers.IO) {
-    val full = decodeBounded(context, asset, MAX_EXPORT_EDGE) ?: return@withContext null
-    withContext(Dispatchers.Default) { runCatching { EditRenderer.render(full, recipe) }.getOrNull() }
+): FullSizeRender? = withContext(Dispatchers.IO) {
+    val decoded = decodeUpright(context, asset.contentUri, EXPORT_DECODE_LIMITS) ?: return@withContext null
+    val rendered = withContext(Dispatchers.Default) {
+        runCatching { EditRenderer.render(decoded.bitmap, recipe) }.getOrNull()
+    } ?: return@withContext null
+    FullSizeRender(rendered, decoded.downscaled)
 }
-
-/**
- * Decode [asset] with its longest edge no greater than [edge].
- *
- * `inSampleSize` only takes powers of two, so this lands at or below the target rather than exactly
- * on it — which is the right way round: decoding above the budget and scaling down afterwards means
- * holding the oversized bitmap first, which is the allocation that fails.
- */
-private fun decodeBounded(
-    context: android.content.Context,
-    asset: MediaAsset,
-    edge: Int,
-): Bitmap? = runCatching {
-    context.contentResolver.openInputStream(asset.contentUri)?.use { stream ->
-        val bytes = stream.readBytes()
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        val longest = maxOf(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
-        var sample = 1
-        while (longest / sample > edge) sample *= 2
-        BitmapFactory.decodeByteArray(
-            bytes, 0, bytes.size,
-            BitmapFactory.Options().apply { inSampleSize = sample },
-        )
-    }
-}.getOrNull()
 
 /**
  * The longest edge an export may reach.
@@ -720,6 +705,12 @@ private fun decodeBounded(
  * ARGB_8888 buffer under 270 MB — and the pipeline holds two or three of those at once.
  */
 private const val MAX_EXPORT_EDGE = 8192
+
+/** The pixel-count budget alongside [MAX_EXPORT_EDGE] -- P0-03: a source can be under the edge
+ * cap on both axes yet still exceed a sane pixel count on an unusual aspect ratio, so both limits
+ * apply together, exactly like [com.fotoxplorr.app.media.DecodeLimits] everywhere else. */
+private const val MAX_EXPORT_PIXELS = 64_000_000L
+private val EXPORT_DECODE_LIMITS = DecodeLimits(maxLongEdge = MAX_EXPORT_EDGE, maxPixels = MAX_EXPORT_PIXELS)
 
 @Composable
 private fun LabelledSlider(

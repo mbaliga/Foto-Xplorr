@@ -52,19 +52,34 @@ class DetailFormattingTest {
 
     @Test
     fun `format badges map from mime types`() {
-        assertEquals("HEIF", DetailFormatting.formatBadge("image/heic"))
-        assertEquals("HEIF", DetailFormatting.formatBadge("image/heif"))
-        assertEquals("JPEG", DetailFormatting.formatBadge("image/jpeg"))
-        assertEquals("PNG", DetailFormatting.formatBadge("image/PNG"))
-        assertEquals("DNG", DetailFormatting.formatBadge("image/x-adobe-dng"))
-        assertEquals("MOV", DetailFormatting.formatBadge("video/quicktime"))
+        assertEquals("HEIF", DetailFormatting.formatBadge("image/heic", "photo.heic"))
+        assertEquals("HEIF", DetailFormatting.formatBadge("image/heif", "photo.heif"))
+        assertEquals("JPEG", DetailFormatting.formatBadge("image/jpeg", "photo.jpg"))
+        assertEquals("PNG", DetailFormatting.formatBadge("image/PNG", "photo.png"))
+        assertEquals("MOV", DetailFormatting.formatBadge("video/quicktime", "clip.mov"))
     }
 
     @Test
     fun `an unknown mime type yields no badge rather than a shrug`() {
-        assertNull(DetailFormatting.formatBadge(""))
-        assertNull(DetailFormatting.formatBadge("image"))
-        assertNull(DetailFormatting.formatBadge("image/"))
+        assertNull(DetailFormatting.formatBadge("", "noext"))
+        assertNull(DetailFormatting.formatBadge("image", "noext"))
+        assertNull(DetailFormatting.formatBadge("image/", "noext"))
+    }
+
+    @Test
+    fun `a RAW file names its vendor rather than a mime subtype`() {
+        assertEquals("Canon RAW", DetailFormatting.formatBadge("image/x-canon-cr2", "photo.CR2"))
+        assertEquals("Nikon RAW", DetailFormatting.formatBadge("application/octet-stream", "photo.nef"))
+        assertEquals("Adobe DNG RAW", DetailFormatting.formatBadge("image/x-adobe-dng", "photo.dng"))
+    }
+
+    @Test
+    fun `an unrecognised type falls back to the file extension, capped and upper-cased`() {
+        assertEquals("MKV", DetailFormatting.formatBadge("application/octet-stream", "clip.mkv"))
+        assertEquals(
+            "ABCDE",
+            DetailFormatting.formatBadge("application/x-weird", "odd.abcdefgh"),
+        )
     }
 
     @Test
@@ -122,11 +137,9 @@ class DetailFormattingTest {
     }
 
     @Test
-    fun `dynamic range badge only claims HDR for capable containers`() {
-        assertEquals("STANDARD", DetailFormatting.dynamicRangeBadge("image/jpeg"))
-        assertEquals("STANDARD", DetailFormatting.dynamicRangeBadge("image/png"))
-        assertEquals("HDR CAPABLE", DetailFormatting.dynamicRangeBadge("image/heic"))
-        assertEquals("HDR CAPABLE", DetailFormatting.dynamicRangeBadge("image/avif"))
+    fun `dynamic range badge only claims HDR when the XMP gain map is actually present`() {
+        assertEquals("ULTRA HDR", DetailFormatting.dynamicRangeBadge(hasHdrGainMap = true))
+        assertNull(DetailFormatting.dynamicRangeBadge(hasHdrGainMap = false))
     }
 
     @Test

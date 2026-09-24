@@ -6,6 +6,7 @@ import android.media.MediaCodecInfo
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.os.StatFs
 import com.fotoxplorr.app.audio.AudioTranscoder
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.video.gl.DecoderOutputSurface
@@ -52,16 +53,20 @@ import java.nio.ByteBuffer
  * trim by only rendering frames inside the window (feeding the decoder from the previous keyframe
  * for correct GOP state, same as [com.fotoxplorr.app.moments.ClipExporter]'s own seek, but
  * discarding frames before the exact requested start rather than snapping to it), speed by
- * scaling presentation timestamps ([exportedPresentationTimeUs]) and, for audio, relabelling the
- * sample rate the encoded track claims ([com.fotoxplorr.app.videoeditor.speedAdjustedSampleRate]).
+ * scaling presentation timestamps ([exportedPresentationTimeUs]) and, for audio, actually
+ * resampling the decoded PCM ([com.fotoxplorr.app.videoeditor.resamplePcm16]).
  * No pixel processing exists yet — a future filters tool would replace [TextureRenderer]'s shader,
  * not this orchestration — and no text overlay or music replacement either; see
  * [VideoEditRecipe]'s own doc for why each is its own, separately-scoped follow-up rather than a
  * new field on that recipe.
  *
  * ## A known limitation, stated rather than hidden
- * [EncodedTrack] buffers a whole track's compressed output in memory before muxing (see its own
- * doc for why), which is why [transcode] refuses a source longer than [MAX_TRANSCODE_DURATION_MS].
+ * [EncodedTrack] spills a whole track's compressed output to a temp file rather than holding it in
+ * memory (P0-11, see [SampleStore]'s own doc) — the OOM risk that motivated [MAX_TRANSCODE_DURATION_MS]
+ * originally is gone, but the cap is kept anyway: "single-clip" is this whole roadmap phase's own
+ * stated scope, and a multi-hour transcode is still a real amount of wall-clock time and disk churn
+ * this first pass was never meant to promise. [checkFreeSpace] refuses up front, before any
+ * decoding starts, when there is not enough room for that spill.
  * This pipeline has NOT been exercised against a real device or emulator — the environment this
  * was built in has neither — and must be verified there before it ships to production. Every piece
  * follows the long-stable, extensively documented `EGL14`/`GLES20`/`MediaCodec` Surface-transcode
@@ -85,6 +90,8 @@ class VideoTranscoder(context: Context) {
 
     private suspend fun runTranscode(asset: MediaAsset, outputFd: FileDescriptor, recipe: VideoEditRecipe) {
         val extractor = MediaExtractor().apply { setDataSource(appContext, asset.contentUri, null) }
+        var videoTrack: EncodedTrack? = null
+        var audioTrack: EncodedTrack? = null
         try {
             val videoTrackIndex = findTrack(extractor, "video/") ?: error("${asset.displayName} has no video track")
             val audioTrackIndex = findTrack(extractor, "audio/") // null: a silent source video
@@ -94,9 +101,10 @@ class VideoTranscoder(context: Context) {
             // is not always populated for every file MediaExtractor can otherwise open, which
             // would wrongly refuse a genuinely convertible video. Falls back to asset.durationMillis
             // only when the track itself declares nothing either. Checked against the SOURCE span
-            // (pre-trim, pre-speed): the cap exists to bound how much this app decodes and holds in
-            // memory at once, which trimming or speeding up the OUTPUT does nothing to reduce.
-            val trackDurationMs = extractor.getTrackFormat(videoTrackIndex)
+            // (pre-trim, pre-speed): the cap exists to bound how much this app decodes at once,
+            // which trimming or speeding up the OUTPUT does nothing to reduce.
+            val videoFormat = extractor.getTrackFormat(videoTrackIndex)
+            val trackDurationMs = videoFormat
                 .let { format -> if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) / 1_000L else null }
                 ?: asset.durationMillis
             check(trackDurationMs in 1..MAX_TRANSCODE_DURATION_MS) {
@@ -104,8 +112,14 @@ class VideoTranscoder(context: Context) {
                     "(${trackDurationMs / 1_000}s, limit ${MAX_TRANSCODE_DURATION_MS / 1_000}s)"
             }
 
-            val videoTrack = encodeVideoTrack(extractor, videoTrackIndex, recipe)
-            val audioTrack = audioTrackIndex?.let { index ->
+            // Every pre-flight check below runs BEFORE any decoding starts (P0-11): a doomed
+            // transcode must never get as far as spending EGL/decoder/encoder setup, let alone
+            // spilling a single sample, on a source this device can never actually finish.
+            runPreflightChecks(videoFormat)
+            checkFreeSpace(trackDurationMs)
+
+            videoTrack = encodeVideoTrack(extractor, videoTrackIndex, recipe)
+            audioTrack = audioTrackIndex?.let { index ->
                 resetToStart(extractor, index)
                 val audioFormat = extractor.getTrackFormat(index)
                 val alreadyAac = audioFormat.getString(MediaFormat.KEY_MIME) == MediaFormat.MIMETYPE_AUDIO_AAC
@@ -114,21 +128,54 @@ class VideoTranscoder(context: Context) {
                     // as-is (trimmed and rebased, but otherwise untouched), exactly ClipExporter's
                     // own stream-copy, rather than paying a decode+re-encode's cost and a second
                     // generation of lossy compression for no format change. A speed change cannot
-                    // take this path: it needs the encoder's OWN declared sample rate changed (see
-                    // speedAdjustedSampleRate's own doc), which a byte-for-byte copy has no way to
-                    // do without risking the container's declared rate disagreeing with the AAC
-                    // bitstream's own internal one.
+                    // take this path: it needs the actual PCM samples resampled (resamplePcm16's
+                    // own doc), which a byte-for-byte copy has no way to do.
                     copyCompressedTrack(extractor, index, audioFormat, recipe)
                 } else {
-                    AudioTranscoder.transcodeTrack(extractor, index, recipe)
+                    AudioTranscoder.transcodeTrack(extractor, index, recipe, appContext.cacheDir)
                 }
             }
 
-            muxTracks(outputFd, videoTrack, audioTrack)
+            // P0-11: the container's own rotation, written via MediaMuxer.setOrientationHint
+            // inside muxTracks -- see StreamCopyRemuxer's own identical precedent (P0-05).
+            val rotationDegrees = findRotationDegrees(appContext, asset.contentUri)
+            muxTracks(outputFd, videoTrack, audioTrack, rotationDegrees)
         } finally {
             runCatching { extractor.release() }
+            videoTrack?.close()
+            audioTrack?.close()
         }
     }
+
+    /** HDR-source and unsupported-size refusals (P0-11) -- both before any decoding starts, so a
+     *  doomed transcode never spends EGL/decoder/encoder setup on a source this device or this
+     *  app's fixed SDR target can never actually finish. */
+    private fun runPreflightChecks(videoFormat: MediaFormat) {
+        val colorTransfer = videoFormat.intOrNull(MediaFormat.KEY_COLOR_TRANSFER)
+        val profile = videoFormat.intOrNull(MediaFormat.KEY_PROFILE)
+        hdrRefusalReason(colorTransfer, profile)?.let { error(it) }
+
+        val width = evenSize(videoFormat.getInteger(MediaFormat.KEY_WIDTH))
+        val height = evenSize(videoFormat.getInteger(MediaFormat.KEY_HEIGHT))
+        check(avcEncoderSupportsSize(width, height)) {
+            "This device's H.264 encoder can't produce video at ${width}x$height"
+        }
+    }
+
+    /** [android.os.StatFs] against [appContext]'s own `cacheDir` -- where [SampleStore] spills
+     *  both tracks' samples (P0-11) -- refusing before any of it is written rather than failing
+     *  partway through with a bare `IOException`. */
+    private fun checkFreeSpace(durationMs: Long) {
+        val availableBytes = StatFs(appContext.cacheDir.path).availableBytes
+        val requiredBytes = requiredSpillBytes(MAX_VIDEO_BIT_RATE, durationMs)
+        check(availableBytes >= requiredBytes) {
+            "Not enough free space to convert this video " +
+                "(need about ${requiredBytes / 1_000_000} MB, ${availableBytes / 1_000_000} MB available)"
+        }
+    }
+
+    private fun MediaFormat.intOrNull(key: String): Int? =
+        if (containsKey(key)) runCatching { getInteger(key) }.getOrNull() else null
 
     private fun findTrack(extractor: MediaExtractor, mimePrefix: String): Int? {
         for (index in 0 until extractor.trackCount) {
@@ -169,25 +216,30 @@ class VideoTranscoder(context: Context) {
             0
         }
         val buffer = ByteBuffer.allocateDirect(declaredMax.coerceIn(MIN_COPY_BUFFER_BYTES, MAX_COPY_BUFFER_BYTES))
-        val samples = mutableListOf<EncodedSample>()
-        while (true) {
-            currentCoroutineContext().ensureActive()
-            buffer.clear()
-            val size = extractor.readSampleData(buffer, 0)
-            if (size < 0) break
-            val sampleTimeUs = extractor.sampleTime
-            if (recipe.trimEndUs != null && sampleTimeUs >= recipe.trimEndUs) break
-            if (isWithinTrim(sampleTimeUs, recipe)) {
-                val data = ByteArray(size)
-                buffer.limit(size)
-                buffer.position(0)
-                buffer.get(data)
-                val exportedTimeUs = exportedPresentationTimeUs(sampleTimeUs, recipe)
-                samples += EncodedSample(data, exportedTimeUs, muxerBufferFlagsFor(extractor.sampleFlags))
+        val sampleStore = SampleStore.create(appContext.cacheDir)
+        try {
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                buffer.clear()
+                val size = extractor.readSampleData(buffer, 0)
+                if (size < 0) break
+                val sampleTimeUs = extractor.sampleTime
+                if (recipe.trimEndUs != null && sampleTimeUs >= recipe.trimEndUs) break
+                if (isWithinTrim(sampleTimeUs, recipe)) {
+                    val data = ByteArray(size)
+                    buffer.limit(size)
+                    buffer.position(0)
+                    buffer.get(data)
+                    val exportedTimeUs = exportedPresentationTimeUs(sampleTimeUs, recipe)
+                    sampleStore.append(data, exportedTimeUs, muxerBufferFlagsFor(extractor.sampleFlags))
+                }
+                extractor.advance()
             }
-            extractor.advance()
+            return EncodedTrack(format, sampleStore)
+        } catch (t: Throwable) {
+            sampleStore.close()
+            throw t
         }
-        return EncodedTrack(format, samples)
     }
 
     /**
@@ -212,8 +264,14 @@ class VideoTranscoder(context: Context) {
         // correct GOP state) but never rendered to the encoder -- see isWithinTrim below.
         if (recipe.trimStartUs > 0L) extractor.seekTo(recipe.trimStartUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
         val sourceFormat = extractor.getTrackFormat(trackIndex)
-        val width = sourceFormat.getInteger(MediaFormat.KEY_WIDTH)
-        val height = sourceFormat.getInteger(MediaFormat.KEY_HEIGHT)
+        // Rounded down to even (P0-11): an AVC encoder needs even dimensions, and this is the
+        // SAME rounding runPreflightChecks already probed avcEncoderSupportsSize against, so an
+        // odd source that only became convertible because of this rounding is actually encoded at
+        // the size that was checked, not the original odd one. The decoder below still decodes at
+        // the source's own true (possibly odd) resolution -- only the encoder's target and the
+        // render step need the even size.
+        val width = evenSize(sourceFormat.getInteger(MediaFormat.KEY_WIDTH))
+        val height = evenSize(sourceFormat.getInteger(MediaFormat.KEY_HEIGHT))
         val sourceMime = sourceFormat.getString(MediaFormat.KEY_MIME) ?: error("Video track has no MIME type")
         val frameRate = if (sourceFormat.containsKey(MediaFormat.KEY_FRAME_RATE)) {
             runCatching { sourceFormat.getInteger(MediaFormat.KEY_FRAME_RATE) }.getOrDefault(DEFAULT_FRAME_RATE)
@@ -245,106 +303,114 @@ class VideoTranscoder(context: Context) {
         decoder.configure(sourceFormat, decoderOutputSurface.surface, null, 0)
         decoder.start()
 
-        val samples = mutableListOf<EncodedSample>()
-        var outputFormat: MediaFormat? = null
+        val sampleStore = SampleStore.create(appContext.cacheDir)
         try {
-            var decoderInputDone = false
-            var decoderOutputDone = false
-            var encoderDone = false
-            val decoderBufferInfo = MediaCodec.BufferInfo()
-            val encoderBufferInfo = MediaCodec.BufferInfo()
-            val transformMatrix = FloatArray(16)
+            var outputFormat: MediaFormat? = null
+            try {
+                var decoderInputDone = false
+                var decoderOutputDone = false
+                var encoderDone = false
+                val decoderBufferInfo = MediaCodec.BufferInfo()
+                val encoderBufferInfo = MediaCodec.BufferInfo()
+                val transformMatrix = FloatArray(16)
 
-            while (!encoderDone) {
-                currentCoroutineContext().ensureActive()
+                while (!encoderDone) {
+                    currentCoroutineContext().ensureActive()
 
-                if (!decoderInputDone) {
-                    val inputIndex = decoder.dequeueInputBuffer(CODEC_TIMEOUT_US)
-                    if (inputIndex >= 0) {
-                        val inputBuffer = decoder.getInputBuffer(inputIndex)
-                            ?: error("Decoder offered input buffer $inputIndex with no backing buffer")
-                        val sampleSize = extractor.readSampleData(inputBuffer, 0)
-                        val pastTrimEnd = recipe.trimEndUs != null &&
-                            sampleSize >= 0 && extractor.sampleTime >= recipe.trimEndUs
-                        if (sampleSize < 0 || pastTrimEnd) {
-                            decoder.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                            decoderInputDone = true
-                        } else {
-                            decoder.queueInputBuffer(inputIndex, 0, sampleSize, extractor.sampleTime, 0)
-                            extractor.advance()
+                    if (!decoderInputDone) {
+                        val inputIndex = decoder.dequeueInputBuffer(CODEC_TIMEOUT_US)
+                        if (inputIndex >= 0) {
+                            val inputBuffer = decoder.getInputBuffer(inputIndex)
+                                ?: error("Decoder offered input buffer $inputIndex with no backing buffer")
+                            val sampleSize = extractor.readSampleData(inputBuffer, 0)
+                            val pastTrimEnd = recipe.trimEndUs != null &&
+                                sampleSize >= 0 && extractor.sampleTime >= recipe.trimEndUs
+                            if (sampleSize < 0 || pastTrimEnd) {
+                                decoder.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                decoderInputDone = true
+                            } else {
+                                decoder.queueInputBuffer(inputIndex, 0, sampleSize, extractor.sampleTime, 0)
+                                extractor.advance()
+                            }
+                        }
+                    }
+
+                    if (!decoderOutputDone) {
+                        val outputIndex = decoder.dequeueOutputBuffer(decoderBufferInfo, CODEC_TIMEOUT_US)
+                        if (outputIndex >= 0) {
+                            val isEos = decoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                            // A decoded frame this app actually wants to keep -- as opposed to one
+                            // decoded only to give the decoder correct GOP state on the way to the
+                            // trim start (see the SEEK_TO_PREVIOUS_SYNC comment above), which must
+                            // still be released (to free the buffer) but never rendered or encoded.
+                            val isWantedFrame = decoderBufferInfo.size > 0 &&
+                                isWithinTrim(decoderBufferInfo.presentationTimeUs, recipe)
+                            decoder.releaseOutputBuffer(outputIndex, isWantedFrame)
+                            if (isWantedFrame) {
+                                // Rendering a frame is a GPU-side, asynchronous consequence of
+                                // releaseOutputBuffer(render = true) above -- awaitNewImage blocks
+                                // until it has actually landed. See DecoderOutputSurface's own doc.
+                                decoderOutputSurface.awaitNewImage()
+                                inputSurface.makeCurrent()
+                                decoderOutputSurface.transformMatrix(transformMatrix)
+                                textureRenderer.draw(decoderOutputSurface.textureId, transformMatrix, width, height)
+                                val exportedTimeUs = exportedPresentationTimeUs(decoderBufferInfo.presentationTimeUs, recipe)
+                                inputSurface.setPresentationTime(exportedTimeUs * 1_000L)
+                                inputSurface.swapBuffers()
+                            }
+                            if (isEos) {
+                                decoderOutputDone = true
+                                encoder.signalEndOfInputStream()
+                            }
+                        }
+                    }
+
+                    val encoderOutputIndex = encoder.dequeueOutputBuffer(encoderBufferInfo, CODEC_TIMEOUT_US)
+                    when {
+                        encoderOutputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> outputFormat = encoder.outputFormat
+                        encoderOutputIndex >= 0 -> {
+                            // The codec-config buffer (SPS/PPS) is carried by the MediaFormat handed
+                            // to MediaMuxer.addTrack, not written as a sample.
+                            val isCodecConfig = encoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                            if (!isCodecConfig && encoderBufferInfo.size > 0) {
+                                val outputBuffer = encoder.getOutputBuffer(encoderOutputIndex)
+                                    ?: error("Encoder offered output buffer $encoderOutputIndex with no backing buffer")
+                                val data = ByteArray(encoderBufferInfo.size)
+                                outputBuffer.position(encoderBufferInfo.offset)
+                                outputBuffer.get(data)
+                                val muxerFlags = encoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME
+                                sampleStore.append(data, encoderBufferInfo.presentationTimeUs, muxerFlags)
+                            }
+                            encoder.releaseOutputBuffer(encoderOutputIndex, false)
+                            if (encoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) encoderDone = true
                         }
                     }
                 }
-
-                if (!decoderOutputDone) {
-                    val outputIndex = decoder.dequeueOutputBuffer(decoderBufferInfo, CODEC_TIMEOUT_US)
-                    if (outputIndex >= 0) {
-                        val isEos = decoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                        // A decoded frame this app actually wants to keep -- as opposed to one
-                        // decoded only to give the decoder correct GOP state on the way to the
-                        // trim start (see the SEEK_TO_PREVIOUS_SYNC comment above), which must
-                        // still be released (to free the buffer) but never rendered or encoded.
-                        val isWantedFrame = decoderBufferInfo.size > 0 &&
-                            isWithinTrim(decoderBufferInfo.presentationTimeUs, recipe)
-                        decoder.releaseOutputBuffer(outputIndex, isWantedFrame)
-                        if (isWantedFrame) {
-                            // Rendering a frame is a GPU-side, asynchronous consequence of
-                            // releaseOutputBuffer(render = true) above -- awaitNewImage blocks
-                            // until it has actually landed. See DecoderOutputSurface's own doc.
-                            decoderOutputSurface.awaitNewImage()
-                            inputSurface.makeCurrent()
-                            decoderOutputSurface.transformMatrix(transformMatrix)
-                            textureRenderer.draw(decoderOutputSurface.textureId, transformMatrix, width, height)
-                            val exportedTimeUs = exportedPresentationTimeUs(decoderBufferInfo.presentationTimeUs, recipe)
-                            inputSurface.setPresentationTime(exportedTimeUs * 1_000L)
-                            inputSurface.swapBuffers()
-                        }
-                        if (isEos) {
-                            decoderOutputDone = true
-                            encoder.signalEndOfInputStream()
-                        }
-                    }
-                }
-
-                val encoderOutputIndex = encoder.dequeueOutputBuffer(encoderBufferInfo, CODEC_TIMEOUT_US)
-                when {
-                    encoderOutputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> outputFormat = encoder.outputFormat
-                    encoderOutputIndex >= 0 -> {
-                        // The codec-config buffer (SPS/PPS) is carried by the MediaFormat handed
-                        // to MediaMuxer.addTrack, not written as a sample.
-                        val isCodecConfig = encoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
-                        if (!isCodecConfig && encoderBufferInfo.size > 0) {
-                            val outputBuffer = encoder.getOutputBuffer(encoderOutputIndex)
-                                ?: error("Encoder offered output buffer $encoderOutputIndex with no backing buffer")
-                            val data = ByteArray(encoderBufferInfo.size)
-                            outputBuffer.position(encoderBufferInfo.offset)
-                            outputBuffer.get(data)
-                            val muxerFlags = encoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME
-                            samples += EncodedSample(data, encoderBufferInfo.presentationTimeUs, muxerFlags)
-                        }
-                        encoder.releaseOutputBuffer(encoderOutputIndex, false)
-                        if (encoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) encoderDone = true
-                    }
-                }
+            } finally {
+                runCatching { decoder.stop() }
+                decoder.release()
+                runCatching { encoder.stop() }
+                encoder.release()
+                textureRenderer.release()
+                decoderOutputSurface.release()
+                inputSurface.release()
+                egl.release()
             }
-        } finally {
-            runCatching { decoder.stop() }
-            decoder.release()
-            runCatching { encoder.stop() }
-            encoder.release()
-            textureRenderer.release()
-            decoderOutputSurface.release()
-            inputSurface.release()
-            egl.release()
+            return EncodedTrack(checkNotNull(outputFormat) { "The H.264 encoder never reported an output format" }, sampleStore)
+        } catch (t: Throwable) {
+            sampleStore.close()
+            throw t
         }
-        return EncodedTrack(checkNotNull(outputFormat) { "The H.264 encoder never reported an output format" }, samples)
     }
 
-    private fun muxTracks(outputFd: FileDescriptor, videoTrack: EncodedTrack, audioTrack: EncodedTrack?) {
+    private fun muxTracks(outputFd: FileDescriptor, videoTrack: EncodedTrack, audioTrack: EncodedTrack?, rotationDegrees: Int) {
         val muxer = MediaMuxer(outputFd, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         try {
             val videoMuxerIndex = muxer.addTrack(videoTrack.format)
             val audioMuxerIndex = audioTrack?.let { muxer.addTrack(it.format) }
+            // Must be set before start(); MediaMuxer ignores it after (P0-11) -- matches
+            // StreamCopyRemuxer's own precedent exactly.
+            muxer.setOrientationHint(rotationDegrees)
             muxer.start()
             muxer.writeSamples(videoMuxerIndex, videoTrack)
             if (audioTrack != null && audioMuxerIndex != null) muxer.writeSamples(audioMuxerIndex, audioTrack)
@@ -365,11 +431,12 @@ class VideoTranscoder(context: Context) {
 
     private companion object {
         /**
-         * [EncodedTrack] holds a whole track's compressed bytes in memory (see its own doc) —
-         * this caps how much video that can mean. Ten minutes at this bitrate ceiling is
-         * comfortably under a phone's per-process memory budget; a longer source needs a
-         * streaming mux this first pass does not build. "Single-clip" is this whole roadmap
-         * phase's own stated scope, not an arbitrary number picked to make a demo work.
+         * [EncodedTrack] spills a whole track's compressed bytes to disk rather than memory
+         * (P0-11, see [SampleStore]'s own doc) — the OOM risk this cap originally guarded against
+         * is gone, but it is kept anyway: "single-clip" is this whole roadmap phase's own stated
+         * scope, and a multi-hour transcode is still real wall-clock time and disk churn this
+         * first pass was never meant to promise, not an arbitrary number picked to make a demo
+         * work.
          */
         const val MAX_TRANSCODE_DURATION_MS = 10 * 60 * 1_000L
 
@@ -384,3 +451,18 @@ class VideoTranscoder(context: Context) {
         const val MAX_COPY_BUFFER_BYTES = 32 shl 20 // 32 MiB
     }
 }
+
+/**
+ * Bytes [VideoTranscoder.checkFreeSpace] requires to be free before starting a transcode of
+ * [durationMs] at up to [maxBitRateBitsPerSecond] (P0-11) — twice the estimated spill size (the
+ * video track's own spill plus, generously, room for the audio track's alongside it, both present
+ * on disk at once until [VideoTranscoder.muxTracks] finishes and both are deleted) plus a fixed
+ * margin for unrelated disk activity during a multi-minute transcode.
+ *
+ * A pure function over already-known values (no [android.os.StatFs] call itself), so it is unit
+ * testable without a real filesystem.
+ */
+internal fun requiredSpillBytes(maxBitRateBitsPerSecond: Int, durationMs: Long): Long =
+    2L * (maxBitRateBitsPerSecond / 8) * (durationMs / 1_000) + FREE_SPACE_MARGIN_BYTES
+
+private const val FREE_SPACE_MARGIN_BYTES = 100_000_000L

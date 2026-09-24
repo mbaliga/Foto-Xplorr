@@ -12,7 +12,14 @@ Foto Xplorr is a local-first, open-source Android gallery for fast everyday brow
 - Sort by newest, oldest, name or size and adjust the grid from 2–7 columns.
 - Full-screen image viewer with swipe, zoom, pan, metadata and slideshow.
 - In-app video playback with duration metadata.
-- SVG and animated GIF/WebP/AVIF support through the available Coil decoders.
+- SVG support, and real animated playback for GIF, animated WebP and animated AVIF/HEIF — detected
+  by inspecting each file's own container (GIF frame count, WebP's `VP8X` flag, PNG's `acTL`/`IDAT`
+  ordering, HEIF/AVIF's `ftyp` brand family), not guessed from MIME type alone, so a static
+  WebP/AVIF/PNG never plays as if it were animated.
+- RAW formats other than Adobe DNG (Canon, Nikon, Sony, Fujifilm, Olympus, Panasonic, Sigma,
+  Leica and others) are recognised and searchable (`type:raw`) but not decoded for full-resolution
+  viewing yet. HEIC/HEIF still-frame decode is only reliable from Android 9 (API 28) onward; it can
+  fail outright on Android 8.0/8.1.
 - System, light and dark themes with multiple accent palettes.
 
 ### Organise
@@ -47,6 +54,17 @@ Foto Xplorr is a local-first, open-source Android gallery for fast everyday brow
 ## Privacy model
 
 Foto Xplorr has no application backend, account, analytics or mandatory cloud service. Location indexing is local and starts only after the user opens Places and requests it.
+
+Sharing strips metadata before a file ever leaves the app, and every stripped output is re-checked
+clean before it is handed to the receiving app — never trusted on the strength of the stripping
+logic alone. JPEG, PNG, WebP, GIF and BMP are parsed directly and only the location, device,
+timestamp, unique-ID and comment fields are removed from their own byte structure; a format the
+parser does not recognise (HEIC/HEIF, AVIF, DNG and other RAW, TIFF) is instead decoded and
+re-encoded as a fresh JPEG, which drops all of its original metadata as a side effect of being a new
+file. Video is never copied byte-for-byte: sharing remuxes it into a new container without ever
+writing a location, re-verifying the result has none. A share this app cannot confirm is clean —
+an unsupported video codec, a corrupt or truncated source — fails with an explanatory error instead
+of silently sending the original with its metadata intact.
 
 The current private-folder feature is an **in-app access gate**. It does not encrypt or relocate original MediaStore files, so other applications that have photo access may still read them. It must not be described as an encrypted vault.
 

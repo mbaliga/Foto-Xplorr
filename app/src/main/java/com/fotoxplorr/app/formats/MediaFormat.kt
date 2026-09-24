@@ -58,17 +58,20 @@ sealed interface MediaFormat {
      * dependency (app/build.gradle.kts) and [com.fotoxplorr.app.media.MediaImage] wires its
      * decoder in whenever animation is requested. This value exists so a caller can tell "this
      * is a GIF" apart from "this is any other decodable image" without re-deriving it from the
-     * mime string -- [com.fotoxplorr.app.media.MediaAsset.isAnimated] already does the same
-     * check for that one purpose; this is the general-purpose version.
+     * mime string. Distinct from [com.fotoxplorr.app.formats.AnimationSniffer] (P0-14): that
+     * answers "does this GIF actually have more than one frame," a real-bytes question this
+     * value has no opinion on -- every GIF is `Gif` here, animated or not.
      */
     data object Gif : MediaFormat {
         override val isLikelyDecodable = true
     }
 
     /**
-     * Still-frame decode is available back to this app's minSdk via `ImageDecoder`/
-     * `BitmapFactory`; animated HEIF sequences additionally need API 28's `ImageDecoder` path,
-     * same story as animated GIF/WebP in [com.fotoxplorr.app.media.MediaImage].
+     * Still-frame decode is dependable from API 28's `ImageDecoder` (and needs an HEVC hardware
+     * decoder) -- NOT this app's own minSdk 26, two platform releases earlier than HEIF decode
+     * actually arrived; a HEIF opened on API 26/27 can fail to decode at all, device-dependent.
+     * Animated HEIF sequences need that same API 28 `ImageDecoder` path, same story as animated
+     * GIF/WebP in [com.fotoxplorr.app.media.MediaImage].
      */
     data object Heif : MediaFormat {
         override val isLikelyDecodable = true
@@ -206,12 +209,30 @@ enum class RawVariant(
     RAF(extension = "raf", vendor = "Fujifilm", isLikelyDecodable = false),
     SRW(extension = "srw", vendor = "Samsung", isLikelyDecodable = false),
     PEF(extension = "pef", vendor = "Pentax / Ricoh", isLikelyDecodable = false),
+    // P0-16: added for recognition/labelling only -- every one of these is `isLikelyDecodable =
+    // false`, matching every proprietary RAW variant above; the existing ten's own flags are left
+    // untested-on-device and unchanged.
+    NRW(extension = "nrw", vendor = "Nikon", isLikelyDecodable = false),
+    THREE_FR(extension = "3fr", vendor = "Hasselblad", isLikelyDecodable = false),
+    IIQ(extension = "iiq", vendor = "Phase One", isLikelyDecodable = false),
+    ERF(extension = "erf", vendor = "Epson", isLikelyDecodable = false),
+    MRW(extension = "mrw", vendor = "Minolta", isLikelyDecodable = false),
+    X3F(extension = "x3f", vendor = "Sigma", isLikelyDecodable = false),
+    DCR(extension = "dcr", vendor = "Kodak", isLikelyDecodable = false),
+    KDC(extension = "kdc", vendor = "Kodak", isLikelyDecodable = false),
+    MEF(extension = "mef", vendor = "Mamiya", isLikelyDecodable = false),
+    MOS(extension = "mos", vendor = "Leaf", isLikelyDecodable = false),
+    RWL(extension = "rwl", vendor = "Leica", isLikelyDecodable = false),
+    SR2(extension = "sr2", vendor = "Sony", isLikelyDecodable = false),
+    SRF(extension = "srf", vendor = "Sony", isLikelyDecodable = false),
+    GPR(extension = "gpr", vendor = "GoPro", isLikelyDecodable = false),
+    CRW(extension = "crw", vendor = "Canon", isLikelyDecodable = false),
     ;
 
     companion object {
         private val byExtension = entries.associateBy { it.extension }
 
-        /** Null for anything that is not one of these ten extensions -- deliberately not a
+        /** Null for anything that is not one of these extensions -- deliberately not a
          *  fallback "unknown RAW" case, since a `.xyz` file this table has never heard of is
          *  far more likely to just not be RAW at all than to be a RAW variant worth a wrong
          *  guess. */

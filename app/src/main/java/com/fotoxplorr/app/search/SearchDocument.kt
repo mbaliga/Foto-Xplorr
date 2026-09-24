@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.search
 
+import com.fotoxplorr.app.formats.MediaFormat
 import com.fotoxplorr.app.media.MediaId
 import java.util.Locale
 
@@ -62,8 +63,15 @@ private fun matchesTerm(term: Term, document: SearchDocument): Boolean = when (t
         if (term.negated) !hit else hit
     }
     is Term.Field -> {
-        val hit = matchesField(term, document)
-        if (term.negated) !hit else hit
+        // No EXIF index exists yet (Phase 2), so camera:/iso: are parsed but never filter
+        // anything -- positive or negated -- rather than matching against a field this app
+        // never populates (SearchDocument.camera is always "", .iso always null).
+        if (term.field == SearchField.CAMERA || term.field == SearchField.ISO) {
+            true
+        } else {
+            val hit = matchesField(term, document)
+            if (term.negated) !hit else hit
+        }
     }
 }
 
@@ -99,8 +107,7 @@ private fun matchesType(value: String, document: SearchDocument): Boolean {
         "gif" -> mime.contains("gif")
         "png" -> mime.contains("png")
         "jpeg", "jpg" -> mime.contains("jpeg") || mime.contains("jpg")
-        "raw", "dng" -> mime.contains("dng") || mime.contains("raw") || mime.contains("arw") ||
-            mime.contains("cr2") || mime.contains("nef")
+        "raw", "dng" -> MediaFormat.classify(document.mimeType, document.name) is MediaFormat.Raw
         "svg" -> mime.contains("svg")
         else -> mime.contains(value)
     }
@@ -117,13 +124,13 @@ private fun compareNumbers(comparison: Comparison, actual: Long?, expected: Long
     }
 }
 
-/** `size:>5mb` — accepts a bare byte count or a `kb`/`mb`/`gb` suffix. */
+/** `size:>5mb` — accepts a bare byte count, or a `k`/`kb`, `m`/`mb`, `g`/`gb` suffix. */
 internal fun parseByteSize(value: String): Long? {
     val text = value.trim().lowercase(Locale.ROOT)
     val multiplier = when {
-        text.endsWith("gb") -> 1_000_000_000L
-        text.endsWith("mb") -> 1_000_000L
-        text.endsWith("kb") -> 1_000L
+        text.endsWith("gb") || text.endsWith("g") -> 1_000_000_000L
+        text.endsWith("mb") || text.endsWith("m") -> 1_000_000L
+        text.endsWith("kb") || text.endsWith("k") -> 1_000L
         text.endsWith("b") -> 1L
         else -> 1L
     }

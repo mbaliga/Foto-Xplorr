@@ -49,7 +49,7 @@ class ProjectionPerfBaselineTest {
                         album, assets, state.favoriteIds, state.sensitiveIds,
                         state.library.archivedIds, state.library.tagsByMediaId,
                         state.lockedFolders, state.unlockedFolders, state.preferences,
-                        SyntheticCatalogue.NOW_MILLIS,
+                        nowMillis = SyntheticCatalogue.NOW_MILLIS,
                     )
                 }
             }

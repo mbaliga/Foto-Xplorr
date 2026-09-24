@@ -87,9 +87,24 @@ fun SettingsTabsRoom(
     var tab by remember { mutableStateOf(initialTab) }
     val preferences = state.preferences
     // One stable sample for the whole session: a preview that reshuffled on every toggle would
-    // make it impossible to see what the toggle actually changed.
-    val sampleAsset = remember(state.assets.firstOrNull()?.id) {
-        state.assets.firstOrNull { !it.isVideo }
+    // make it impossible to see what the toggle actually changed. Drawn from the one visibility
+    // filter (P0-01), so the settings preview can never show a locked, archived or hidden photo.
+    val sampleAsset = remember(
+        state.assets,
+        state.library.archivedIds,
+        state.sensitiveIds,
+        state.lockedFolders,
+        state.unlockedFolders,
+        preferences.hideSensitive,
+    ) {
+        browsableAssets(
+            assets = state.assets,
+            archivedIds = state.library.archivedIds,
+            sensitiveIds = state.sensitiveIds,
+            lockedFolders = state.lockedFolders,
+            unlockedFolders = state.unlockedFolders,
+            hideSensitive = preferences.hideSensitive,
+        ).firstOrNull { !it.isVideo }
     }
 
     Column(

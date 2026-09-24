@@ -7,11 +7,11 @@ import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
 import android.opengl.Matrix
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.util.Size
+import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.decodeUpright
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -25,6 +25,7 @@ import javax.microedition.khronos.opengles.GL10
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.runBlocking
 
 internal class PhotoWallRenderer(
     private val context: Context,
@@ -257,29 +258,17 @@ internal class PhotoWallRenderer(
         }
     }
 
+    /** P0-03: [decodeUpright] now does the bounding (and, unlike before, applies EXIF
+     * orientation); the ARGB_8888 conversion GL texture upload needs is unchanged. Runs on
+     * [loader]'s own background thread, not a coroutine, hence [runBlocking]. */
     private fun decodeThumbnail(asset: MediaAsset): Bitmap {
-        val resolver = context.contentResolver
-        val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            resolver.loadThumbnail(asset.contentUri, Size(TEXTURE_SIZE, TEXTURE_SIZE), null)
-        } else {
-            resolver.openInputStream(asset.contentUri)?.use(android.graphics.BitmapFactory::decodeStream)
-                ?: error("Unable to decode ${asset.displayName}")
-        }
-        val scaled = if (bitmap.width > TEXTURE_SIZE || bitmap.height > TEXTURE_SIZE) {
-            val ratio = min(TEXTURE_SIZE.toFloat() / bitmap.width, TEXTURE_SIZE.toFloat() / bitmap.height)
-            Bitmap.createScaledBitmap(
-                bitmap,
-                max(1, (bitmap.width * ratio).toInt()),
-                max(1, (bitmap.height * ratio).toInt()),
-                true,
-            ).also { if (it !== bitmap) bitmap.recycle() }
-        } else {
+        val decoded = runBlocking { decodeUpright(context, asset.contentUri, TEXTURE_DECODE_LIMITS) }
+            ?: error("Unable to decode ${asset.displayName}")
+        val bitmap = decoded.bitmap
+        return if (bitmap.config == Bitmap.Config.ARGB_8888) {
             bitmap
-        }
-        return if (scaled.config == Bitmap.Config.ARGB_8888) {
-            scaled
         } else {
-            scaled.copy(Bitmap.Config.ARGB_8888, false).also { if (it !== scaled) scaled.recycle() }
+            bitmap.copy(Bitmap.Config.ARGB_8888, false).also { if (it !== bitmap) bitmap.recycle() }
         }
     }
 
@@ -401,6 +390,7 @@ internal class PhotoWallRenderer(
         const val MAX_TEXTURES = 72
         const val TEXTURE_WORKERS = 2
         const val TEXTURE_SIZE = 384
+        val TEXTURE_DECODE_LIMITS = DecodeLimits(maxLongEdge = TEXTURE_SIZE, maxPixels = TEXTURE_SIZE.toLong() * TEXTURE_SIZE)
         const val VERTEX_STRIDE = 5 * Float.SIZE_BYTES
         const val DRAG_YAW_SCALE = 0.075f
         const val DRAG_DEPTH_SCALE = 0.018f

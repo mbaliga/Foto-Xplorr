@@ -11,7 +11,7 @@ import org.junit.Test
 
 class MediaIndexerTest {
     @Test
-    fun `a full scan persists progressively and reconciles deletions at completion`() = runBlocking {
+    fun `a full scan persists progressively and sweeps to exactly what it discovered`() = runBlocking {
         val assets = listOf(asset(1), asset(2), asset(3))
         val repository = RecordingRepository()
         val scanner = RecordingScanner { plan ->
@@ -27,13 +27,76 @@ class MediaIndexerTest {
             .collect {}
 
         assertEquals(listOf(listOf(assets[0], assets[1]), listOf(assets[2])), repository.upserts)
-        assertEquals(assets, repository.replacement)
+        assertEquals(assets.map { it.id }.toSet(), repository.lastSweepKeepIds)
     }
 
     @Test
-    fun `a delta scan must never replaceAll -- that would delete the untouched library`() = runBlocking {
-        // The whole point of a delta: 21,526 known assets, one new screenshot. A replaceAll
-        // with only the delta's contents would wipe the other 21,526.
+    fun `a full pass removes only the missing ids`() = runBlocking {
+        val stale = asset(1)
+        val kept = asset(2)
+        val fresh = asset(3)
+        val repository = RecordingRepository().apply { seed(listOf(stale, kept)) }
+        val scanner = RecordingScanner { plan ->
+            flow {
+                emit(ScanEvent.Started("test"))
+                emit(ScanEvent.AssetFound(kept))
+                emit(ScanEvent.AssetFound(fresh))
+                emit(ScanEvent.Completed(2, plan, newestModifiedSeconds = 3L))
+            }
+        }
+
+        MediaIndexer(scanner, repository, FakeWatermark(lastCompleted = 1_000L))
+            .refresh(userRequested = true)
+            .collect {}
+
+        assertEquals("only the stale id was removed", setOf(stale.id), repository.lastSweptIds)
+        assertEquals("kept and fresh both survive", listOf(kept, fresh), repository.current().sortedBy { it.id.value })
+    }
+
+    @Test
+    fun `a guard refusal leaves every row in place`() = runBlocking {
+        // Unattended (userRequested = false) AND no trustworthy watermark (ScanPlan.decide's own
+        // "lastCompletedSeconds <= 0L -> Full" branch -- the watermark preference and the SQLite
+        // catalogue are two independent stores, so this really can happen with a large existing
+        // catalogue still on disk) is the one real way an UNATTENDED pass ever reaches Full at
+        // all: SweepPolicy must refuse it, since an enormous missingCount this far past both the
+        // floor and the quarter is far more likely a broken/partial pass than 21,525 genuine
+        // deletions.
+        val untouched = List(21_526) { asset(it + 100L) }
+        val repository = RecordingRepository().apply { seed(untouched) }
+        val fresh = asset(999_999)
+        val scanner = RecordingScanner { plan ->
+            flow {
+                emit(ScanEvent.Started("test"))
+                emit(ScanEvent.AssetFound(fresh))
+                emit(ScanEvent.Completed(1, plan, newestModifiedSeconds = 999_999L))
+            }
+        }
+        var refusedCatalogueSize: Int? = null
+        var refusedMissingCount: Int? = null
+
+        MediaIndexer(
+            scanner,
+            repository,
+            FakeWatermark(lastCompleted = 0L),
+            onSweepRefused = { catalogueSize, missingCount ->
+                refusedCatalogueSize = catalogueSize
+                refusedMissingCount = missingCount
+            },
+        ).refresh(userRequested = false).collect {}
+
+        assertTrue("no trustworthy watermark must still plan a full pass", scanner.lastPlan is ScanPlan.Full)
+
+        assertNull("nothing must be removed on a refusal", repository.lastSweptIds)
+        assertEquals(untouched.size + 1, repository.current().size)
+        assertEquals(untouched.size + 1, refusedCatalogueSize)
+        assertEquals(untouched.size, refusedMissingCount)
+    }
+
+    @Test
+    fun `a delta scan must never sweep -- that would delete the untouched library`() = runBlocking {
+        // The whole point of a delta: 21,526 known assets, one new screenshot. Sweeping with only
+        // the delta's own findings as the keep set would wipe the other 21,526.
         val repository = RecordingRepository().apply { seed(List(21_526) { asset(it + 100L) }) }
         val fresh = asset(999_999)
         val scanner = RecordingScanner { plan ->
@@ -50,7 +113,7 @@ class MediaIndexerTest {
 
         assertTrue("a populated library + watermark must plan a delta", scanner.lastPlan is ScanPlan.Delta)
         assertEquals("the new asset must be upserted", listOf(listOf(fresh)), repository.upserts)
-        assertNull("replaceAll must NOT run on a delta", repository.replacement)
+        assertNull("removeAllExcept must NOT run on a delta", repository.lastSweepKeepIds)
     }
 
     @Test
@@ -141,17 +204,24 @@ class MediaIndexerTest {
 
     private class RecordingRepository : MediaRepository {
         val upserts = mutableListOf<List<MediaAsset>>()
-        /** Null until replaceAll actually runs, so "it never ran" is distinguishable from "it ran empty". */
-        var replacement: List<MediaAsset>? = null
+        /** Null until removeAllExcept actually runs, so "it never ran" is distinguishable from
+         * "it ran and happened to keep everything". */
+        var lastSweepKeepIds: Set<MediaId>? = null
+        /** The ids removeAllExcept actually removed, computed from what the repository held right
+         * before that call -- null under the same "never ran" rule as [lastSweepKeepIds]. */
+        var lastSweptIds: Set<MediaId>? = null
         private val state = MutableStateFlow<List<MediaAsset>>(emptyList())
 
         fun seed(items: List<MediaAsset>) { state.value = items }
 
+        fun current(): List<MediaAsset> = state.value
+
         override fun observeAll(): Flow<List<MediaAsset>> = state
 
-        override suspend fun replaceAll(items: List<MediaAsset>) {
-            replacement = items
-            state.value = items
+        override suspend fun removeAllExcept(keep: Set<MediaId>) {
+            lastSweepKeepIds = keep
+            lastSweptIds = state.value.filterNot { it.id in keep }.mapTo(mutableSetOf()) { it.id }
+            state.value = state.value.filter { it.id in keep }
         }
 
         override suspend fun upsert(items: List<MediaAsset>) {

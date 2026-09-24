@@ -6,6 +6,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.share.fileProviderAuthority
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -34,7 +35,7 @@ import java.util.UUID
  */
 class MomentFrameExporter(context: Context) {
     private val appContext = context.applicationContext
-    private val authority = "${appContext.packageName}.files"
+    private val authority = fileProviderAuthority(appContext)
 
     suspend fun exportFrame(asset: MediaAsset, positionMs: Long): Result<Uri> =
         withContext(Dispatchers.IO) {

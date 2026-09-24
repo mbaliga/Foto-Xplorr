@@ -1,5 +1,7 @@
 package com.fotoxplorr.app.videoeditor
 
+import kotlin.math.roundToInt
+
 /**
  * A single-clip video edit, as a photographer or casual editor describes it — trim range and
  * playback speed — kept as pure data the same way
@@ -21,7 +23,7 @@ package com.fotoxplorr.app.videoeditor
  * @param speedFactor how much faster (>1) or slower (<1) the exported clip plays. Changes pitch
  *   along with tempo (the classic "sped-up tape" effect) rather than preserving pitch — real
  *   pitch-preserving time-stretch is signal-processing work this first pass does not build; see
- *   [speedAdjustedSampleRate]'s own doc.
+ *   [resamplePcm16]'s own doc.
  */
 data class VideoEditRecipe(
     val trimStartUs: Long = 0L,
@@ -63,17 +65,39 @@ internal fun exportedPresentationTimeUs(originalUs: Long, recipe: VideoEditRecip
     ((originalUs - recipe.trimStartUs) / recipe.speedFactor).toLong()
 
 /**
- * The sample rate to LABEL a speed-changed audio track with, while feeding it the source's own
- * unmodified PCM samples — see [VideoEditRecipe.speedFactor]'s own doc on why this changes pitch.
+ * Resamples 16-bit PCM audio to [speed] — above 1 plays faster (fewer output frames for the same
+ * source span), below 1 slower — via linear interpolation per channel. Changes pitch along with
+ * tempo exactly the way this function's predecessor, `speedAdjustedSampleRate` (removed by this
+ * same change, P0-11), used to: the samples themselves are now actually resampled, so the result
+ * can be encoded at the source's own valid sample rate instead of a scaled, frequently-invalid one
+ * — 1.5× used to turn 44,100 Hz into 66,150 Hz, which AAC cannot encode at all, so exports with
+ * sound at most non-1× speeds most likely failed outright. See [VideoEditRecipe.speedFactor]'s own
+ * doc for why this changes pitch along with tempo rather than preserving it.
  *
- * This is not resampling: the actual samples are untouched. Telling a decoder "these samples are
- * `originalSampleRate * speedFactor` per second" instead of their true rate is what makes a player
- * read through them faster or slower — precisely the mechanism a sped-up tape or turntable uses,
- * and it needs no DSP at all, which is the whole reason this is the first pass's approach rather
- * than a real time-stretch.
+ * A pure function over PCM samples (no [android.media.MediaCodec]/[android.media.MediaExtractor]
+ * dependency), so it is unit-testable without a real device.
+ *
+ * @param interleaved source PCM, one 16-bit sample per channel per frame, channels interleaved.
+ *   Its length must be a multiple of [channels].
+ * @param channels the channel count [interleaved] is interleaved for.
  */
-internal fun speedAdjustedSampleRate(originalSampleRate: Int, speedFactor: Float): Int =
-    (originalSampleRate * speedFactor).let { scaled ->
-        require(scaled >= 1f) { "speedFactor $speedFactor makes $originalSampleRate Hz audio invalid" }
-        scaled.toInt().coerceAtLeast(1)
+internal fun resamplePcm16(interleaved: ShortArray, channels: Int, speed: Float): ShortArray {
+    require(channels > 0) { "channels must be positive, was $channels" }
+    require(speed > 0f) { "speed must be positive, was $speed" }
+    val inFrames = interleaved.size / channels
+    if (inFrames == 0) return ShortArray(0)
+    val outFrames = (inFrames / speed).roundToInt().coerceAtLeast(1)
+    val output = ShortArray(outFrames * channels)
+    for (outFrame in 0 until outFrames) {
+        val sourcePosition = outFrame * speed
+        val sourceFrame = sourcePosition.toInt().coerceIn(0, inFrames - 1)
+        val nextFrame = (sourceFrame + 1).coerceAtMost(inFrames - 1)
+        val fraction = sourcePosition - sourceFrame
+        for (channel in 0 until channels) {
+            val a = interleaved[sourceFrame * channels + channel]
+            val b = interleaved[nextFrame * channels + channel]
+            output[outFrame * channels + channel] = (a + (b - a) * fraction).roundToInt().toShort()
+        }
     }
+    return output
+}

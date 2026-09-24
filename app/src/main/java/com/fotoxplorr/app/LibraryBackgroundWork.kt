@@ -44,7 +44,12 @@ class LibraryBackgroundWork(context: Context) : BackgroundWorkRunner {
         // awaitLoaded, NOT observeAll().first(): the repository loads asynchronously after
         // construction, and a StateFlow's first value on a fresh instance is the empty list it
         // was initialised with. See SqliteMediaRepository.awaitLoaded for the failure this was.
-        val assets = SqliteMediaRepository(appContext).awaitLoaded()
+        //
+        // LibraryRuntime.get, never a second SqliteMediaRepository instance (P0-09): this used to
+        // construct its own, a second in-memory mirror of the same database, independent of the
+        // foreground scan's own repository -- the same failure family LibraryStore.get's own
+        // KDoc warns about for that class.
+        val assets = LibraryRuntime.get(appContext).repository.awaitLoaded()
         if (assets.isEmpty()) return null
 
         currentCoroutineContext().ensureActive()

@@ -85,18 +85,21 @@ class AndroidAudioMediaStoreScanner(
         }
     }
 
-    private fun projection(): Array<String> = arrayOf(
-        MediaStore.Audio.AudioColumns._ID,
-        MediaStore.Audio.AudioColumns.DISPLAY_NAME,
-        MediaStore.Audio.AudioColumns.TITLE,
-        MediaStore.Audio.AudioColumns.ARTIST,
-        MediaStore.Audio.AudioColumns.ALBUM,
-        MediaStore.Audio.AudioColumns.MIME_TYPE,
-        MediaStore.Audio.AudioColumns.DURATION,
-        MediaStore.Audio.AudioColumns.SIZE,
-        MediaStore.Audio.AudioColumns.DATE_ADDED,
-        MediaStore.Audio.AudioColumns.DATE_MODIFIED,
-    )
+    private fun projection(): Array<String> = buildList {
+        add(MediaStore.Audio.AudioColumns._ID)
+        add(MediaStore.Audio.AudioColumns.DISPLAY_NAME)
+        add(MediaStore.Audio.AudioColumns.TITLE)
+        add(MediaStore.Audio.AudioColumns.ARTIST)
+        add(MediaStore.Audio.AudioColumns.ALBUM)
+        add(MediaStore.Audio.AudioColumns.MIME_TYPE)
+        add(MediaStore.Audio.AudioColumns.DURATION)
+        add(MediaStore.Audio.AudioColumns.SIZE)
+        add(MediaStore.Audio.AudioColumns.DATE_ADDED)
+        add(MediaStore.Audio.AudioColumns.DATE_MODIFIED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            add(MediaStore.Audio.AudioColumns.RELATIVE_PATH)
+        }
+    }.toTypedArray()
 
     private class CursorColumns(cursor: Cursor) {
         private val id = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns._ID)
@@ -109,6 +112,7 @@ class AndroidAudioMediaStoreScanner(
         private val size = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.SIZE)
         private val dateAdded = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.DATE_ADDED)
         private val dateModified = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.DATE_MODIFIED)
+        private val relativePath = cursor.getColumnIndex(MediaStore.Audio.AudioColumns.RELATIVE_PATH)
 
         fun toAsset(cursor: Cursor): AudioAsset {
             val rawId = cursor.getLong(id)
@@ -130,6 +134,7 @@ class AndroidAudioMediaStoreScanner(
                 sizeBytes = cursor.longOrZero(size),
                 dateAddedSeconds = cursor.longOrZero(dateAdded),
                 dateModifiedSeconds = cursor.longOrZero(dateModified),
+                relativePath = cursor.stringOrNull(relativePath),
             )
         }
     }
@@ -146,17 +151,23 @@ class AndroidAudioMediaStoreScanner(
  * `MediaStore`'s own compile-time-inlined constants, so it needs no real `ContentResolver` (or
  * Robolectric) to test.
  *
- * `IS_MUSIC != 0` excludes ringtones, alarms and notification sounds MediaStore also indexes under
- * this same collection — a real, long-standing column (present since the very first MediaStore
- * audio table, not an API-level-gated addition), so this filter applies identically across every
- * API level this app supports. Without it, "Audio" would list every stock notification tone on the
- * device alongside actual music and recordings.
+ * Excludes ringtones, alarms and notification sounds MediaStore also indexes under this same
+ * collection by name (`IS_RINGTONE=0 AND IS_NOTIFICATION=0 AND IS_ALARM=0`), not by requiring
+ * `IS_MUSIC!=0` (P0-10): the old clause also excluded voice recordings, podcasts and audiobooks,
+ * every one of which is real audio a user would expect this library to list, despite none of them
+ * being "music". All three columns are real, long-standing ones (present since the very first
+ * MediaStore audio table, not an API-level-gated addition), so this filter applies identically
+ * across every API level this app supports. Without it, "Audio" would list every stock
+ * notification tone on the device alongside actual recordings and music.
  */
 internal fun buildAudioSelection(plan: ScanPlan): AudioSelectionQuery {
-    val musicClause = "${MediaStore.Audio.AudioColumns.IS_MUSIC}!=0"
+    val notASystemSoundClause = "${MediaStore.Audio.AudioColumns.IS_RINGTONE}=0 AND " +
+        "${MediaStore.Audio.AudioColumns.IS_NOTIFICATION}=0 AND " +
+        "${MediaStore.Audio.AudioColumns.IS_ALARM}=0"
     val clause = when (plan) {
-        is ScanPlan.Full -> musicClause
-        is ScanPlan.Delta -> "$musicClause AND ${MediaStore.Audio.AudioColumns.DATE_MODIFIED}>=?"
+        is ScanPlan.Full -> notASystemSoundClause
+        is ScanPlan.Delta ->
+            "$notASystemSoundClause AND ${MediaStore.Audio.AudioColumns.DATE_MODIFIED}>=?"
     }
     val args = when (plan) {
         is ScanPlan.Full -> emptyList()

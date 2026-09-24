@@ -1,8 +1,6 @@
 package com.fotoxplorr.app.viewer
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -64,12 +62,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.exifinterface.media.ExifInterface
+import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.media.decodeUpright
+import com.fotoxplorr.app.media.openForLocationRead
+import com.fotoxplorr.app.media.uriForLocationRead
 import com.fotoxplorr.app.metadata.CurrentMetadata
 import com.fotoxplorr.app.metadata.XmpPacket
 import com.fotoxplorr.app.metadata.currentMetadataFrom
+import com.fotoxplorr.app.metadata.xmpAttributeUtf8
 import com.fotoxplorr.app.palette.PaletteExtractor
 import com.fotoxplorr.app.palette.PaletteSwatch
 import kotlinx.coroutines.Dispatchers
@@ -727,6 +730,23 @@ private fun PlaceBlock(
                 longitude = longitude,
                 reveal = reveal,
             )
+        } else if (!exif.readOk) {
+            // A failed read is not evidence the file has no GPS tag (P0-02) -- only that this
+            // attempt couldn't see it. Never the picker here: offering to hand-place a location
+            // would invite overwriting one that may already be in the file.
+            Column(
+                modifier = Modifier
+                    .graphicsLayer { alpha = PlaceMorph.textAlpha(reveal()) }
+                    .padding(vertical = 6.dp),
+            ) {
+                RoomEyebrow("PLACE")
+                Text(
+                    text = "Couldn't read this photo's details",
+                    color = RoomStyle.InkMuted,
+                    style = RoomStyle.Row,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
         } else if (onSetLocation != null) {
             Box(Modifier.graphicsLayer { alpha = PlaceMorph.textAlpha(reveal()) }) {
                 com.fotoxplorr.app.spatial.LocationPicker(
@@ -801,10 +821,13 @@ private fun InformationBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: 
         RoomEyebrow("FILE", Modifier.padding(bottom = 3.dp))
         // No "Name" row: the room's title is the filename, and RoomHeader's KDoc says why the
         // title wins. The extension the title drops is what "Kind" is.
-        InformationRow("Kind", DetailFormatting.formatBadge(asset.mimeType) ?: asset.mimeType)
-        // Never null, and deliberately unconditional: "STANDARD" is a real answer here, not a
-        // missing one — see DetailFormatting.dynamicRangeBadge on what this can honestly claim.
-        InformationRow("Dynamic range", DetailFormatting.dynamicRangeBadge(asset.mimeType))
+        InformationRow(
+            "Kind",
+            DetailFormatting.formatBadge(asset.mimeType, asset.displayName) ?: asset.mimeType,
+        )
+        // Null when the file's XMP does not declare the Ultra HDR gain-map namespace -- see
+        // DetailFormatting.dynamicRangeBadge on why this can only claim a genuine positive.
+        InformationRow("Dynamic range", DetailFormatting.dynamicRangeBadge(exif.hasHdrGainMap))
         InformationRow("Size", DetailFormatting.byteLine(asset.sizeBytes))
         InformationRow("Dimensions", "${asset.width} × ${asset.height}")
         InformationRow("Megapixels", megapixels(asset.width, asset.height))
@@ -955,7 +978,9 @@ internal suspend fun readImagePalette(
     if (asset.isVideo) return emptyList()
     return withContext(Dispatchers.IO) {
         runCatching {
-            val bitmap = decodeSampledBitmap(context, asset) ?: return@runCatching emptyList()
+            val decoded = decodeUpright(context, asset.contentUri, PALETTE_DECODE_LIMITS)
+                ?: return@runCatching emptyList()
+            val bitmap = decoded.bitmap
             try {
                 val pixels = IntArray(bitmap.width * bitmap.height)
                 bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
@@ -968,41 +993,16 @@ internal suspend fun readImagePalette(
 }
 
 /**
- * Decode [asset] with its longest edge no greater than [PALETTE_SAMPLE_DIMENSION].
- *
- * Bytes are read into memory once and decoded from that byte array twice — first with
- * `inJustDecodeBounds` to learn the real size without allocating any pixels, then for real with
- * `inSampleSize` set — rather than opening the content stream twice. Re-opening a `content://`
- * stream a second time is not guaranteed cheap: for a cloud-backed provider it can mean a second
- * network fetch of the original file, which is exactly the cost this function exists to avoid.
- * `inSampleSize` only takes powers of two, so this lands at or below the target rather than
- * exactly on it — decoding above budget and scaling down afterwards would mean holding the
- * oversized bitmap first, which is the allocation this whole function is written to avoid.
- */
-private fun decodeSampledBitmap(context: Context, asset: MediaAsset): Bitmap? {
-    val bytes = context.contentResolver.openInputStream(asset.contentUri)?.use { it.readBytes() }
-        ?: return null
-
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    val longestEdge = maxOf(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
-
-    var sample = 1
-    while (longestEdge / sample > PALETTE_SAMPLE_DIMENSION) sample *= 2
-
-    return BitmapFactory.decodeByteArray(
-        bytes, 0, bytes.size,
-        BitmapFactory.Options().apply { inSampleSize = sample },
-    )
-}
-
-/**
  * The target longest edge for palette sampling. A segmented bar only ever shows up to
  * [PaletteExtractor.DEFAULT_MAX_COLORS] swatches, and 100px on the long edge is already tens of
  * thousands of sample pixels for the quantiser to work with — far more than five colours need to
  * be measured accurately, and small enough that decoding it costs milliseconds, not seconds.
  */
 private const val PALETTE_SAMPLE_DIMENSION = 100
+private val PALETTE_DECODE_LIMITS = DecodeLimits(
+    maxLongEdge = PALETTE_SAMPLE_DIMENSION,
+    maxPixels = PALETTE_SAMPLE_DIMENSION.toLong() * PALETTE_SAMPLE_DIMENSION,
+)
 
 /** `2.0 MP`, or null when the file never recorded its own size. */
 internal fun megapixels(width: Int, height: Int): String? {
@@ -1072,16 +1072,35 @@ data class ImageExifDetails(
      */
     val professionalMetadata: CurrentMetadata =
         CurrentMetadata.EMPTY,
+    /** Whether this file's XMP declares the Ultra HDR gain-map namespace (P0-16) -- see
+     *  [DetailFormatting.dynamicRangeBadge]. */
+    val hasHdrGainMap: Boolean = false,
+    /**
+     * Whether this file's EXIF was actually read. False means the open or the parse failed --
+     * [PlaceBlock] must never show the "set a location by hand" picker in that case (P0-02): a
+     * read failure is not evidence the file has no GPS tag, only that this attempt couldn't see
+     * it, and offering the picker would invite the user to overwrite a location that may already
+     * be there. A video (no EXIF to read) counts as ok: there is nothing this field would be
+     * warning about.
+     */
+    val readOk: Boolean = true,
 )
 
 suspend fun readImageExifDetails(context: Context, asset: MediaAsset): ImageExifDetails {
-    if (asset.isVideo) return ImageExifDetails()
+    if (asset.isVideo) return ImageExifDetails(readOk = true)
     return withContext(Dispatchers.IO) {
-        runCatching {
-            context.contentResolver.openInputStream(asset.contentUri)?.use { input ->
-                exifDetailsFrom(ExifInterface(input))
-            } ?: ImageExifDetails()
-        }.getOrDefault(ImageExifDetails())
+        val requested = context.uriForLocationRead(asset.contentUri)
+        val opened = openForLocationRead(requested, asset.contentUri) { uri ->
+            context.contentResolver.openInputStream(uri)
+        }
+        if (opened == null) {
+            ImageExifDetails(readOk = false)
+        } else {
+            val (input, _) = opened
+            runCatching { input.use { exifDetailsFrom(ExifInterface(it)) } }
+                .map { it.copy(readOk = true) }
+                .getOrDefault(ImageExifDetails(readOk = false))
+        }
     }
 }
 
@@ -1095,6 +1114,11 @@ private fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
     // and well-formed, which is exactly the guarantee ImageExifDetails.latitude documents —
     // so the pair is destructured from one call rather than read as two independent tags.
     val latLong = exif.latLong
+    // xmpAttributeUtf8(), not getAttribute(TAG_XMP): see that function's own doc for why
+    // getAttribute decodes a real (non-entity-escaped) UTF-8 packet with the wrong charset.
+    // Parsed once and reused below for both the professional-metadata card and the P0-16 HDR
+    // gain-map check, rather than parsing the same packet twice.
+    val xmp = exif.xmpAttributeUtf8()?.let { XmpPacket.parse(it) }
     return ImageExifDetails(
         make = exif.getAttribute(ExifInterface.TAG_MAKE)?.trim()?.takeIf(String::isNotEmpty),
         model = exif.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf(String::isNotEmpty),
@@ -1112,11 +1136,12 @@ private fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
         longitude = latLong?.get(1),
         colorSpace = colorSpaceName(exif.getAttributeInt(ExifInterface.TAG_COLOR_SPACE, -1)),
         professionalMetadata = currentMetadataFrom(
-            xmp = exif.getAttribute(ExifInterface.TAG_XMP)?.let { XmpPacket.parse(it) },
+            xmp = xmp,
             exifImageDescription = exif.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION),
             exifArtist = exif.getAttribute(ExifInterface.TAG_ARTIST),
             exifCopyright = exif.getAttribute(ExifInterface.TAG_COPYRIGHT),
         ),
+        hasHdrGainMap = xmp?.hasNamespace(XmpPacket.HDR_GAIN_MAP_NS) == true,
     )
 }
 

@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.viewer
 
+import com.fotoxplorr.app.formats.MediaFormat
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -31,13 +32,17 @@ object DetailFormatting {
     }
 
     /**
-     * The short format badge shown on the EXIF card ("HEIF" in the mockup), derived from the
-     * MIME type. Null when the type says nothing useful, so the badge is simply omitted
-     * rather than showing a shrug.
+     * The short format badge shown on the EXIF card ("HEIF" in the mockup). A RAW file names its
+     * vendor ("Canon RAW"), from the same [MediaFormat] classifier the search `type:raw` term
+     * uses (P0-16) rather than a MIME check of its own. Anything else this function does not
+     * specifically recognise falls back to the file extension, upper-cased and capped at 5
+     * characters -- never a truncated MIME subtype string like "X-CANO", which named nothing a
+     * person would recognise.
      */
-    fun formatBadge(mimeType: String): String? {
+    fun formatBadge(mimeType: String, fileName: String): String? {
+        val format = MediaFormat.classify(mimeType, fileName)
+        if (format is MediaFormat.Raw) return "${format.variant.vendor} RAW"
         val subtype = mimeType.substringAfter('/', "").lowercase().trim()
-        if (subtype.isEmpty()) return null
         return when (subtype) {
             "heic", "heif", "heic-sequence", "heif-sequence" -> "HEIF"
             "jpeg", "jpg" -> "JPEG"
@@ -45,12 +50,12 @@ object DetailFormatting {
             "webp" -> "WEBP"
             "gif" -> "GIF"
             "avif" -> "AVIF"
-            "dng", "x-adobe-dng" -> "DNG"
             "tiff", "x-tiff" -> "TIFF"
             "mp4", "x-m4v" -> "MP4"
             "quicktime" -> "MOV"
             "webm" -> "WEBM"
-            else -> subtype.uppercase().take(6)
+            else -> fileName.substringAfterLast('.', missingDelimiterValue = "")
+                .uppercase(Locale.ROOT).take(5).ifEmpty { null }
         }
     }
 
@@ -132,17 +137,16 @@ object DetailFormatting {
     }
 
     /**
-     * The dynamic-range badge on the mockup's EXIF card. Foto Xplorr has no HDR-gain-map
-     * probe, so this reports the one thing it can actually establish from the file: whether
-     * the container is one that can carry a gain map at all. "STANDARD" therefore means
-     * "not carried in an HDR-capable container", not "measured as SDR" -- an honest, if
-     * conservative, reading.
+     * The dynamic-range badge on the mockup's EXIF card (P0-16). "ULTRA HDR" when the photo's
+     * XMP actually declares the gain-map namespace ([com.fotoxplorr.app.metadata.XmpPacket.HDR_GAIN_MAP_NS])
+     * a real Ultra
+     * HDR file carries -- a genuine positive answer, not a container-type guess. Null otherwise,
+     * so the row shows "--" the same way every other unanswered row on this card already does,
+     * rather than a confident-sounding "STANDARD"/"HDR CAPABLE" this app cannot actually verify
+     * (a HEIF or AVIF file is merely a container THAT CAN carry a gain map, not proof it does).
      */
-    fun dynamicRangeBadge(mimeType: String): String =
-        if (formatBadge(mimeType) in HDR_CAPABLE_FORMATS) "HDR CAPABLE" else "STANDARD"
+    fun dynamicRangeBadge(hasHdrGainMap: Boolean): String? = if (hasHdrGainMap) "ULTRA HDR" else null
 
     /** Whether the flash glyph on the EXIF card should be lit. EXIF flash bit 0 = fired. */
     fun flashFired(exifFlash: Int?): Boolean = exifFlash != null && (exifFlash and 0x1) == 1
-
-    private val HDR_CAPABLE_FORMATS = setOf("HEIF", "AVIF")
 }

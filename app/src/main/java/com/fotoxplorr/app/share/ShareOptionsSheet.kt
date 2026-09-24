@@ -1,7 +1,6 @@
 package com.fotoxplorr.app.share
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -39,7 +38,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.decodeUpright
 import com.fotoxplorr.app.pro.LocalProEntitlement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -92,22 +93,8 @@ fun ShareOptionsSheet(
     // decode previews the real thing faithfully at a fraction of the cost.
     LaunchedEffect(sample?.id) {
         val asset = sample ?: return@LaunchedEffect
-        sourceBitmap = withContext(Dispatchers.IO) {
-            runCatching {
-                context.contentResolver.openInputStream(asset.contentUri)?.use { stream ->
-                    val bytes = stream.readBytes()
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                    val longest = maxOf(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
-                    var inSample = 1
-                    while (longest / inSample > PREVIEW_EDGE_PX) inSample *= 2
-                    BitmapFactory.decodeByteArray(
-                        bytes, 0, bytes.size,
-                        BitmapFactory.Options().apply { inSampleSize = inSample },
-                    )
-                }
-            }.getOrNull()
-        }
+        sourceBitmap = runCatching { decodeUpright(context, asset.contentUri, SHARE_PREVIEW_LIMITS)?.bitmap }
+            .getOrNull()
     }
 
     LaunchedEffect(sourceBitmap, effectiveOptions) {
@@ -345,3 +332,4 @@ private fun SheetField(
 
 /** Longest edge of the sheet's sample decode. Small on purpose -- see the call site. */
 private const val PREVIEW_EDGE_PX = 720
+private val SHARE_PREVIEW_LIMITS = DecodeLimits(maxLongEdge = PREVIEW_EDGE_PX, maxPixels = PREVIEW_EDGE_PX.toLong() * PREVIEW_EDGE_PX)

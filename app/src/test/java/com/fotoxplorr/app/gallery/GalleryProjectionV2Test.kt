@@ -69,12 +69,70 @@ class GalleryProjectionV2Test {
     }
 
     @Test
-    fun `duplicate candidates require same size dimensions and mime`() {
-        val first = asset(1, 100, size = 2_000, width = 800, height = 600)
+    fun `search categories include archived and screenshot, matching GallerySearch's old set`() {
+        val archived = asset(1, 100)
+        val screenshot = asset(2, 200, name = "Screenshot_2026.png", path = "Pictures/Screenshots/")
+        val ordinary = asset(3, 300)
+
+        assertTrue(archived.matchesGallerySearch("is:archived", emptySet(), archivedIds = setOf(archived.id)))
+        assertFalse(ordinary.matchesGallerySearch("is:archived", emptySet(), archivedIds = setOf(archived.id)))
+        assertTrue(screenshot.matchesGallerySearch("is:screenshot", emptySet()))
+        assertFalse(ordinary.matchesGallerySearch("is:screenshot", emptySet()))
+    }
+
+    @Test
+    fun `the animated album is membership in animatedIds, not a MIME guess`() {
+        // Same MIME type (webp) on both -- only the id set says which one actually animates,
+        // proving this no longer falls back to MediaAsset.isAnimated's old MIME-blanket rule.
+        val animatedWebp = asset(1, 100, mime = "image/webp", name = "party.webp")
+        val staticWebp = asset(2, 200, mime = "image/webp", name = "sticker.webp")
+        val all = listOf(animatedWebp, staticWebp)
+
+        val animated = smart(SmartAlbum.ANIMATED, all, emptyMap(), animatedIds = setOf(animatedWebp.id))
+
+        assertEquals(listOf(animatedWebp), animated)
+    }
+
+    @Test
+    fun `the animated search category reflects animatedIds, not MIME type`() {
+        val animatedGif = asset(1, 100, mime = "image/gif")
+        val staticGif = asset(2, 200, mime = "image/gif")
+
+        assertTrue(animatedGif.matchesGallerySearch("is:animated", emptySet(), animatedIds = setOf(animatedGif.id)))
+        assertFalse(staticGif.matchesGallerySearch("is:animated", emptySet(), animatedIds = setOf(animatedGif.id)))
+    }
+
+    @Test
+    fun `duplicate candidates require same size dimensions and mime, and exclude the keeper`() {
+        val first = asset(1, 100, size = 2_000, width = 800, height = 600) // earliest taken -> keeper
         val second = asset(2, 200, size = 2_000, width = 800, height = 600)
         val differentDimensions = asset(3, 300, size = 2_000, width = 600, height = 800)
 
-        assertEquals(setOf(first.id, second.id), duplicateCandidateIds(listOf(first, second, differentDimensions)))
+        assertEquals(setOf(second.id), duplicateCandidateIds(listOf(first, second, differentDimensions)))
+    }
+
+    @Test
+    fun `a group of three duplicates keeps only the oldest, and ties break by the smallest id`() {
+        val oldest = asset(2, taken = 50, size = 2_000, width = 800, height = 600)
+        val middle = asset(1, taken = 100, size = 2_000, width = 800, height = 600)
+        val newest = asset(3, taken = 300, size = 2_000, width = 800, height = 600)
+
+        assertEquals(setOf(middle.id, newest.id), duplicateCandidateIds(listOf(oldest, middle, newest)))
+
+        // A capture-time tie between the two lowest-taken assets breaks by the lower id, not
+        // input order: swapping which one is "oldest" by id alone must flip which is excluded.
+        val tiedA = asset(2, taken = 50, size = 2_000, width = 800, height = 600)
+        val tiedB = asset(1, taken = 50, size = 2_000, width = 800, height = 600)
+        assertEquals(setOf(tiedA.id, newest.id), duplicateCandidateIds(listOf(tiedA, tiedB, newest)))
+    }
+
+    @Test
+    fun `a capture-time tie within a duplicate group breaks by the earliest modified time`() {
+        val a = asset(2, taken = 100, modified = 500, size = 2_000, width = 800, height = 600)
+        val keeper = asset(1, taken = 100, modified = 100, size = 2_000, width = 800, height = 600)
+        val c = asset(3, taken = 100, modified = 900, size = 2_000, width = 800, height = 600)
+
+        assertEquals(setOf(a.id, c.id), duplicateCandidateIds(listOf(a, keeper, c)))
     }
 
     @Test
@@ -95,10 +153,89 @@ class GalleryProjectionV2Test {
         assertEquals(listOf(normal), visible)
     }
 
+    @Test
+    fun `browsableAssets excludes locked archived and hidden sensitive media`() {
+        val normal = asset(1, 100)
+        val archived = asset(2, 200)
+        val locked = asset(3, 300, path = "Pictures/Private/")
+        val sensitive = asset(4, 400)
+        val lockedKey = folderIdentity(locked).key.value
+        val all = listOf(normal, archived, locked, sensitive)
+
+        val visible = browsableAssets(
+            assets = all,
+            archivedIds = setOf(archived.id),
+            sensitiveIds = setOf(sensitive.id),
+            lockedFolders = setOf(lockedKey),
+            unlockedFolders = emptySet(),
+            hideSensitive = true,
+        )
+
+        assertEquals(listOf(normal), visible)
+    }
+
+    @Test
+    fun `browsableAssets returns each item once it is unlocked un-archived or un-hidden`() {
+        val archived = asset(1, 100)
+        val locked = asset(2, 200, path = "Pictures/Private/")
+        val sensitive = asset(3, 300)
+        val lockedKey = folderIdentity(locked).key.value
+        val all = listOf(archived, locked, sensitive)
+
+        val unarchived = browsableAssets(
+            assets = all,
+            archivedIds = emptySet(),
+            sensitiveIds = setOf(sensitive.id),
+            lockedFolders = setOf(lockedKey),
+            unlockedFolders = emptySet(),
+            hideSensitive = true,
+        )
+        assertTrue(archived in unarchived)
+
+        val unlocked = browsableAssets(
+            assets = all,
+            archivedIds = setOf(archived.id),
+            sensitiveIds = setOf(sensitive.id),
+            lockedFolders = setOf(lockedKey),
+            unlockedFolders = setOf(lockedKey),
+            hideSensitive = true,
+        )
+        assertTrue(locked in unlocked)
+
+        val unhidden = browsableAssets(
+            assets = all,
+            archivedIds = setOf(archived.id),
+            sensitiveIds = setOf(sensitive.id),
+            lockedFolders = setOf(lockedKey),
+            unlockedFolders = emptySet(),
+            hideSensitive = false,
+        )
+        assertTrue(sensitive in unhidden)
+    }
+
+    @Test
+    fun `browsableAssets keeps input order`() {
+        val a = asset(1, 100)
+        val b = asset(2, 200)
+        val c = asset(3, 300)
+
+        val visible = browsableAssets(
+            assets = listOf(c, a, b),
+            archivedIds = emptySet(),
+            sensitiveIds = emptySet(),
+            lockedFolders = emptySet(),
+            unlockedFolders = emptySet(),
+            hideSensitive = false,
+        )
+
+        assertEquals(listOf(c, a, b), visible)
+    }
+
     private fun smart(
         album: SmartAlbum,
         assets: List<MediaAsset>,
         tags: Map<MediaId, Set<String>>,
+        animatedIds: Set<MediaId> = emptySet(),
     ): List<MediaAsset> = smartAlbumAssets(
         smartAlbum = album,
         assets = assets,
@@ -109,6 +246,7 @@ class GalleryProjectionV2Test {
         lockedFolders = emptySet(),
         unlockedFolders = emptySet(),
         preferences = preferences,
+        animatedIds = animatedIds,
         nowMillis = 1_000_000,
     )
 
@@ -122,6 +260,7 @@ class GalleryProjectionV2Test {
         width: Int = 100,
         height: Int = 100,
         trashed: Boolean = false,
+        modified: Long = taken / 1_000,
     ) = MediaAsset(
         id = MediaId(id),
         contentUriString = "content://media/$id",
@@ -130,7 +269,7 @@ class GalleryProjectionV2Test {
         bucketName = path.trimEnd('/').substringAfterLast('/'),
         bucketId = id,
         dateTakenMillis = taken,
-        dateModifiedSeconds = taken / 1_000,
+        dateModifiedSeconds = modified,
         width = width,
         height = height,
         sizeBytes = size,

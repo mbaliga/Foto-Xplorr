@@ -26,6 +26,22 @@ class MediaFormatTest {
             "raf" to RawVariant.RAF,
             "srw" to RawVariant.SRW,
             "pef" to RawVariant.PEF,
+            // P0-16 additions.
+            "nrw" to RawVariant.NRW,
+            "3fr" to RawVariant.THREE_FR,
+            "iiq" to RawVariant.IIQ,
+            "erf" to RawVariant.ERF,
+            "mrw" to RawVariant.MRW,
+            "x3f" to RawVariant.X3F,
+            "dcr" to RawVariant.DCR,
+            "kdc" to RawVariant.KDC,
+            "mef" to RawVariant.MEF,
+            "mos" to RawVariant.MOS,
+            "rwl" to RawVariant.RWL,
+            "sr2" to RawVariant.SR2,
+            "srf" to RawVariant.SRF,
+            "gpr" to RawVariant.GPR,
+            "crw" to RawVariant.CRW,
         )
         expected.forEach { (extension, variant) ->
             val format = MediaFormat.classify(mimeType = "", fileName = "IMG_0001.$extension")
