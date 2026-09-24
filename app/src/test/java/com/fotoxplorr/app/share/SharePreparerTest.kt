@@ -4,8 +4,8 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.pro.ProEntitlement
+import com.fotoxplorr.core.model.MediaId
 import java.io.ByteArrayInputStream
 import kotlin.io.path.createTempFile
 import androidx.core.content.FileProvider

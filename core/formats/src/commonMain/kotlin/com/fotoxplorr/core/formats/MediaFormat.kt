@@ -1,4 +1,4 @@
-package com.fotoxplorr.app.formats
+package com.fotoxplorr.core.formats
 
 /**
  * The SVG MIME type, in one place because two callers need the exact same string and must not

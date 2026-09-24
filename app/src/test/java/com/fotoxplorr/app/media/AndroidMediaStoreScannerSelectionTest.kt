@@ -1,7 +1,7 @@
 package com.fotoxplorr.app.media
 
 import android.provider.MediaStore
-import com.fotoxplorr.app.formats.SVG_MIME_TYPE
+import com.fotoxplorr.core.formats.SVG_MIME_TYPE
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

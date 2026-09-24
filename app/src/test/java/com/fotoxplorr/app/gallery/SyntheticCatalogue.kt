@@ -2,9 +2,9 @@ package com.fotoxplorr.app.gallery
 
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.organize.LibraryState
 import com.fotoxplorr.app.recognition.RecognitionIndex
+import com.fotoxplorr.core.model.MediaId
 
 /**
  * The fixed synthetic catalogue behind the FX-003 characterisation goldens.

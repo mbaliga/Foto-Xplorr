@@ -21,6 +21,12 @@ include(":app")
 // below are unaffected by it.
 include(":feature:ai-remote")
 
+// ADR-010 (WP1.2): the shared KMP core. `:app -> :core:*` only (ADR-010 §2) — never add an
+// includeBuild or a :feature:* dependency to any of these.
+include(":core:model")
+include(":core:formats")
+include(":core:metadata")
+
 // Hyle Design System (dev.aarso:hyle / dev.aarso:crash-recovery), pulled in via the
 // constellation's one sanctioned sharing mechanism (D-A): git submodule + Gradle
 // includeBuild dependency substitution. No vendored Hyle source, no registry publish.

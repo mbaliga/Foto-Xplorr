@@ -1,27 +1,38 @@
-package com.fotoxplorr.app.share
+package com.fotoxplorr.core.metadata
 
-import java.io.ByteArrayOutputStream
-import org.junit.Assert.assertArrayEquals
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * JPEG, PNG, WebP, GIF and BMP round trips, plus the fail-closed edge cases, all on synthetic byte
- * arrays built right here -- no Android, no Robolectric, just [MetadataStripper] against the exact
- * container structures its class doc describes. This module cannot use `java.awt`/`javax.imageio`
- * (Android's Kotlin compilation does not expose `java.desktop`, even for a host-JVM unit test), so
- * a *real, decodable* JPEG -- for confirming the stripped output still decodes to the same
- * dimensions, and the real-photo GPS-removal case -- lives in [MetadataStripperJpegTest] instead,
- * built with `Bitmap.compress` under Robolectric NATIVE mode like the rest of this codebase's
- * real-image tests. The JPEG tests here cover what a real single-scan photo can't: multi-segment
- * keep/drop rules and a second, progressive-style scan's entropy data.
+ * arrays built right here -- no platform APIs at all, just [MetadataStripper] against the exact
+ * container structures its class doc describes. A *real, decodable* JPEG -- for confirming the
+ * stripped output still decodes to the same dimensions, and the real-photo GPS-removal case --
+ * lives in `MetadataStripperJpegTest` in `:app` instead (Robolectric NATIVE mode, `Bitmap.compress`),
+ * since neither is available outside the Android app module. The JPEG tests here cover what a
+ * real single-scan photo can't: multi-segment keep/drop rules and a second, progressive-style
+ * scan's entropy data.
+ *
+ * ADR-010 (WP1.2): moved from `com.fotoxplorr.app.share` (a plain JUnit4 test there) into this
+ * module's `commonTest`, so it also runs on `linuxX64`/`linuxArm64` -- it never used Android or
+ * Robolectric, only `java.io.ByteArrayOutputStream` as its one JVM-only detail, now replaced by a
+ * plain [ByteSink] collecting into a growable list, and `kotlin.test` in place of JUnit4.
  */
 class MetadataStripperTest {
 
+    private class CollectingSink : ByteSink {
+        private val bytes = mutableListOf<Byte>()
+        override fun write(bytes: ByteArray, offset: Int, length: Int) {
+            for (i in offset until offset + length) this.bytes += bytes[i]
+        }
+        fun toByteArray(): ByteArray = bytes.toByteArray()
+    }
+
     private fun strip(input: ByteArray): Pair<MetadataStripper.StripResult, ByteArray> {
-        val output = ByteArrayOutputStream()
-        val result = MetadataStripper.strip(input.inputStream(), output)
+        val output = CollectingSink()
+        val result = MetadataStripper.stripBytes(input, output)
         return result to output.toByteArray()
     }
 
@@ -55,7 +66,7 @@ class MetadataStripperTest {
 
         assertEquals(MetadataStripper.StripResult.Stripped(MetadataStripper.Format.JPEG), result)
         val expected = soi + app0 + icc + dqt + dht + sof0 + sos + entropyData + eoi
-        assertArrayEquals(expected, output)
+        assertContentEquals(expected, output)
     }
 
     @Test
@@ -77,7 +88,7 @@ class MetadataStripperTest {
         val (result, output) = strip(input)
 
         assertEquals(MetadataStripper.StripResult.Stripped(MetadataStripper.Format.JPEG), result)
-        assertArrayEquals(input, output) // every one of these markers is on the keep list
+        assertContentEquals(input, output) // every one of these markers is on the keep list
     }
 
     // --- PNG ---------------------------------------------------------------------------------
@@ -111,7 +122,7 @@ class MetadataStripperTest {
 
         assertEquals(MetadataStripper.StripResult.Stripped(MetadataStripper.Format.PNG), result)
         val expected = PNG_MAGIC + ihdr + iccp + actl + idat + iend
-        assertArrayEquals(expected, output)
+        assertContentEquals(expected, output)
     }
 
     @Test
@@ -123,7 +134,7 @@ class MetadataStripperTest {
 
         val (droppedResult, droppedOutput) = strip(PNG_MAGIC + ihdr + unknownAncillary + idat + iend)
         assertEquals(MetadataStripper.StripResult.Stripped(MetadataStripper.Format.PNG), droppedResult)
-        assertArrayEquals(PNG_MAGIC + ihdr + idat + iend, droppedOutput)
+        assertContentEquals(PNG_MAGIC + ihdr + idat + iend, droppedOutput)
 
         val unknownCritical = pngChunk("FOOB", byteArrayOf(1))
         val (failedResult, _) = strip(PNG_MAGIC + ihdr + unknownCritical + idat + iend)
@@ -166,16 +177,16 @@ class MetadataStripperTest {
         val (result, output) = strip(input)
 
         assertEquals(MetadataStripper.StripResult.Stripped(MetadataStripper.Format.WEBP), result)
-        assertEquals("RIFF", String(output, 0, 4, Charsets.US_ASCII))
-        assertEquals("WEBP", String(output, 8, 4, Charsets.US_ASCII))
+        assertEquals("RIFF", output.copyOfRange(0, 4).decodeToString())
+        assertEquals("WEBP", output.copyOfRange(8, 12).decodeToString())
         val declaredSize = (output[4].toInt() and 0xFF) or ((output[5].toInt() and 0xFF) shl 8) or
             ((output[6].toInt() and 0xFF) shl 16) or ((output[7].toInt() and 0xFF) shl 24)
         assertEquals(output.size - 8, declaredSize)
 
         val expectedVp8x = webpChunk("VP8X", byteArrayOf(0x00, 0, 0, 0, 7, 0, 0, 7, 0, 0))
-        assertArrayEquals(expectedVp8x, output.copyOfRange(12, 12 + expectedVp8x.size))
+        assertContentEquals(expectedVp8x, output.copyOfRange(12, 12 + expectedVp8x.size))
         // Nothing else survives except the image chunk, directly after VP8X -- EXIF and XMP gone.
-        assertArrayEquals(image, output.copyOfRange(12 + expectedVp8x.size, output.size))
+        assertContentEquals(image, output.copyOfRange(12 + expectedVp8x.size, output.size))
     }
 
     @Test
@@ -225,7 +236,7 @@ class MetadataStripperTest {
         val (result, output) = strip(input)
 
         assertEquals(MetadataStripper.StripResult.Stripped(MetadataStripper.Format.GIF), result)
-        assertArrayEquals(header + lsd + netscapeLoop + gce + image + trailer, output)
+        assertContentEquals(header + lsd + netscapeLoop + gce + image + trailer, output)
     }
 
     @Test
@@ -243,7 +254,7 @@ class MetadataStripperTest {
         val input = byteArrayOf('B'.code.toByte(), 'M'.code.toByte()) + ByteArray(30) { it.toByte() }
         val (result, output) = strip(input)
         assertEquals(MetadataStripper.StripResult.Stripped(MetadataStripper.Format.BMP), result)
-        assertArrayEquals(input, output)
+        assertContentEquals(input, output)
     }
 
     // --- Unrecognized / malformed ----------------------------------------------------------------

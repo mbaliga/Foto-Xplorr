@@ -8,13 +8,15 @@ import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.decodeUpright
 import com.fotoxplorr.app.pro.LocalProEntitlement
 import com.fotoxplorr.app.pro.ProEntitlement
 import com.fotoxplorr.app.video.RemuxResult
 import com.fotoxplorr.app.video.findRotationDegrees
 import com.fotoxplorr.app.video.remux
+import com.fotoxplorr.core.metadata.MetadataStripper
+import com.fotoxplorr.core.metadata.strip
+import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

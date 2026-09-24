@@ -116,6 +116,14 @@ android {
         // Locale-dependent String.format is used throughout for EXIF/size readouts that are
         // numeric-only; the app has no translations, so this is noise rather than a defect.
         disable += "DefaultLocale"
+        // WP1.1 (ADR-009) added gradle/libs.versions.toml so the new :core:* modules share one
+        // pinned version each -- the moment ANY catalog file exists, this check starts flagging
+        // every OTHER already-existing hardcoded dependency coordinate in this file (35 of them,
+        // none touched by that work package) as "should use the catalog too". Migrating this
+        // module's whole existing dependency block into the catalog is real, unplanned scope
+        // Phase 1 never asked for; disabling this one check keeps the signal that IS actionable
+        // (GradleDependency's "a newer version exists") without that unrelated noise.
+        disable += "UseTomlInstead"
     }
 
     testOptions {
@@ -172,6 +180,12 @@ configurations.all {
 }
 
 dependencies {
+    // ADR-010 (WP1.2): the shared KMP core. :app -> :core:* only -- these modules never depend
+    // back on :app (enforced by the WP1.9 governance check).
+    implementation(project(":core:model"))
+    implementation(project(":core:formats"))
+    implementation(project(":core:metadata"))
+
     // Screenshot rendering of the real composables, on the JVM, no emulator. Test-only, so it
     // never reaches the runtime classpath the offline gate guards.
     testImplementation("org.robolectric:robolectric:4.14.1")

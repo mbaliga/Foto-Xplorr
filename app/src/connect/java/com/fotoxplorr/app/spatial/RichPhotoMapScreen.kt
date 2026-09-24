@@ -46,8 +46,8 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.core.model.MediaId
 import com.google.gson.JsonObject
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition

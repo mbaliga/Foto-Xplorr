@@ -1,6 +1,6 @@
 package com.fotoxplorr.app.search
 
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 import java.time.LocalDate
 import java.time.ZoneId
 import org.junit.Assert.assertEquals

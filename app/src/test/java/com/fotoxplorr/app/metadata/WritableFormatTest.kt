@@ -2,7 +2,7 @@ package com.fotoxplorr.app.metadata
 
 import android.net.Uri
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse

@@ -1,7 +1,7 @@
 package com.fotoxplorr.app.spatial
 
 import android.database.sqlite.SQLiteDatabase
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith

@@ -47,10 +47,10 @@ import com.fotoxplorr.app.curate.ArchiveAdvisor
 import com.fotoxplorr.app.curate.ArchiveReviewItem
 import com.fotoxplorr.app.curate.ArchiveSuggestionsReview
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
+import com.fotoxplorr.core.model.MediaId
 
 /**
  * The primary destinations from the owner's mockups, plus Audio (added for standalone audio

@@ -1,8 +1,8 @@
-package com.fotoxplorr.app.formats
+package com.fotoxplorr.core.formats
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 /**
  * P0-14: [AnimationSniffer.sniff] is the one place a file's own bytes -- not its MIME type --

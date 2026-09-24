@@ -1,4 +1,4 @@
-package com.fotoxplorr.app.formats
+package com.fotoxplorr.core.formats
 
 /**
  * Whether a file's own BYTES actually animate -- not its MIME type, which cannot tell a static

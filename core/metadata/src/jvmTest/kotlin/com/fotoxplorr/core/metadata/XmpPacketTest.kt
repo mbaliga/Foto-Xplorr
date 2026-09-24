@@ -1,4 +1,4 @@
-package com.fotoxplorr.app.metadata
+package com.fotoxplorr.core.metadata
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -10,6 +10,10 @@ import org.junit.Test
  * class exists to avoid (an editor silently destroying a professional's existing catalogue
  * metadata) only ever shows up after a serialize-then-reparse cycle, never in the in-memory
  * object alone.
+ *
+ * ADR-010 (WP1.2): moved from `com.fotoxplorr.app.metadata` (`:app`'s own JUnit4 test) into this
+ * module's `jvmTest`, unchanged -- [XmpPacket] itself is jvmMain-only (org.w3c.dom/javax.xml), so
+ * this test has nowhere else to usefully run.
  */
 class XmpPacketTest {
 

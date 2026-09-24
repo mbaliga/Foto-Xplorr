@@ -1,6 +1,6 @@
 package com.fotoxplorr.app.recognition
 
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 import kotlin.math.sqrt
 
 /**

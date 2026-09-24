@@ -6,8 +6,8 @@ import android.database.Cursor
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.ScanPlan
+import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext

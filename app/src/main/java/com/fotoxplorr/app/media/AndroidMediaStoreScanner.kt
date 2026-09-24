@@ -7,7 +7,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
-import com.fotoxplorr.app.formats.SVG_MIME_TYPE
+import com.fotoxplorr.core.formats.SVG_MIME_TYPE
+import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext

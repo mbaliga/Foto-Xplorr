@@ -4,7 +4,7 @@ import android.Manifest
 import android.graphics.Bitmap
 import android.net.Uri
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlinx.coroutines.runBlocking

@@ -1,9 +1,9 @@
-package com.fotoxplorr.app.formats
+package com.fotoxplorr.core.formats
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * The classifier the UI leans on to decide "try to decode this" vs. "show an honest
@@ -45,7 +45,7 @@ class MediaFormatTest {
         )
         expected.forEach { (extension, variant) ->
             val format = MediaFormat.classify(mimeType = "", fileName = "IMG_0001.$extension")
-            assertEquals("$extension should classify as $variant", MediaFormat.Raw(variant), format)
+            assertEquals(MediaFormat.Raw(variant), format, "$extension should classify as $variant")
         }
     }
 
@@ -63,7 +63,7 @@ class MediaFormatTest {
         assertTrue(RawVariant.DNG.isLikelyDecodable)
         val nonDng = RawVariant.entries - RawVariant.DNG
         nonDng.forEach { variant ->
-            assertFalse("$variant should not be marked decodable", variant.isLikelyDecodable)
+            assertFalse(variant.isLikelyDecodable, "$variant should not be marked decodable")
         }
     }
 

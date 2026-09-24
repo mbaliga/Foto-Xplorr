@@ -2,7 +2,8 @@ package com.fotoxplorr.app.formats
 
 import android.net.Uri
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.formats.AnimationSniffer
+import com.fotoxplorr.core.model.MediaId
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals

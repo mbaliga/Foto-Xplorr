@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.metadata
 
 import androidx.exifinterface.media.ExifInterface
+import com.fotoxplorr.core.metadata.XmpPacket
 import java.lang.reflect.Modifier
 
 /**

@@ -1,7 +1,4 @@
-package com.fotoxplorr.app.share
-
-import java.io.InputStream
-import java.io.OutputStream
+package com.fotoxplorr.core.metadata
 
 /**
  * P0-04: strips location- and identity-carrying metadata from an image, format by format, by
@@ -14,10 +11,11 @@ import java.io.OutputStream
  * per-photo metadata, dropping the rest -- and reports [StripResult.Unsupported] for anything it
  * does not have a verified-safe parser for, rather than guessing.
  *
- * Deliberately **pure Kotlin** -- [InputStream]/[OutputStream]/[ByteArray] only, no Android import
- * anywhere in this file. Nothing about "which bytes of a JPEG are safe to keep" needs a `Context`,
- * and keeping it Android-free is what makes the round-trip tests plain, fast JUnit rather than
- * Robolectric.
+ * Deliberately **pure Kotlin** -- [ByteSink]/[ByteArray] only, no platform import anywhere in this
+ * file (ADR-010 WP1.2: moved from `com.fotoxplorr.app.share`, behind [ByteSink] instead of
+ * `java.io.OutputStream` so this compiles for every target this module builds for, not just the
+ * JVM). Nothing about "which bytes of a JPEG are safe to keep" needs a `Context`, and keeping it
+ * platform-free is what makes the round-trip tests plain, fast tests rather than Robolectric.
  *
  * Format is detected by magic bytes, never by the caller-supplied MIME type or file extension --
  * both are attacker- and typo-controlled, and this class's entire job is to fail closed rather
@@ -39,18 +37,14 @@ object MetadataStripper {
     }
 
     /**
-     * Reads all of [input], strips it, and writes the result to [output]. [input] is read fully
-     * into memory -- every format below needs to look back (a WebP RIFF size, a GIF trailer) or
+     * Strips [bytes] and writes the result to [output]. The JVM-only [strip] overload (jvmMain)
+     * reads a whole `InputStream` into memory and adapts an `OutputStream` to [ByteSink] before
+     * calling this -- every format below needs to look back (a WebP RIFF size, a GIF trailer) or
      * forward (JPEG's next-marker scan) past what a single streaming pass could hold, and the
      * images this pipeline handles (camera photos, not multi-gigabyte RAW masters) are small
      * enough that this is not a meaningful memory concern.
      */
-    fun strip(input: InputStream, output: OutputStream): StripResult {
-        val bytes = input.readBytes()
-        return stripBytes(bytes, output)
-    }
-
-    internal fun stripBytes(bytes: ByteArray, output: OutputStream): StripResult = when {
+    internal fun stripBytes(bytes: ByteArray, output: ByteSink): StripResult = when {
         isJpeg(bytes) -> stripJpeg(bytes, output)
         isPng(bytes) -> stripPng(bytes, output)
         isWebp(bytes) -> stripWebp(bytes, output)
@@ -59,18 +53,21 @@ object MetadataStripper {
         else -> StripResult.Unsupported("Unrecognized image format")
     }
 
-    // internal, not private: com.fotoxplorr.app.metadata.isMetadataWritable (P0-08) sniffs the
+    // Not internal, not private: com.fotoxplorr.app.metadata.isMetadataWritable (P0-08) sniffs the
     // exact same three writable-by-ExifInterface formats by the exact same magic bytes, and
     // reusing these rather than a second hand-typed copy is what keeps the two decisions ("can
     // this app strip metadata from it" and "can this app write metadata into it") from silently
-    // drifting apart on a future format addition to only one of them.
-    internal fun isJpeg(bytes: ByteArray) =
+    // drifting apart on a future format addition to only one of them. Public rather than the
+    // original `internal` (WP1.2): that caller now lives in :app, a different Gradle module, and
+    // `internal` no longer reaches across the module boundary the way it did in the single-module
+    // app these three functions were written in.
+    fun isJpeg(bytes: ByteArray) =
         bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()
 
-    internal fun isPng(bytes: ByteArray) =
+    fun isPng(bytes: ByteArray) =
         bytes.size >= 8 && (0 until 8).all { bytes[it] == PNG_MAGIC[it] }
 
-    internal fun isWebp(bytes: ByteArray) =
+    fun isWebp(bytes: ByteArray) =
         bytes.size >= 12 && isAscii(bytes, 0, "RIFF") && isAscii(bytes, 8, "WEBP")
 
     private fun isGif(bytes: ByteArray) =
@@ -93,7 +90,7 @@ object MetadataStripper {
     private val ICC_PROFILE_ID = "ICC_PROFILE\u0000".toByteArray(Charsets.US_ASCII)
     private val ADOBE_ID = "Adobe".toByteArray(Charsets.US_ASCII)
 
-    private fun stripJpeg(bytes: ByteArray, output: OutputStream): StripResult {
+    private fun stripJpeg(bytes: ByteArray, output: ByteSink): StripResult {
         output.write(bytes, 0, 2) // SOI, already matched by isJpeg
         var pos = 2
         while (pos < bytes.size) {
@@ -163,7 +160,7 @@ object MetadataStripper {
      * a real marker (the next scan of a progressive JPEG, or the trailing EOI). Returns the offset
      * of that marker's leading `FF`, or null if the data runs off the end of the file first.
      */
-    private fun scanEntropyData(bytes: ByteArray, start: Int, output: OutputStream): Int? {
+    private fun scanEntropyData(bytes: ByteArray, start: Int, output: ByteSink): Int? {
         var i = start
         while (true) {
             if (i >= bytes.size) return null
@@ -214,7 +211,7 @@ object MetadataStripper {
     )
     private val PNG_DROP_CHUNKS = setOf("eXIf", "tEXt", "zTXt", "iTXt", "tIME")
 
-    private fun stripPng(bytes: ByteArray, output: OutputStream): StripResult {
+    private fun stripPng(bytes: ByteArray, output: ByteSink): StripResult {
         output.write(bytes, 0, 8) // signature, already matched by isPng
         var pos = 8
         while (pos < bytes.size) {
@@ -225,7 +222,7 @@ object MetadataStripper {
             val dataStart = typeStart + 4
             val chunkEnd = dataStart + length + 4 // + CRC
             if (chunkEnd > bytes.size) return StripResult.Unsupported("Truncated PNG chunk")
-            val chunkType = String(bytes, typeStart, 4, Charsets.US_ASCII)
+            val chunkType = bytes.decodeAsciiSlice(typeStart, 4)
             val keep = when {
                 chunkType in PNG_KEEP_CHUNKS -> true
                 chunkType in PNG_DROP_CHUNKS -> false
@@ -257,13 +254,13 @@ object MetadataStripper {
 
     private const val MAX_WEBP_SIZE = 64L * 1024 * 1024
 
-    private fun stripWebp(bytes: ByteArray, output: OutputStream): StripResult {
+    private fun stripWebp(bytes: ByteArray, output: ByteSink): StripResult {
         if (bytes.size > MAX_WEBP_SIZE) return StripResult.Unsupported("WebP larger than 64MB")
         val chunks = mutableListOf<ByteArray>()
         var pos = 12
         while (pos < bytes.size) {
             if (pos + 8 > bytes.size) return StripResult.Unsupported("Truncated WebP chunk header")
-            val fourCc = String(bytes, pos, 4, Charsets.US_ASCII)
+            val fourCc = bytes.decodeAsciiSlice(pos, 4)
             val size = readInt32LE(bytes, pos + 4)
             if (size < 0) return StripResult.Unsupported("Invalid WebP chunk size")
             val dataStart = pos + 8
@@ -317,7 +314,7 @@ object MetadataStripper {
     // application extension is dropped.
     // ---------------------------------------------------------------------------------------
 
-    private fun stripGif(bytes: ByteArray, output: OutputStream): StripResult {
+    private fun stripGif(bytes: ByteArray, output: ByteSink): StripResult {
         output.write(bytes, 0, 6) // GIF87a/GIF89a signature, already matched by isGif
         if (13 > bytes.size) return StripResult.Unsupported("Truncated GIF logical screen descriptor")
         val packed = bytes[10].toInt() and 0xFF
@@ -390,7 +387,7 @@ object MetadataStripper {
         val firstLength = bytes[subBlocksStart].toInt() and 0xFF
         val idStart = subBlocksStart + 1
         if (firstLength != 11 || idStart + 11 > bytes.size) return false
-        val identifier = String(bytes, idStart, 11, Charsets.US_ASCII)
+        val identifier = bytes.decodeAsciiSlice(idStart, 11)
         return identifier == "NETSCAPE2.0" || identifier == "ANIMEXTS1.0"
     }
 
@@ -398,7 +395,7 @@ object MetadataStripper {
     // BMP -- no per-photo location metadata format exists for it; copy the whole file through.
     // ---------------------------------------------------------------------------------------
 
-    private fun stripBmp(bytes: ByteArray, output: OutputStream): StripResult {
+    private fun stripBmp(bytes: ByteArray, output: ByteSink): StripResult {
         output.write(bytes)
         return StripResult.Stripped(Format.BMP)
     }
@@ -408,4 +405,11 @@ object MetadataStripper {
         for (i in text.indices) if (bytes[offset + i] != text[i].code.toByte()) return false
         return true
     }
+
+    /** A 7-bit-ASCII-only slice decode, in place of the JVM-only `String(bytes, off, len, charset)`
+     *  constructor overload -- every caller here is checking a fixed 4- or 11-byte ASCII tag
+     *  (a PNG chunk type, a WebP FourCC, a GIF application identifier), never arbitrary text, so a
+     *  byte-for-byte ASCII decode is exact and needs no charset machinery. */
+    private fun ByteArray.decodeAsciiSlice(offset: Int, length: Int): String =
+        buildString(length) { for (i in offset until offset + length) append(this@decodeAsciiSlice[i].toInt().toChar()) }
 }

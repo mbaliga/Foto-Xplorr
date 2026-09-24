@@ -62,8 +62,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.hypot

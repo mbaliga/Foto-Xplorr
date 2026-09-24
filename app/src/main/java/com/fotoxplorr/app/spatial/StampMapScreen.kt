@@ -47,9 +47,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.ui.FotoStamp
+import com.fotoxplorr.core.model.MediaId
 import kotlin.math.roundToInt
 
 /**

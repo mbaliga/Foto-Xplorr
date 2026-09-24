@@ -1,7 +1,7 @@
 package com.fotoxplorr.app.search
 
-import com.fotoxplorr.app.formats.MediaFormat
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.formats.MediaFormat
+import com.fotoxplorr.core.model.MediaId
 import java.util.Locale
 
 /**
