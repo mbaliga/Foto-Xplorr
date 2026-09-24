@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.media
 
 import com.fotoxplorr.core.model.MediaId
+import com.fotoxplorr.core.organize.ScanPlan
 import kotlinx.coroutines.flow.Flow
 
 sealed interface ScanEvent {

@@ -1,6 +1,6 @@
-package com.fotoxplorr.app.fileops
+package com.fotoxplorr.core.organize
 
-import java.time.ZoneId
+import kotlinx.datetime.TimeZone
 
 /**
  * Turns a [RenamePattern] and a batch of photos into concrete, collision-free file names.
@@ -9,9 +9,11 @@ import java.time.ZoneId
  * is easy to get right; making sure the arithmetic never hands two different photos the same
  * name — or a name some untouched third file already owns — is the part where a naive
  * implementation quietly destroys data, because a MediaStore rename that lands on an existing
- * name does not merge or warn, it silently overwrites whatever was there. Pure Kotlin, no Android
- * import anywhere in this file, so this property is something a JVM test proves rather than
- * something demonstrated by hand on a device and hoped to still hold.
+ * name does not merge or warn, it silently overwrites whatever was there. Pure Kotlin, no
+ * platform import anywhere in this file, so this property is something a plain test proves rather
+ * than something demonstrated by hand on a device and hoped to still hold.
+ *
+ * ADR-010 (WP1.2): moved from `com.fotoxplorr.app.fileops`, `java.time` ported to kotlinx-datetime.
  */
 object BulkRenamePlanner {
 
@@ -45,7 +47,7 @@ object BulkRenamePlanner {
         subjects: List<RenameSubject>,
         startAt: Int = 1,
         existingNames: Set<String> = emptySet(),
-        zoneId: ZoneId = ZoneId.systemDefault(),
+        zoneId: TimeZone = TimeZone.currentSystemDefault(),
     ): List<PlannedName> {
         require(pattern.isNotBlank()) { "A rename pattern is required" }
         require(startAt >= 0) { "The starting number can't be negative, was $startAt" }
@@ -94,9 +96,9 @@ object BulkRenamePlanner {
 
     /**
      * Strips characters MediaStore rejects, the same rule
-     * [MediaFileOperations.sanitizeDisplayName] applies to a single rename (duplicated rather than
+     * `MediaFileOperations.sanitizeDisplayName` applies to a single rename (duplicated rather than
      * shared because that is an instance method on a class that also touches `ContentResolver`,
-     * and this object has to stay callable from a plain JVM test with no Android on the classpath).
+     * and this object has to stay callable from a plain test with no Android on the classpath).
      *
      * [fallback] covers the pattern that is ALL tokens and resolves to nothing for this subject —
      * e.g. `{orig}` on a file with no name, which cannot happen from a real scan but must not be

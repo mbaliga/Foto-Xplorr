@@ -1,9 +1,9 @@
-package com.fotoxplorr.app.fileops
+package com.fotoxplorr.core.organize
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 /**
  * Collision safety for bulk rename — the part of this feature that actually matters. A pattern
@@ -11,6 +11,9 @@ import org.junit.Test
  * one photo the name of an untouched neighbour, is a MediaStore rename that silently overwrites
  * and a file that is simply gone. Every test here asserts that never happens, not just that the
  * happy path produces nice-looking names.
+ *
+ * ADR-010 (WP1.2): moved from `com.fotoxplorr.app.fileops`, JUnit4 ported to kotlin.test -- it
+ * never touched Android.
  */
 class BulkRenamePlannerTest {
 
@@ -25,7 +28,7 @@ class BulkRenamePlannerTest {
         val plan = BulkRenamePlanner.plan("Holiday", subjects)
 
         val names = plan.map { it.finalName }
-        assertEquals("no two photos may share a final name", names.size, names.toSet().size)
+        assertEquals(names.size, names.toSet().size, "no two photos may share a final name")
         assertEquals(listOf("Holiday.jpg", "Holiday (2).jpg", "Holiday (3).jpg"), names)
     }
 
@@ -63,14 +66,14 @@ class BulkRenamePlannerTest {
 
     @Test
     fun `a counter token keeps every name distinct without needing the collision suffix`() {
-        val subjects = List(40) { subject("IMG_%05d.jpg".format(it)) }
+        val subjects = List(40) { subject("IMG_${it.toString().padStart(5, '0')}.jpg") }
         val plan = BulkRenamePlanner.plan("Trip_{counter:3}", subjects)
 
         val names = plan.map { it.finalName }
         assertEquals(40, names.toSet().size)
         assertEquals("Trip_001.jpg", names.first())
         assertEquals("Trip_040.jpg", names.last())
-        assertTrue("a counter pattern should never need a (2) suffix", names.none { it.contains('(') })
+        assertTrue(names.none { it.contains('(') }, "a counter pattern should never need a (2) suffix")
     }
 
     @Test

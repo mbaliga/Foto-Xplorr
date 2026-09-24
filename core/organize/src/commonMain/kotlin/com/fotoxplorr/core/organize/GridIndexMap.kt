@@ -1,4 +1,4 @@
-package com.fotoxplorr.app.gallery
+package com.fotoxplorr.core.organize
 
 /**
  * Maps between "grid index" -- the LazyGrid's own item position, which can include one header

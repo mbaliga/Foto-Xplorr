@@ -1,10 +1,15 @@
-package com.fotoxplorr.app.fileops
+package com.fotoxplorr.core.organize
 
-import java.time.ZoneOffset
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlinx.datetime.TimeZone
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
-/** The bulk-rename token language, checked token by token. */
+/**
+ * The bulk-rename token language, checked token by token.
+ *
+ * ADR-010 (WP1.2): moved from `com.fotoxplorr.app.fileops`, `java.time` ported to
+ * kotlinx-datetime, JUnit4 ported to kotlin.test -- it never touched Android.
+ */
 class RenamePatternTest {
 
     // 2026-08-21 14:05:09 UTC exactly, so date-token assertions are exact rather than "close to now".
@@ -48,14 +53,14 @@ class RenamePatternTest {
         val result = RenamePattern.expand(
             "{yyyy}-{MM}-{dd}_{HH}{mm}{ss}",
             subjects,
-            zoneId = ZoneOffset.UTC,
+            zoneId = TimeZone.UTC,
         )
         assertEquals(listOf("2026-08-21_140509"), result)
     }
 
     @Test
     fun `the two-digit year token takes the last two digits`() {
-        val result = RenamePattern.expand("{yy}", listOf(subject("a.jpg")), zoneId = ZoneOffset.UTC)
+        val result = RenamePattern.expand("{yy}", listOf(subject("a.jpg")), zoneId = TimeZone.UTC)
         assertEquals(listOf("26"), result)
     }
 
@@ -64,11 +69,11 @@ class RenamePatternTest {
         val modifiedSeconds = 1_700_000_000L // a fixed, known instant
         val subjects = listOf(subject("a.jpg", dateTakenMillis = 0L, dateModifiedSeconds = modifiedSeconds))
 
-        val fromModified = RenamePattern.expand("{yyyy}{MM}{dd}", subjects, zoneId = ZoneOffset.UTC)
+        val fromModified = RenamePattern.expand("{yyyy}{MM}{dd}", subjects, zoneId = TimeZone.UTC)
         val expected = RenamePattern.expand(
             "{yyyy}{MM}{dd}",
             listOf(subject("a.jpg", dateTakenMillis = modifiedSeconds * 1000L)),
-            zoneId = ZoneOffset.UTC,
+            zoneId = TimeZone.UTC,
         )
         assertEquals(expected, fromModified)
     }
@@ -108,7 +113,7 @@ class RenamePatternTest {
     @Test
     fun `multiple tokens combine in one pattern`() {
         val subjects = listOf(subject("a.jpg"))
-        val result = RenamePattern.expand("{yyyy}_{orig}_{counter:2}", subjects, zoneId = ZoneOffset.UTC)
+        val result = RenamePattern.expand("{yyyy}_{orig}_{counter:2}", subjects, zoneId = TimeZone.UTC)
         assertEquals(listOf("2026_a_01"), result)
     }
 }

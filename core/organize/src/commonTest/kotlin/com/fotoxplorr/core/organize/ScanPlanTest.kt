@@ -1,8 +1,8 @@
-package com.fotoxplorr.app.media
+package com.fotoxplorr.core.organize
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * The decision that stops a screenshot from restarting a 21,526-item index.
@@ -59,7 +59,7 @@ class ScanPlanTest {
             knownAssetCount = 21_526,
             userRequested = false,
         )
-        assertTrue("expected a delta, got $plan", plan is ScanPlan.Delta)
+        assertTrue(plan is ScanPlan.Delta, "expected a delta, got $plan")
     }
 
     @Test
@@ -68,7 +68,7 @@ class ScanPlanTest {
         // previous scan finished would be excluded by a strict bound and never seen again.
         val since = ScanPlan.deltaSince(1_700_000_000L)
         assertEquals(1_700_000_000L - ScanPlan.WATERMARK_REWIND_SECONDS, since)
-        assertTrue("the bound must not exceed the watermark", since < 1_700_000_000L)
+        assertTrue(since < 1_700_000_000L, "the bound must not exceed the watermark")
     }
 
     @Test

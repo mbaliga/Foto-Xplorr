@@ -1,4 +1,4 @@
-package com.fotoxplorr.app.media
+package com.fotoxplorr.core.organize
 
 /**
  * Decides how much work a rescan actually has to do.

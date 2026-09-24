@@ -1,7 +1,7 @@
 package com.fotoxplorr.app.audio
 
-import com.fotoxplorr.app.media.ScanPlan
 import com.fotoxplorr.core.model.MediaId
+import com.fotoxplorr.core.organize.ScanPlan
 import kotlinx.coroutines.flow.Flow
 
 /**

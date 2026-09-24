@@ -119,6 +119,7 @@ import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
 import com.fotoxplorr.app.spatial.SpatialExperience
 import com.fotoxplorr.core.model.MediaId
+import com.fotoxplorr.core.organize.GridIndexMap
 import com.fotoxplorr.core.search.ParsedQuery
 import com.fotoxplorr.core.search.SearchDocument
 import com.fotoxplorr.core.search.matchesQuery

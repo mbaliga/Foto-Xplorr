@@ -1,16 +1,16 @@
-package com.fotoxplorr.app.fileops
+package com.fotoxplorr.core.organize
 
-import java.time.Instant
-import java.time.ZoneId
-import java.util.Locale
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 
 /**
  * One photo as the bulk-rename engine needs to see it: the two pieces every generated name is
  * built from, and nothing else.
  *
- * A plain data class rather than [com.fotoxplorr.app.media.MediaAsset] itself, on purpose: the
+ * A plain data class rather than `com.fotoxplorr.app.media.MediaAsset` itself, on purpose: the
  * whole point of a pattern engine is that its correctness is provable on the JVM without a device
- * or a MediaStore in sight, the same reason [com.fotoxplorr.app.editor.AutoFix] takes a raw pixel
+ * or a MediaStore in sight, the same reason `com.fotoxplorr.app.editor.AutoFix` takes a raw pixel
  * `IntArray` rather than a `Bitmap`. `MediaAsset` also carries an `android.net.Uri`, which this
  * file has no business depending on just to read a name and two timestamps.
  */
@@ -31,7 +31,7 @@ data class RenameSubject(
      *
      * Falls back to the file's modified time when it never recorded a capture date — screenshots,
      * downloads, anything that already had its EXIF stripped before this app ever saw it. This is
-     * the exact fallback [com.fotoxplorr.app.gallery.summarise] already uses to give such files
+     * the exact fallback `com.fotoxplorr.app.gallery.summarise` already uses to give such files
      * SOME date rather than none in the info room; a rename pattern with a date token would
      * otherwise silently produce garbage for a large fraction of a real library. Falls all the way
      * to the epoch only when both are zero, which a real MediaStore scan never produces — this app
@@ -56,7 +56,7 @@ data class RenameSubject(
  * | `{counter}`     | a sequential number, starting at the caller's `startAt` (default 1)   |
  * | `{counter:3}`   | the same number, zero-padded to 3 digits: `001`, `002`, … `999`, `1000` |
  * | `{orig}`        | the original file name, with its extension removed                    |
- * | `{yyyy}`        | the year the photo was taken, 4 digits                                 |
+ * | `{yyyy}`        | the year the photo was taken, 4 digits                                |
  * | `{yy}`          | the year, last 2 digits                                                |
  * | `{MM}`          | month, 2 digits                                                        |
  * | `{dd}`          | day of month, 2 digits                                                 |
@@ -75,6 +75,8 @@ data class RenameSubject(
  * no visible cause is far worse than one that visibly carries a `{typo}` the user can immediately
  * see is wrong and fix — this is the same "fail visibly" instinct [BulkRenamePlanner] applies to
  * an all-token pattern that collapses to nothing (see its `sanitizeStem`).
+ *
+ * ADR-010 (WP1.2): moved from `com.fotoxplorr.app.fileops`, `java.time` ported to kotlinx-datetime.
  */
 object RenamePattern {
 
@@ -93,13 +95,13 @@ object RenamePattern {
         pattern: String,
         subjects: List<RenameSubject>,
         startAt: Int = 1,
-        zoneId: ZoneId = ZoneId.systemDefault(),
+        zoneId: TimeZone = TimeZone.currentSystemDefault(),
     ): List<String> = subjects.mapIndexed { index, subject ->
         expandOne(pattern, subject, startAt + index, zoneId)
     }
 
-    private fun expandOne(pattern: String, subject: RenameSubject, counter: Int, zoneId: ZoneId): String {
-        val takenAt = Instant.ofEpochMilli(subject.effectiveDateMillis).atZone(zoneId)
+    private fun expandOne(pattern: String, subject: RenameSubject, counter: Int, zoneId: TimeZone): String {
+        val takenAt = Instant.fromEpochMilliseconds(subject.effectiveDateMillis).toLocalDateTime(zoneId)
         return TOKEN.replace(pattern) { match ->
             val token = match.groupValues[1]
             val width = match.groupValues[2].toIntOrNull()
@@ -108,7 +110,7 @@ object RenamePattern {
                 "orig" -> subject.stem
                 "yyyy" -> fixed(takenAt.year, 4)
                 "yy" -> fixed(takenAt.year % 100, 2)
-                "MM" -> fixed(takenAt.monthValue, 2)
+                "MM" -> fixed(takenAt.monthNumber, 2)
                 "dd" -> fixed(takenAt.dayOfMonth, 2)
                 "HH" -> fixed(takenAt.hour, 2)
                 "mm" -> fixed(takenAt.minute, 2)
@@ -119,12 +121,11 @@ object RenamePattern {
     }
 
     /**
-     * Locale-US, zero-padded to [width]. Pinned to `US` deliberately: some locales render `%d`
-     * with non-ASCII digit glyphs (Arabic-Indic, for one), which would produce a "number" that is
-     * not a number as far as most filesystems and every human retyping the name are concerned.
-     * A rename pattern's output has to be a filename first and a formatted number a distant
-     * second.
+     * Zero-padded to [width], ASCII digits always -- the multiplatform-safe replacement for the
+     * original `String.format(Locale.US, "%0${width}d", value)` (JVM-only, and `Locale.US` was
+     * itself only ever pinned to rule out a locale rendering `%d` with non-ASCII digit glyphs).
+     * Every caller here passes a non-negative date component or a non-negative counter, so plain
+     * `padStart` is exact -- there is no sign to get wrong.
      */
-    private fun fixed(value: Int, width: Int): String =
-        String.format(Locale.US, "%0${width}d", value)
+    private fun fixed(value: Int, width: Int): String = value.toString().padStart(width, '0')
 }

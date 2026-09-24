@@ -1,8 +1,8 @@
-package com.fotoxplorr.app.gallery
+package com.fotoxplorr.core.organize
 
-import org.junit.Assert.assertEquals
-import org.junit.Test
 import kotlin.random.Random
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 /**
  * P0-15: `GridIndexMap` is what keeps the scrubber, the pill caption and arrow-key navigation
@@ -12,7 +12,7 @@ import kotlin.random.Random
 class GridIndexMapTest {
 
     @Test
-    fun `no groups is an empty grid, footer aside`() {
+    fun `no groups is an empty grid -- footer aside`() {
         val withFooter = GridIndexMap(groupSizes = emptyList(), hasHeaders = true, trailingFooter = true)
         assertEquals(1, withFooter.itemCount)
         assertEquals(0, withFooter.gridIndexOf(0))
@@ -60,7 +60,7 @@ class GridIndexMapTest {
     }
 
     @Test
-    fun `trailing footer adds exactly one item past the last group, mapping to the last asset`() {
+    fun `trailing footer adds exactly one item past the last group -- mapping to the last asset`() {
         val map = GridIndexMap(groupSizes = listOf(2, 2), hasHeaders = true, trailingFooter = true)
         // H,a,a, H,a,a, footer = 7 items.
         assertEquals(7, map.itemCount)
@@ -68,7 +68,7 @@ class GridIndexMapTest {
     }
 
     @Test
-    fun `with headers off the map is the identity, plus the existing footer`() {
+    fun `with headers off the map is the identity -- plus the existing footer`() {
         val withFooter = GridIndexMap(groupSizes = listOf(3, 4), hasHeaders = false, trailingFooter = true)
         assertEquals(8, withFooter.itemCount) // 7 assets + 1 footer, no header rows at all
         for (i in 0..6) {
@@ -86,7 +86,7 @@ class GridIndexMapTest {
     }
 
     @Test
-    fun `round trip holds over random group sizes, headers and footer on or off`() {
+    fun `round trip holds over random group sizes -- headers and footer on or off`() {
         val random = Random(seed = 20260924)
         repeat(200) {
             val groupCount = random.nextInt(0, 12)
@@ -98,10 +98,10 @@ class GridIndexMapTest {
             for (assetIndex in 0 until totalAssets) {
                 val gridIndex = map.gridIndexOf(assetIndex)
                 assertEquals(
-                    "assetIndexAt(gridIndexOf($assetIndex)) should round-trip " +
-                        "(groupSizes=$groupSizes, hasHeaders=$hasHeaders, trailingFooter=$trailingFooter)",
                     assetIndex,
                     map.assetIndexAt(gridIndex),
+                    "assetIndexAt(gridIndexOf($assetIndex)) should round-trip " +
+                        "(groupSizes=$groupSizes, hasHeaders=$hasHeaders, trailingFooter=$trailingFooter)",
                 )
             }
         }

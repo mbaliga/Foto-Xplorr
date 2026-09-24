@@ -17,10 +17,10 @@ import com.fotoxplorr.app.media.MediaIndexer
 import com.fotoxplorr.app.media.MediaStoreChangeObserver
 import com.fotoxplorr.app.media.PrefsScanWatermark
 import com.fotoxplorr.app.media.ScanEvent
-import com.fotoxplorr.app.media.ScanPlan
 import com.fotoxplorr.app.media.SqliteMediaRepository
 import com.fotoxplorr.app.organize.LegacyCatalogMigration
 import com.fotoxplorr.app.organize.LibraryStore
+import com.fotoxplorr.core.organize.ScanPlan
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

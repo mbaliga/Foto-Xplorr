@@ -1,4 +1,4 @@
-package com.fotoxplorr.app.media
+package com.fotoxplorr.core.organize
 
 /**
  * Whether a completed full scan may remove rows it did not see (TRAPS #8: "a partial scan never
