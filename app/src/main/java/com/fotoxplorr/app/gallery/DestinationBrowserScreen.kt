@@ -117,7 +117,7 @@ fun destinationAssets(
         HyleDestination.PLACES, HyleDestination.PROTECTED, HyleDestination.AUDIO -> emptyList()
     }
     if (query.isBlank()) return base
-    return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds, state.animatedIds) }
+    return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds, state.animatedIds, state.library.archivedIds) }
 }
 
 /**

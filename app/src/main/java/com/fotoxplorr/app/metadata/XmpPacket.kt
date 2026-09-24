@@ -174,6 +174,21 @@ class XmpPacket private constructor(private val document: Document) {
         removeAttributeEverywhere(firstDescriptionOrNull(), namespaceUri, localName)
     }
 
+    /**
+     * Whether [namespaceUri] is used ANYWHERE in the document, in either shape a property can
+     * take -- an element (`<hdrgm:Version>1.0</hdrgm:Version>`) or the attribute-shorthand form
+     * Ultra HDR's own gain-map metadata actually uses (`rdf:Description hdrgm:Version="1.0"`,
+     * per the Ultra HDR guide). Unlike [intValue]/[langAlt], this has no specific property name to
+     * look for -- the presence of the namespace at all is the fact P0-16's HDR badge needs.
+     */
+    fun hasNamespace(namespaceUri: String): Boolean {
+        if (document.getElementsByTagNameNS(namespaceUri, "*").length > 0) return true
+        return descriptions().any { description ->
+            val attributes = description.attributes
+            (0 until attributes.length).any { i -> attributes.item(i).namespaceURI == namespaceUri }
+        }
+    }
+
     // ---------------------------------------------------------------------
     // Serialization
     // ---------------------------------------------------------------------
@@ -328,6 +343,8 @@ class XmpPacket private constructor(private val document: Document) {
         const val TIFF_NS = "http://ns.adobe.com/tiff/1.0/"
         const val EXIF_NS = "http://ns.adobe.com/exif/1.0/"
         const val IPTC4XMPEXT_NS = "http://iptc.org/std/Iptc4xmpExt/2008-02-29/"
+        /** Ultra HDR's gain-map metadata namespace (P0-16). See the Ultra HDR guide. */
+        const val HDR_GAIN_MAP_NS = "http://ns.adobe.com/hdr-gain-map/1.0/"
         private const val XML_NS = "http://www.w3.org/XML/1998/namespace"
         private const val XMLNS_NS = "http://www.w3.org/2000/xmlns/"
         private const val DEFAULT_LANG = "x-default"

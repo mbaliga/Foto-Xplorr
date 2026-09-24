@@ -148,17 +148,47 @@ class SearchQueryTest {
     @Test
     fun `numeric comparisons compare rather than string-match`() {
         val doc = document(name = "a.jpg", iso = 1600, sizeBytes = 8_000_000)
-        assertTrue(matchesQuery(parse("iso:>800"), doc))
-        assertFalse(matchesQuery(parse("iso:<800"), doc))
         assertTrue(matchesQuery(parse("size:>5mb"), doc))
         assertFalse(matchesQuery(parse("size:>50mb"), doc))
     }
 
     @Test
-    fun `size accepts units and bare bytes`() {
+    fun `type raw classifies by extension, not the old hard-coded mime list`() {
+        // "orf" (Olympus) and "raf" (Fujifilm) were never in the old hand-picked
+        // dng/raw/arw/cr2/nef list -- classifying via MediaFormat.classify catches them too.
+        val olympus = document(name = "IMG_0001.orf", mimeType = "application/octet-stream")
+        val fujifilm = document(name = "IMG_0002.raf", mimeType = "application/octet-stream")
+        val jpeg = document(name = "IMG_0003.jpg", mimeType = "image/jpeg")
+
+        assertTrue(matchesQuery(parse("type:raw"), olympus))
+        assertTrue(matchesQuery(parse("type:raw"), fujifilm))
+        assertFalse(matchesQuery(parse("type:raw"), jpeg))
+    }
+
+    @Test
+    fun `camera and iso terms match everything, positive or negated, until an EXIF index exists`() {
+        // No EXIF index exists yet (P0-16): SearchDocument.camera/.iso are never populated by the
+        // live path (always "" / null), so letting these terms filter would silently hide every
+        // photo the moment someone typed one. Both are parsed but inert -- neither excludes nor
+        // requires anything -- regardless of what the document actually holds.
+        val doc = document(name = "a.jpg", iso = 1600)
+        assertTrue(matchesQuery(parse("camera:x"), doc))
+        assertTrue(matchesQuery(parse("-camera:x"), doc))
+        assertTrue(matchesQuery(parse("iso:>800"), doc))
+        assertTrue(matchesQuery(parse("iso:<800"), doc))
+        assertTrue(matchesQuery(parse("-iso:>800"), doc))
+    }
+
+    @Test
+    fun `size accepts letter or two-letter unit suffixes and bare bytes`() {
+        assertEquals(500_000L, parseByteSize("500k"))
+        assertEquals(1_500_000L, parseByteSize("1.5m"))
+        assertEquals(2_000_000_000L, parseByteSize("2gb"))
         assertEquals(5_000_000L, parseByteSize("5mb"))
         assertEquals(1_000L, parseByteSize("1kb"))
+        assertEquals(700L, parseByteSize("700"))
         assertEquals(2_048L, parseByteSize("2048"))
+        assertEquals(null, parseByteSize("abc"))
     }
 
     // ---- suggestions ----
@@ -195,6 +225,7 @@ class SearchQueryTest {
     private fun document(
         name: String,
         folder: String = "Camera",
+        mimeType: String = "image/jpeg",
         labels: Set<String> = emptySet(),
         text: String = "",
         takenAt: Long = instant(2025, 1, 1),
@@ -204,7 +235,7 @@ class SearchQueryTest {
         mediaId = MediaId(1L),
         name = name,
         folder = folder,
-        mimeType = "image/jpeg",
+        mimeType = mimeType,
         takenAtMillis = takenAt,
         tags = emptySet(),
         labels = labels,

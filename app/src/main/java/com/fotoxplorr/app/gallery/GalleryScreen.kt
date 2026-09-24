@@ -609,7 +609,7 @@ private fun GalleryBrowser(
                     // items the user put there on purpose still show -- but a locked folder is
                     // never optional, so that part of the one visibility filter still applies.
                     asset.isPrivacyVisible(state.lockedFolders, state.unlockedFolders) &&
-                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id), state.recognition, state.favoriteIds, state.animatedIds)
+                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id), state.recognition, state.favoriteIds, state.animatedIds, state.library.archivedIds)
             },
             state.preferences.sort,
         )
@@ -624,7 +624,7 @@ private fun GalleryBrowser(
             unlockedFolders = state.unlockedFolders,
             preferences = state.preferences,
             animatedIds = state.animatedIds,
-        ).filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds, state.animatedIds) }
+        ).filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds, state.animatedIds, state.library.archivedIds) }
         is BrowserRoute.Tag -> sortAssets(
             state.assets.filter { asset ->
                 current.tag in state.library.tagsFor(asset.id) &&
@@ -632,7 +632,7 @@ private fun GalleryBrowser(
                     // Same rule as BrowserRoute.Collection just above: a tag view is a curated
                     // list too, but a locked folder is still never optional.
                     asset.isPrivacyVisible(state.lockedFolders, state.unlockedFolders) &&
-                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id), state.recognition, state.favoriteIds, state.animatedIds)
+                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id), state.recognition, state.favoriteIds, state.animatedIds, state.library.archivedIds)
             },
             state.preferences.sort,
         )
@@ -1893,6 +1893,7 @@ internal fun MediaAsset.matchesGallerySearch(
     recognition: RecognitionIndex = RecognitionIndex.EMPTY,
     favouriteIds: Set<MediaId> = emptySet(),
     animatedIds: Set<MediaId> = emptySet(),
+    archivedIds: Set<MediaId> = emptySet(),
 ): Boolean {
     val parsed = rememberParsedQuery(query)
     if (parsed.isEmpty) return true
@@ -1907,6 +1908,8 @@ internal fun MediaAsset.matchesGallerySearch(
             tags = tags,
             labels = recognition.labelsByMedia[id].orEmpty().toSet(),
             text = recognition.textOf(id),
+            // P0-16: the same category set the now-deleted search/GallerySearch.kt (P0-14) had,
+            // this time actually reachable from the live search path -- see docs/handoff.
             categories = buildSet {
                 if (isVideo) add("video") else add("photo")
                 if (id in animatedIds) add("animated")
@@ -1914,7 +1917,11 @@ internal fun MediaAsset.matchesGallerySearch(
                 if (id in recognition.petMediaIds) add("pet")
                 if (id in recognition.peopleMediaIds) add("person")
                 if (id in recognition.identityMediaIds) add("document")
+                if (id in archivedIds) add("archived")
                 if (tags.isEmpty()) add("untagged")
+                if (folderIdentity(this@matchesGallerySearch).displayName.contains("screenshot", ignoreCase = true)) {
+                    add("screenshot")
+                }
             },
             camera = "",
             iso = null,

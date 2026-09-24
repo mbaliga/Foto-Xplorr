@@ -46,7 +46,6 @@ data class SearchVocabulary(
     val labels: Set<String> = emptySet(),
     val tags: Set<String> = emptySet(),
     val folders: Set<String> = emptySet(),
-    val cameras: Set<String> = emptySet(),
     val categories: Set<String> = emptySet(),
 )
 
@@ -144,8 +143,9 @@ private fun fieldAlternatives(
         SearchField.LABEL -> vocabulary.labels
         SearchField.TAG -> vocabulary.tags
         SearchField.FOLDER -> vocabulary.folders
-        SearchField.CAMERA -> vocabulary.cameras
         SearchField.CATEGORY -> vocabulary.categories
+        // CAMERA/ISO have no EXIF index to draw alternatives from yet (Phase 2), and no longer
+        // filter anything either -- see SearchQuery.matchesTerm.
         else -> emptySet()
     }
     val current = term.value.lowercase(Locale.ROOT)

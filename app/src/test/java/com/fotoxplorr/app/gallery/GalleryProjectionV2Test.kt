@@ -69,6 +69,18 @@ class GalleryProjectionV2Test {
     }
 
     @Test
+    fun `search categories include archived and screenshot, matching GallerySearch's old set`() {
+        val archived = asset(1, 100)
+        val screenshot = asset(2, 200, name = "Screenshot_2026.png", path = "Pictures/Screenshots/")
+        val ordinary = asset(3, 300)
+
+        assertTrue(archived.matchesGallerySearch("is:archived", emptySet(), archivedIds = setOf(archived.id)))
+        assertFalse(ordinary.matchesGallerySearch("is:archived", emptySet(), archivedIds = setOf(archived.id)))
+        assertTrue(screenshot.matchesGallerySearch("is:screenshot", emptySet()))
+        assertFalse(ordinary.matchesGallerySearch("is:screenshot", emptySet()))
+    }
+
+    @Test
     fun `the animated album is membership in animatedIds, not a MIME guess`() {
         // Same MIME type (webp) on both -- only the id set says which one actually animates,
         // proving this no longer falls back to MediaAsset.isAnimated's old MIME-blanket rule.

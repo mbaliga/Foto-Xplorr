@@ -72,6 +72,7 @@ import com.fotoxplorr.app.media.uriForLocationRead
 import com.fotoxplorr.app.metadata.CurrentMetadata
 import com.fotoxplorr.app.metadata.XmpPacket
 import com.fotoxplorr.app.metadata.currentMetadataFrom
+import com.fotoxplorr.app.metadata.xmpAttributeUtf8
 import com.fotoxplorr.app.palette.PaletteExtractor
 import com.fotoxplorr.app.palette.PaletteSwatch
 import kotlinx.coroutines.Dispatchers
@@ -820,10 +821,13 @@ private fun InformationBlock(asset: MediaAsset, exif: ImageExifDetails, reveal: 
         RoomEyebrow("FILE", Modifier.padding(bottom = 3.dp))
         // No "Name" row: the room's title is the filename, and RoomHeader's KDoc says why the
         // title wins. The extension the title drops is what "Kind" is.
-        InformationRow("Kind", DetailFormatting.formatBadge(asset.mimeType) ?: asset.mimeType)
-        // Never null, and deliberately unconditional: "STANDARD" is a real answer here, not a
-        // missing one — see DetailFormatting.dynamicRangeBadge on what this can honestly claim.
-        InformationRow("Dynamic range", DetailFormatting.dynamicRangeBadge(asset.mimeType))
+        InformationRow(
+            "Kind",
+            DetailFormatting.formatBadge(asset.mimeType, asset.displayName) ?: asset.mimeType,
+        )
+        // Null when the file's XMP does not declare the Ultra HDR gain-map namespace -- see
+        // DetailFormatting.dynamicRangeBadge on why this can only claim a genuine positive.
+        InformationRow("Dynamic range", DetailFormatting.dynamicRangeBadge(exif.hasHdrGainMap))
         InformationRow("Size", DetailFormatting.byteLine(asset.sizeBytes))
         InformationRow("Dimensions", "${asset.width} × ${asset.height}")
         InformationRow("Megapixels", megapixels(asset.width, asset.height))
@@ -1068,6 +1072,9 @@ data class ImageExifDetails(
      */
     val professionalMetadata: CurrentMetadata =
         CurrentMetadata.EMPTY,
+    /** Whether this file's XMP declares the Ultra HDR gain-map namespace (P0-16) -- see
+     *  [DetailFormatting.dynamicRangeBadge]. */
+    val hasHdrGainMap: Boolean = false,
     /**
      * Whether this file's EXIF was actually read. False means the open or the parse failed --
      * [PlaceBlock] must never show the "set a location by hand" picker in that case (P0-02): a
@@ -1107,6 +1114,11 @@ private fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
     // and well-formed, which is exactly the guarantee ImageExifDetails.latitude documents —
     // so the pair is destructured from one call rather than read as two independent tags.
     val latLong = exif.latLong
+    // xmpAttributeUtf8(), not getAttribute(TAG_XMP): see that function's own doc for why
+    // getAttribute decodes a real (non-entity-escaped) UTF-8 packet with the wrong charset.
+    // Parsed once and reused below for both the professional-metadata card and the P0-16 HDR
+    // gain-map check, rather than parsing the same packet twice.
+    val xmp = exif.xmpAttributeUtf8()?.let { XmpPacket.parse(it) }
     return ImageExifDetails(
         make = exif.getAttribute(ExifInterface.TAG_MAKE)?.trim()?.takeIf(String::isNotEmpty),
         model = exif.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf(String::isNotEmpty),
@@ -1124,11 +1136,12 @@ private fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
         longitude = latLong?.get(1),
         colorSpace = colorSpaceName(exif.getAttributeInt(ExifInterface.TAG_COLOR_SPACE, -1)),
         professionalMetadata = currentMetadataFrom(
-            xmp = exif.getAttribute(ExifInterface.TAG_XMP)?.let { XmpPacket.parse(it) },
+            xmp = xmp,
             exifImageDescription = exif.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION),
             exifArtist = exif.getAttribute(ExifInterface.TAG_ARTIST),
             exifCopyright = exif.getAttribute(ExifInterface.TAG_COPYRIGHT),
         ),
+        hasHdrGainMap = xmp?.hasNamespace(XmpPacket.HDR_GAIN_MAP_NS) == true,
     )
 }
 

@@ -186,4 +186,39 @@ class XmpPacketTest {
         assertTrue(serialized.trimEnd().endsWith("<?xpacket end=\"w\"?>"))
         assertTrue(serialized.contains("W5M0MpCehiHzreSzNTczkc9d"))
     }
+
+    @Test
+    fun `hasNamespace finds a namespace written as its own element`() {
+        val elementForm = """
+            <x:xmpmeta xmlns:x="adobe:ns:meta/">
+             <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+              <rdf:Description rdf:about="" xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/">
+               <hdrgm:Version>1.0</hdrgm:Version>
+              </rdf:Description>
+             </rdf:RDF>
+            </x:xmpmeta>
+        """.trimIndent()
+        val packet = XmpPacket.parse(elementForm)!!
+        assertTrue(packet.hasNamespace(XmpPacket.HDR_GAIN_MAP_NS))
+    }
+
+    @Test
+    fun `hasNamespace finds a namespace written in the attribute-shorthand form`() {
+        val attributeForm = """
+            <x:xmpmeta xmlns:x="adobe:ns:meta/">
+             <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+              <rdf:Description rdf:about="" xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/" hdrgm:Version="1.0"/>
+             </rdf:RDF>
+            </x:xmpmeta>
+        """.trimIndent()
+        val packet = XmpPacket.parse(attributeForm)!!
+        assertTrue(packet.hasNamespace(XmpPacket.HDR_GAIN_MAP_NS))
+    }
+
+    @Test
+    fun `hasNamespace is false when the packet never mentions it`() {
+        val packet = XmpPacket.empty()
+        packet.setLangAlt(XmpPacket.DC_NS, "dc", "description", "no gain map here")
+        assertTrue(!packet.hasNamespace(XmpPacket.HDR_GAIN_MAP_NS))
+    }
 }
