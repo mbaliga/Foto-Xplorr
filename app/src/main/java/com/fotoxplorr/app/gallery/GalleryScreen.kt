@@ -740,15 +740,57 @@ private fun GalleryBrowser(
         animationSpec = SpatialMotion.settleSpec,
         label = "scrubber-reveal",
     )
-    // The scrubber's stops, in the grid's index space. Both surfaces that show it render
-    // headerless grids, so grid item n is asset n — see timelineStops.
     val scrubberAssets = if (route == BrowserRoute.Root) destinationAssets else currentAssets
-    val scrubberStops = remember(scrubberAssets) { timelineStops(scrubberAssets) }
+    // P0-15: whether TimelineScreen is about to take its date-header branch for THIS render --
+    // the one condition (see TimelineScreen's own `!showDateHeaders || grouping == NONE` check)
+    // that decides whether the grid below actually draws header rows, since `showDateHeaders` is
+    // hardcoded true at this screen's own call site (below). Mirrored here, not read back from
+    // TimelineScreen, because GalleryScreen must build `groups`/[GridIndexMap] BEFORE the grid
+    // composes, not after.
+    val headersActive = timelineHeadersOn && state.preferences.timelineGrouping != TimelineGrouping.NONE
+    // The one grouping computation, shared by the grid (TimelineScreen, below) and everything
+    // that used to assume grid index == asset index (the scrubber, the pill, arrow keys, and the
+    // list handed to the viewer on open) -- see docs/TRAPS.md #5 and #9. Without headers this is
+    // the identity: one group holding every asset, unreordered.
+    val groups = if (headersActive) {
+        remember(scrubberAssets, state.preferences.timelineGrouping) {
+            timelineGroups(scrubberAssets, state.preferences.timelineGrouping)
+        }
+    } else {
+        remember(scrubberAssets) { listOf(TimelineGroup("all", "", scrubberAssets)) }
+    }
+    // What the grid actually draws, asset-wise, in draw order -- NOT scrubberAssets once headers
+    // regroup/reorder it. This, not scrubberAssets, is what the scrubber, pill, arrow keys and
+    // viewer-open must all key off from here down.
+    val renderedAssets = remember(groups) { groups.flatMap { it.assets } }
+    // Every grid this screen can show draws one trailing 88dp footer spacer after the last item
+    // (TimelineScreen's grouped branch and both of MediaGridScreen's branches all do) -- see
+    // GridIndexMap's own doc for why headers-off is just the identity plus this one footer.
+    val gridIndexMap = remember(groups, headersActive) {
+        GridIndexMap(groupSizes = groups.map { it.assets.size }, hasHeaders = headersActive, trailingFooter = true)
+    }
+    // The scrubber's stops, in the GRID's index space (its own contract: it does not know or
+    // care what an index means, only that stops/itemCount/currentIndex/onScrubTo all agree on
+    // one space). timelineStops itself still reasons in asset-index space over renderedAssets --
+    // its own month-bucketing has no idea headers exist -- so every stop's target is remapped
+    // through the same map the grid was built from before it reaches the scrubber.
+    val scrubberStops = remember(renderedAssets, gridIndexMap) {
+        timelineStops(renderedAssets).map { it.copy(itemIndex = gridIndexMap.gridIndexOf(it.itemIndex)) }
+    }
     // Whether the grid (square, masonry, or with Timeline's date headers) is what is actually on
     // screen right now, as opposed to Calendar or Map -- those two draw their own scrollable
     // surface and neither shares gridState with it, so the edge scrubber and the density pill
     // below would be tracking and driving a position nothing on screen agrees with.
     val gridActive = zoomLevel !is GalleryZoomLevel.Calendar && zoomLevel !is GalleryZoomLevel.MapView
+    // P0-15: masonry's staggered grid keeps its own LazyStaggeredGridState, entirely unreachable
+    // from here (see MediaGridScreen's own doc) -- gridState/GridIndexMap describe a grid that,
+    // in masonry, is not even the one on screen. Rather than let the scrubber track and drive a
+    // position nothing agrees with, it is hidden while masonry is active; the pill's position
+    // text is hidden the same way just below, since there is no staggered-grid position to show
+    // in its place without threading a second scroll state up through DestinationContent, a file
+    // this task does not own.
+    val masonryActive = !state.preferences.fitToTile && !headersActive
+    val scrubberTrackable = gridActive && !masonryActive
 
     // ---- desktop input: fold pinch and Ctrl+scroll into the zoom ladder, and the right-click
     // context menu into real actions. Both gestures are already consumed in GalleryContent.kt
@@ -771,7 +813,7 @@ private fun GalleryBrowser(
     }
     chromeBridge.onContextAction = { asset, action ->
         when (action) {
-            MediaContextAction.OPEN -> actions.onOpenAsset(asset, scrubberAssets)
+            MediaContextAction.OPEN -> actions.onOpenAsset(asset, renderedAssets)
             MediaContextAction.TOGGLE_FAVORITE ->
                 actions.onSetFavorite(setOf(asset.id), asset.id !in state.favoriteIds)
             MediaContextAction.MOVE_TO_TRASH -> actions.onMoveToTrash(listOf(asset))
@@ -795,7 +837,11 @@ private fun GalleryBrowser(
     fun handleGalleryShortcut(shortcut: GalleryShortcut) {
         when (shortcut) {
             is GalleryShortcut.MoveSelection -> {
-                val ids = scrubberAssets
+                // renderedAssets, not scrubberAssets: this is asset-index-space arithmetic (a
+                // column stride is a stride in assets, header rows aren't columns), but it must
+                // walk the SAME order the grid draws once headers regroup it, then convert the
+                // result through GridIndexMap before it ever reaches gridState.
+                val ids = renderedAssets
                 if (ids.isEmpty()) return
                 val columns = state.preferences.gridColumns.coerceAtLeast(1)
                 val current = ids.indexOfFirst { it.id == chromeBridge.keyboardFocusedId }
@@ -810,10 +856,10 @@ private fun GalleryBrowser(
                 // scrollToItem, not animateScrollToItem: matches the edge scrubber's own choice
                 // just below -- a held-down arrow key fires many of these in quick succession, and
                 // an animated scroll queued behind an animated scroll is how that becomes a stutter.
-                gridScope.launch { gridState.scrollToItem(next) }
+                gridScope.launch { gridState.scrollToItem(gridIndexMap.gridIndexOf(next)) }
             }
             GalleryShortcut.OpenFocused -> {
-                val ids = scrubberAssets
+                val ids = renderedAssets
                 val focused = ids.firstOrNull { it.id == chromeBridge.keyboardFocusedId } ?: ids.firstOrNull()
                 focused?.let { actions.onOpenAsset(it, ids) }
             }
@@ -1098,6 +1144,7 @@ private fun GalleryBrowser(
                             // without touching that file.
                             timelineHeadersOn -> TimelineScreen(
                                 assets = scrubberAssets,
+                                groups = groups,
                                 grouping = state.preferences.timelineGrouping,
                                 columns = state.preferences.gridColumns,
                                 favoriteIds = state.favoriteIds,
@@ -1105,7 +1152,7 @@ private fun GalleryBrowser(
                                 blurSensitive = state.preferences.blurSensitive,
                                 selectedIds = selection.selectedIds,
                                 selectionActive = selection.isActive,
-                                onOpen = { asset -> actions.onOpenAsset(asset, scrubberAssets) },
+                                onOpen = { asset -> actions.onOpenAsset(asset, renderedAssets) },
                                 onToggleSelection = { id -> selection = selection.toggle(id) },
                                 showDateHeaders = true,
                                 gridState = gridState,
@@ -1173,10 +1220,10 @@ private fun GalleryBrowser(
                     // why the pill no longer carries a scrubber of its own — two position
                     // controls on one screen is one too many, and the edge is the one the owner
                     // asked for.
-                    if (!selection.isActive && legacyScreen == null && gridActive && scrubberStops.isNotEmpty()) {
+                    if (!selection.isActive && legacyScreen == null && scrubberTrackable && scrubberStops.isNotEmpty()) {
                         EdgeTimelineScrubber(
                             stops = scrubberStops,
-                            itemCount = scrubberAssets.size,
+                            itemCount = gridIndexMap.itemCount,
                             currentIndex = firstVisibleIndex,
                             onScrubTo = { index ->
                                 // scrollToItem, not animateScrollToItem: the finger is already
@@ -1243,7 +1290,11 @@ private fun GalleryBrowser(
                     // the pill itself stays up throughout.
                     if (!selection.isActive && legacyScreen == null) {
                         FloatingPillControl(
-                            caption = if (gridActive) pillCaption(scrubberAssets, firstVisibleIndex) else "",
+                            caption = if (scrubberTrackable) {
+                                pillCaption(renderedAssets, gridIndexMap.assetIndexAt(firstVisibleIndex))
+                            } else {
+                                ""
+                            },
                             onSearch = { searchVisible = !searchVisible },
                             onToggleDensity = {
                                 val next = state.preferences.gridColumns + 1

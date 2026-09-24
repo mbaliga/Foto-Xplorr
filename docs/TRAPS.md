@@ -22,8 +22,14 @@ change that needs saying out loud. Source: the 6 Aug 2026 handoff plus plan FX-I
    Declaring ANY explicit substitution for an included build disables AUTOMATIC
    substitution for that build — a module you forget to declare is silently not
    substituted. The inline reasoning stays with the block.
-5. **The scrubber assumes a headerless grid.** Grid item *n* is asset *n*. Date headers,
-   stacks or any non-1:1 grid item silently desync the edge timeline strip from the list.
+5. **The scrubber, pill and arrow keys must agree with the grid through `GridIndexMap`,
+   never grid-item-*n*-is-asset-*n*.** Fixed for date headers by P0-15
+   (`gallery/GridIndexMap.kt`): `GalleryScreen` now converts every grid index through it
+   before it reaches `pillCaption`/`gridState.scrollToItem`, and `renderedAssets` (not
+   `scrubberAssets`) is the one asset list all four agree on. Still true in masonry mode,
+   where the staggered grid keeps a `LazyStaggeredGridState` this screen cannot reach at
+   all — the scrubber and the pill's position text are hidden there instead of tracking a
+   position nothing on screen agrees with (see `MediaGridScreen`'s own doc).
 6. **`local.properties` (with `sdk.dir`) is needed in every included build** on a fresh
    clone — the root's copy does not propagate. `scripts/verify.sh` creates them if absent
    and never clobbers an existing file.
@@ -34,9 +40,10 @@ change that needs saying out loud. Source: the 6 Aug 2026 handoff plus plan FX-I
 
 8. **A partial scan never sweeps.** The generalisation of #1 to every future source: a
    scan that did not fully enumerate its root must not remove anything it failed to see.
-9. **Nothing that changes grid item count ships before `GridIndexMap`.** Conflict stacks,
-   duplicate stacks, grouping and headers all break #5 through different doors. (WP3
-   ticket FX-044; nothing on the current branch stacks yet.)
+9. **Nothing that changes grid item count ships before `GridIndexMap`.** `GridIndexMap`
+   now exists (P0-15) and Timeline's date headers go through it; conflict stacks and
+   duplicate stacks still don't exist yet and must go through it too, the day they do.
+   (WP3 ticket FX-044.)
 10. **Foreign keys are enabled in `SQLiteOpenHelper.onConfigure` only.** Anywhere else
     is a silent no-op (inside a transaction) or a throw (`setForeignKeyConstraintsEnabled`
     mid-transaction). Every `ON DELETE CASCADE` is decorative until this is done.

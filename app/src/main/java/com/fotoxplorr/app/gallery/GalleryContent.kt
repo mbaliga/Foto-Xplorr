@@ -218,6 +218,14 @@ internal fun Modifier.gridZoomGestures(bridge: GridChromeBridge): Modifier = poi
 @Composable
 fun TimelineScreen(
     assets: List<MediaAsset>,
+    /**
+     * The grouping GalleryScreen already computed -- via the same [timelineGroups] this used to
+     * call itself -- so the scrubber, pill and arrow keys agree with exactly what gets drawn
+     * below (P0-15; see [GridIndexMap]). Unused, and safe to leave at its default, whenever
+     * [showDateHeaders] is false or [grouping] is [TimelineGrouping.NONE]: that branch draws
+     * [assets] directly through [MediaGridScreen] and never reads a group.
+     */
+    groups: List<TimelineGroup> = emptyList(),
     grouping: TimelineGrouping,
     columns: Int,
     favoriteIds: Set<MediaId>,
@@ -277,7 +285,6 @@ fun TimelineScreen(
     // MediaGridScreen, so it cannot inherit that one's overlay.
     var peeked by remember { mutableStateOf<MediaAsset?>(null) }
     val onPeek: (MediaAsset) -> Unit = { peeked = it }
-    val groups = timelineGroups(assets, grouping)
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
         state = gridState,
