@@ -121,3 +121,10 @@ Current phase: **Phase 1 — Foundation**. Branch: `claude/fotoz-p1-foundation`.
    - Fonebrew-style one-time unlock for pro tools (RAW develop, network sources, batch conversion, AI packs), with viewing, sharing and organising free forever and the sideload build fully unlocked.
 
 ## Device checks added
+
+- **Phase 1 gate**: `docs/device-test/phase-1-checklist.md` -- every device-only claim from every
+  Phase 1 WP, same grouping as `docs/device-test/phase-0-checklist.md`, with ADR-011's migration
+  check (upgrade over the owner's real library; every favourite, tag, collection, lock, caption and
+  manual pin present) pinned at the top and marked MUST PASS BEFORE MERGE. PR #14's own description
+  was rewritten as the Phase 1 gate report, summarising every WP and pointing back to this file's
+  entries above for the full reasoning behind each deferral. Phase 2 has not started.
