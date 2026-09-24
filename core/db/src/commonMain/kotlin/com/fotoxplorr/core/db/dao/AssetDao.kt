@@ -1,5 +1,6 @@
 package com.fotoxplorr.core.db.dao
 
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
@@ -64,6 +65,29 @@ interface AssetDao {
     @Query("SELECT * FROM asset WHERE fingerprint = :fingerprint")
     suspend fun findByFingerprint(fingerprint: String): List<AssetEntity>
 
+    /**
+     * WP1.4's mark-and-sweep: the set `SyncEngine` compares a fully-enumerated source's found
+     * locators against, to find rows that need to become [com.fotoxplorr.core.db.entity.
+     * Availability.MISSING_CONFIRMED]. Takes a list of [availabilities], not one value: a
+     * reconnecting source's full re-sync must reconcile both its still-`ONLINE` rows AND the
+     * ones `markSourceOffline` bulk-marked `OFFLINE` while it was gone (found again -> `ONLINE`
+     * via the normal upsert path; still missing -> `MISSING_CONFIRMED`, now that a complete
+     * enumeration can actually confirm that, per ADR-011 §6). Projects only `asset_id`/`locator`
+     * (not a full [AssetEntity] load) since a large library's whole online set can be sizeable;
+     * the `asset_state (availability, trashed)` index covers this query's `WHERE` clause.
+     */
+    @Query("SELECT asset_id, locator FROM asset WHERE source_id = :sourceId AND availability IN (:availabilities)")
+    suspend fun idsAndLocatorsForSource(sourceId: SourceId, availabilities: List<String>): List<AssetIdLocator>
+
+    @Query("UPDATE asset SET availability = :availability WHERE asset_id IN (:assetIds)")
+    suspend fun setAvailability(assetIds: List<AssetId>, availability: String)
+
+    /** The whole-source case (ADR-011 §6 / TRAPS #8's "an absent source means OFFLINE"): a
+     *  source that's gone entirely needs no enumeration and no per-row locator comparison --
+     *  every one of its rows just flips state in one statement. */
+    @Query("UPDATE asset SET availability = :availability WHERE source_id = :sourceId")
+    suspend fun setAvailabilityForSource(sourceId: SourceId, availability: String)
+
     /** Permanent delete ("shred", ADR-011 §6) -- cascades to every user/derived row via
      *  `ON DELETE CASCADE`. */
     @Query("DELETE FROM asset WHERE asset_id = :assetId")
@@ -72,3 +96,8 @@ interface AssetDao {
     @Query("DELETE FROM asset WHERE asset_id IN (:assetIds)")
     suspend fun deletePermanently(assetIds: List<AssetId>)
 }
+
+data class AssetIdLocator(
+    @ColumnInfo(name = "asset_id") val assetId: AssetId,
+    @ColumnInfo(name = "locator") val locator: String,
+)

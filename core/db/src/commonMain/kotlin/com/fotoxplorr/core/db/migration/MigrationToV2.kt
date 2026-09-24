@@ -2,6 +2,8 @@ package com.fotoxplorr.core.db.migration
 
 import com.fotoxplorr.core.db.FotozDatabase
 import com.fotoxplorr.core.db.FotozVectorsDatabase
+import com.fotoxplorr.core.db.assetRevision
+import com.fotoxplorr.core.db.baseAssetUser
 import com.fotoxplorr.core.db.entity.Availability
 import com.fotoxplorr.core.db.entity.AssetEntity
 import com.fotoxplorr.core.db.entity.AssetKeywordEntity
@@ -25,7 +27,6 @@ import com.fotoxplorr.core.db.entity.OrphanKind
 import com.fotoxplorr.core.db.entity.RecognitionEntity
 import com.fotoxplorr.core.db.entity.SourceEntity
 import com.fotoxplorr.core.db.entity.SourceKind
-import com.fotoxplorr.core.db.entity.SourceState
 import com.fotoxplorr.core.db.entity.TextBlockEntity
 import com.fotoxplorr.core.db.entity.TraitEntity
 import com.fotoxplorr.core.db.entity.VideoMomentEntity
@@ -33,6 +34,8 @@ import com.fotoxplorr.core.db.entity.VideoMomentFeedbackEntity
 import com.fotoxplorr.core.db.entity.VideoMomentScanEntity
 import com.fotoxplorr.core.db.entity.EmbeddingEntity
 import com.fotoxplorr.core.db.entity.encodeRecognitionList
+import com.fotoxplorr.core.db.folderKey
+import com.fotoxplorr.core.db.newMediaStoreSource
 import com.fotoxplorr.core.formats.MediaFormat
 import com.fotoxplorr.core.formats.formatId
 import com.fotoxplorr.core.model.AssetId
@@ -186,20 +189,8 @@ class MigrationToV2(
         val volumes = legacy.externalVolumeNames()
         val primaryLocator = volumes.firstOrNull { it == "external_primary" } ?: volumes.firstOrNull() ?: "external"
         return db.sourceDao().findByLocator(SourceKind.MEDIASTORE_VOLUME, primaryLocator)?.sourceId
-            ?: SourceId(db.sourceDao().insert(newSource(primaryLocator)))
+            ?: SourceId(db.sourceDao().insert(newMediaStoreSource(primaryLocator)))
     }
-
-    private fun newSource(volumeName: String) = SourceEntity(
-        sourceId = SourceId(0),
-        kind = SourceKind.MEDIASTORE_VOLUME,
-        rootLocator = volumeName,
-        volumeUuid = null,
-        displayName = volumeName,
-        state = SourceState.ONLINE,
-        syncVersion = null,
-        syncGeneration = null,
-        lastFullScanMs = null,
-    )
 
     private suspend fun runSources(): String {
         val volumes = legacy.externalVolumeNames()
@@ -210,7 +201,7 @@ class MigrationToV2(
         var created = 0
         for (volume in volumes) {
             if (db.sourceDao().findByLocator(SourceKind.MEDIASTORE_VOLUME, volume) == null) {
-                db.sourceDao().insert(newSource(volume))
+                db.sourceDao().insert(newMediaStoreSource(volume))
                 created++
             }
         }
@@ -235,7 +226,7 @@ class MigrationToV2(
                     volume == null -> primary
                     else -> sourceByVolume.getOrPut(volume) {
                         db.sourceDao().findByLocator(SourceKind.MEDIASTORE_VOLUME, volume)?.sourceId
-                            ?: SourceId(db.sourceDao().insert(newSource(volume)))
+                            ?: SourceId(db.sourceDao().insert(newMediaStoreSource(volume)))
                     }
                 }
 
@@ -300,29 +291,6 @@ class MigrationToV2(
         markDone(MigrationStep.ID_MAP, "${db.migrationProgressDao().idMapCount()} mapped (populated during ASSETS)")
         return "$total asset(s) copied"
     }
-
-    /** ADR-011 §2's `asset.revision`: "bumps whenever size/date_modified/content changes" --
-     *  `content_hash` is filled lazily (WP1.4) so isn't available at migration time; the file's
-     *  own modification timestamp already changes whenever its content does in every case this
-     *  app can observe, so mixing in size is extra sensitivity, not a substitute for a real
-     *  content hash. */
-    private fun assetRevision(dateModifiedMs: Long, sizeBytes: Long): Long = dateModifiedMs xor sizeBytes
-
-    private fun baseAssetUser(assetId: AssetId, favorite: Boolean) = AssetUserEntity(
-        assetId = assetId,
-        favorite = favorite,
-        rating = 0,
-        flag = 0,
-        colorLabel = 0,
-        archived = false,
-        everUnarchived = false,
-        sensitive = false,
-        caption = null,
-        captionIsMachine = false,
-        captionMachineSuppressed = false,
-        archiveSuggestionRejected = false,
-        sidecarState = null,
-    )
 
     // ---- USER_DATA -------------------------------------------------------------------------
 
