@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
+import androidx.room.Room
+import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import com.fotoxplorr.app.audio.AndroidAudioMediaStoreScanner
 import com.fotoxplorr.app.audio.AudioIndexer
 import com.fotoxplorr.app.audio.InMemoryAudioRepository
@@ -18,8 +20,15 @@ import com.fotoxplorr.app.media.MediaStoreChangeObserver
 import com.fotoxplorr.app.media.PrefsScanWatermark
 import com.fotoxplorr.app.media.ScanEvent
 import com.fotoxplorr.app.media.SqliteMediaRepository
+import com.fotoxplorr.app.migration.AndroidLegacySource
+import com.fotoxplorr.app.migration.AndroidMigrationEnvironment
+import com.fotoxplorr.app.migration.AndroidProjectionParityCheck
+import com.fotoxplorr.app.migration.MigrationStateStore
 import com.fotoxplorr.app.organize.LegacyCatalogMigration
 import com.fotoxplorr.app.organize.LibraryStore
+import com.fotoxplorr.core.db.FotozDatabase
+import com.fotoxplorr.core.db.FotozVectorsDatabase
+import com.fotoxplorr.core.db.migration.MigrationToV2
 import com.fotoxplorr.core.organize.ScanPlan
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -89,6 +98,21 @@ class LibraryRuntime private constructor(context: Context) {
     // so the Animated album and the viewer are never stale just because nobody tapped "index".
     val animationIndex: AnimationIndex = AnimationIndex(appContext)
 
+    // WP1.3 (ADR-011): fotoz.db / fotoz-vectors.db, real device-persisted databases (not
+    // in-memory -- compare :core:db's own smoke/migration tests, which use
+    // Room.inMemoryDatabaseBuilder deliberately). Built unconditionally, whether or not
+    // migration has run yet: MigrationToV2.run() itself is the thing that decides whether
+    // there's anything to do (see the init block below).
+    val fotozDb: FotozDatabase = Room.databaseBuilder<FotozDatabase>(appContext, "fotoz.db")
+        .setDriver(BundledSQLiteDriver())
+        .setQueryCoroutineContext(Dispatchers.IO)
+        .build()
+    val fotozVectorsDb: FotozVectorsDatabase = Room.databaseBuilder<FotozVectorsDatabase>(appContext, "fotoz-vectors.db")
+        .setDriver(BundledSQLiteDriver())
+        .setQueryCoroutineContext(Dispatchers.IO)
+        .build()
+    private val migrationState = MigrationStateStore(appContext)
+
     // Audio keeps its own pipeline, parallel to the photo/video one above rather than folded into
     // it -- see AudioAsset's own doc for why the two asset types stay apart everywhere. It still
     // needs the SAME once-per-process guard the photo/video scan does, which is why it lives here
@@ -120,6 +144,53 @@ class LibraryRuntime private constructor(context: Context) {
         // why this runs here rather than lazily from wherever a caller first touches favourites,
         // tags or collections.
         LegacyCatalogMigration(appContext, LibraryStore.get(appContext), FavoriteStore(appContext)).run()
+
+        // WP1.3 (ADR-011): the catalogue-v2 migration. Runs after LegacyCatalogMigration above --
+        // that one first brings the CURRENT old stores up to date from an even older (V1) format,
+        // and MigrationToV2 reads FROM those current old stores.
+        //
+        // Deliberately calling only run(), not runCleanupIfDue(): run() driving all the way
+        // through CUTOVER is safe to fire unconditionally on every process start -- nothing in
+        // this app yet reads MigrationStateStore.isCutoverComplete() to change its own behaviour
+        // (no store is rewired onto fotoz.db yet, see MASTER-PROGRESS.md's WP1.3 Decisions), so a
+        // real cutover firing has no user-visible effect today; it only proves the whole pipeline
+        // end to end against this device's real data. runCleanupIfDue() is different: it can
+        // really delete the six old SQLite files and four prefs files two starts after cutover,
+        // which would be destructive with nothing yet reading their fotoz.db replacement -- wiring
+        // that call is the store-rewiring work's own job, not this one's.
+        scope.launch {
+            val migration = MigrationToV2(
+                db = fotozDb,
+                vectorsDb = fotozVectorsDb,
+                legacy = AndroidLegacySource(appContext),
+                environment = AndroidMigrationEnvironment(appContext),
+                projectionParity = AndroidProjectionParityCheck(
+                    context = appContext,
+                    repository = repository,
+                    animationIndex = animationIndex,
+                    assetDao = fotozDb.assetDao(),
+                    assetUserDao = fotozDb.assetUserDao(),
+                    keywordDao = fotozDb.keywordDao(),
+                    folderLockDao = fotozDb.folderLockDao(),
+                    recognitionDao = fotozDb.recognitionDao(),
+                    traitDao = fotozDb.traitDao(),
+                ),
+            )
+            try {
+                when (val result = migration.run()) {
+                    is MigrationToV2.Result.Completed -> Log.i(TAG, "catalogue v2 migration completed")
+                    is MigrationToV2.Result.AlreadyCutOver -> {} // the common case on every later start.
+                    is MigrationToV2.Result.VerifyFailed -> Log.w(TAG, "catalogue v2 migration VERIFY failed: ${result.detail}")
+                }
+            } catch (t: Throwable) {
+                // Best-effort background work: a bug here (unexpected old-store data, a device
+                // out of disk space mid-copy, ...) must not crash the app that's still running
+                // entirely on the old stores regardless. MigrationToV2 already recorded the
+                // failing step's own detail in migration_progress before rethrowing; the next
+                // process start's run() resumes from there.
+                Log.e(TAG, "catalogue v2 migration failed, will retry on next start", t)
+            }
+        }
         scope.launch {
             for (userRequested in scanRequests) {
                 indexer.refresh(userRequested = userRequested, partialAccess = hasPartialMediaAccess(appContext))

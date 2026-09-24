@@ -190,6 +190,12 @@ dependencies {
     implementation(project(":core:db"))
     implementation(project(":core:index"))
 
+    // WP1.3 (ADR-011): :core:db declares Room as `implementation`, not `api`, so it doesn't leak
+    // transitively -- :app needs its own direct dependency to construct FotozDatabase/
+    // FotozVectorsDatabase via Room.databaseBuilder itself (LibraryRuntime).
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.sqlite.bundled)
+
     // Screenshot rendering of the real composables, on the JVM, no emulator. Test-only, so it
     // never reaches the runtime classpath the offline gate guards.
     testImplementation("org.robolectric:robolectric:4.14.1")
