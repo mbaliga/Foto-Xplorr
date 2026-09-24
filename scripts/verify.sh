@@ -31,6 +31,10 @@ for d in . hyle-design-system shared-libraries; do
   [ -f "$d/local.properties" ] || echo "sdk.dir=${ANDROID_HOME:?ANDROID_HOME not set}" > "$d/local.properties"
 done
 
+# WP1.9 (ADR-010 §2): a fast, always-on grep gate -- runs before the (much slower) Gradle build
+# so a violation fails in seconds, not minutes. See scripts/verify-core-purity.sh's own doc.
+./scripts/verify-core-purity.sh
+
 # The post-WP1 matrix: both flavors build, test and lint, and the offline flavor passes
 # its three enforcement gates — merged manifest, resolved runtime classpath, and the
 # targeted source scan. The gates are the offline claim; the rest is the build.
@@ -41,16 +45,15 @@ GRADLE_ARGS=(
   :app:verifyOfflineManifest :app:verifyOfflineRuntimeClasspath :app:verifyOfflineSourceReferences
 )
 
-# NATIVE_TASKS is empty until WP1.2 lands the first native-ready :core:* module (ADR-009
-# decision 5, the `core-native` CI job). Passing -Pfotoz.native=true with nothing to build
-# against is a harmless no-op -- Gradle ignores an unread project property -- so this flag is
-# safe to use starting now, even before there is anything native to compile.
-NATIVE_TASKS=()
-
-if [ "$NATIVE" -eq 1 ]; then
-  GRADLE_ARGS+=("-Pfotoz.native=true" "${NATIVE_TASKS[@]}")
-fi
-
 ./gradlew "${GRADLE_ARGS[@]}"
+
+# WP1.9 (ADR-009 decision 5, the `core-native` CI job): scripts/verify-native.sh owns the actual
+# native task list, and is also the `core-native` CI job's own direct entry point -- one
+# definition, not two that can drift apart. Before this, `--native` only passed the
+# `fotoz.native` property through with nothing here actually depending on a native task, so
+# `./scripts/verify.sh --native` silently verified nothing native at all.
+if [ "$NATIVE" -eq 1 ]; then
+  ./scripts/verify-native.sh
+fi
 
 echo "VERIFY OK  $(git rev-parse --short HEAD)"

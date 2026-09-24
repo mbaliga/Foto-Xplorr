@@ -28,7 +28,7 @@ class FormatSnifferTest {
     fun `bmp`() = assertFormat(MediaFormat.Bmp, ascii("BM") + pad())
 
     @Test
-    fun `webp -- a RIFF container with WEBP at offset 8, not just any RIFF file`() {
+    fun `webp -- a RIFF container with WEBP at offset 8 -- not just any RIFF file`() {
         assertFormat(MediaFormat.WebP, ascii("RIFF") + hex("00000000") + ascii("WEBP") + pad())
         assertNull(FormatSniffer.sniff(ascii("RIFF") + hex("00000000") + ascii("AVI ") + pad()), "a RIFF/AVI file is not WebP")
     }
@@ -76,7 +76,7 @@ class FormatSnifferTest {
     fun `radiance hdr`() = assertFormat(MediaFormat.Hdr, ascii("#?RADIANCE\n") + pad())
 
     @Test
-    fun `pnm -- all six netpbm sub-formats, but not a random P-prefixed file`() {
+    fun `pnm -- all six netpbm sub-formats -- but not a random P-prefixed file`() {
         for (n in '1'..'6') {
             assertFormat(MediaFormat.Pnm, ascii("P${n}\n") + pad(), "P$n")
         }
@@ -109,7 +109,7 @@ class FormatSnifferTest {
     fun `icns`() = assertFormat(MediaFormat.Icns, ascii("icns") + pad())
 
     @Test
-    fun `pcx -- manufacturer byte alone is not enough, encoding byte must also match`() {
+    fun `pcx -- manufacturer byte alone is not enough -- the encoding byte must also match`() {
         assertFormat(MediaFormat.Pcx, hex("0A0501") + pad())
         assertNull(FormatSniffer.sniff(hex("0A0500") + pad()), "encoding byte 0x00 (uncompressed) doesn't match this sniffer's RLE-only check")
     }
@@ -118,13 +118,13 @@ class FormatSnifferTest {
     fun `xcf`() = assertFormat(MediaFormat.Xcf, ascii("gimp xcf") + pad())
 
     @Test
-    fun `an empty or short header never throws, just returns null`() {
+    fun `an empty or short header never throws -- it just returns null`() {
         assertNull(FormatSniffer.sniff(ByteArray(0)))
         assertNull(FormatSniffer.sniff(byteArrayOf(0x00)))
     }
 
     @Test
-    fun `an unrecognised file returns null, not a guess`() {
+    fun `an unrecognised file returns null -- not a guess`() {
         assertNull(FormatSniffer.sniff(ascii("this is not any known format") + pad()))
     }
 
