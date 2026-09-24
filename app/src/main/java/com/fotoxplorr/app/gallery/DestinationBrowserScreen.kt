@@ -263,6 +263,7 @@ fun DestinationContent(
             if (spatial != null) {
                 PlacesScreen(
                     assets = spatial.assets,
+                    indexInput = spatial.indexInput,
                     geoState = spatial.geoState,
                     onIndexLocations = spatial.onIndexLocations,
                     onOpenAsset = spatial.onOpenAsset,

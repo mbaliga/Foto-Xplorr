@@ -49,20 +49,19 @@ enum class ShareFrame(val label: String, val description: String) {
  * @param stripMetadata remove GPS, camera and timestamp EXIF from the shared copy. Defaults to
  *   **true** on owner direction: the safe thing should be what happens when nobody thinks about
  *   it, and the advanced sheet is where someone deliberately turns it off.
- * @param watermark draw the Foto Xplorr mark in the corner. Defaults to **true** (owner,
- *   2026-08-21): the free tier's whole shape is that a share carries a small mark unless the
- *   sharer has unlocked Pro, so "on" has to be what happens when nobody has unlocked anything and
- *   nobody touched the switch — the same reasoning that makes [stripMetadata] default true. This
- *   field alone does not decide whether the mark actually gets drawn, though: a non-Pro sharer
- *   cannot set it false at all (the sheet shows the switch locked on), and a Pro one never draws
- *   it regardless of what it holds. [resolveWatermark] and [resolvedFor] are the real decision.
+ * @param watermark draw the Foto Xplorr mark in the corner. Defaults to **false** (Phase 1 owner
+ *   decision 3, 24 Sep 2026: the watermark is off by default for everyone, superseding the
+ *   2026-08-21 free-tier-mark decision this field's default used to encode). This field alone
+ *   never decided whether the mark actually gets drawn — [resolveWatermark] and [resolvedFor] are
+ *   the real decision, and as of this owner decision they return `false` unconditionally,
+ *   regardless of Pro status, until a monetization model is chosen.
  * @param caption drawn in the Polaroid's lower lip. Ignored by other frames.
  * @param seal the user's own short signature drawn on a stamp. Ignored by other frames.
  */
 data class ShareOptions(
     val frame: ShareFrame = ShareFrame.NONE,
     val stripMetadata: Boolean = true,
-    val watermark: Boolean = true,
+    val watermark: Boolean = false,
     val caption: String? = null,
     val seal: String? = null,
 ) {
@@ -81,20 +80,21 @@ data class ShareOptions(
         get() = frame != ShareFrame.NONE || watermark
 
     /**
-     * Whether the mark should actually be drawn, once the sharer's Pro status is known.
+     * Whether the mark should actually be drawn.
      *
-     * Deliberately `!isPro` and NOT `watermark && !isPro`: [watermark] is not consulted at all.
-     * Pro removes the mark unconditionally, and everyone else gets it unconditionally — there is
-     * no per-share choice on either side, because a Pro account should never have a stray switch
-     * that can put the mark back by accident, and a non-Pro account cannot buy its way out of the
-     * mark by constructing a [ShareOptions] with `watermark = false` (a bypass this class exists
-     * specifically to close — see [com.fotoxplorr.app.share.SharePreparer]'s class doc). The
-     * [watermark] field survives on the data class only so the sheet has a checked/unchecked
-     * state to render; it is not itself a way to opt out of the free tier's mark. See
-     * [com.fotoxplorr.app.share.ShareOptionsSheet], where the switch is shown locked rather than
-     * wired to let a non-Pro account flip it off.
+     * Always `false` (Phase 1 owner decision 3, 24 Sep 2026): the watermark is off by default for
+     * everyone, and nothing gates on Pro status until the owner chooses a monetization model. This
+     * still takes [isPro] and is still the one function every render path calls — deliberately,
+     * so the [com.fotoxplorr.app.pro.ProEntitlement] seam this function sits on stays wired
+     * exactly as before and reactivating the mark later (if a model is chosen) is a one-line
+     * change here, not a hunt through every caller that currently asks this question. Before this
+     * decision the rule was `!isPro` (free tier marked, Pro unmarked); [watermark] was never
+     * consulted then either, for the same reason it is not now — see
+     * [com.fotoxplorr.app.share.SharePreparer]'s class doc for why this field alone was never the
+     * bypass-proof source of truth.
      */
-    fun resolveWatermark(isPro: Boolean): Boolean = !isPro
+    @Suppress("UNUSED_PARAMETER")
+    fun resolveWatermark(isPro: Boolean): Boolean = false
 
     /**
      * These options as they should actually be rendered, with [watermark] resolved against

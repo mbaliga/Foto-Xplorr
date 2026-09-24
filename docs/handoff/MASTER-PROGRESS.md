@@ -21,7 +21,7 @@ Current phase: **Phase 1 — Foundation**. Branch: `claude/fotoz-p1-foundation`.
 
 | WP | Status | SHAs | Notes |
 |---|---|---|---|
-| 1.0 Apply owner decisions 1, 3, 5 (2 lands in 1.5) | todo | | |
+| 1.0 Apply owner decisions 1, 3, 5 (2 lands in 1.5) | done | WP1.0 | Similarity indexer now covers all assets incl. trashed via a new `indexInput` field threaded through `SpatialExperience`/`PlacesScreen`; display (`assets`) stays browsable-filtered. Watermark forced off (`resolveWatermark` returns `false` unconditionally); `ProEntitlement` seam kept wired at every call site, unused. `WorkRules.requireCharging` default flipped to `true`; `WorkRulesStore.load()` migrates per-key via `preferences.contains(KEY_REQUIRE_CHARGING)` so only installs that never touched charging specifically pick up the new default. |
 | 1.1 KMP build on the pinned toolchain (ADR-009) | todo | | |
 | 1.2 Module split (ADR-010) | todo | | |
 | 1.3 Catalogue v2 + migration (ADR-011) | todo | | |
@@ -39,6 +39,10 @@ Current phase: **Phase 1 — Foundation**. Branch: `claude/fotoz-p1-foundation`.
 |---|---|---|---|
 
 ## Decisions
+
+- **WP1.0 / decision 5, migration scope:** read "migrate existing installs only if the user never edited their rules" as scoped per-key, not per-object. `WorkRules` is one object holding several independent settings; a user who customized an unrelated control (e.g. active hours) never made a decision about charging specifically, so `requireCharging` still migrates to the new default for them. Only an install with an explicit prior write to `requireCharging` itself (`SharedPreferences.contains(KEY_REQUIRE_CHARGING)`) is left alone. If the owner intended the coarser "any edit at all freezes every default" reading, this needs revisiting.
+- **WP1.0 / decision 1:** no dedicated unit test added for the trivial `assets` → `indexInput` filter removal itself (deleting a `.filterNot { it.isTrashed }` call); covered instead by the existing `SimilarityExplorerScreen`/spatial composition tests continuing to pass unchanged, since none of them asserted on trash exclusion in the first place.
+- **WP1.0 / decision 5, test fallout:** flipping `WorkRules.requireCharging`'s default broke 8 pre-existing pure-logic tests (5 in `WorkRuleEvaluatorTest.kt`, 3 in `WorkRulesTest.kt`) that constructed `WorkRules(...)` without setting `requireCharging`, relying on the old `false` default to isolate other rules under test. Fixed by adding `requireCharging = false` explicitly at each affected call site, matching this codebase's stated testing philosophy (sensible defaults, override only what's under test).
 
 ## Owner questions
 

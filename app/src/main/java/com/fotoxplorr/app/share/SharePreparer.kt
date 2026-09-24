@@ -47,12 +47,14 @@ sealed interface PreparedItem {
  * The original is never opened for writing, in any path through this class.
  *
  * The watermark is resolved against [ProEntitlement] in here, not trusted from the caller's
- * [ShareOptions] as handed in (owner, 2026-08-21: the mark becomes the free tier's default rather
- * than an opt-in extra, with a Pro entitlement that removes it). The share sheet already shows
- * the toggle locked for a non-Pro sharer, but the sheet is UI, and UI is not the only caller this
- * class can ever have or the only place a bug can put the wrong value in [ShareOptions.watermark]
- * -- see [ShareOptions.resolvedFor], which is the actual decision and is what makes this class,
- * not the sheet, the thing that cannot be argued out of drawing the mark for a non-Pro sharer.
+ * [ShareOptions] as handed in -- a pattern kept from the 2026-08-21 decision that first
+ * centralised this resolution, even though what it now resolves TO has changed: Phase 1 owner
+ * decision 3 (24 Sep 2026) turns the mark off for everyone, gating nothing on Pro status until a
+ * monetization model is chosen (see [ShareOptions.resolveWatermark]). The share sheet's own switch
+ * is disabled and unchecked for everyone now, but the sheet is UI, and UI is not the only caller
+ * this class can ever have or the only place a bug could put the wrong value in
+ * [ShareOptions.watermark] -- see [ShareOptions.resolvedFor], which is the actual decision and is
+ * what makes this class, not the sheet, the thing a future caller cannot argue its way around.
  */
 class SharePreparer(
     context: Context,

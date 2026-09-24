@@ -69,7 +69,20 @@ class WorkRulesStore(context: Context) {
 
     private fun load(): WorkRules = WorkRules(
         requireIdle = preferences.getBoolean(KEY_REQUIRE_IDLE, false),
-        requireCharging = preferences.getBoolean(KEY_REQUIRE_CHARGING, false),
+        // Phase 1 owner decision 5 (24 Sep 2026): requireCharging now defaults ON, but an install
+        // that already explicitly recorded a choice here -- true or false, it does not matter
+        // which -- keeps exactly that choice. Only an install that never touched THIS control
+        // specifically (`contains` is false: setRequireCharging is the only write path for this
+        // key, and it always writes it) picks up the new default, matching "migrate existing
+        // installs only if the user never edited their rules" read as scoped to this one rule:
+        // someone who customized an unrelated control (active hours, say) never made a decision
+        // about charging at all, and should not have this control's own default skipped over
+        // just because they touched a different one.
+        requireCharging = if (preferences.contains(KEY_REQUIRE_CHARGING)) {
+            preferences.getBoolean(KEY_REQUIRE_CHARGING, false)
+        } else {
+            true
+        },
         minBatteryPercent = preferences
             .getInt(KEY_MIN_BATTERY_PERCENT, DEFAULT_MIN_BATTERY_PERCENT)
             .coerceIn(MIN_BATTERY_PERCENT_ALLOWED, MAX_BATTERY_PERCENT_ALLOWED),

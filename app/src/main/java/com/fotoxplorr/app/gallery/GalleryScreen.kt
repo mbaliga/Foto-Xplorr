@@ -326,9 +326,14 @@ fun GalleryScreen(
     val context = LocalContext.current
     val geoState by geoRepository.observe().collectAsStateWithLifecycle()
     val spatialScope = rememberCoroutineScope()
-    // Index input: every non-trashed asset, so a still-locked or hidden photo's location is
-    // already indexed and unlocking the folder never needs a re-index of its own (P0-01).
-    val spatialIndexInput = remember(state.assets) { state.assets.filterNot { it.isTrashed } }
+    // Index input: EVERY asset, trashed included (Phase 1 owner decision 1, 24 Sep 2026,
+    // reversing P0-01's own trashed exclusion here) -- a photo trashed before its location was
+    // ever indexed must not sit permanently unindexed while trashed, and a still-locked or hidden
+    // photo's location is already indexed so unlocking the folder never needs a re-index of its
+    // own. Display filtering (what Places/the map/the 3D scenes actually draw) stays entirely in
+    // `spatialDisplayAssets` below, per the same decision's own "display filtering stays in the
+    // UI" instruction -- this list is never rendered directly.
+    val spatialIndexInput = state.assets
     // Display list: what Places, the map, the compass and the 3D scenes actually draw. Must go
     // through the one visibility filter, or a locked, archived or hidden photo leaks onto them.
     val spatialDisplayAssets = remember(
@@ -358,6 +363,7 @@ fun GalleryScreen(
         ),
         LocalSpatialExperience provides SpatialExperience(
             assets = spatialDisplayAssets,
+            indexInput = spatialIndexInput,
             geoState = geoState,
             onIndexLocations = {
                 spatialScope.launch {
@@ -1481,6 +1487,7 @@ private fun GalleryMapZoomContent() {
     if (spatial != null) {
         PlacesScreen(
             assets = spatial.assets,
+            indexInput = spatial.indexInput,
             geoState = spatial.geoState,
             onIndexLocations = spatial.onIndexLocations,
             onOpenAsset = spatial.onOpenAsset,

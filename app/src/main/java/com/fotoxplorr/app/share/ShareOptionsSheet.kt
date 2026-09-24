@@ -63,12 +63,10 @@ private val MUTED_TEXT = Color.White.copy(alpha = 0.45f)
  * so the real [FrameRenderer] draws a real sample, off the main thread, on every change. What is
  * on screen is what gets sent.
  *
- * The watermark row is the one control here that is not really a choice for a non-Pro account:
- * the free tier's mark cannot be switched off from this sheet (owner, 2026-08-21), so what is
- * shown is a locked, checked switch and a way to unlock Pro rather than a working toggle that
- * would be lying about what Share is about to do. [ShareOptions.resolvedFor] is what both the
- * preview above and the actual [onShare] call use, so what is on screen matches what is drawn
- * either way.
+ * The watermark row shows a disabled, unchecked switch: off for everyone, not a per-share choice
+ * (Phase 1 owner decision 3, 24 Sep 2026 -- see [ShareOptions.resolveWatermark]).
+ * [ShareOptions.resolvedFor] is what both the preview above and the actual [onShare] call use, so
+ * what is on screen matches what is drawn either way.
  */
 @Composable
 fun ShareOptionsSheet(
@@ -193,7 +191,7 @@ fun ShareOptionsSheet(
                 checked = options.stripMetadata,
                 onCheckedChange = { options = options.copy(stripMetadata = it) },
             )
-            WatermarkRow(isPro = isPro, onUnlock = entitlement::recordUnlock)
+            WatermarkRow()
 
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -248,56 +246,24 @@ private fun SheetSwitch(
 }
 
 /**
- * The watermark control, which is present-but-locked for everyone who has not unlocked Pro.
+ * The watermark control -- shown, and permanently off, for everyone.
  *
- * A working switch a non-Pro account could flip off would be a promise the free tier does not
- * keep — see [ShareOptions.resolveWatermark]. So the switch here always shows the true state
- * ([isPro]'s free/Pro reading, not a per-share choice) and is always disabled; the only thing a
- * non-Pro sharer can actually do about the mark lives below it, as a plain, honestly labelled
- * unlock action rather than a toggle wired to look like one.
+ * Phase 1 owner decision 3 (24 Sep 2026): the mark is off by default for everyone, and nothing
+ * gates on Pro status until a monetization model is chosen (see [ShareOptions.resolveWatermark]).
+ * The switch stays here, disabled, rather than being removed outright, so this sheet keeps naming
+ * the option that exists rather than silently dropping a row someone might look for; there is
+ * deliberately no "Unlock Pro" call to action attached to it any more, since there is nothing left
+ * for that account state to unlock here.
  */
 @Composable
-private fun WatermarkRow(isPro: Boolean, onUnlock: () -> Unit) {
-    if (isPro) {
-        SheetSwitch(
-            label = "No Foto Xplorr mark",
-            caption = "Included with Pro. Every share leaves the mark off.",
-            checked = false,
-            onCheckedChange = null,
-            enabled = false,
-        )
-        return
-    }
-
-    Column {
-        SheetSwitch(
-            label = "Add the Foto Xplorr mark",
-            caption = "On for every free share. Unlock Pro to turn it off.",
-            checked = true,
-            onCheckedChange = null,
-            enabled = false,
-        )
-        Text(
-            "Unlock Pro",
-            color = MaterialTheme.colorScheme.primary,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier
-                .padding(top = 6.dp)
-                .clickable(onClick = onUnlock)
-                .padding(vertical = 4.dp),
-        )
-        Text(
-            // Honest about what tapping it actually does today -- see ProEntitlement's KDoc for
-            // why there is no store, no charge and no receipt behind this yet, and where the real
-            // purchase goes once the connect flavour implements one.
-            "This build doesn't charge anything yet — unlocking here just remembers Pro on this " +
-                "device, the same way it will once real billing is wired in.",
-            color = MUTED_TEXT,
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(top = 2.dp),
-        )
-    }
+private fun WatermarkRow() {
+    SheetSwitch(
+        label = "No Foto Xplorr mark",
+        caption = "Off for every share for now.",
+        checked = false,
+        onCheckedChange = null,
+        enabled = false,
+    )
 }
 
 @Composable

@@ -844,6 +844,7 @@ fun DiscoverScreen(
             TextButton(onClick = { showingPlaces = false }) { Text("Back to Discover") }
             PlacesScreen(
                 assets = spatial.assets,
+                indexInput = spatial.indexInput,
                 geoState = spatial.geoState,
                 onIndexLocations = spatial.onIndexLocations,
                 onOpenAsset = spatial.onOpenAsset,
