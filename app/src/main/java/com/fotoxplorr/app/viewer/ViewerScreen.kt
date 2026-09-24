@@ -159,6 +159,14 @@ fun ViewerScreen(
     metadataRevision: Int = 0,
     /** Let GIFs and animated images play. */
     loopAnimations: Boolean = false,
+    /**
+     * Whether [asset] itself actually animates (P0-14's [com.fotoxplorr.app.formats.AnimationIndex],
+     * sniffed from real bytes) -- independent of [loopAnimations], which is a grid-density
+     * preference about decoding many tiles at once and has no equivalent cost here: the viewer
+     * shows exactly one photo at a time, so a genuinely animated photo the user opened full-screen
+     * plays regardless of that setting, the same way opening a GIF in most photo viewers does.
+     */
+    animated: Boolean = false,
     /** Start videos without waiting for a tap on play. */
     autoplayVideos: Boolean = false,
     onSetSlideshowInterval: (Int) -> Unit = {},
@@ -440,6 +448,11 @@ fun ViewerScreen(
                         asset = asset,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Fit,
+                        // A GIF plays even before AnimationIndex has sniffed it (P0-14's own
+                        // stated fallback) -- almost every real GIF a user has IS animated, and a
+                        // static one costs nothing extra through the animated decode path when
+                        // only one image is ever on screen at a time, unlike a grid tile.
+                        animate = animated || asset.mimeType.equals("image/gif", ignoreCase = true),
                     )
 
                     // Text found by the offline recognition pass, selectable in place. Only while

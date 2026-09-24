@@ -10,6 +10,7 @@ import com.fotoxplorr.app.audio.AndroidAudioMediaStoreScanner
 import com.fotoxplorr.app.audio.AudioIndexer
 import com.fotoxplorr.app.audio.InMemoryAudioRepository
 import com.fotoxplorr.app.audio.PrefsAudioScanWatermark
+import com.fotoxplorr.app.formats.AnimationIndex
 import com.fotoxplorr.app.media.AndroidMediaStoreScanner
 import com.fotoxplorr.app.media.MediaIndexer
 import com.fotoxplorr.app.media.MediaStoreChangeObserver
@@ -79,6 +80,12 @@ class LibraryRuntime private constructor(context: Context) {
         },
     )
 
+    // P0-14: which media ids actually animate, kept fresh from here rather than a user-triggered
+    // action (unlike RecognitionIndexer) -- it is cheap enough (a bounded byte read per candidate
+    // file, no ML model) to just run after every scan the same way the scan itself already does,
+    // so the Animated album and the viewer are never stale just because nobody tapped "index".
+    val animationIndex: AnimationIndex = AnimationIndex(appContext)
+
     // Audio keeps its own pipeline, parallel to the photo/video one above rather than folded into
     // it -- see AudioAsset's own doc for why the two asset types stay apart everywhere. It still
     // needs the SAME once-per-process guard the photo/video scan does, which is why it lives here
@@ -121,6 +128,19 @@ class LibraryRuntime private constructor(context: Context) {
                             )
                             is ScanEvent.Failed ->
                                 ScanState.Error(event.error.message ?: "Unable to scan media")
+                        }
+                        // Fire-and-forget on this same scope, deliberately NOT awaited here: the
+                        // scan-request loop must keep consuming the next request while a big
+                        // library's own sniff pass is still working through it. A sniff triggered
+                        // by two scans completing in quick succession can overlap harmlessly --
+                        // sniffPending's own staleness check makes a duplicate pass a no-op once
+                        // the first one's upserts have landed.
+                        if (event is ScanEvent.Completed) {
+                            val current = repository.awaitLoaded()
+                            scope.launch {
+                                animationIndex.sniffPending(current)
+                                animationIndex.removeMissing(current.map { it.id }.toSet())
+                            }
                         }
                     }
             }

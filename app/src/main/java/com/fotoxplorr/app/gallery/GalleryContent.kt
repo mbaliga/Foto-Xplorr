@@ -243,6 +243,10 @@ fun TimelineScreen(
     gridState: LazyGridState = rememberLazyGridState(),
     fitToTile: Boolean = true,
     loopAnimations: Boolean = false,
+    /** Which ids actually animate (P0-14) -- a tile only decodes through the animated path when
+     *  both this AND [loopAnimations] say so; the grid's whole reason to check membership here
+     *  at all, rather than every image, is to never spend a decoder on a static tile. */
+    animatedIds: Set<MediaId> = emptySet(),
     longPressPreview: Boolean = true,
 ) {
     if (assets.isEmpty()) {
@@ -264,6 +268,7 @@ fun TimelineScreen(
             gridState = gridState,
             fitToTile = fitToTile,
             loopAnimations = loopAnimations,
+            animatedIds = animatedIds,
             longPressPreview = longPressPreview,
         )
         return
@@ -320,6 +325,7 @@ fun TimelineScreen(
                     selectionActive = selectionActive,
                     fitToTile = fitToTile,
                     loopAnimations = loopAnimations,
+                    animated = asset.id in animatedIds,
                     longPressPreview = longPressPreview,
                     onOpen = { onOpen(asset) },
                     onToggleSelection = { onToggleSelection(asset.id) },
@@ -331,7 +337,7 @@ fun TimelineScreen(
         item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(88.dp)) }
     }
 
-    peeked?.let { asset -> MediaPeek(asset = asset, loopAnimations = loopAnimations) }
+    peeked?.let { asset -> MediaPeek(asset = asset, loopAnimations = loopAnimations, animated = asset.id in animatedIds) }
 }
 
 /**
@@ -378,6 +384,7 @@ fun MediaGridScreen(
     // (albums, collections, search results) keep working without each having to thread them.
     fitToTile: Boolean = true,
     loopAnimations: Boolean = false,
+    animatedIds: Set<MediaId> = emptySet(),
     longPressPreview: Boolean = true,
 ) {
     if (assets.isEmpty()) {
@@ -408,6 +415,7 @@ fun MediaGridScreen(
                         selectionActive = selectionActive,
                         fitToTile = true,
                         loopAnimations = loopAnimations,
+                        animated = asset.id in animatedIds,
                         longPressPreview = longPressPreview,
                         onOpen = { onOpen(asset) },
                         onToggleSelection = { onToggleSelection(asset.id) },
@@ -442,6 +450,7 @@ fun MediaGridScreen(
                         fitToTile = true,
                         tileAspectRatio = asset.aspectRatio,
                         loopAnimations = loopAnimations,
+                        animated = asset.id in animatedIds,
                         longPressPreview = longPressPreview,
                         onOpen = { onOpen(asset) },
                         onToggleSelection = { onToggleSelection(asset.id) },
@@ -453,7 +462,7 @@ fun MediaGridScreen(
             }
         }
 
-        peeked?.let { asset -> MediaPeek(asset = asset, loopAnimations = loopAnimations) }
+        peeked?.let { asset -> MediaPeek(asset = asset, loopAnimations = loopAnimations, animated = asset.id in animatedIds) }
     }
 }
 
@@ -475,7 +484,7 @@ fun MediaGridScreen(
  * long-press-to-select exactly as it was for anyone who prefers it.
  */
 @Composable
-private fun MediaPeek(asset: MediaAsset, loopAnimations: Boolean) {
+private fun MediaPeek(asset: MediaAsset, loopAnimations: Boolean, animated: Boolean) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -492,7 +501,7 @@ private fun MediaPeek(asset: MediaAsset, loopAnimations: Boolean) {
             asset = asset,
             modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
             contentScale = ContentScale.Fit,
-            animate = loopAnimations,
+            animate = loopAnimations && animated,
         )
         Text(
             asset.displayName,
@@ -520,6 +529,7 @@ private fun MediaTile(
     selectionActive: Boolean,
     fitToTile: Boolean,
     loopAnimations: Boolean,
+    animated: Boolean,
     longPressPreview: Boolean,
     onOpen: () -> Unit,
     onToggleSelection: () -> Unit,
@@ -598,7 +608,7 @@ private fun MediaTile(
             // masonry layout gives Crop nothing left to trim -- the tile's own shape (above) IS
             // the photo's aspect ratio -- so this switch matters only in the square grid.
             contentScale = if (fitToTile) ContentScale.Crop else ContentScale.Fit,
-            animate = loopAnimations,
+            animate = loopAnimations && animated,
         )
         if (contextMenuVisible) {
             DropdownMenu(expanded = true, onDismissRequest = { contextMenuVisible = false }) {

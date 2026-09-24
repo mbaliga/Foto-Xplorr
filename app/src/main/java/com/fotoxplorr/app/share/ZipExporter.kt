@@ -61,6 +61,9 @@ class ZipExporter(
             // against Pro status regardless of what this class asks for (by design, see its own
             // class doc), so a non-Pro sharer's zip would otherwise still get rendered and marked.
             val options = ShareOptions(frame = ShareFrame.NONE, stripMetadata = stripMetadata, watermark = false)
+            // animatedIds is left at its default (empty): allowRender = false already forces
+            // every item through the plain copy/strip path regardless of animation status, so
+            // which ids the caller considers animated can never change anything here.
             val prepared = sharePreparer.prepare(items, options, allowRender = false).getOrThrow()
             val failed = prepared.filterIsInstance<PreparedItem.Failed>()
             // Paired by index rather than carried on PreparedItem.Ready itself (which has no asset

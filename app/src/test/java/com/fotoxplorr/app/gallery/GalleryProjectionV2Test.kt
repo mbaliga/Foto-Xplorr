@@ -69,6 +69,28 @@ class GalleryProjectionV2Test {
     }
 
     @Test
+    fun `the animated album is membership in animatedIds, not a MIME guess`() {
+        // Same MIME type (webp) on both -- only the id set says which one actually animates,
+        // proving this no longer falls back to MediaAsset.isAnimated's old MIME-blanket rule.
+        val animatedWebp = asset(1, 100, mime = "image/webp", name = "party.webp")
+        val staticWebp = asset(2, 200, mime = "image/webp", name = "sticker.webp")
+        val all = listOf(animatedWebp, staticWebp)
+
+        val animated = smart(SmartAlbum.ANIMATED, all, emptyMap(), animatedIds = setOf(animatedWebp.id))
+
+        assertEquals(listOf(animatedWebp), animated)
+    }
+
+    @Test
+    fun `the animated search category reflects animatedIds, not MIME type`() {
+        val animatedGif = asset(1, 100, mime = "image/gif")
+        val staticGif = asset(2, 200, mime = "image/gif")
+
+        assertTrue(animatedGif.matchesGallerySearch("is:animated", emptySet(), animatedIds = setOf(animatedGif.id)))
+        assertFalse(staticGif.matchesGallerySearch("is:animated", emptySet(), animatedIds = setOf(animatedGif.id)))
+    }
+
+    @Test
     fun `duplicate candidates require same size dimensions and mime, and exclude the keeper`() {
         val first = asset(1, 100, size = 2_000, width = 800, height = 600) // earliest taken -> keeper
         val second = asset(2, 200, size = 2_000, width = 800, height = 600)
@@ -201,6 +223,7 @@ class GalleryProjectionV2Test {
         album: SmartAlbum,
         assets: List<MediaAsset>,
         tags: Map<MediaId, Set<String>>,
+        animatedIds: Set<MediaId> = emptySet(),
     ): List<MediaAsset> = smartAlbumAssets(
         smartAlbum = album,
         assets = assets,
@@ -211,6 +234,7 @@ class GalleryProjectionV2Test {
         lockedFolders = emptySet(),
         unlockedFolders = emptySet(),
         preferences = preferences,
+        animatedIds = animatedIds,
         nowMillis = 1_000_000,
     )
 

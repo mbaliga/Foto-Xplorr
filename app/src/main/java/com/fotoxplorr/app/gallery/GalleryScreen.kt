@@ -218,6 +218,13 @@ data class GalleryUiState(
     val recognition: RecognitionIndex = RecognitionIndex.EMPTY,
     val recognitionProgress: RecognitionProgress = RecognitionProgress(),
     /**
+     * Which ids actually animate, sniffed from real bytes (P0-14) rather than assumed from MIME
+     * type -- replaces the deleted [com.fotoxplorr.app.media.MediaAsset.isAnimated] everywhere
+     * this state flows: the Animated album, `is:animated` search, and which grid tiles decode
+     * through the animated path at all.
+     */
+    val animatedIds: Set<MediaId> = emptySet(),
+    /**
      * A search the user asked for from somewhere outside the grid — today, the viewer's
      * "Search inside this photo" card (see [com.fotoxplorr.app.lens.LensCard]).
      *
@@ -602,7 +609,7 @@ private fun GalleryBrowser(
                     // items the user put there on purpose still show -- but a locked folder is
                     // never optional, so that part of the one visibility filter still applies.
                     asset.isPrivacyVisible(state.lockedFolders, state.unlockedFolders) &&
-                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id), state.recognition, state.favoriteIds)
+                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id), state.recognition, state.favoriteIds, state.animatedIds)
             },
             state.preferences.sort,
         )
@@ -616,7 +623,8 @@ private fun GalleryBrowser(
             lockedFolders = state.lockedFolders,
             unlockedFolders = state.unlockedFolders,
             preferences = state.preferences,
-        ).filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds) }
+            animatedIds = state.animatedIds,
+        ).filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds, state.animatedIds) }
         is BrowserRoute.Tag -> sortAssets(
             state.assets.filter { asset ->
                 current.tag in state.library.tagsFor(asset.id) &&
@@ -624,7 +632,7 @@ private fun GalleryBrowser(
                     // Same rule as BrowserRoute.Collection just above: a tag view is a curated
                     // list too, but a locked folder is still never optional.
                     asset.isPrivacyVisible(state.lockedFolders, state.unlockedFolders) &&
-                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id), state.recognition, state.favoriteIds)
+                    asset.matchesGallerySearch(query, state.library.tagsFor(asset.id), state.recognition, state.favoriteIds, state.animatedIds)
             },
             state.preferences.sort,
         )
@@ -1103,6 +1111,7 @@ private fun GalleryBrowser(
                                 gridState = gridState,
                                 fitToTile = state.preferences.fitToTile,
                                 loopAnimations = state.preferences.loopAnimations,
+                                animatedIds = state.animatedIds,
                                 longPressPreview = state.preferences.longPressPreview,
                             )
                             // Pull-to-backup is retired (owner direction, 2026-08-05): the
@@ -1151,6 +1160,7 @@ private fun GalleryBrowser(
                                 gridState = gridState,
                                 fitToTile = state.preferences.fitToTile,
                                 loopAnimations = state.preferences.loopAnimations,
+                                animatedIds = state.animatedIds,
                                 longPressPreview = state.preferences.longPressPreview,
                             )
                         }
@@ -1831,6 +1841,7 @@ internal fun MediaAsset.matchesGallerySearch(
     tags: Set<String>,
     recognition: RecognitionIndex = RecognitionIndex.EMPTY,
     favouriteIds: Set<MediaId> = emptySet(),
+    animatedIds: Set<MediaId> = emptySet(),
 ): Boolean {
     val parsed = rememberParsedQuery(query)
     if (parsed.isEmpty) return true
@@ -1847,7 +1858,7 @@ internal fun MediaAsset.matchesGallerySearch(
             text = recognition.textOf(id),
             categories = buildSet {
                 if (isVideo) add("video") else add("photo")
-                if (isAnimated) add("animated")
+                if (id in animatedIds) add("animated")
                 if (isFavorite || id in favouriteIds) add("favourite")
                 if (id in recognition.petMediaIds) add("pet")
                 if (id in recognition.peopleMediaIds) add("person")

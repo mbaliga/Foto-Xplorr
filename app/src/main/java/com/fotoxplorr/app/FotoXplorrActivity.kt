@@ -180,6 +180,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val library by libraryStore.observe().collectAsStateWithLifecycle()
     val recognition by recognitionStore.observe().collectAsStateWithLifecycle()
     val recognitionProgress by recognitionStore.observeProgress().collectAsStateWithLifecycle()
+    // P0-14: which ids actually animate, kept fresh by LibraryRuntime itself after every scan --
+    // this Activity only ever reads it, the same read-only-view shape scanState already has.
+    val animatedIds by runtime.animationIndex.observeAnimatedIds().collectAsStateWithLifecycle(initialValue = emptySet())
 
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
     var partialMediaAccess by remember { mutableStateOf(hasPartialMediaAccess(applicationContext)) }
@@ -741,7 +744,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         if (items.isEmpty()) return
         scope.launch {
             userMessage = "Preparing ${if (items.size == 1) "your photo" else "your photos"}…"
-            sharePreparer.prepare(items, options).fold(
+            sharePreparer.prepare(items, options, animatedIds = animatedIds).fold(
                 onSuccess = { prepared ->
                     val ready = prepared.filterIsInstance<PreparedItem.Ready>()
                     val failed = prepared.filterIsInstance<PreparedItem.Failed>()
@@ -1041,6 +1044,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             showFilmstrip = preferences.showFilmstrip,
             slideshowShuffle = preferences.slideshowShuffle,
             loopAnimations = preferences.loopAnimations,
+            animated = activeAsset.id in animatedIds,
             autoplayVideos = preferences.autoplayVideos,
             onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
             onSetBlurSensitive = galleryPreferences::setBlurSensitive,
@@ -1096,6 +1100,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 preferences = preferences,
                 recognition = recognition,
                 recognitionProgress = recognitionProgress,
+                animatedIds = animatedIds,
                 pendingSearch = pendingSearch,
             ),
             actions = GalleryActions(

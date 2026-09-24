@@ -140,11 +140,15 @@ class SharePreparerTest {
     }
 
     @Test
-    fun `an animated-by-MIME asset is stripped but never rendered, even with a frame requested`() = runBlocking {
+    fun `a known-animated asset is stripped but never rendered, even with a frame requested`() = runBlocking {
         val asset = registerAsset(minimalGif(), "party.gif", mimeType = "image/gif")
 
         val items = preparer()
-            .prepare(listOf(asset), ShareOptions(frame = ShareFrame.POLAROID, stripMetadata = true))
+            .prepare(
+                listOf(asset),
+                ShareOptions(frame = ShareFrame.POLAROID, stripMetadata = true),
+                animatedIds = setOf(asset.id),
+            )
             .getOrThrow()
 
         val ready = items.single() as PreparedItem.Ready
@@ -152,6 +156,24 @@ class SharePreparerTest {
         // the GIF's own MIME type back confirms this went through the strip path, not a render
         // that would have baked a static Polaroid frame over the animation.
         assertEquals("image/gif", ready.mimeType)
+    }
+
+    @Test
+    fun `a file the index has not marked animated is rendered normally, unlike the old MIME-blanket exclusion`() = runBlocking {
+        // Real JPEG bytes, claiming a MIME type the OLD code excluded from rendering purely by
+        // name -- P0-14's whole point is that this asset, absent from animatedIds, is no longer
+        // automatically treated as animated just because its MIME type could be.
+        val asset = registerAsset(realJpegWithGps(4, 4), "photo.webp", mimeType = "image/webp")
+
+        val items = preparer()
+            .prepare(listOf(asset), ShareOptions(frame = ShareFrame.POLAROID, stripMetadata = true))
+            .getOrThrow()
+
+        val ready = items.single() as PreparedItem.Ready
+        // A Polaroid frame always renders to JPEG (see prepareRendered) -- seeing that, rather
+        // than the source's own "image/webp" coming straight through, confirms this went through
+        // the render path, which the old MIME-blanket check would have refused outright.
+        assertEquals("image/jpeg", ready.mimeType)
     }
 
     @Test

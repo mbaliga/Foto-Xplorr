@@ -89,7 +89,7 @@ fun destinationAssets(
     fun smart(album: SmartAlbum) = smartAlbumAssets(
         album, state.assets, state.favoriteIds, state.sensitiveIds,
         state.library.archivedIds, state.library.tagsByMediaId, state.lockedFolders,
-        state.unlockedFolders, state.preferences,
+        state.unlockedFolders, state.preferences, state.animatedIds,
     )
 
     fun everyday() = everydayAssets(
@@ -117,7 +117,7 @@ fun destinationAssets(
         HyleDestination.PLACES, HyleDestination.PROTECTED, HyleDestination.AUDIO -> emptyList()
     }
     if (query.isBlank()) return base
-    return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds) }
+    return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds, state.animatedIds) }
 }
 
 /**
@@ -325,6 +325,7 @@ fun DestinationContent(
                     gridState = gridState,
                     fitToTile = state.preferences.fitToTile,
                     loopAnimations = state.preferences.loopAnimations,
+                    animatedIds = state.animatedIds,
                     longPressPreview = state.preferences.longPressPreview,
                 )
             }
@@ -530,6 +531,7 @@ fun LegacyScreenHost(
                     lockedFolders = state.lockedFolders,
                     unlockedFolders = state.unlockedFolders,
                     preferences = state.preferences,
+                    animatedIds = state.animatedIds,
                 ),
                 onOpen = { onOpenRoute(BrowserRoute.Smart(it.album)) },
             )

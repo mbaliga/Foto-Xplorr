@@ -184,6 +184,7 @@ fun smartAlbumAssets(
     lockedFolders: Set<String>,
     unlockedFolders: Set<String>,
     preferences: GalleryPreferencesState,
+    animatedIds: Set<MediaId> = emptySet(),
     nowMillis: Long = System.currentTimeMillis(),
 ): List<MediaAsset> {
     val privacyVisible = assets.filter { it.isPrivacyVisible(lockedFolders, unlockedFolders) }
@@ -194,7 +195,7 @@ fun smartAlbumAssets(
         SmartAlbum.RECENT -> nonTrash.filter { it.dateTakenMillis >= nowMillis - RECENT_WINDOW_MILLIS }
         SmartAlbum.VIDEOS -> nonTrash.filter { it.isVideo }
         SmartAlbum.SCREENSHOTS -> nonTrash.filter(MediaAsset::isScreenshot)
-        SmartAlbum.ANIMATED -> nonTrash.filter { it.isAnimated }
+        SmartAlbum.ANIMATED -> nonTrash.filter { it.id in animatedIds }
         SmartAlbum.LARGE_FILES -> nonTrash.filter { it.sizeBytes >= LARGE_FILE_THRESHOLD_BYTES }
         SmartAlbum.DUPLICATES -> nonTrash.filter { it.id in duplicateIds }
         SmartAlbum.SENSITIVE -> nonTrash.filter { it.id in sensitiveIds }
@@ -217,6 +218,7 @@ fun smartAlbumSummaries(
     lockedFolders: Set<String>,
     unlockedFolders: Set<String>,
     preferences: GalleryPreferencesState,
+    animatedIds: Set<MediaId> = emptySet(),
 ): List<SmartAlbumSummary> = SmartAlbum.entries.map { album ->
     val items = smartAlbumAssets(
         smartAlbum = album,
@@ -228,6 +230,7 @@ fun smartAlbumSummaries(
         lockedFolders = lockedFolders,
         unlockedFolders = unlockedFolders,
         preferences = preferences,
+        animatedIds = animatedIds,
     )
     SmartAlbumSummary(
         album = album,

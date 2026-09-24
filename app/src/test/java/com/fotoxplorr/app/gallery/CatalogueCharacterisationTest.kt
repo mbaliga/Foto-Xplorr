@@ -42,6 +42,7 @@ class CatalogueCharacterisationTest {
                 lockedFolders = state.lockedFolders,
                 unlockedFolders = state.unlockedFolders,
                 preferences = state.preferences,
+                animatedIds = state.animatedIds,
                 nowMillis = SyntheticCatalogue.NOW_MILLIS,
             )
             "smart:${album.name}" to describe(projected)

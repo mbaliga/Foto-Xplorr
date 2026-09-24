@@ -8,6 +8,7 @@ import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.decodeUpright
 import com.fotoxplorr.app.pro.LocalProEntitlement
 import com.fotoxplorr.app.pro.ProEntitlement
@@ -77,6 +78,7 @@ class SharePreparer(
         items: List<MediaAsset>,
         options: ShareOptions,
         allowRender: Boolean = true,
+        animatedIds: Set<MediaId> = emptySet(),
     ): Result<List<PreparedItem>> = withContext(Dispatchers.IO) {
         runCatching {
             require(items.isNotEmpty()) { "No photos selected" }
@@ -95,7 +97,7 @@ class SharePreparer(
                 check(mkdirs() || isDirectory) { "Could not prepare share storage" }
             }
 
-            items.map { asset -> prepareOne(asset, resolvedOptions, directory, allowRender) }
+            items.map { asset -> prepareOne(asset, resolvedOptions, directory, allowRender, asset.id in animatedIds) }
         }
     }
 
@@ -105,17 +107,28 @@ class SharePreparer(
      * here rather than aborting [prepare] for every other item in the batch. [CancellationException]
      * is the one thing let through -- a cancelled share should stop, not "fail" item by item.
      */
-    private suspend fun prepareOne(asset: MediaAsset, options: ShareOptions, directory: File, allowRender: Boolean): PreparedItem {
+    private suspend fun prepareOne(
+        asset: MediaAsset,
+        options: ShareOptions,
+        directory: File,
+        allowRender: Boolean,
+        animated: Boolean,
+    ): PreparedItem {
         // Video cannot be framed or stripped by this path, so it is shared as-is rather than
         // failed. Refusing to share a video because a frame was selected for the photos beside it
         // would be the app being clever at the user's expense.
         val strippable = !asset.isVideo && asset.mimeType.startsWith("image/")
-        // Animated images (GIF, animated WebP/AVIF -- MIME-based until P0-14's animation index
-        // exists to tell an actually-animated WebP from a still one) are never rendered with a
-        // frame or watermark: baking one static frame over the top would silently destroy the
-        // animation on every viewer that respects it. They are still stripped like any other
-        // image, just never routed through prepareRendered.
-        val renderable = strippable && !asset.isAnimated && allowRender
+        // A real animated image (P0-14's AnimationIndex, sniffed from actual bytes -- not every
+        // GIF/WebP/AVIF by MIME type, which used to include every static one of those formats
+        // too) is never rendered with a frame or watermark: baking one static frame over the top
+        // would silently destroy the animation on every viewer that respects it. It is still
+        // stripped like any other image, just never routed through prepareRendered. An asset the
+        // index has not sniffed YET (freshly imported, before the next background pass catches up)
+        // reads as `animated = false` here -- a narrow, temporary window where a fresh animated
+        // file could be framed before its row exists, accepted rather than adding a three-state
+        // known-animated/known-static/unknown model for a gap the background pass closes within
+        // moments of the next scan.
+        val renderable = strippable && !animated && allowRender
         return try {
             when {
                 renderable && options.requiresRender -> prepareRendered(asset, options, directory)

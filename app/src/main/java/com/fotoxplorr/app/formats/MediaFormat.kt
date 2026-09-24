@@ -58,8 +58,9 @@ sealed interface MediaFormat {
      * dependency (app/build.gradle.kts) and [com.fotoxplorr.app.media.MediaImage] wires its
      * decoder in whenever animation is requested. This value exists so a caller can tell "this
      * is a GIF" apart from "this is any other decodable image" without re-deriving it from the
-     * mime string -- [com.fotoxplorr.app.media.MediaAsset.isAnimated] already does the same
-     * check for that one purpose; this is the general-purpose version.
+     * mime string. Distinct from [com.fotoxplorr.app.formats.AnimationSniffer] (P0-14): that
+     * answers "does this GIF actually have more than one frame," a real-bytes question this
+     * value has no opinion on -- every GIF is `Gif` here, animated or not.
      */
     data object Gif : MediaFormat {
         override val isLikelyDecodable = true

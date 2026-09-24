@@ -29,11 +29,6 @@ data class MediaAsset(
     val isVideo: Boolean
         get() = mimeType.startsWith("video/", ignoreCase = true)
 
-    val isAnimated: Boolean
-        get() = mimeType.equals("image/gif", ignoreCase = true) ||
-            mimeType.equals("image/webp", ignoreCase = true) ||
-            mimeType.equals("image/avif", ignoreCase = true)
-
     /**
      * What this file actually is -- RAW variant, SVG, GIF, HEIF, and so on -- and whether the
      * platform can be expected to decode it. Computed on read from [mimeType]/[displayName]

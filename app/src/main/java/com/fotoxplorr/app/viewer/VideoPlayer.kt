@@ -114,9 +114,9 @@ fun VideoPlayer(
         VideoView(context).apply {
             setOnPreparedListener { player ->
                 mediaPlayer = player
-                // Always false: looping is a GIF/animated-image behaviour (MediaAsset.isAnimated
-                // excludes video by construction) and never a video one, regardless of the
-                // separate "loop animations" or "autoplay videos" preferences.
+                // Always false: looping is a GIF/animated-image behaviour (AnimationIndex, P0-14,
+                // never sniffs video) and never a video one, regardless of the separate
+                // "loop animations" or "autoplay videos" preferences.
                 player.isLooping = false
                 val preparedDuration = player.duration.toLong()
                 if (preparedDuration > 0L) durationMs = preparedDuration
