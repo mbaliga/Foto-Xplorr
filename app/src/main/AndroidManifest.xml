@@ -152,5 +152,32 @@
                 <data android:scheme="content" android:mimeType="video/*" />
             </intent-filter>
         </activity>
+
+        <!--
+          Photo picker (P0-20, stretch): lets another app pick photos or videos from this
+          library via the standard ACTION_GET_CONTENT or the older ACTION_PICK, in a read-only
+          selection grid over the same browsableAssets(...) filter (P0-01) every other screen in
+          this app already uses — nothing locked or hidden is ever offered to the caller. Same
+          shape as "Open with" (P0-18): a focused activity of its own, never FotoXplorrActivity
+          with a mode flag, and the same configChanges as every other activity here, per P0-09.
+        -->
+        <activity
+            android:name=".picker.PhotoPickerActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density">
+            <intent-filter>
+                <action android:name="android.intent.action.GET_CONTENT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.OPENABLE" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.PICK" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

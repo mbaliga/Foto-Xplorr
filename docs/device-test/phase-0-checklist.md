@@ -215,3 +215,24 @@ genuine second-process-start scenario.
   Sandbox coverage: neither the OS's own real chooser UI, nor a genuine already-catalogued external
   open (as opposed to this sandbox's unit test of the same `awaitLoaded()`/`LaunchedEffect(assets)`
   redirect logic), can be produced here.
+
+## P0-20 (stretch) — Act as a photo picker
+
+- [ ] From a second real app (or a generic file-manager/picker test app), issue `ACTION_GET_CONTENT`
+      for `image/*` → Foto Xplorr is offered in the system chooser, opens to a grid of only
+      browsable photos (nothing locked, archived or sensitive), and tapping one returns control to
+      the caller with a usable `content://` uri.
+- [ ] The calling app can actually read the bytes behind the returned uri (`openInputStream` or
+      equivalent) — the real test of whether `FLAG_GRANT_READ_URI_PERMISSION` genuinely grants
+      cross-process access, not just whether it was set on the result Intent.
+- [ ] Repeat with `ACTION_PICK` in place of `ACTION_GET_CONTENT` → same behaviour.
+- [ ] Repeat with `EXTRA_ALLOW_MULTIPLE` set → the "Add (N)" multi-select flow returns every
+      selected uri via `ClipData`, and the caller can read all of them, not just the first.
+- [ ] Deny the media permission when the picker first launches (a cold process, never opened by the
+      user directly before) → a clear "Grant access" prompt, never a crash; granting afterward
+      shows the grid.
+
+  Sandbox coverage: none of a second real app, a real system chooser, or a real cross-process
+  URI-permission grant can be produced here — the manifest routing (`PhotoPickerActivityManifestTest`)
+  and the pure mime-scope logic (`PhotoPickerMimeMatchingTest`) are unit-tested, but the actual
+  grant mechanism this whole feature exists to provide is not.

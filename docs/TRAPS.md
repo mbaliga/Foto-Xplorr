@@ -259,3 +259,13 @@ compiler doesn't enforce. Read the raw tag with the ordinary public `getAttribut
 (ExifInterface.TAG_DATETIME_ORIGINAL)` and parse the `"yyyy:MM:dd HH:mm:ss"` string yourself instead
 of calling the restricted accessor.
 
+## 38. A KDoc naming a glob or a bare `*/*` mime type can close its own comment
+
+`/** ... */` closes at the first `*/` it finds, with no awareness of Markdown backticks or intent —
+a doc comment naming the wildcard mime type `"*/*"` (P0-20, writing down `matchesRequestedMimeType`'s
+own contract) closes itself two characters in, and every word after that point becomes code the
+compiler tries to parse, surfacing as a wall of unrelated syntax errors far from the real cause. The
+same shape bites over a glob path (`*/*.jpg`) just as easily. Reword around the literal instead of
+trying to escape it — a backslash has no escape meaning inside a Kotlin comment and only makes the
+rendered doc uglier for no safety.
+
