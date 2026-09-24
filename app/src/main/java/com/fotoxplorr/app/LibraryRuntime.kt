@@ -14,6 +14,7 @@ import com.fotoxplorr.app.audio.InMemoryAudioRepository
 import com.fotoxplorr.app.audio.PrefsAudioScanWatermark
 import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.formats.AnimationIndex
+import com.fotoxplorr.app.index.AndroidMediaSync
 import com.fotoxplorr.app.media.AndroidMediaStoreScanner
 import com.fotoxplorr.app.media.MediaIndexer
 import com.fotoxplorr.app.media.MediaStoreChangeObserver
@@ -29,6 +30,7 @@ import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.core.db.FotozDatabase
 import com.fotoxplorr.core.db.FotozVectorsDatabase
 import com.fotoxplorr.core.db.migration.MigrationToV2
+import com.fotoxplorr.core.index.SyncResult
 import com.fotoxplorr.core.organize.ScanPlan
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -189,6 +191,25 @@ class LibraryRuntime private constructor(context: Context) {
                 // failing step's own detail in migration_progress before rethrowing; the next
                 // process start's run() resumes from there.
                 Log.e(TAG, "catalogue v2 migration failed, will retry on next start", t)
+            }
+
+            // WP1.4: the ongoing sync engine, run once right after migration (whether or not it
+            // succeeded -- AndroidMediaSync doesn't care how asset/source rows got there, only
+            // that MediaStore is the source of truth going forward). Same "safe to run
+            // unconditionally, nothing live reads fotoz.db's asset table yet" reasoning as
+            // MigrationToV2.run() above -- see MASTER-PROGRESS.md's WP1.4 Decisions. Deliberately
+            // once per process start here, not hooked into the scanRequests loop below yet: that
+            // loop drives the OLD pipeline's own live-UI data, and wiring this into it is the
+            // store-rewiring work's job once something downstream actually reads fotoz.db.
+            try {
+                val results = AndroidMediaSync(appContext, fotozDb.sourceDao(), fotozDb.assetDao(), fotozDb.assetUserDao())
+                    .syncAll(partialAccess = hasPartialMediaAccess(appContext), nowMs = System.currentTimeMillis())
+                val failed = results.filterIsInstance<SyncResult.Failed>()
+                if (failed.isNotEmpty()) {
+                    Log.w(TAG, "catalogue v2 sync: ${failed.size} volume(s) failed: ${failed.map { it.error.message }}")
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "catalogue v2 sync failed, will retry on next start", t)
             }
         }
         scope.launch {
