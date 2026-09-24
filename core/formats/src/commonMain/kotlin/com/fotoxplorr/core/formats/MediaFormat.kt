@@ -109,6 +109,98 @@ sealed interface MediaFormat {
         override val isLikelyDecodable = true
     }
 
+    /** Windows icon container -- typically wraps a PNG or 32-bit BMP internally, which is why
+     *  Skia's codecs decode most real-world ICOs despite ICO never appearing on Android's own
+     *  documented `BitmapFactory`/`ImageDecoder` format list (the same "best-effort, not a
+     *  contract" caveat [Raw]'s DNG case already carries). Section 4 of MASTER-PLAN.md groups it
+     *  with the platform-decodable formats on exactly this basis. */
+    data object Ico : MediaFormat {
+        override val isLikelyDecodable = true
+    }
+
+    /** Still-frame decode from API 31 -- this app's own minSdk is 26, five releases earlier, same
+     *  "best-effort on this app's actual floor" caveat as [Heif]. Animated AVIF needs a pack or
+     *  API 36 per MASTER-PLAN.md §4; that gap doesn't change [isLikelyDecodable] here any more
+     *  than an un-sniffed animated GIF does -- this value only answers "is this file an AVIF." */
+    data object Avif : MediaFormat {
+        override val isLikelyDecodable = true
+    }
+
+    /** No Android platform codec at all (MASTER-PLAN.md §4: needs the `jxl-coder` pack, WP2.3).
+     *  [FormatSniffer] can already tell a JPEG XL file apart from everything else -- that's
+     *  "Discover", not "Decode", and Phase 1 only needs the former. */
+    data object JpegXl : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** Needs a pack (MASTER-PLAN.md §4). */
+    data object Tiff : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** Composite-flattened decode needs a pack (`stb_image`, MASTER-PLAN.md §4); this value is
+     *  Discover-only in Phase 1, same as every other pack-gated format below. */
+    data object Psd : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** Needs a pack (`tinyexr` + tone-mapping, MASTER-PLAN.md §4). */
+    data object Exr : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** Radiance RGBE HDR. Needs a pack (`stb_image`, MASTER-PLAN.md §4). */
+    data object Hdr : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** Netpbm (PBM/PGM/PPM). Needs a pack (`stb_image`, MASTER-PLAN.md §4). */
+    data object Pnm : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** JPEG 2000 (raw codestream or JP2 container). Needs a pack (OpenJPEG, MASTER-PLAN.md §4). */
+    data object Jp2 : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** JPEG XR / HD Photo. Needs a pack (`jxrlib`, MASTER-PLAN.md §4). */
+    data object Jxr : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** Needs a pack (`qoi`, MASTER-PLAN.md §4). */
+    data object Qoi : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** DirectDraw Surface. Needs a pack (`dds-ktx`, MASTER-PLAN.md §4). */
+    data object Dds : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** Khronos texture container (KTX1 or KTX2). Needs a pack (`dds-ktx`, MASTER-PLAN.md §4). */
+    data object Ktx : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** Apple icon container. No pack planned (not on MASTER-PLAN.md §4's Notes column for any
+     *  entry) -- Discover-only for the foreseeable future, not just Phase 1. */
+    data object Icns : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** ZSoft Paintbrush. No pack planned. Discover-only. */
+    data object Pcx : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** GIMP's native format. MASTER-PLAN.md §4 is explicit: "No permissive decoder" exists for
+     *  XCF at all -- a thumbnail-only placeholder is the plan, not a future pack. */
+    data object Xcf : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
     /**
      * Everything this classifier does not recognise. Deliberately [isLikelyDecodable] = true,
      * not false: "unrecognised" is not the same claim as "known broken", and defaulting to true
