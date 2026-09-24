@@ -87,8 +87,8 @@ object MetadataStripper {
     // ---------------------------------------------------------------------------------------
 
     private val SOF_MARKERS = (0xC0..0xCF).filterNot { it == 0xC4 || it == 0xC8 || it == 0xCC }.toSet()
-    private val ICC_PROFILE_ID = "ICC_PROFILE\u0000".toByteArray(Charsets.US_ASCII)
-    private val ADOBE_ID = "Adobe".toByteArray(Charsets.US_ASCII)
+    private val ICC_PROFILE_ID = "ICC_PROFILE\u0000".encodeToByteArray()
+    private val ADOBE_ID = "Adobe".encodeToByteArray()
 
     private fun stripJpeg(bytes: ByteArray, output: ByteSink): StripResult {
         output.write(bytes, 0, 2) // SOI, already matched by isJpeg
@@ -288,8 +288,8 @@ object MetadataStripper {
         return StripResult.Stripped(Format.WEBP)
     }
 
-    private val ASCII_RIFF = "RIFF".toByteArray(Charsets.US_ASCII)
-    private val ASCII_WEBP = "WEBP".toByteArray(Charsets.US_ASCII)
+    private val ASCII_RIFF = "RIFF".encodeToByteArray()
+    private val ASCII_WEBP = "WEBP".encodeToByteArray()
 
     private fun readInt32LE(bytes: ByteArray, offset: Int): Int =
         (bytes[offset].toInt() and 0xFF) or

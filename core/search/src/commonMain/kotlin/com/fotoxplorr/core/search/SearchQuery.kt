@@ -1,10 +1,14 @@
-package com.fotoxplorr.app.search
+package com.fotoxplorr.core.search
 
-import java.time.LocalDate
-import java.time.YearMonth
-import java.time.ZoneId
-import java.time.format.TextStyle
-import java.util.Locale
+import kotlinx.datetime.Clock
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.isoDayNumber
+import kotlinx.datetime.minus
+import kotlinx.datetime.plus
+import kotlinx.datetime.todayIn
 
 /**
  * The query language behind the search field.
@@ -26,6 +30,9 @@ import java.util.Locale
  *
  * Terms are AND by default (every constraint must hold), because that is what narrowing means to
  * a person typing more words. `or` between two terms makes them alternatives.
+ *
+ * ADR-010 (WP1.2): moved from `com.fotoxplorr.app.search`, `java.time` ported to kotlinx-datetime.
+ * See [MonthNames] for why month names are a fixed table rather than a formatter call.
  */
 
 /** A field a term can be scoped to. `label` and `text` are the two the on-device AI feeds. */
@@ -50,7 +57,7 @@ enum class SearchField(val key: String, val aliases: List<String> = emptyList(),
     companion object {
         /** Resolve a user-typed key, e.g. `album` -> [FOLDER]. Null when it is not a field at all. */
         fun of(key: String): SearchField? {
-            val k = key.lowercase(Locale.ROOT)
+            val k = key.lowercase()
             return entries.firstOrNull { it.key == k || it.aliases.contains(k) }
         }
     }
@@ -141,19 +148,17 @@ private val STOPWORDS = setOf(
  * `label:` and `folder:` aliases. Dropped when bare, honoured when they carry a colon.
  */
 private val MONTHS: Map<String, Int> = buildMap {
-    java.time.Month.entries.forEach { month ->
-        val full = month.getDisplayName(TextStyle.FULL, Locale.ENGLISH).lowercase(Locale.ROOT)
-        val short = month.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).lowercase(Locale.ROOT)
-        put(full, month.value)
-        put(short, month.value)
+    for (month in 1..12) {
+        put(MonthNames.full(month).lowercase(), month)
+        put(MonthNames.short(month).lowercase(), month)
     }
 }
 
 /** Parse [raw] into constraints. Never throws: unparseable input degrades to bare words. */
 fun parseSearchQuery(
     raw: String,
-    zone: ZoneId = ZoneId.systemDefault(),
-    today: LocalDate = LocalDate.now(zone),
+    zone: TimeZone = TimeZone.currentSystemDefault(),
+    today: LocalDate = Clock.System.todayIn(zone),
 ): ParsedQuery {
     val tokens = tokenize(raw)
     if (tokens.isEmpty()) return ParsedQuery(emptyList(), raw)
@@ -165,7 +170,7 @@ fun parseSearchQuery(
 
     while (index < tokens.size) {
         val token = tokens[index]
-        val lower = token.text.lowercase(Locale.ROOT)
+        val lower = token.text.lowercase()
 
         // `or` joins the previous term to the next one instead of adding a constraint.
         if (lower == "or" && terms.isNotEmpty()) {
@@ -252,7 +257,7 @@ private fun tokenize(raw: String): List<Token> {
 }
 
 /** Turn one token into a term, or null when it is a stopword that carries nothing. */
-private fun readTerm(token: Token, zone: ZoneId, today: LocalDate): Term? {
+private fun readTerm(token: Token, zone: TimeZone, today: LocalDate): Term? {
     val text = token.text
     val negated = !token.quoted && text.startsWith("-") && text.length > 1
     val body = if (negated) text.substring(1) else text
@@ -275,7 +280,7 @@ private fun readTerm(token: Token, zone: ZoneId, today: LocalDate): Term? {
         if (dateTerm != null) return dateTerm
     }
 
-    val lower = body.lowercase(Locale.ROOT)
+    val lower = body.lowercase()
     if (!token.quoted && lower in STOPWORDS) return null
     if (body.isBlank()) return null
     return Term.Word(body, negated)
@@ -285,7 +290,7 @@ private fun fieldTerm(
     field: SearchField,
     rawValue: String,
     negated: Boolean,
-    zone: ZoneId,
+    zone: TimeZone,
     today: LocalDate,
 ): Term {
     if (!field.numeric) {
@@ -305,11 +310,11 @@ private fun fieldTerm(
 private fun boundaryDate(
     key: String,
     value: String,
-    zone: ZoneId,
+    zone: TimeZone,
     today: LocalDate,
     negated: Boolean,
 ): Term? {
-    val lower = key.lowercase(Locale.ROOT)
+    val lower = key.lowercase()
     val isAfter = lower == "after" || lower == "since"
     val isBefore = lower == "before" || lower == "until"
     if (!isAfter && !isBefore) return null
@@ -329,21 +334,35 @@ private fun boundaryDate(
 private data class Window(val fromMillis: Long, val toMillis: Long, val phrase: String)
 private data class DatePhrase(val term: Term.DateWindow, val nextIndex: Int)
 
-private fun LocalDate.startMillis(zone: ZoneId) = atStartOfDay(zone).toInstant().toEpochMilli()
+/** A stand-in for `java.time.YearMonth`, which kotlinx-datetime has no equivalent to. */
+private data class YearMonth(val year: Int, val month: Int) {
+    init {
+        require(month in 1..12) { "month $month out of range" }
+    }
+
+    fun atDay(day: Int): LocalDate = LocalDate(year, month, day)
+    fun plusMonths(count: Int): YearMonth {
+        val shifted = atDay(1).plus(count, DateTimeUnit.MONTH)
+        return YearMonth(shifted.year, shifted.monthNumber)
+    }
+    fun displayPhrase(): String = "${MonthNames.full(month)} $year"
+}
+
+private fun LocalDate.startMillis(zone: TimeZone): Long = atStartOfDayIn(zone).toEpochMilliseconds()
 
 /** Parse a single date-ish token into a window: `2025`, `2025-08`, `2025-08-14`, `august`. */
-private fun absoluteWindow(value: String, zone: ZoneId, today: LocalDate): Window? {
-    val text = value.trim().lowercase(Locale.ROOT)
+private fun absoluteWindow(value: String, zone: TimeZone, today: LocalDate): Window? {
+    val text = value.trim().lowercase()
     if (text.isEmpty()) return null
 
     Regex("^(\\d{4})-(\\d{1,2})-(\\d{1,2})$").find(text)?.let { m ->
         val (y, mo, d) = m.destructured
-        val date = runCatching { LocalDate.of(y.toInt(), mo.toInt(), d.toInt()) }.getOrNull() ?: return null
-        return Window(date.startMillis(zone), date.plusDays(1).startMillis(zone), text)
+        val date = runCatching { LocalDate(y.toInt(), mo.toInt(), d.toInt()) }.getOrNull() ?: return null
+        return Window(date.startMillis(zone), date.plus(1, DateTimeUnit.DAY).startMillis(zone), text)
     }
     Regex("^(\\d{4})-(\\d{1,2})$").find(text)?.let { m ->
         val (y, mo) = m.destructured
-        val ym = runCatching { YearMonth.of(y.toInt(), mo.toInt()) }.getOrNull() ?: return null
+        val ym = runCatching { YearMonth(y.toInt(), mo.toInt()) }.getOrNull() ?: return null
         return Window(
             ym.atDay(1).startMillis(zone),
             ym.plusMonths(1).atDay(1).startMillis(zone),
@@ -354,22 +373,19 @@ private fun absoluteWindow(value: String, zone: ZoneId, today: LocalDate): Windo
         val year = m.groupValues[1].toInt()
         if (year !in 1900..2999) return null
         return Window(
-            LocalDate.of(year, 1, 1).startMillis(zone),
-            LocalDate.of(year + 1, 1, 1).startMillis(zone),
+            LocalDate(year, 1, 1).startMillis(zone),
+            LocalDate(year + 1, 1, 1).startMillis(zone),
             year.toString(),
         )
     }
     MONTHS[text]?.let { month ->
         // A bare month means the most recent one that has already happened.
-        val year = if (month <= today.monthValue) today.year else today.year - 1
-        val ym = YearMonth.of(year, month)
+        val year = if (month <= today.monthNumber) today.year else today.year - 1
+        val ym = YearMonth(year, month)
         return Window(ym.atDay(1).startMillis(zone), ym.plusMonths(1).atDay(1).startMillis(zone), ym.displayPhrase())
     }
     return null
 }
-
-private fun YearMonth.displayPhrase(): String =
-    "${month.getDisplayName(TextStyle.FULL, Locale.ENGLISH)} $year"
 
 /**
  * Read a date phrase starting at [start], possibly spanning two tokens (`august 2025`).
@@ -379,27 +395,27 @@ private fun YearMonth.displayPhrase(): String =
 private fun readDatePhrase(
     tokens: List<Token>,
     start: Int,
-    zone: ZoneId,
+    zone: TimeZone,
     today: LocalDate,
 ): DatePhrase? {
     val first = tokens[start]
     if (first.quoted) return null
-    val lower = first.text.lowercase(Locale.ROOT)
+    val lower = first.text.lowercase()
 
     // "last month" / "last week" / "last year" / "this month" …
     if (lower == "last" || lower == "past" || lower == "this") {
-        val unit = tokens.getOrNull(start + 1)?.text?.lowercase(Locale.ROOT) ?: return null
+        val unit = tokens.getOrNull(start + 1)?.text?.lowercase() ?: return null
         val window = relativeWindow(lower, unit, zone, today) ?: return null
         return DatePhrase(Term.DateWindow(window.fromMillis, window.toMillis, window.phrase), start + 2)
     }
     if (lower == "today") {
         return DatePhrase(
-            Term.DateWindow(today.startMillis(zone), today.plusDays(1).startMillis(zone), "today"),
+            Term.DateWindow(today.startMillis(zone), today.plus(1, DateTimeUnit.DAY).startMillis(zone), "today"),
             start + 1,
         )
     }
     if (lower == "yesterday") {
-        val y = today.minusDays(1)
+        val y = today.minus(1, DateTimeUnit.DAY)
         return DatePhrase(
             Term.DateWindow(y.startMillis(zone), today.startMillis(zone), "yesterday"),
             start + 1,
@@ -412,7 +428,7 @@ private fun readDatePhrase(
         val yearToken = tokens.getOrNull(start + 1)?.text
         val year = yearToken?.toIntOrNull()?.takeIf { it in 1900..2999 }
         if (year != null) {
-            val ym = YearMonth.of(year, month)
+            val ym = YearMonth(year, month)
             return DatePhrase(
                 Term.DateWindow(
                     ym.atDay(1).startMillis(zone),
@@ -431,37 +447,38 @@ private fun readDatePhrase(
     return DatePhrase(Term.DateWindow(window.fromMillis, window.toMillis, window.phrase), start + 1)
 }
 
-private fun relativeWindow(qualifier: String, unit: String, zone: ZoneId, today: LocalDate): Window? =
+private fun relativeWindow(qualifier: String, unit: String, zone: TimeZone, today: LocalDate): Window? =
     when (unit.removeSuffix("s")) {
         "day" -> if (qualifier == "this") {
-            Window(today.startMillis(zone), today.plusDays(1).startMillis(zone), "today")
+            Window(today.startMillis(zone), today.plus(1, DateTimeUnit.DAY).startMillis(zone), "today")
         } else {
-            Window(today.minusDays(1).startMillis(zone), today.startMillis(zone), "yesterday")
+            val yesterday = today.minus(1, DateTimeUnit.DAY)
+            Window(yesterday.startMillis(zone), today.startMillis(zone), "yesterday")
         }
         "week" -> if (qualifier == "this") {
-            val start = today.minusDays((today.dayOfWeek.value - 1).toLong())
-            Window(start.startMillis(zone), start.plusWeeks(1).startMillis(zone), "this week")
+            val start = today.minus(today.dayOfWeek.isoDayNumber - 1, DateTimeUnit.DAY)
+            Window(start.startMillis(zone), start.plus(1, DateTimeUnit.WEEK).startMillis(zone), "this week")
         } else {
-            val start = today.minusDays((today.dayOfWeek.value - 1).toLong()).minusWeeks(1)
-            Window(start.startMillis(zone), start.plusWeeks(1).startMillis(zone), "last week")
+            val start = today.minus(today.dayOfWeek.isoDayNumber - 1, DateTimeUnit.DAY).minus(1, DateTimeUnit.WEEK)
+            Window(start.startMillis(zone), start.plus(1, DateTimeUnit.WEEK).startMillis(zone), "last week")
         }
         "month" -> if (qualifier == "this") {
-            val ym = YearMonth.from(today)
+            val ym = YearMonth(today.year, today.monthNumber)
             Window(ym.atDay(1).startMillis(zone), ym.plusMonths(1).atDay(1).startMillis(zone), "this month")
         } else {
-            val ym = YearMonth.from(today).minusMonths(1)
+            val ym = YearMonth(today.year, today.monthNumber).plusMonths(-1)
             Window(ym.atDay(1).startMillis(zone), ym.plusMonths(1).atDay(1).startMillis(zone), "last month")
         }
         "year" -> if (qualifier == "this") {
             Window(
-                LocalDate.of(today.year, 1, 1).startMillis(zone),
-                LocalDate.of(today.year + 1, 1, 1).startMillis(zone),
+                LocalDate(today.year, 1, 1).startMillis(zone),
+                LocalDate(today.year + 1, 1, 1).startMillis(zone),
                 "this year",
             )
         } else {
             Window(
-                LocalDate.of(today.year - 1, 1, 1).startMillis(zone),
-                LocalDate.of(today.year, 1, 1).startMillis(zone),
+                LocalDate(today.year - 1, 1, 1).startMillis(zone),
+                LocalDate(today.year, 1, 1).startMillis(zone),
                 "last year",
             )
         }

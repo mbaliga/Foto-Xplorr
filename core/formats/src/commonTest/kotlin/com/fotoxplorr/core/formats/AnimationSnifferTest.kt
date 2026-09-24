@@ -12,7 +12,7 @@ import kotlin.test.assertNull
 class AnimationSnifferTest {
 
     @Test
-    fun `an unsupported mime type is unknown, not a confident false`() {
+    fun `an unsupported mime type is unknown -- not a confident false`() {
         assertNull(AnimationSniffer.sniff(ByteArray(0), "image/jpeg"))
     }
 
@@ -46,7 +46,7 @@ class AnimationSnifferTest {
 
     @Test
     fun `gif magic bytes that do not match GIF87a or GIF89a are treated conservatively`() {
-        val bogus = "NOTAGIF".toByteArray(Charsets.US_ASCII)
+        val bogus = "NOTAGIF".encodeToByteArray()
         assertEquals(true, AnimationSniffer.sniff(bogus, "image/gif"))
     }
 

@@ -44,14 +44,14 @@ class MetadataStripperTest {
     }
 
     @Test
-    fun `JPEG strip keeps SOI, APP0 and the ICC APP2 byte-identical, drops Exif, XMP, APP13 and COM, and stops at the first EOI`() {
+    fun `JPEG strip keeps SOI and APP0 and the ICC APP2 byte-identical -- drops Exif XMP APP13 and COM -- and stops at the first EOI`() {
         val soi = byteArrayOf(0xFF.toByte(), 0xD8.toByte())
-        val app0 = segment(0xE0, "JFIF\u0000".toByteArray() + byteArrayOf(1, 1, 0, 0, 1, 0, 1, 0, 0))
-        val exifGps = segment(0xE1, "Exif\u0000\u0000FAKE-EXIF-WITH-GPS".toByteArray())
-        val xmp = segment(0xE1, "http://ns.adobe.com/xap/1.0/\u0000<FAKE XMP/>".toByteArray())
-        val icc = segment(0xE2, "ICC_PROFILE\u0000".toByteArray() + byteArrayOf(1, 1, 0xAA.toByte(), 0xBB.toByte()))
-        val photoshop = segment(0xED, "FAKE PHOTOSHOP IPTC BLOCK".toByteArray())
-        val comment = segment(0xFE, "a comment nobody needs to keep".toByteArray())
+        val app0 = segment(0xE0, "JFIF\u0000".encodeToByteArray() + byteArrayOf(1, 1, 0, 0, 1, 0, 1, 0, 0))
+        val exifGps = segment(0xE1, "Exif\u0000\u0000FAKE-EXIF-WITH-GPS".encodeToByteArray())
+        val xmp = segment(0xE1, "http://ns.adobe.com/xap/1.0/\u0000<FAKE XMP/>".encodeToByteArray())
+        val icc = segment(0xE2, "ICC_PROFILE\u0000".encodeToByteArray() + byteArrayOf(1, 1, 0xAA.toByte(), 0xBB.toByte()))
+        val photoshop = segment(0xED, "FAKE PHOTOSHOP IPTC BLOCK".encodeToByteArray())
+        val comment = segment(0xFE, "a comment nobody needs to keep".encodeToByteArray())
         val dqt = segment(0xDB, ByteArray(9))
         val dht = segment(0xC4, byteArrayOf(0, 1, 2, 3))
         val sof0 = segment(0xC0, byteArrayOf(8, 0, 1, 0, 1, 1, 1, 0x11, 0))
@@ -70,7 +70,7 @@ class MetadataStripperTest {
     }
 
     @Test
-    fun `JPEG entropy-data scanning copies FF00 stuffing and restart markers through a second, progressive-style scan`() {
+    fun `JPEG entropy-data scanning copies FF00 stuffing and restart markers through a second progressive-style scan`() {
         val soi = byteArrayOf(0xFF.toByte(), 0xD8.toByte())
         val sof2 = segment(0xC2, byteArrayOf(8, 0, 4, 0, 4, 1, 1, 0x11, 0))
         val dht1 = segment(0xC4, byteArrayOf(0, 1, 2, 3))
@@ -104,16 +104,16 @@ class MetadataStripperTest {
             ((length shr 8) and 0xFF).toByte(),
             (length and 0xFF).toByte(),
         )
-        return lengthBytes + type.toByteArray(Charsets.US_ASCII) + data + crc
+        return lengthBytes + type.encodeToByteArray() + data + crc
     }
 
     @Test
-    fun `PNG strip keeps iCCP and acTL, drops eXIf and iTXt, and leaves kept chunk bytes -- including CRCs -- untouched`() {
+    fun `PNG strip keeps iCCP and acTL -- drops eXIf and iTXt -- and leaves kept chunk bytes including CRCs untouched`() {
         val ihdr = pngChunk("IHDR", ByteArray(13))
         val iccp = pngChunk("iCCP", byteArrayOf(1, 2, 3, 4, 5))
         val actl = pngChunk("acTL", byteArrayOf(0, 0, 0, 1, 0, 0, 0, 0))
         val exif = pngChunk("eXIf", byteArrayOf(6, 7, 8, 9))
-        val itxt = pngChunk("iTXt", "GPS:51.5,-0.1".toByteArray())
+        val itxt = pngChunk("iTXt", "GPS:51.5,-0.1".encodeToByteArray())
         val idat = pngChunk("IDAT", byteArrayOf(1, 1, 1))
         val iend = pngChunk("IEND", ByteArray(0))
         val input = PNG_MAGIC + ihdr + iccp + actl + exif + itxt + idat + iend
@@ -160,11 +160,11 @@ class MetadataStripperTest {
 
     private fun webpChunk(fourCc: String, data: ByteArray): ByteArray {
         val padded = if (data.size % 2 == 1) data + byteArrayOf(0) else data
-        return fourCc.toByteArray(Charsets.US_ASCII) + intLe32(data.size) + padded
+        return fourCc.encodeToByteArray() + intLe32(data.size) + padded
     }
 
     @Test
-    fun `WebP strip drops EXIF and XMP chunks, clears VP8X's flag bits, and recomputes the RIFF size`() {
+    fun `WebP strip drops EXIF and XMP chunks -- clears VP8X's flag bits -- and recomputes the RIFF size`() {
         // flags byte 0x0C: bit 3 (EXIF, 0x08) and bit 2 (XMP, 0x04) both set.
         val vp8x = webpChunk("VP8X", byteArrayOf(0x0C, 0, 0, 0, 7, 0, 0, 7, 0, 0))
         val exif = webpChunk("EXIF", byteArrayOf(1, 2, 3, 4, 5))
@@ -172,7 +172,7 @@ class MetadataStripperTest {
         // Odd-length payload, to also confirm the pad byte on a KEPT chunk survives untouched.
         val image = webpChunk("VP8L", byteArrayOf(0x2F, 0, 0, 0, 0, 0xAA.toByte()))
         val body = vp8x + exif + xmp + image
-        val input = "RIFF".toByteArray(Charsets.US_ASCII) + intLe32(4 + body.size) + "WEBP".toByteArray(Charsets.US_ASCII) + body
+        val input = "RIFF".encodeToByteArray() + intLe32(4 + body.size) + "WEBP".encodeToByteArray() + body
 
         val (result, output) = strip(input)
 
@@ -191,7 +191,7 @@ class MetadataStripperTest {
 
     @Test
     fun `WebP larger than 64MB is refused rather than buffered whole`() {
-        val header = "RIFF".toByteArray(Charsets.US_ASCII) + intLe32(0) + "WEBP".toByteArray(Charsets.US_ASCII)
+        val header = "RIFF".encodeToByteArray() + intLe32(0) + "WEBP".encodeToByteArray()
         val oversized = header + ByteArray(64 * 1024 * 1024 + 1)
         val (result, _) = strip(oversized)
         assertTrue(result is MetadataStripper.StripResult.Unsupported)
@@ -202,7 +202,7 @@ class MetadataStripperTest {
     private fun gifSubBlock(bytes: ByteArray): ByteArray = byteArrayOf(bytes.size.toByte()) + bytes
 
     private fun gifAppExtension(identifier: String, extraData: ByteArray? = null): ByteArray {
-        val idBytes = identifier.toByteArray(Charsets.US_ASCII)
+        val idBytes = identifier.encodeToByteArray()
         require(idBytes.size == 11)
         val blocks = mutableListOf(gifSubBlock(idBytes))
         if (extraData != null) blocks += gifSubBlock(extraData)
@@ -210,7 +210,7 @@ class MetadataStripperTest {
     }
 
     private fun gifCommentExtension(text: String): ByteArray =
-        byteArrayOf(0x21, 0xFE.toByte()) + gifSubBlock(text.toByteArray(Charsets.US_ASCII)) + byteArrayOf(0)
+        byteArrayOf(0x21, 0xFE.toByte()) + gifSubBlock(text.encodeToByteArray()) + byteArrayOf(0)
 
     private fun gifGraphicControlExtension(): ByteArray =
         byteArrayOf(0x21, 0xF9.toByte()) + gifSubBlock(byteArrayOf(0, 0, 0, 0)) + byteArrayOf(0)
@@ -222,8 +222,8 @@ class MetadataStripperTest {
     }
 
     @Test
-    fun `GIF strip keeps the NETSCAPE loop extension and image data, drops a comment and an unrelated app extension`() {
-        val header = "GIF89a".toByteArray(Charsets.US_ASCII)
+    fun `GIF strip keeps the NETSCAPE loop extension and image data -- drops a comment and an unrelated app extension`() {
+        val header = "GIF89a".encodeToByteArray()
         val lsd = byteArrayOf(1, 0, 1, 0, 0x00, 0, 0) // 1x1, no global color table
         val netscapeLoop = gifAppExtension("NETSCAPE2.0", byteArrayOf(1, 0, 0))
         val comment = gifCommentExtension("dropped")
@@ -241,7 +241,7 @@ class MetadataStripperTest {
 
     @Test
     fun `GIF without a trailer is Unsupported`() {
-        val header = "GIF89a".toByteArray(Charsets.US_ASCII)
+        val header = "GIF89a".encodeToByteArray()
         val lsd = byteArrayOf(1, 0, 1, 0, 0x00, 0, 0)
         val (result, _) = strip(header + lsd + gifImageBlock())
         assertTrue(result is MetadataStripper.StripResult.Unsupported)
@@ -250,7 +250,7 @@ class MetadataStripperTest {
     // --- BMP -----------------------------------------------------------------------------------
 
     @Test
-    fun `BMP has no per-photo location metadata format, so it is copied through whole`() {
+    fun `BMP has no per-photo location metadata format -- so it is copied through whole`() {
         val input = byteArrayOf('B'.code.toByte(), 'M'.code.toByte()) + ByteArray(30) { it.toByte() }
         val (result, output) = strip(input)
         assertEquals(MetadataStripper.StripResult.Stripped(MetadataStripper.Format.BMP), result)
@@ -260,7 +260,7 @@ class MetadataStripperTest {
     // --- Unrecognized / malformed ----------------------------------------------------------------
 
     @Test
-    fun `an unrecognized format is reported as Unsupported, not guessed at`() {
+    fun `an unrecognized format is reported as Unsupported -- not guessed at`() {
         val (result, _) = strip(byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8))
         assertTrue(result is MetadataStripper.StripResult.Unsupported)
     }

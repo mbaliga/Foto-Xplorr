@@ -1,12 +1,13 @@
-package com.fotoxplorr.app.search
+package com.fotoxplorr.core.search
 
 import com.fotoxplorr.core.model.MediaId
-import java.time.LocalDate
-import java.time.ZoneId
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * The query language, pinned.
@@ -14,11 +15,14 @@ import org.junit.Test
  * These are the cases the owner named — "pictures of flowers downloaded in August 2025" first
  * among them — plus the ones that quietly break parsers: a quoted phrase containing a colon, a
  * negation, a month with no year, and a query made of nothing but stopwords.
+ *
+ * ADR-010 (WP1.2): moved from `com.fotoxplorr.app.search`, `java.time` ported to kotlinx-datetime,
+ * JUnit4 ported to kotlin.test -- it never touched Android or Robolectric.
  */
 class SearchQueryTest {
 
-    private val zone: ZoneId = ZoneId.of("UTC")
-    private val today: LocalDate = LocalDate.of(2026, 3, 15)
+    private val zone: TimeZone = TimeZone.UTC
+    private val today: LocalDate = LocalDate(2026, 3, 15)
 
     private fun parse(raw: String) = parseSearchQuery(raw, zone, today)
 
@@ -45,7 +49,7 @@ class SearchQueryTest {
     }
 
     @Test
-    fun `field terms scope, and numeric fields compare`() {
+    fun `field terms scope -- and numeric fields compare`() {
         val query = parse("label:flower iso:>800 size:<5mb")
         val fields = query.terms.filterIsInstance<Term.Field>()
 
@@ -153,7 +157,7 @@ class SearchQueryTest {
     }
 
     @Test
-    fun `type raw classifies by extension, not the old hard-coded mime list`() {
+    fun `type raw classifies by extension -- not the old hard-coded mime list`() {
         // "orf" (Olympus) and "raf" (Fujifilm) were never in the old hand-picked
         // dng/raw/arw/cr2/nef list -- classifying via MediaFormat.classify catches them too.
         val olympus = document(name = "IMG_0001.orf", mimeType = "application/octet-stream")
@@ -166,7 +170,7 @@ class SearchQueryTest {
     }
 
     @Test
-    fun `camera and iso terms match everything, positive or negated, until an EXIF index exists`() {
+    fun `camera and iso terms match everything -- positive or negated -- until an EXIF index exists`() {
         // No EXIF index exists yet (P0-16): SearchDocument.camera/.iso are never populated by the
         // live path (always "" / null), so letting these terms filter would silently hide every
         // photo the moment someone typed one. Both are parsed but inert -- neither excludes nor
@@ -220,7 +224,7 @@ class SearchQueryTest {
     }
 
     private fun instant(year: Int, month: Int, day: Int): Long =
-        LocalDate.of(year, month, day).atStartOfDay(zone).toInstant().toEpochMilli()
+        LocalDate(year, month, day).atStartOfDayIn(zone).toEpochMilliseconds()
 
     private fun document(
         name: String,

@@ -100,7 +100,7 @@ object AnimationSniffer {
     }
 
     private fun isGifMagic(head: ByteArray): Boolean {
-        val magic = String(head, 0, 6, Charsets.US_ASCII)
+        val magic = asciiAt(head, 0, 6)
         return magic == "GIF87a" || magic == "GIF89a"
     }
 
@@ -131,7 +131,7 @@ object AnimationSniffer {
         while (pos + 8 <= head.size) {
             val length = readInt32BE(head, pos)
             if (length < 0) return false // malformed length field; nothing more to trust
-            val type = String(head, pos + 4, 4, Charsets.US_ASCII)
+            val type = asciiAt(head, pos + 4, 4)
             when (type) {
                 "acTL" -> return true
                 "IDAT" -> return false
@@ -168,8 +168,12 @@ object AnimationSniffer {
         return asciiAt(bytes, offset, expected.length) == expected
     }
 
+    // decodeToString(), not the JVM-only String(bytes, offset, length, Charsets.US_ASCII)
+    // constructor overload (ADR-010 WP1.2: this module also builds for linuxX64/linuxArm64).
+    // UTF-8 decoding of bytes already known to be 7-bit ASCII is byte-for-byte identical to an
+    // ASCII decode, so this is exact for every caller here (a GIF/PNG/ISOBMFF magic tag).
     private fun asciiAt(bytes: ByteArray, offset: Int, length: Int): String =
-        String(bytes, offset, length, Charsets.US_ASCII)
+        bytes.decodeToString(offset, offset + length)
 
     /**
      * Raw byte-for-byte comparison, unlike [matchesAscii]: PNG's own file signature deliberately

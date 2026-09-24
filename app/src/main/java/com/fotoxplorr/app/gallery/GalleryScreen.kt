@@ -114,15 +114,15 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.organize.LibraryState
 import com.fotoxplorr.app.recognition.RecognitionIndex
 import com.fotoxplorr.app.recognition.RecognitionProgress
-import com.fotoxplorr.app.search.ParsedQuery
-import com.fotoxplorr.app.search.SearchDocument
-import com.fotoxplorr.app.search.matchesQuery
-import com.fotoxplorr.app.search.parseSearchQuery
 import com.fotoxplorr.app.spatial.GeoMetadataRepository
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
 import com.fotoxplorr.app.spatial.SpatialExperience
 import com.fotoxplorr.core.model.MediaId
+import com.fotoxplorr.core.search.ParsedQuery
+import com.fotoxplorr.core.search.SearchDocument
+import com.fotoxplorr.core.search.matchesQuery
+import com.fotoxplorr.core.search.parseSearchQuery
 import kotlinx.coroutines.launch
 // ---- adaptive package: window sizing, the pinch/scroll zoom ladder, and keyboard shortcuts.
 // See each file's own doc for why this stays pure Kotlin with no Compose/Android import of its

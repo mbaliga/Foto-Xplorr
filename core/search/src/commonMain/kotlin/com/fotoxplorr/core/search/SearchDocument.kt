@@ -1,8 +1,7 @@
-package com.fotoxplorr.app.search
+package com.fotoxplorr.core.search
 
 import com.fotoxplorr.core.formats.MediaFormat
 import com.fotoxplorr.core.model.MediaId
-import java.util.Locale
 
 /**
  * Everything about one photo that a query can match against, flattened once.
@@ -12,7 +11,7 @@ import java.util.Locale
  * turns a 22k-photo library into a scroll stutter. The lowercasing happens here too, once, for
  * the same reason.
  *
- * Pure data with no Android types, so the matcher is a JVM unit test rather than a device test.
+ * Pure data with no platform types, so the matcher is a plain unit test rather than a device test.
  */
 data class SearchDocument(
     val mediaId: MediaId,
@@ -44,7 +43,7 @@ data class SearchDocument(
             labels.forEach { append(it).append(' ') }
             categories.forEach { append(it).append(' ') }
             append(text)
-        }.lowercase(Locale.ROOT)
+        }.lowercase()
     }
 }
 
@@ -55,7 +54,7 @@ fun matchesQuery(query: ParsedQuery, document: SearchDocument): Boolean =
 private fun matchesTerm(term: Term, document: SearchDocument): Boolean = when (term) {
     is Term.AnyOf -> term.branches.any { matchesTerm(it, document) }
     is Term.Word -> {
-        val hit = document.haystack.contains(term.value.lowercase(Locale.ROOT))
+        val hit = document.haystack.contains(term.value.lowercase())
         if (term.negated) !hit else hit
     }
     is Term.DateWindow -> {
@@ -76,18 +75,18 @@ private fun matchesTerm(term: Term, document: SearchDocument): Boolean = when (t
 }
 
 private fun matchesField(term: Term.Field, document: SearchDocument): Boolean {
-    val value = term.value.lowercase(Locale.ROOT)
+    val value = term.value.lowercase()
     if (value.isEmpty()) return true
 
     return when (term.field) {
-        SearchField.NAME -> document.name.lowercase(Locale.ROOT).contains(value)
-        SearchField.FOLDER -> document.folder.lowercase(Locale.ROOT).contains(value)
-        SearchField.TAG -> document.tags.any { it.lowercase(Locale.ROOT).contains(value) }
+        SearchField.NAME -> document.name.lowercase().contains(value)
+        SearchField.FOLDER -> document.folder.lowercase().contains(value)
+        SearchField.TAG -> document.tags.any { it.lowercase().contains(value) }
         SearchField.TYPE -> matchesType(value, document)
-        SearchField.TEXT -> document.text.lowercase(Locale.ROOT).contains(value)
-        SearchField.LABEL -> document.labels.any { it.lowercase(Locale.ROOT).contains(value) }
+        SearchField.TEXT -> document.text.lowercase().contains(value)
+        SearchField.LABEL -> document.labels.any { it.lowercase().contains(value) }
         SearchField.CATEGORY -> document.categories.any { it.contains(value) }
-        SearchField.CAMERA -> document.camera.lowercase(Locale.ROOT).contains(value)
+        SearchField.CAMERA -> document.camera.lowercase().contains(value)
         SearchField.ISO -> compareNumbers(term.comparison, document.iso?.toLong(), value.toLongOrNull())
         SearchField.WIDTH -> compareNumbers(term.comparison, document.width.toLong(), value.toLongOrNull())
         SearchField.HEIGHT -> compareNumbers(term.comparison, document.height.toLong(), value.toLongOrNull())
@@ -100,7 +99,7 @@ private fun matchesField(term: Term.Field, document: SearchDocument): Boolean {
  * Both work — the friendly words are checked first, then it falls back to a substring of the MIME.
  */
 private fun matchesType(value: String, document: SearchDocument): Boolean {
-    val mime = document.mimeType.lowercase(Locale.ROOT)
+    val mime = document.mimeType.lowercase()
     return when (value) {
         "photo", "photos", "image", "images", "picture", "pictures" -> mime.startsWith("image/")
         "video", "videos", "movie", "movies" -> mime.startsWith("video/")
@@ -126,7 +125,7 @@ private fun compareNumbers(comparison: Comparison, actual: Long?, expected: Long
 
 /** `size:>5mb` — accepts a bare byte count, or a `k`/`kb`, `m`/`mb`, `g`/`gb` suffix. */
 internal fun parseByteSize(value: String): Long? {
-    val text = value.trim().lowercase(Locale.ROOT)
+    val text = value.trim().lowercase()
     val multiplier = when {
         text.endsWith("gb") || text.endsWith("g") -> 1_000_000_000L
         text.endsWith("mb") || text.endsWith("m") -> 1_000_000L

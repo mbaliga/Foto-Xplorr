@@ -1,9 +1,12 @@
-package com.fotoxplorr.app.search
+package com.fotoxplorr.core.search
 
-import java.time.Instant
-import java.time.ZoneId
-import java.time.temporal.ChronoUnit
-import java.util.Locale
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.daysUntil
+import kotlinx.datetime.minus
+import kotlinx.datetime.plus
+import kotlinx.datetime.toLocalDateTime
 
 /**
  * What to offer the user *about* their query — the two halves of the owner's search brief.
@@ -17,6 +20,8 @@ import java.util.Locale
  *
  * Both are derived from the parsed query and the corpus, never hardcoded: an alternative that
  * would return nothing is not offered, which is what stops this becoming a wall of dead ends.
+ *
+ * ADR-010 (WP1.2): moved from `com.fotoxplorr.app.search`, `java.time` ported to kotlinx-datetime.
  */
 
 /** One offered edit. Applying it yields a new query string. */
@@ -59,7 +64,7 @@ fun alternativesFor(
     query: ParsedQuery,
     termIndex: Int,
     vocabulary: SearchVocabulary,
-    zone: ZoneId = ZoneId.systemDefault(),
+    zone: TimeZone = TimeZone.currentSystemDefault(),
 ): List<SearchSuggestion> {
     val term = query.terms.getOrNull(termIndex) ?: return emptyList()
     val out = mutableListOf<SearchSuggestion>()
@@ -84,27 +89,27 @@ private fun dateAlternatives(
     query: ParsedQuery,
     index: Int,
     term: Term.DateWindow,
-    zone: ZoneId,
+    zone: TimeZone,
 ): List<SearchSuggestion> {
     // A window with an open end is `after:`/`before:`; shifting it is not meaningful.
     if (term.fromMillis == Long.MIN_VALUE || term.toMillis == Long.MAX_VALUE) return emptyList()
 
-    val from = Instant.ofEpochMilli(term.fromMillis).atZone(zone).toLocalDate()
-    val span = ChronoUnit.DAYS.between(from, Instant.ofEpochMilli(term.toMillis).atZone(zone).toLocalDate())
+    val from = Instant.fromEpochMilliseconds(term.fromMillis).toLocalDateTime(zone).date
+    val span = from.daysUntil(Instant.fromEpochMilliseconds(term.toMillis).toLocalDateTime(zone).date)
     val out = mutableListOf<SearchSuggestion>()
 
     if (span in 27..31) {
         // A month: offer its neighbours and its year.
-        val previous = from.minusMonths(1)
-        val next = from.plusMonths(1)
+        val previous = from.minus(1, DateTimeUnit.MONTH)
+        val next = from.plus(1, DateTimeUnit.MONTH)
         out += SearchSuggestion(
-            monthPhrase(previous.monthValue, previous.year),
-            rewrite(query, index, monthPhrase(previous.monthValue, previous.year)),
+            monthPhrase(previous.monthNumber, previous.year),
+            rewrite(query, index, monthPhrase(previous.monthNumber, previous.year)),
             SearchSuggestion.Kind.ALTERNATIVE,
         )
         out += SearchSuggestion(
-            monthPhrase(next.monthValue, next.year),
-            rewrite(query, index, monthPhrase(next.monthValue, next.year)),
+            monthPhrase(next.monthNumber, next.year),
+            rewrite(query, index, monthPhrase(next.monthNumber, next.year)),
             SearchSuggestion.Kind.ALTERNATIVE,
         )
         out += SearchSuggestion(
@@ -128,10 +133,7 @@ private fun dateAlternatives(
     return out
 }
 
-private fun monthPhrase(month: Int, year: Int): String {
-    val name = java.time.Month.of(month).getDisplayName(java.time.format.TextStyle.FULL, Locale.ENGLISH)
-    return "$name $year"
-}
+private fun monthPhrase(month: Int, year: Int): String = "${MonthNames.full(month)} $year"
 
 private fun fieldAlternatives(
     query: ParsedQuery,
@@ -148,10 +150,10 @@ private fun fieldAlternatives(
         // filter anything either -- see SearchQuery.matchesTerm.
         else -> emptySet()
     }
-    val current = term.value.lowercase(Locale.ROOT)
+    val current = term.value.lowercase()
     return pool.asSequence()
-        .filter { it.lowercase(Locale.ROOT) != current }
-        .sortedBy { it.lowercase(Locale.ROOT) }
+        .filter { it.lowercase() != current }
+        .sortedBy { it.lowercase() }
         .take(MAX_ALTERNATIVES)
         .map { candidate ->
             SearchSuggestion(
@@ -175,17 +177,17 @@ private fun wordAlternatives(
     vocabulary: SearchVocabulary,
 ): List<SearchSuggestion> {
     val word = term.value
-    val lower = word.lowercase(Locale.ROOT)
+    val lower = word.lowercase()
     val out = mutableListOf<SearchSuggestion>()
 
-    if (vocabulary.labels.any { it.lowercase(Locale.ROOT).contains(lower) }) {
+    if (vocabulary.labels.any { it.lowercase().contains(lower) }) {
         out += SearchSuggestion(
             "Only photos OF $word",
             rewrite(query, index, "label:${quoteIfNeeded(word)}"),
             SearchSuggestion.Kind.NARROW,
         )
     }
-    if (vocabulary.tags.any { it.lowercase(Locale.ROOT).contains(lower) }) {
+    if (vocabulary.tags.any { it.lowercase().contains(lower) }) {
         out += SearchSuggestion(
             "Only tag #$word",
             rewrite(query, index, "tag:${quoteIfNeeded(word)}"),
@@ -215,7 +217,7 @@ fun expansionSuggestions(
     query: ParsedQuery,
     resultCount: Int,
     vocabulary: SearchVocabulary,
-    zone: ZoneId = ZoneId.systemDefault(),
+    zone: TimeZone = TimeZone.currentSystemDefault(),
 ): List<SearchSuggestion> {
     if (query.isEmpty) return emptyList()
     val out = mutableListOf<SearchSuggestion>()
@@ -235,7 +237,7 @@ fun expansionSuggestions(
         // Widening a month to its year is the single most common useful widening.
         query.terms.forEachIndexed { index, term ->
             if (term is Term.DateWindow && term.fromMillis != Long.MIN_VALUE) {
-                val year = Instant.ofEpochMilli(term.fromMillis).atZone(zone).toLocalDate().year
+                val year = Instant.fromEpochMilliseconds(term.fromMillis).toLocalDateTime(zone).date.year
                 val widened = rewrite(query, index, year.toString())
                 if (widened != query.raw) {
                     out += SearchSuggestion("Widen to all of $year", widened, SearchSuggestion.Kind.WIDEN)
