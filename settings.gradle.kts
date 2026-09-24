@@ -28,6 +28,7 @@ include(":core:formats")
 include(":core:metadata")
 include(":core:search")
 include(":core:organize")
+include(":core:db")
 include(":core:index")
 
 // Hyle Design System (dev.aarso:hyle / dev.aarso:crash-recovery), pulled in via the
