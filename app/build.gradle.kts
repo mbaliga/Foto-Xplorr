@@ -187,6 +187,7 @@ dependencies {
     implementation(project(":core:metadata"))
     implementation(project(":core:search"))
     implementation(project(":core:organize"))
+    implementation(project(":core:index"))
 
     // Screenshot rendering of the real composables, on the JVM, no emulator. Test-only, so it
     // never reaches the runtime classpath the offline gate guards.
