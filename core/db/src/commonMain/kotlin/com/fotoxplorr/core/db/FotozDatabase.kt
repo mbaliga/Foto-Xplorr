@@ -40,6 +40,7 @@ import com.fotoxplorr.core.db.entity.TraitEntity
 import com.fotoxplorr.core.db.entity.VideoMomentEntity
 import com.fotoxplorr.core.db.entity.VideoMomentFeedbackEntity
 import com.fotoxplorr.core.db.entity.VideoMomentScanEntity
+import com.fotoxplorr.core.db.gallery.GalleryProjectionDao
 
 /**
  * ADR-011 §1/§2: the catalogue and its derived data, `fotoz.db`. Foreign keys must be verified
@@ -95,6 +96,7 @@ abstract class FotozDatabase : RoomDatabase() {
     abstract fun auditLogDao(): AuditLogDao
     abstract fun migrationProgressDao(): MigrationProgressDao
     abstract fun rawCheckDao(): RawCheckDao
+    abstract fun galleryProjectionDao(): GalleryProjectionDao
 }
 
 @Suppress("KotlinNoActualForExpect")
