@@ -1,13 +1,13 @@
-// :core:db -- ADR-010 §1. Created empty but compiling in WP1.2 (Room plugin, KSP wiring, a
-// trivial @Database smoke test); the real catalogue v2 schema (ADR-011) fills this in during
-// WP1.3. Uses the classic com.android.library + org.jetbrains.kotlin.multiplatform plugin pair,
-// not com.android.kotlin.multiplatform.library, per ADR-009 §2 item 4 (that newer plugin needs an
+// :core:db -- ADR-010 §1 / ADR-011. Catalogue v2: fotoz.db (FotozDatabase) and fotoz-vectors.db
+// (FotozVectorsDatabase), plus the WP1.3 migration off the seven old stores. Uses the classic
+// com.android.library + org.jetbrains.kotlin.multiplatform plugin pair, not
+// com.android.kotlin.multiplatform.library, per ADR-009 §2 item 4 (that newer plugin needs an
 // AGP this constellation isn't on).
 //
 // No hand-written `actual object ... RoomDatabaseConstructor` anywhere in this module, on any
-// target -- Room's KSP processor generates it itself from the `expect` declaration in
-// SmokeDatabase.kt. See that file's own doc comment and MASTER-PROGRESS.md's Decisions for why
-// (a real, non-obvious Room/KSP gotcha this WP1.2 batch cost significant time to root-cause).
+// target -- Room's KSP processor generates it itself from the `expect` declaration. See
+// MASTER-PROGRESS.md's WP1.2 Decisions for why (a real, non-obvious Room/KSP gotcha the WP1.2
+// smoke module cost significant time to root-cause).
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     id("com.android.library")
@@ -43,6 +43,8 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
+            implementation(project(":core:model"))
+            implementation(project(":core:formats"))
             implementation(libs.androidx.room.runtime)
             implementation(libs.kotlinx.coroutines.core)
         }

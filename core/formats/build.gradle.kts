@@ -17,6 +17,9 @@ kotlin {
     }
 
     sourceSets {
+        commonMain.dependencies {
+            implementation(project(":core:model"))
+        }
         commonTest.dependencies {
             implementation(kotlin("test"))
         }

@@ -157,16 +157,9 @@ object SyntheticCatalogue {
      * Order-sensitive fingerprint of a projection result: FNV-1a 64 over the id sequence.
      * Two results with the same members in a different order get different fingerprints,
      * which is the point — FX-003 pins *stable ordering*, not just membership.
+     *
+     * The implementation moved to production code ([projectionFingerprint]) for ADR-011's
+     * migration VERIFY step; this delegates so the goldens pin that single definition.
      */
-    fun fingerprint(assets: List<MediaAsset>): String {
-        var hash = -0x340d631b7bdddcdbL // FNV-1a 64 offset basis
-        assets.forEach { asset ->
-            var v = asset.id.value
-            repeat(8) {
-                hash = (hash xor (v and 0xFF)) * 0x100000001b3L
-                v = v ushr 8
-            }
-        }
-        return "%016x".format(hash)
-    }
+    fun fingerprint(assets: List<MediaAsset>): String = projectionFingerprint(assets)
 }

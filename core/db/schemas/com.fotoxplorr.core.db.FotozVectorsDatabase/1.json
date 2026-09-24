@@ -1,0 +1,87 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "925b9e1b1af27b5d271028cc6abb55af",
+    "entities": [
+      {
+        "tableName": "embedding",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`asset_id` INTEGER NOT NULL, `model_sha` TEXT NOT NULL, `revision` INTEGER NOT NULL, `vector` BLOB NOT NULL, `signature` INTEGER NOT NULL, `x` REAL, `y` REAL, PRIMARY KEY(`asset_id`, `model_sha`))",
+        "fields": [
+          {
+            "fieldPath": "assetId",
+            "columnName": "asset_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modelSha",
+            "columnName": "model_sha",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "vector",
+            "columnName": "vector",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "signature",
+            "columnName": "signature",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "x",
+            "columnName": "x",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "y",
+            "columnName": "y",
+            "affinity": "REAL"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "asset_id",
+            "model_sha"
+          ]
+        },
+        "indices": [
+          {
+            "name": "embedding_model_idx",
+            "unique": false,
+            "columnNames": [
+              "model_sha"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `embedding_model_idx` ON `${TABLE_NAME}` (`model_sha`)"
+          },
+          {
+            "name": "embedding_signature_idx",
+            "unique": false,
+            "columnNames": [
+              "model_sha",
+              "signature"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `embedding_signature_idx` ON `${TABLE_NAME}` (`model_sha`, `signature`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '925b9e1b1af27b5d271028cc6abb55af')"
+    ]
+  }
+}
