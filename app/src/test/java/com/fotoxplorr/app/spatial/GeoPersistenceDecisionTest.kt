@@ -1,7 +1,7 @@
 package com.fotoxplorr.app.spatial
 
 import android.os.Build
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test

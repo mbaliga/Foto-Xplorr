@@ -3,6 +3,8 @@ package com.fotoxplorr.app.share
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.exifinterface.media.ExifInterface
+import com.fotoxplorr.core.metadata.MetadataStripper
+import com.fotoxplorr.core.metadata.strip
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import kotlin.io.path.createTempFile

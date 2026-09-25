@@ -18,11 +18,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomRule
 import com.fotoxplorr.app.ui.RoomStyle
 import com.fotoxplorr.app.viewer.DetailFormatting
+import com.fotoxplorr.core.model.MediaId
 import java.util.Calendar
 
 /**

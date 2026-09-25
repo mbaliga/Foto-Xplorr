@@ -1,0 +1,254 @@
+package com.fotoxplorr.core.search
+
+import com.fotoxplorr.core.model.MediaId
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+/**
+ * The query language, pinned.
+ *
+ * These are the cases the owner named — "pictures of flowers downloaded in August 2025" first
+ * among them — plus the ones that quietly break parsers: a quoted phrase containing a colon, a
+ * negation, a month with no year, and a query made of nothing but stopwords.
+ *
+ * ADR-010 (WP1.2): moved from `com.fotoxplorr.app.search`, `java.time` ported to kotlinx-datetime,
+ * JUnit4 ported to kotlin.test -- it never touched Android or Robolectric.
+ */
+class SearchQueryTest {
+
+    private val zone: TimeZone = TimeZone.UTC
+    private val today: LocalDate = LocalDate(2026, 3, 15)
+
+    private fun parse(raw: String) = parseSearchQuery(raw, zone, today)
+
+    @Test
+    fun `the owner's sentence reduces to a word and a month`() {
+        val query = parse("Pictures of flowers downloaded in August 2025")
+
+        // "pictures", "downloaded" and "in" carry nothing and must not become AND-terms that
+        // demand a filename containing them.
+        val words = query.terms.filterIsInstance<Term.Word>().map { it.value }
+        assertEquals(listOf("flowers"), words)
+
+        val window = query.terms.filterIsInstance<Term.DateWindow>().single()
+        assertEquals("August 2025", window.phrase)
+        assertEquals(instant(2025, 8, 1), window.fromMillis)
+        assertEquals(instant(2025, 9, 1), window.toMillis)
+    }
+
+    @Test
+    fun `a query of only stopwords constrains nothing`() {
+        // Must be empty rather than "a term that matches nothing" -- otherwise typing "photos"
+        // shows an empty gallery, which reads as a broken app.
+        assertTrue(parse("show me all the photos").isEmpty)
+    }
+
+    @Test
+    fun `field terms scope -- and numeric fields compare`() {
+        val query = parse("label:flower iso:>800 size:<5mb")
+        val fields = query.terms.filterIsInstance<Term.Field>()
+
+        assertEquals(SearchField.LABEL, fields[0].field)
+        assertEquals("flower", fields[0].value)
+        assertEquals(Comparison.EQ, fields[0].comparison)
+
+        assertEquals(SearchField.ISO, fields[1].field)
+        assertEquals(Comparison.GT, fields[1].comparison)
+        assertEquals("800", fields[1].value)
+
+        assertEquals(SearchField.SIZE, fields[2].field)
+        assertEquals(Comparison.LT, fields[2].comparison)
+    }
+
+    @Test
+    fun `aliases mean a person need not learn the key`() {
+        assertEquals(SearchField.LABEL, SearchField.of("of"))
+        assertEquals(SearchField.FOLDER, SearchField.of("album"))
+        assertEquals(SearchField.TEXT, SearchField.of("ocr"))
+        assertEquals(SearchField.NAME, SearchField.of("filename"))
+    }
+
+    @Test
+    fun `a quoted phrase stays one term even with a colon in it`() {
+        val query = parse("\"gate 42: boarding\"")
+        val word = query.terms.filterIsInstance<Term.Word>().single()
+        assertEquals("gate 42: boarding", word.value)
+    }
+
+    @Test
+    fun `negation drops matches rather than adding them`() {
+        val query = parse("-screenshot")
+        val word = query.terms.filterIsInstance<Term.Word>().single()
+        assertTrue(word.negated)
+    }
+
+    @Test
+    fun `a bare month means the most recent one that has happened`() {
+        // Today is March 2026, so "december" is 2025 and "february" is 2026. A parser that
+        // always picked the current year would send half the calendar into the future.
+        val december = parse("december").terms.filterIsInstance<Term.DateWindow>().single()
+        assertEquals("December 2025", december.phrase)
+
+        val february = parse("february").terms.filterIsInstance<Term.DateWindow>().single()
+        assertEquals("February 2026", february.phrase)
+    }
+
+    @Test
+    fun `relative windows resolve against today`() {
+        val lastMonth = parse("last month").terms.filterIsInstance<Term.DateWindow>().single()
+        assertEquals(instant(2026, 2, 1), lastMonth.fromMillis)
+        assertEquals(instant(2026, 3, 1), lastMonth.toMillis)
+    }
+
+    @Test
+    fun `after and before produce open-ended windows`() {
+        val after = parse("after:2025-06-01").terms.filterIsInstance<Term.DateWindow>().single()
+        assertEquals(instant(2025, 6, 1), after.fromMillis)
+        assertEquals(Long.MAX_VALUE, after.toMillis)
+
+        val before = parse("before:2025").terms.filterIsInstance<Term.DateWindow>().single()
+        assertEquals(Long.MIN_VALUE, before.fromMillis)
+        assertEquals(instant(2025, 1, 1), before.toMillis)
+    }
+
+    @Test
+    fun `or makes alternatives rather than a second requirement`() {
+        val query = parse("cat or dog")
+        val anyOf = query.terms.filterIsInstance<Term.AnyOf>().single()
+        assertEquals(2, anyOf.branches.size)
+    }
+
+    // ---- matching ----
+
+    @Test
+    fun `a photo matches only when every constraint holds`() {
+        val doc = document(
+            name = "IMG_2031.jpg",
+            labels = setOf("Flower", "Plant"),
+            takenAt = instant(2025, 8, 14),
+        )
+
+        assertTrue(matchesQuery(parse("flowers August 2025"), doc.copy(labels = setOf("flowers"))))
+        assertTrue(matchesQuery(parse("flower august 2025"), doc))
+        // Right subject, wrong month.
+        assertFalse(matchesQuery(parse("flower july 2025"), doc))
+        // Right month, wrong subject.
+        assertFalse(matchesQuery(parse("dog august 2025"), doc))
+    }
+
+    @Test
+    fun `text inside the image is searchable`() {
+        val doc = document(name = "IMG_9.jpg", text = "PLATFORM 9 3/4 KINGS CROSS")
+        assertTrue(matchesQuery(parse("text:kings"), doc))
+        assertTrue(matchesQuery(parse("kings"), doc))
+        assertFalse(matchesQuery(parse("text:paddington"), doc))
+    }
+
+    @Test
+    fun `numeric comparisons compare rather than string-match`() {
+        val doc = document(name = "a.jpg", iso = 1600, sizeBytes = 8_000_000)
+        assertTrue(matchesQuery(parse("size:>5mb"), doc))
+        assertFalse(matchesQuery(parse("size:>50mb"), doc))
+    }
+
+    @Test
+    fun `type raw classifies by extension -- not the old hard-coded mime list`() {
+        // "orf" (Olympus) and "raf" (Fujifilm) were never in the old hand-picked
+        // dng/raw/arw/cr2/nef list -- classifying via MediaFormat.classify catches them too.
+        val olympus = document(name = "IMG_0001.orf", mimeType = "application/octet-stream")
+        val fujifilm = document(name = "IMG_0002.raf", mimeType = "application/octet-stream")
+        val jpeg = document(name = "IMG_0003.jpg", mimeType = "image/jpeg")
+
+        assertTrue(matchesQuery(parse("type:raw"), olympus))
+        assertTrue(matchesQuery(parse("type:raw"), fujifilm))
+        assertFalse(matchesQuery(parse("type:raw"), jpeg))
+    }
+
+    @Test
+    fun `camera and iso terms match everything -- positive or negated -- until an EXIF index exists`() {
+        // No EXIF index exists yet (P0-16): SearchDocument.camera/.iso are never populated by the
+        // live path (always "" / null), so letting these terms filter would silently hide every
+        // photo the moment someone typed one. Both are parsed but inert -- neither excludes nor
+        // requires anything -- regardless of what the document actually holds.
+        val doc = document(name = "a.jpg", iso = 1600)
+        assertTrue(matchesQuery(parse("camera:x"), doc))
+        assertTrue(matchesQuery(parse("-camera:x"), doc))
+        assertTrue(matchesQuery(parse("iso:>800"), doc))
+        assertTrue(matchesQuery(parse("iso:<800"), doc))
+        assertTrue(matchesQuery(parse("-iso:>800"), doc))
+    }
+
+    @Test
+    fun `size accepts letter or two-letter unit suffixes and bare bytes`() {
+        assertEquals(500_000L, parseByteSize("500k"))
+        assertEquals(1_500_000L, parseByteSize("1.5m"))
+        assertEquals(2_000_000_000L, parseByteSize("2gb"))
+        assertEquals(5_000_000L, parseByteSize("5mb"))
+        assertEquals(1_000L, parseByteSize("1kb"))
+        assertEquals(700L, parseByteSize("700"))
+        assertEquals(2_048L, parseByteSize("2048"))
+        assertEquals(null, parseByteSize("abc"))
+    }
+
+    // ---- suggestions ----
+
+    @Test
+    fun `dropping a term rewrites the query without it`() {
+        val query = parse("flower august 2025")
+        val rewritten = rewrite(query, 1, null)
+        assertEquals("flower", rewritten)
+    }
+
+    @Test
+    fun `a thin result set is offered ways to widen`() {
+        val query = parse("flower august 2025")
+        val suggestions = expansionSuggestions(query, resultCount = 2, vocabulary = SearchVocabulary(), zone = zone)
+
+        assertTrue(suggestions.any { it.label.contains("Widen to all of 2025") })
+        assertTrue(suggestions.any { it.kind == SearchSuggestion.Kind.WIDEN })
+    }
+
+    @Test
+    fun `a rewritten query still parses`() {
+        // The round trip is the property that matters: a suggestion the parser cannot read back
+        // would silently drop constraints the moment it is taken.
+        val query = parse("label:\"potted plant\" august 2025 -screenshot")
+        val text = rewrite(query, 0, "label:flower")
+        val reparsed = parse(text)
+        assertEquals(query.terms.size, reparsed.terms.size)
+    }
+
+    private fun instant(year: Int, month: Int, day: Int): Long =
+        LocalDate(year, month, day).atStartOfDayIn(zone).toEpochMilliseconds()
+
+    private fun document(
+        name: String,
+        folder: String = "Camera",
+        mimeType: String = "image/jpeg",
+        labels: Set<String> = emptySet(),
+        text: String = "",
+        takenAt: Long = instant(2025, 1, 1),
+        iso: Int? = null,
+        sizeBytes: Long = 1_000_000,
+    ) = SearchDocument(
+        mediaId = MediaId(1L),
+        name = name,
+        folder = folder,
+        mimeType = mimeType,
+        takenAtMillis = takenAt,
+        tags = emptySet(),
+        labels = labels,
+        text = text,
+        categories = emptySet(),
+        camera = "",
+        iso = iso,
+        width = 4000,
+        height = 3000,
+        sizeBytes = sizeBytes,
+    )
+}

@@ -90,19 +90,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.ScanState
-import com.fotoxplorr.app.hyle.FloatingPillControl
-import com.fotoxplorr.app.hyle.ActivityShade
 import com.fotoxplorr.app.hyle.ActivityKind
+import com.fotoxplorr.app.hyle.ActivityShade
 import com.fotoxplorr.app.hyle.BackgroundActivity
-import com.fotoxplorr.app.hyle.ShadeState
-import com.fotoxplorr.app.hyle.shadeHeight
+import com.fotoxplorr.app.hyle.FloatingPillControl
+import com.fotoxplorr.app.hyle.PILL_DESIGN_H
 import com.fotoxplorr.app.hyle.SelectionToolbarShape
 import com.fotoxplorr.app.hyle.SelectionTrashShape
-import com.fotoxplorr.app.hyle.TOOLBAR_DESIGN_W
+import com.fotoxplorr.app.hyle.ShadeState
 import com.fotoxplorr.app.hyle.TOOLBAR_DESIGN_H
-import com.fotoxplorr.app.hyle.PILL_DESIGN_H
-import com.fotoxplorr.app.hyle.TRASH_DESIGN_W
+import com.fotoxplorr.app.hyle.TOOLBAR_DESIGN_W
 import com.fotoxplorr.app.hyle.TRASH_DESIGN_H
+import com.fotoxplorr.app.hyle.TRASH_DESIGN_W
+import com.fotoxplorr.app.hyle.shadeHeight
 import androidx.compose.foundation.layout.offset
 import dev.aarso.cellshell.EdgeTimelineScrubber
 import dev.aarso.cellshell.RoomEdge
@@ -111,18 +111,19 @@ import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.SpatialShell
 import dev.aarso.cellshell.rememberSpatialController
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.organize.LibraryState
 import com.fotoxplorr.app.recognition.RecognitionIndex
-import com.fotoxplorr.app.search.ParsedQuery
-import com.fotoxplorr.app.search.SearchDocument
-import com.fotoxplorr.app.search.matchesQuery
-import com.fotoxplorr.app.search.parseSearchQuery
 import com.fotoxplorr.app.recognition.RecognitionProgress
 import com.fotoxplorr.app.spatial.GeoMetadataRepository
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
-import com.fotoxplorr.app.spatial.SpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
+import com.fotoxplorr.app.spatial.SpatialExperience
+import com.fotoxplorr.core.model.MediaId
+import com.fotoxplorr.core.organize.GridIndexMap
+import com.fotoxplorr.core.search.ParsedQuery
+import com.fotoxplorr.core.search.SearchDocument
+import com.fotoxplorr.core.search.matchesQuery
+import com.fotoxplorr.core.search.parseSearchQuery
 import kotlinx.coroutines.launch
 // ---- adaptive package: window sizing, the pinch/scroll zoom ladder, and keyboard shortcuts.
 // See each file's own doc for why this stays pure Kotlin with no Compose/Android import of its
@@ -326,9 +327,14 @@ fun GalleryScreen(
     val context = LocalContext.current
     val geoState by geoRepository.observe().collectAsStateWithLifecycle()
     val spatialScope = rememberCoroutineScope()
-    // Index input: every non-trashed asset, so a still-locked or hidden photo's location is
-    // already indexed and unlocking the folder never needs a re-index of its own (P0-01).
-    val spatialIndexInput = remember(state.assets) { state.assets.filterNot { it.isTrashed } }
+    // Index input: EVERY asset, trashed included (Phase 1 owner decision 1, 24 Sep 2026,
+    // reversing P0-01's own trashed exclusion here) -- a photo trashed before its location was
+    // ever indexed must not sit permanently unindexed while trashed, and a still-locked or hidden
+    // photo's location is already indexed so unlocking the folder never needs a re-index of its
+    // own. Display filtering (what Places/the map/the 3D scenes actually draw) stays entirely in
+    // `spatialDisplayAssets` below, per the same decision's own "display filtering stays in the
+    // UI" instruction -- this list is never rendered directly.
+    val spatialIndexInput = state.assets
     // Display list: what Places, the map, the compass and the 3D scenes actually draw. Must go
     // through the one visibility filter, or a locked, archived or hidden photo leaks onto them.
     val spatialDisplayAssets = remember(
@@ -358,6 +364,7 @@ fun GalleryScreen(
         ),
         LocalSpatialExperience provides SpatialExperience(
             assets = spatialDisplayAssets,
+            indexInput = spatialIndexInput,
             geoState = geoState,
             onIndexLocations = {
                 spatialScope.launch {
@@ -1481,6 +1488,7 @@ private fun GalleryMapZoomContent() {
     if (spatial != null) {
         PlacesScreen(
             assets = spatial.assets,
+            indexInput = spatial.indexInput,
             geoState = spatial.geoState,
             onIndexLocations = spatial.onIndexLocations,
             onOpenAsset = spatial.onOpenAsset,

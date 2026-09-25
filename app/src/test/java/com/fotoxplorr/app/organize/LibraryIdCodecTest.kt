@@ -1,6 +1,6 @@
 package com.fotoxplorr.app.organize
 
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

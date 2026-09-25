@@ -196,7 +196,7 @@ class SurfaceRenderTest {
             PhotoGridStandIn()
             SelectionOverlay(
                 selection = com.fotoxplorr.app.gallery.GallerySelection(
-                    selectedIds = (1L..9999L).map { com.fotoxplorr.app.media.MediaId(it) }.toSet(),
+                    selectedIds = (1L..9999L).map { com.fotoxplorr.core.model.MediaId(it) }.toSet(),
                     selecting = true,
                 ),
                 selectedAssets = emptyList(),
@@ -214,7 +214,7 @@ class SurfaceRenderTest {
                 state = emptyState(),
                 actions = noOpActions(),
                 selection = com.fotoxplorr.app.gallery.GallerySelection(
-                    selectedIds = (1L..12L).map { com.fotoxplorr.app.media.MediaId(it) }.toSet(),
+                    selectedIds = (1L..12L).map { com.fotoxplorr.core.model.MediaId(it) }.toSet(),
                     selecting = true,
                 ),
                 selectedAssets = emptyList(),

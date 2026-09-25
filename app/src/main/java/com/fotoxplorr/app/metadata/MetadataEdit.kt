@@ -1,5 +1,7 @@
 package com.fotoxplorr.app.metadata
 
+import com.fotoxplorr.core.metadata.XmpPacket
+
 /**
  * One photo's professional metadata, as a photographer edits it -- not as EXIF or XMP tag names,
  * which is exactly the layer [MetadataWriter] hides behind this.

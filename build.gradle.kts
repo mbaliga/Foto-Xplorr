@@ -15,4 +15,12 @@ plugins {
     // the composite build.
     id("org.jetbrains.kotlin.android") version "2.1.0" apply false
     id("org.jetbrains.kotlin.plugin.compose") version "2.1.0" apply false
+
+    // WP1.1 (ADR-009): declared here, applied nowhere yet. The first :core:* module (WP1.2)
+    // applies these instead of repeating a version per module build script. Versions come
+    // from gradle/libs.versions.toml, not a literal, so every module tracks one pin.
+    alias(libs.plugins.kotlin.multiplatform) apply false
+    alias(libs.plugins.kotlin.serialization) apply false
+    alias(libs.plugins.ksp) apply false
+    alias(libs.plugins.androidx.room) apply false
 }

@@ -2,10 +2,10 @@ package com.fotoxplorr.app.curate
 
 import com.fotoxplorr.app.gallery.folderIdentity
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.recognition.RecognitionIndex
 import com.fotoxplorr.app.recognition.SceneClassifier
+import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext

@@ -1,0 +1,51 @@
+[versions]
+# ADR-009: no constellation upgrade in Phase 1. These pins are IDENTICAL to
+# hyle-design-system/gradle/libs.versions.toml's own agp/kotlin/ksp entries by requirement
+# (D-Q for agp; ADR-009 decision 2 "Must equal Hyle's" for ksp) -- verify against that file
+# before ever bumping either here.
+kotlin = "2.1.0"
+ksp = "2.1.0-1.0.29"
+
+# Same as app/build.gradle.kts's existing kotlinx-coroutines-android pin (ADR-009 decision 2).
+coroutines = "1.10.2"
+serialization = "1.8.1"
+# The 0.6.x line specifically (ADR-009): 0.7.0+ exists upstream but is not what Phase 1 asked
+# for. Re-evaluate the line bump alongside the constellation toolchain upgrade, not piecemeal.
+datetime = "0.6.2"
+
+# Hyle's own proven pin on this exact toolchain (Kotlin 2.1.0 / KSP 2.1.0-1.0.29 / AGP 8.9.1).
+# Room 2.7.2 exists upstream and its POM is otherwise compatible, but nothing in this
+# constellation has built it yet -- stay on the pin something has actually proven green here,
+# per ADR-009's own "newest 2.7 patch only if it builds green on this toolchain". Revisit once
+# a real :core:db module exists to test 2.7.2 against.
+room = "2.7.1"
+# The exact androidx.sqlite line room-runtime:2.7.1's own POM declares (sqlite-framework and
+# sqlite both resolve to 2.5.0 for that Room version) -- kept in lockstep rather than taking a
+# newer 2.5.x patch Room 2.7.1 itself was never built against.
+sqliteBundled = "2.5.0"
+
+# Only pulled in by a module once one actually needs commonMain file I/O (ADR-009: "Only if a
+# module needs file I/O in commonMain") -- most likely the WP1.10 XMP sidecar writer. Cataloging
+# the version now costs nothing; no module depends on it yet.
+okio = "3.9.1"
+
+[libraries]
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
+kotlinx-datetime = { group = "org.jetbrains.kotlinx", name = "kotlinx-datetime", version.ref = "datetime" }
+
+androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+androidx-sqlite-bundled = { group = "androidx.sqlite", name = "sqlite-bundled", version.ref = "sqliteBundled" }
+
+squareup-okio = { group = "com.squareup.okio", name = "okio", version.ref = "okio" }
+
+[plugins]
+# Not yet applied anywhere (WP1.1 sets up the catalog; WP1.2 creates the first module that
+# uses these). Declared here so every :core:* module build script references one version, not
+# a copy-pasted literal per module.
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+androidx-room = { id = "androidx.room", version.ref = "room" }

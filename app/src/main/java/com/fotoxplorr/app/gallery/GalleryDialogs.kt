@@ -35,10 +35,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.fileops.BulkRenameOutcome
-import com.fotoxplorr.app.fileops.RenamePattern
-import com.fotoxplorr.app.fileops.RenameSubject
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.organize.MediaCollection
+import com.fotoxplorr.core.organize.RenamePattern
+import com.fotoxplorr.core.organize.RenameSubject
 import kotlinx.coroutines.launch
 
 @Composable

@@ -1,6 +1,6 @@
 package com.fotoxplorr.app.gallery
 
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 
 /**
  * What is selected, and whether the user is selecting at all.

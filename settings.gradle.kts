@@ -16,10 +16,30 @@ dependencyResolutionManagement {
 
 rootProject.name = "FotoXplorr"
 include(":app")
+
+// WP1.8 (FX-005): OPT-IN via `-Pfotoz.benchmarks=true`, matching every other target-specific
+// Gradle-property gate in this build (`-Pfotoz.native`, `-PabiSplits`). This repo is routinely
+// built in environments with no physical device (CI, cloud sessions), and Macrobenchmark can
+// only ever produce real numbers on one -- see benchmarks/README.md for the full story and the
+// manual enable steps this gate replaces. `:app`'s own matching `benchmark` build type
+// (app/build.gradle.kts) is gated on the identical property, so a plain build never sees either.
+if (providers.gradleProperty("fotoz.benchmarks").isPresent) {
+    include(":benchmarks")
+}
 // The connect flavor's network engine (WP1). A plain project module of THIS build — it
 // does not resolve through either included build, so the dependencySubstitution rules
 // below are unaffected by it.
 include(":feature:ai-remote")
+
+// ADR-010 (WP1.2): the shared KMP core. `:app -> :core:*` only (ADR-010 §2) — never add an
+// includeBuild or a :feature:* dependency to any of these.
+include(":core:model")
+include(":core:formats")
+include(":core:metadata")
+include(":core:search")
+include(":core:organize")
+include(":core:db")
+include(":core:index")
 
 // Hyle Design System (dev.aarso:hyle / dev.aarso:crash-recovery), pulled in via the
 // constellation's one sanctioned sharing mechanism (D-A): git submodule + Gradle
