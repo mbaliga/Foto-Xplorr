@@ -20,7 +20,7 @@ class GalleryZoomLadderTest {
     // ---- rung <-> level ----
 
     @Test
-    fun `the ladder climbs from the densest grid through every column count to Calendar then Map`() {
+    fun `the ladder climbs from the densest grid through every column count to Calendar, Year, Decade, then Map`() {
         val levels = (0 until ladder.rungCount).map { ladder.levelAt(it) }
         assertEquals(
             listOf(
@@ -29,6 +29,8 @@ class GalleryZoomLadderTest {
                 GalleryZoomLevel.Grid(4),
                 GalleryZoomLevel.Grid(5),
                 GalleryZoomLevel.Calendar,
+                GalleryZoomLevel.Year,
+                GalleryZoomLevel.Decade,
                 GalleryZoomLevel.MapView,
             ),
             levels,
@@ -45,7 +47,7 @@ class GalleryZoomLadderTest {
     @Test
     fun `a Grid level outside the configured range clamps rather than throwing`() {
         assertEquals(0, ladder.rungOf(GalleryZoomLevel.Grid(0)))
-        assertEquals(ladder.rungCount - 3, ladder.rungOf(GalleryZoomLevel.Grid(999)))
+        assertEquals(ladder.rungOf(GalleryZoomLevel.Grid(ladder.maxColumns)), ladder.rungOf(GalleryZoomLevel.Grid(999)))
     }
 
     @Test
@@ -104,12 +106,18 @@ class GalleryZoomLadderTest {
     }
 
     @Test
-    fun `zooming back in from Map reverses through Calendar before reaching the grid again`() {
+    fun `zooming back in from Map reverses through Decade, Year and Calendar before reaching the grid again`() {
         val oneStepIn = ladder.step(GalleryZoomLevel.MapView, residual = 0f, scaleFactor = 1.30f)
-        assertEquals(GalleryZoomLevel.Calendar, oneStepIn.level)
+        assertEquals(GalleryZoomLevel.Decade, oneStepIn.level)
 
         val twoStepsIn = ladder.step(oneStepIn.level, oneStepIn.residual, scaleFactor = 1.30f)
-        assertEquals(GalleryZoomLevel.Grid(ladder.maxColumns), twoStepsIn.level)
+        assertEquals(GalleryZoomLevel.Year, twoStepsIn.level)
+
+        val threeStepsIn = ladder.step(twoStepsIn.level, twoStepsIn.residual, scaleFactor = 1.30f)
+        assertEquals(GalleryZoomLevel.Calendar, threeStepsIn.level)
+
+        val fourStepsIn = ladder.step(threeStepsIn.level, threeStepsIn.residual, scaleFactor = 1.30f)
+        assertEquals(GalleryZoomLevel.Grid(ladder.maxColumns), fourStepsIn.level)
     }
 
     @Test

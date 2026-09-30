@@ -98,6 +98,11 @@ private enum class ExploreExperience(
 @Composable
 fun PlacesScreen(
     assets: List<MediaAsset>,
+    /** Every asset the similarity indexer should cover, trashed included -- see
+     *  [com.fotoxplorr.app.spatial.SpatialExperience.indexInput]'s own doc. Only
+     *  [ExploreExperience.SIMILARITY] reads this; every other experience here only displays
+     *  [assets]. */
+    indexInput: List<MediaAsset>,
     geoState: GeoIndexState,
     onIndexLocations: () -> Unit,
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
@@ -118,6 +123,7 @@ fun PlacesScreen(
     when (experience) {
         ExploreExperience.SIMILARITY -> SimilarityExplorerScreen(
             assets = assets,
+            indexInput = indexInput,
             onOpenAsset = onOpenAsset,
             onClose = { experience = null },
         )

@@ -29,12 +29,12 @@ import com.fotoxplorr.app.FotoXplorrActivity
 import com.fotoxplorr.app.LibraryRuntime
 import com.fotoxplorr.app.gallery.GalleryPreferences
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.share.PreparedItem
 import com.fotoxplorr.app.share.ShareFrame
 import com.fotoxplorr.app.share.ShareOptions
 import com.fotoxplorr.app.share.SharePreparer
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.core.model.MediaId
 import dev.aarso.crashrecovery.CrashRecovery
 import dev.aarso.crashrecovery.CrashRecoveryStyle
 import kotlinx.coroutines.CoroutineScope

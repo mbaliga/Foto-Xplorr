@@ -101,6 +101,14 @@ jobs:
         shell: bash
         run: ./gradlew :app:assembleOfflineRelease -PabiSplits=true
 
+      # TRAPS #16 / WP1.9: a read-only regression guard -- AGP already produces 16 KB-aligned
+      # output by default, this only catches a future change that breaks it.
+      - name: Verify 16 KB page alignment
+        shell: bash
+        run: |
+          chmod +x scripts/verify-page-alignment.sh
+          ./scripts/verify-page-alignment.sh app/build/outputs/apk/offline/release/*.apk
+
       # Uploaded as SEPARATE artifacts, one per architecture, because GitHub zips an artifact
       # whole: bundling four ABIs would put the size straight back. arm64-v8a is the only one
       # any current phone needs — it is the file to click.
@@ -119,3 +127,31 @@ jobs:
             app/build/outputs/apk/offline/release/app-offline-armeabi-v7a-release.apk
             app/build/outputs/apk/offline/release/app-offline-x86_64-release.apk
           if-no-files-found: warn
+
+  # WP1.9 (ADR-009 decision 5), "required once WP1.2 lands" -- WP1.2 has landed every
+  # :core:* module this job covers. Separate from `build` above rather than folded into it:
+  # this only needs the :core:* modules and their native targets, not the whole app/lint/test
+  # matrix, and keeping it a distinct job means a native-only failure shows up as its own red
+  # check instead of being buried inside `build`'s much longer log.
+  core-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compile and test every native-ready :core:* module
+        shell: bash
+        run: |
+          chmod +x ./gradlew scripts/verify-native.sh
+          # scripts/verify-native.sh is the one definition of the native task list (FX-002) --
+          # `./scripts/verify.sh --native` calls the exact same script.
+          ./scripts/verify-native.sh

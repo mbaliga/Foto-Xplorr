@@ -1,7 +1,7 @@
 package com.fotoxplorr.app.audio
 
 import android.provider.MediaStore
-import com.fotoxplorr.app.media.ScanPlan
+import com.fotoxplorr.core.organize.ScanPlan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

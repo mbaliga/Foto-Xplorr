@@ -9,9 +9,9 @@ import android.media.MediaMetadataRetriever
 import android.os.Build
 import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.openForLocationRead
 import com.fotoxplorr.app.media.uriForLocationRead
+import com.fotoxplorr.core.model.MediaId
 import java.io.FileDescriptor
 import kotlin.math.abs
 import kotlin.math.roundToInt

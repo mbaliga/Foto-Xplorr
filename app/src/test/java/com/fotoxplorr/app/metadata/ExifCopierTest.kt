@@ -3,6 +3,7 @@ package com.fotoxplorr.app.metadata
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.exifinterface.media.ExifInterface
+import com.fotoxplorr.core.metadata.XmpPacket
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

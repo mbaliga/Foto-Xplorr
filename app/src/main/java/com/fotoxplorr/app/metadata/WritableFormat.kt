@@ -2,7 +2,7 @@ package com.fotoxplorr.app.metadata
 
 import android.content.ContentResolver
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.share.MetadataStripper
+import com.fotoxplorr.core.metadata.MetadataStripper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 

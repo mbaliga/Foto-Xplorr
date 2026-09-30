@@ -87,11 +87,26 @@ class CatalogueCharacterisationTest {
         compare(mapOf("timeline:stops" to "${stops.size}:${joined.hashCode()}"))
     }
 
-    private fun describe(projected: List<com.fotoxplorr.app.media.MediaAsset>): String {
-        val first = projected.firstOrNull()?.id?.value ?: -1L
-        val last = projected.lastOrNull()?.id?.value ?: -1L
-        return "${projected.size}:${SyntheticCatalogue.fingerprint(projected)}:$first:$last"
+    /**
+     * ADR-011's migration VERIFY runs [projectionFingerprints] (production code) over real data.
+     * This pins that enumerator to the same goldens as the four hand-written loops above, so the
+     * migration gate provably computes exactly what this suite characterises.
+     */
+    @Test
+    fun `the production projection enumerator reproduces every golden`() {
+        val actual = projectionFingerprints(
+            state = state,
+            nowMillis = SyntheticCatalogue.NOW_MILLIS,
+            zoneId = java.time.ZoneOffset.UTC,
+            locale = java.util.Locale.UK,
+        )
+        assertEquals(GOLDENS.keys, actual.keys)
+        compare(actual)
     }
+
+    // Moved to production code (ProjectionFingerprint.kt) for ADR-011's migration VERIFY step.
+    private fun describe(projected: List<com.fotoxplorr.app.media.MediaAsset>): String =
+        describeProjection(projected)
 
     private fun compare(actual: Map<String, String>) {
         // An env var, not a -D property: Gradle forks the test JVM, and a -D on the CLI

@@ -56,7 +56,9 @@ class WorkRuleEvaluatorTest {
 
     @Test
     fun `every rule off and enabled on allows anything`() {
-        val rules = WorkRules(enabled = true)
+        // requireCharging = false explicitly: it defaults to true since Phase 1 owner decision 5
+        // (24 Sep 2026), so "every rule off" now has to say so rather than rely on the default.
+        val rules = WorkRules(enabled = true, requireCharging = false)
         val messyState = DeviceState(batteryPercent = 3, charging = false, idle = false, unmetered = false, hourOfDay = 3)
         // minBatteryPercent still defaults to 20 here, so this is really pinning that a battery
         // of 3% below the default threshold IS blocked -- see the dedicated battery tests below
@@ -149,16 +151,21 @@ class WorkRuleEvaluatorTest {
 
     // ---- battery: the threshold's own boundary ----
 
+    // requireCharging = false throughout this section: these device states are deliberately off
+    // the charger (to test the battery-percent threshold in isolation), and requireCharging
+    // defaults to true since Phase 1 owner decision 5 (24 Sep 2026) -- left at its default, every
+    // one of these would block on charging before ever reaching the battery check under test.
+
     @Test
     fun `battery exactly at the threshold passes`() {
-        val rules = WorkRules(minBatteryPercent = 50)
+        val rules = WorkRules(minBatteryPercent = 50, requireCharging = false)
         val atThreshold = okState(batteryPercent = 50, charging = false)
         assertEquals(WorkVerdict.Allowed, WorkRuleEvaluator.evaluate(rules, atThreshold))
     }
 
     @Test
     fun `one percent below the threshold blocks, and the reason names both numbers`() {
-        val rules = WorkRules(minBatteryPercent = 50)
+        val rules = WorkRules(minBatteryPercent = 50, requireCharging = false)
         val justBelow = okState(batteryPercent = 49, charging = false)
         val reason = WorkRuleEvaluator.evaluate(rules, justBelow).reasonOrFail()
         assertTrue("should name the threshold: $reason", reason.contains("50"))
@@ -167,7 +174,7 @@ class WorkRuleEvaluatorTest {
 
     @Test
     fun `one percent above the threshold passes`() {
-        val rules = WorkRules(minBatteryPercent = 50)
+        val rules = WorkRules(minBatteryPercent = 50, requireCharging = false)
         val justAbove = okState(batteryPercent = 51, charging = false)
         assertEquals(WorkVerdict.Allowed, WorkRuleEvaluator.evaluate(rules, justAbove))
     }
@@ -253,7 +260,9 @@ class WorkRuleEvaluatorTest {
         assertTrue(chargingBlocked.isNotBlank())
 
         val batteryBlocked = WorkRuleEvaluator.evaluate(
-            WorkRules(minBatteryPercent = 40),
+            // requireCharging = false: this device is off the charger, to isolate the battery
+            // rule, and requireCharging now defaults to true (Phase 1 owner decision 5).
+            WorkRules(minBatteryPercent = 40, requireCharging = false),
             okState(batteryPercent = 10, charging = false),
         ).reasonOrFail()
         assertTrue(batteryBlocked.contains("40"))

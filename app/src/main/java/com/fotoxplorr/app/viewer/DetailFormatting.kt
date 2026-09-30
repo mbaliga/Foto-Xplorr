@@ -1,6 +1,6 @@
 package com.fotoxplorr.app.viewer
 
-import com.fotoxplorr.app.formats.MediaFormat
+import com.fotoxplorr.core.formats.MediaFormat
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -138,7 +138,7 @@ object DetailFormatting {
 
     /**
      * The dynamic-range badge on the mockup's EXIF card (P0-16). "ULTRA HDR" when the photo's
-     * XMP actually declares the gain-map namespace ([com.fotoxplorr.app.metadata.XmpPacket.HDR_GAIN_MAP_NS])
+     * XMP actually declares the gain-map namespace ([com.fotoxplorr.core.metadata.XmpPacket.HDR_GAIN_MAP_NS])
      * a real Ultra
      * HDR file carries -- a genuine positive answer, not a container-type guess. Null otherwise,
      * so the row shows "--" the same way every other unanswered row on this card already does,

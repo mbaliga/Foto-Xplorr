@@ -46,6 +46,9 @@ import com.fotoxplorr.app.background.formatHourOfDay
 import com.fotoxplorr.app.background.summarize
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.pro.LocalProEntitlement
+import com.fotoxplorr.app.ui.ThemeJsonResult
+import com.fotoxplorr.app.ui.builtInThemeJson
+import com.fotoxplorr.app.ui.parseThemeJson
 
 /**
  * The settings room's tabs (owner, 2026-08-14: *"The settings are pathetically few. And 'more
@@ -155,11 +158,10 @@ fun SettingsTabsRoom(
                         preferences.themeMode,
                         actions.onSetThemeMode,
                     )
-                    ChoiceRow(
-                        "Accent",
-                        AccentPalette.entries.map { it to it.name.lowercase().replaceFirstChar(Char::uppercase) },
-                        preferences.accentPalette,
-                        actions.onSetAccentPalette,
+                    ThemePaletteRow(
+                        preferences = preferences,
+                        onSetAccentPalette = actions.onSetAccentPalette,
+                        onSetCustomTheme = actions.onSetCustomTheme,
                     )
                     StepperRow(
                         label = "Grid columns",
@@ -685,6 +687,95 @@ private fun <T> ChoiceRow(
             }
         }
     }
+}
+
+/**
+ * The theme palette picker: the five bundled presets (now JSON-backed -- see `ThemeJson.kt`),
+ * plus "Custom…" for a theme pasted or imported as JSON -- the owner's JSON-theming ask, applied
+ * to this app's own accent palette.
+ *
+ * A built-in chip applies immediately, exactly as this row always worked -- nothing about
+ * choosing VIOLET/OCEAN/FOREST/AMBER/MONOCHROME changed. "Custom…" is different on purpose: it
+ * opens [CustomThemeJsonDialog], whose own doc covers the mandatory preview-before-apply flow.
+ */
+@Composable
+private fun ThemePaletteRow(
+    preferences: GalleryPreferencesState,
+    onSetAccentPalette: (AccentPalette) -> Unit,
+    onSetCustomTheme: (String) -> Unit,
+) {
+    var showCustomDialog by remember { mutableStateOf(false) }
+    val builtIns = remember { AccentPalette.entries.filter { it != AccentPalette.CUSTOM } }
+
+    Column {
+        Text("Accent", color = Color.White, style = MaterialTheme.typography.bodyLarge)
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(top = 8.dp),
+        ) {
+            items(builtIns, key = { it.name }) { palette ->
+                ThemeChip(
+                    label = palette.name.lowercase().replaceFirstChar(Char::uppercase),
+                    selected = preferences.accentPalette == palette,
+                    onClick = { onSetAccentPalette(palette) },
+                )
+            }
+            item(key = "custom") {
+                ThemeChip(
+                    label = "Custom…",
+                    selected = preferences.accentPalette == AccentPalette.CUSTOM,
+                    onClick = { showCustomDialog = true },
+                )
+            }
+        }
+        if (preferences.accentPalette == AccentPalette.CUSTOM) {
+            // Re-parsed here rather than trusted as already-valid: this reads back whatever is
+            // actually persisted, which is the honest thing to show even in the (should-not-
+            // happen) case that it is no longer parsable -- see resolveThemeSpec's own doc for
+            // why FotoXplorrTheme itself falls back safely in that same case.
+            val activeName = (parseThemeJson(preferences.customThemeJson) as? ThemeJsonResult.Valid)?.spec?.name
+            Text(
+                text = if (activeName != null) "Active: $activeName -- tap to edit" else "Tap to fix the active custom theme",
+                color = Color.White.copy(alpha = 0.55f),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .clickable { showCustomDialog = true },
+            )
+        }
+    }
+
+    if (showCustomDialog) {
+        CustomThemeJsonDialog(
+            // A fresh custom theme starts from VIOLET's own bundled JSON -- a valid, familiar
+            // template to edit rather than a blank box, and the SAME text BUILT_IN_THEMES itself
+            // is parsed from (see builtInThemeJson's own doc), not a second copy of it.
+            initialJson = preferences.customThemeJson.ifBlank {
+                builtInThemeJson(AccentPalette.VIOLET).orEmpty()
+            },
+            onDismiss = { showCustomDialog = false },
+            onApply = { json ->
+                onSetCustomTheme(json)
+                showCustomDialog = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun ThemeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        text = label,
+        color = if (selected) Color.Black else Color.White.copy(alpha = 0.75f),
+        style = MaterialTheme.typography.labelLarge,
+        modifier = Modifier
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.10f),
+                RoundedCornerShape(50),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    )
 }
 
 /**

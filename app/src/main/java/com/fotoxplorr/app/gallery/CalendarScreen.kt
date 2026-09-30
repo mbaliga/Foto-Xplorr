@@ -51,12 +51,21 @@ import java.util.Calendar
 fun CalendarScreen(
     assets: List<MediaAsset>,
     onOpenDay: (List<MediaAsset>) -> Unit,
+    /**
+     * Which month to land on, if any -- set when arriving from [YearScreen]'s "tap a month"
+     * drill-in, so the screen opens on the month that was actually tapped rather than always
+     * resetting to the latest one. Null (the default) keeps this screen's original behaviour
+     * unchanged for every other caller: the latest month with photos.
+     */
+    initialMonth: YearMonth? = null,
     modifier: Modifier = Modifier,
 ) {
     // Bucket once per asset list, not per recomposition: this walks the whole library.
     val byMonth = remember(assets) { groupByMonth(assets) }
     val months = remember(byMonth) { byMonth.keys.sortedDescending() }
-    var monthIndex by remember(months) { mutableStateOf(0) }
+    var monthIndex by remember(months, initialMonth) {
+        mutableStateOf(initialMonth?.let { months.indexOf(it) }?.takeIf { it >= 0 } ?: 0)
+    }
 
     if (months.isEmpty()) {
         Box(modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
@@ -269,3 +278,248 @@ private val MONTHS = listOf(
 )
 
 private val WEEKDAYS = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+
+// =====================================================================================
+// Year and Decade: the two rungs sparser than this file's own month calendar (see
+// GalleryZoomLadder.kt's own doc for exactly where these sit and why). Both reuse
+// [groupByMonth] as their one data source rather than re-deriving buckets of their own, and
+// both mirror this file's month calendar in shape: a heading you can page through with the same
+// [NavArrow]s, and a grid of stamp-framed cells you tap to drill one rung in.
+// =====================================================================================
+
+/** One cell in [YearScreen]'s grid: a month, and every asset [groupByMonth] has for it across
+ *  every day. */
+internal data class MonthCellData(val month: Int, val assets: List<MediaAsset>)
+
+/** One cell in [DecadeScreen]'s grid: a year, and every asset across every month of it. */
+internal data class YearCellData(val year: Int, val assets: List<MediaAsset>)
+
+/** [year]'s own decade start -- 2024 -> 2020, 2026 -> 2020, 1999 -> 1990. */
+internal fun decadeStartOf(year: Int): Int = (year / 10) * 10
+
+/** The 12 months of [year], each carrying every asset [byMonth] has for it, flattened across
+ *  every day -- [YearScreen]'s own grid, in Jan..Dec order. */
+internal fun yearCells(byMonth: Map<YearMonth, Map<Int, List<MediaAsset>>>, year: Int): List<MonthCellData> =
+    (0 until 12).map { month ->
+        MonthCellData(month, byMonth[YearMonth(year, month)]?.values?.flatten().orEmpty())
+    }
+
+/** The 10 years of the decade starting at [decadeStart], each carrying every asset across every
+ *  one of its own months -- [DecadeScreen]'s own grid, oldest-to-newest within the decade. */
+internal fun decadeCells(byMonth: Map<YearMonth, Map<Int, List<MediaAsset>>>, decadeStart: Int): List<YearCellData> =
+    (0 until 10).map { offset ->
+        val year = decadeStart + offset
+        YearCellData(year, byMonth.filterKeys { it.year == year }.values.flatMap { it.values.flatten() })
+    }
+
+/**
+ * A grid of the 12 months in one year -- one rung sparser than [CalendarScreen]. Tapping a month
+ * opens Calendar at that month, the same "tap to drill one rung in" contract Calendar's own day
+ * cells already have.
+ */
+@Composable
+fun YearScreen(
+    assets: List<MediaAsset>,
+    onOpenMonth: (YearMonth, List<MediaAsset>) -> Unit,
+    /** Which year to land on -- set when arriving from [DecadeScreen]'s "tap a year" drill-in.
+     *  Null (the default) opens on the latest year with photos. */
+    initialYear: Int? = null,
+    modifier: Modifier = Modifier,
+) {
+    val byMonth = remember(assets) { groupByMonth(assets) }
+    val years = remember(byMonth) { byMonth.keys.map { it.year }.distinct().sortedDescending() }
+
+    if (years.isEmpty()) {
+        Box(modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+            Text("No dated photos yet", color = Color.White.copy(alpha = 0.6f))
+        }
+        return
+    }
+
+    var yearIndex by remember(years, initialYear) {
+        mutableStateOf(initialYear?.let { years.indexOf(it) }?.takeIf { it >= 0 } ?: 0)
+    }
+    val year = years[yearIndex.coerceIn(0, years.lastIndex)]
+    val cells = remember(byMonth, year) { yearCells(byMonth, year) }
+
+    Column(
+        modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .statusBarsPadding()
+            .padding(horizontal = 16.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            Text(
+                text = year.toString(),
+                color = Color.White,
+                fontSize = 56.sp,
+                fontWeight = FontWeight.Light,
+                modifier = Modifier.weight(1f),
+            )
+            // Newer years sit at index 0, same convention as this file's own months.
+            NavArrow("‹", enabled = yearIndex < years.lastIndex) { yearIndex += 1 }
+            NavArrow("›", enabled = yearIndex > 0) { yearIndex -= 1 }
+        }
+
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(3),
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(cells, key = { "month-${it.month}" }) { cell ->
+                MonthCell(cell = cell, onOpen = { onOpenMonth(YearMonth(year, cell.month), cell.assets) })
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) { Box(Modifier.padding(bottom = 88.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun MonthCell(cell: MonthCellData, onOpen: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = monthName(cell.month),
+            color = if (cell.assets.isNotEmpty()) Color.White.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.3f),
+            style = MaterialTheme.typography.labelMedium,
+        )
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(1f).padding(top = 4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            val cover = cell.assets.firstOrNull()
+            if (cover != null) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .clip(FotoStamp)
+                        .background(Color(0xFF101010))
+                        .clickable(onClick = onOpen),
+                ) {
+                    MediaImage(asset = cover, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                }
+                Text(
+                    "${cell.assets.size}",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A grid of the 10 years in one decade -- the ladder's outermost temporal rung, one sparser than
+ * [YearScreen]. Tapping a year opens Year at that year.
+ */
+@Composable
+fun DecadeScreen(
+    assets: List<MediaAsset>,
+    onOpenYear: (Int, List<MediaAsset>) -> Unit,
+    /** Which year's decade to land on -- set when arriving from [YearScreen] via the ladder's
+     *  own further-out pinch. Null (the default) opens on the latest decade with photos. */
+    initialYear: Int? = null,
+    modifier: Modifier = Modifier,
+) {
+    val byMonth = remember(assets) { groupByMonth(assets) }
+    val decadeStarts = remember(byMonth) {
+        byMonth.keys.map { decadeStartOf(it.year) }.distinct().sortedDescending()
+    }
+
+    if (decadeStarts.isEmpty()) {
+        Box(modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+            Text("No dated photos yet", color = Color.White.copy(alpha = 0.6f))
+        }
+        return
+    }
+
+    var decadeIndex by remember(decadeStarts, initialYear) {
+        mutableStateOf(
+            initialYear?.let { decadeStarts.indexOf(decadeStartOf(it)) }?.takeIf { it >= 0 } ?: 0,
+        )
+    }
+    val decadeStart = decadeStarts[decadeIndex.coerceIn(0, decadeStarts.lastIndex)]
+    val cells = remember(byMonth, decadeStart) { decadeCells(byMonth, decadeStart) }
+
+    Column(
+        modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .statusBarsPadding()
+            .padding(horizontal = 16.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            Text(
+                text = "${decadeStart}s",
+                color = Color.White,
+                fontSize = 48.sp,
+                fontWeight = FontWeight.Light,
+                modifier = Modifier.weight(1f),
+            )
+            NavArrow("‹", enabled = decadeIndex < decadeStarts.lastIndex) { decadeIndex += 1 }
+            NavArrow("›", enabled = decadeIndex > 0) { decadeIndex -= 1 }
+        }
+
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(cells, key = { "year-${it.year}" }) { cell ->
+                YearCell(cell = cell, onOpen = { onOpenYear(cell.year, cell.assets) })
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) { Box(Modifier.padding(bottom = 88.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun YearCell(cell: YearCellData, onOpen: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = cell.year.toString(),
+            color = if (cell.assets.isNotEmpty()) Color.White.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.3f),
+            style = MaterialTheme.typography.labelMedium,
+        )
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(1.4f).padding(top = 4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            val cover = cell.assets.firstOrNull()
+            if (cover != null) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .clip(FotoStamp)
+                        .background(Color(0xFF101010))
+                        .clickable(onClick = onOpen),
+                ) {
+                    MediaImage(asset = cover, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                }
+                Text(
+                    "${cell.assets.size}",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                )
+            }
+        }
+    }
+}

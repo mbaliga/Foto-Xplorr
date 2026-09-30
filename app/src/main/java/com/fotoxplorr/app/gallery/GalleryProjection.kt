@@ -1,7 +1,7 @@
 package com.fotoxplorr.app.gallery
 
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter

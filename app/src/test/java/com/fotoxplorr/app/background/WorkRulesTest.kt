@@ -59,7 +59,9 @@ class WorkRulesTest {
 
     @Test
     fun `no active conditions summarizes as anytime`() {
-        val summary = summarize(WorkRules(enabled = true, minBatteryPercent = 0))
+        // requireCharging = false: this test means "every condition off", and the Phase 1 default
+        // for charging specifically is now on -- isolate it the same way as the other rules here.
+        val summary = summarize(WorkRules(enabled = true, minBatteryPercent = 0, requireCharging = false))
         assertEquals("Indexing runs anytime, with no conditions.", summary)
     }
 
@@ -84,13 +86,18 @@ class WorkRulesTest {
 
     @Test
     fun `a battery-only rule does not mention hours or idle at all`() {
-        val summary = summarize(WorkRules(minBatteryPercent = 35))
+        // requireCharging = false: this test's whole point is that ONLY battery shows up in the
+        // sentence, so the new charging default must be turned off here to keep it battery-only.
+        val summary = summarize(WorkRules(minBatteryPercent = 35, requireCharging = false))
         assertEquals("Indexing runs with battery above 35%.", summary)
     }
 
     @Test
     fun `only-on-unmetered is named as Wi-Fi in the summary`() {
-        val summary = summarize(WorkRules(minBatteryPercent = 0, onlyOnUnmetered = true))
+        // requireCharging = false: same isolation -- this test is pinning the Wi-Fi wording alone.
+        val summary = summarize(
+            WorkRules(minBatteryPercent = 0, onlyOnUnmetered = true, requireCharging = false),
+        )
         assertEquals("Indexing runs on Wi-Fi.", summary)
     }
 }

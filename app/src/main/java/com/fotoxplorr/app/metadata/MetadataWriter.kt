@@ -7,6 +7,7 @@ import android.os.Build
 import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.uriForLocationRead
+import com.fotoxplorr.core.metadata.XmpPacket
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File

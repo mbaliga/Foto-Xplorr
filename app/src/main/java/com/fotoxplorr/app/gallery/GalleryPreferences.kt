@@ -31,6 +31,27 @@ enum class AccentPalette {
     FOREST,
     AMBER,
     MONOCHROME,
+    /** A theme pasted/imported as JSON rather than one of the five bundled ones above -- see
+     *  `ThemeJson.kt`. Its actual colours live in [GalleryPreferencesState.customThemeJson], not
+     *  in this enum, the same way this value's NAME (not a colour) is what gets persisted. */
+    CUSTOM,
+}
+
+/**
+ * The two things a pinch inside the single-photo viewer can mean -- see `ViewerScreen.kt`'s own
+ * gesture arbiter for how each is actually dispatched.
+ *
+ * [OPTICAL_ZOOM] is the default and the viewer's original behaviour, unchanged for anyone who
+ * never touches this setting: pinch zooms the photo, exactly as it always has.
+ *
+ * [PANEL_SHORTCUTS] is the owner's alternate ask (*"pinch in (details/info) and pinch out
+ * (edit/actions)"*): pinch-in opens the photo's details room, pinch-out opens its actions room,
+ * and neither also moves the photo -- the two meanings are mutually exclusive within one gesture,
+ * which is the entire point of making this selectable rather than additive.
+ */
+enum class ViewerPinchMode {
+    OPTICAL_ZOOM,
+    PANEL_SHORTCUTS,
 }
 
 data class GalleryPreferencesState(
@@ -110,6 +131,18 @@ data class GalleryPreferencesState(
     val shareFrame: String = "NONE",
     /** The user's postmark, drawn on stamp-framed shares. */
     val shareSeal: String = "",
+    /** Which pinch-in-the-viewer meaning is active. See [ViewerPinchMode]'s own doc. Defaults to
+     *  the viewer's original behaviour so nobody who never opens this setting sees any change. */
+    val viewerPinchMode: ViewerPinchMode = ViewerPinchMode.OPTICAL_ZOOM,
+    /**
+     * The full JSON text of the custom theme, when [accentPalette] is
+     * [AccentPalette.CUSTOM] -- see `ThemeJson.kt`'s schema. Empty (never null, so a
+     * `SharedPreferences` round-trip has nothing to distinguish from "absent") whenever a built-in
+     * palette is active; [com.fotoxplorr.app.ui.FotoXplorrTheme] falls back to
+     * [AccentPalette.VIOLET] if this is ever selected while empty or unparsable, rather than
+     * crashing -- see that file's own doc.
+     */
+    val customThemeJson: String = "",
 )
 
 class GalleryPreferences(context: Context) {
@@ -149,9 +182,23 @@ class GalleryPreferences(context: Context) {
         state.value.copy(themeMode = mode),
     ) { putString(KEY_THEME_MODE, mode.name) }
 
-    fun setAccentPalette(palette: AccentPalette) = update(
-        state.value.copy(accentPalette = palette),
-    ) { putString(KEY_ACCENT_PALETTE, palette.name) }
+    /**
+     * Selects a bundled palette (or, given [AccentPalette.CUSTOM] directly, re-activates whatever
+     * custom JSON is already stored). [setCustomTheme] is the normal way into CUSTOM -- it always
+     * carries the JSON that goes with it -- so switching AWAY from CUSTOM here clears
+     * [GalleryPreferencesState.customThemeJson] rather than leaving a stale value behind that a
+     * later, unrelated bug could read back.
+     */
+    fun setAccentPalette(palette: AccentPalette) {
+        if (palette == AccentPalette.CUSTOM) {
+            update(state.value.copy(accentPalette = palette)) { putString(KEY_ACCENT_PALETTE, palette.name) }
+        } else {
+            update(state.value.copy(accentPalette = palette, customThemeJson = "")) {
+                putString(KEY_ACCENT_PALETTE, palette.name)
+                putString(KEY_CUSTOM_THEME_JSON, "")
+            }
+        }
+    }
 
     fun setDefaultDestination(destination: HyleDestination) = update(
         state.value.copy(defaultDestination = destination),
@@ -210,6 +257,20 @@ class GalleryPreferences(context: Context) {
         update(state.value.copy(shareSeal = trimmed)) { putString(KEY_SHARE_SEAL, trimmed) }
     }
 
+    fun setViewerPinchMode(mode: ViewerPinchMode) = update(
+        state.value.copy(viewerPinchMode = mode),
+    ) { putString(KEY_VIEWER_PINCH_MODE, mode.name) }
+
+    /** Applies a validated custom theme -- see `ThemeJson.kt`. [json] is stored VERBATIM, exactly
+     *  as the user pasted it: the mandatory preview dialog showed them this exact text, and
+     *  reformatting it before saving would make that preview a preview of something else. */
+    fun setCustomTheme(json: String) = update(
+        state.value.copy(accentPalette = AccentPalette.CUSTOM, customThemeJson = json),
+    ) {
+        putString(KEY_ACCENT_PALETTE, AccentPalette.CUSTOM.name)
+        putString(KEY_CUSTOM_THEME_JSON, json)
+    }
+
     fun setSlideshowInterval(seconds: Int) {
         val safeSeconds = seconds.coerceIn(MIN_SLIDESHOW_INTERVAL_SECONDS, MAX_SLIDESHOW_INTERVAL_SECONDS)
         update(state.value.copy(slideshowIntervalSeconds = safeSeconds)) {
@@ -257,6 +318,8 @@ class GalleryPreferences(context: Context) {
         shareWatermark = preferences.getBoolean(KEY_SHARE_WATERMARK, false),
         shareFrame = preferences.getString(KEY_SHARE_FRAME, null) ?: "NONE",
         shareSeal = preferences.getString(KEY_SHARE_SEAL, null).orEmpty(),
+        viewerPinchMode = enumValue(KEY_VIEWER_PINCH_MODE, ViewerPinchMode.OPTICAL_ZOOM),
+        customThemeJson = preferences.getString(KEY_CUSTOM_THEME_JSON, null).orEmpty(),
     )
 
     private inline fun <reified T : Enum<T>> enumValue(key: String, fallback: T): T =
@@ -289,6 +352,8 @@ class GalleryPreferences(context: Context) {
         const val KEY_SHARE_WATERMARK = "share_watermark"
         const val KEY_SHARE_FRAME = "share_frame"
         const val KEY_SHARE_SEAL = "share_seal"
+        const val KEY_VIEWER_PINCH_MODE = "viewer_pinch_mode"
+        const val KEY_CUSTOM_THEME_JSON = "custom_theme_json"
         const val MAX_SEAL_CHARS = 12
     }
 }

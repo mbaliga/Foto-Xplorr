@@ -20,9 +20,14 @@ package com.fotoxplorr.app.background
  *   signal (JobScheduler's device-idle constraint, `JobInfo.setRequiresDeviceIdle`) -- before running. OFF by default: idle can mean
  *   "screen off for a while" long before it means Doze's deep maintenance window, and most heavy
  *   passes do not need to wait that long for that little benefit.
- * @param requireCharging Wait for the charger. OFF by default -- [minBatteryPercent] below is
- *   the gentler, ON-by-default alternative that protects the battery without requiring anyone to
- *   plug in at all.
+ * @param requireCharging Wait for the charger. ON by default (Phase 1 owner decision 5, 24 Sep
+ *   2026: background ML -- recognition, similarity, moments, traits -- requires charging unless
+ *   the person turns this off in Settings to allow it on battery). Before that decision this
+ *   defaulted OFF, with [minBatteryPercent] below as the gentler always-on alternative; that
+ *   field still applies whenever this one is off, on a fresh install or otherwise. See
+ *   [com.fotoxplorr.app.background.WorkRulesStore]'s own `load()` for the one-time migration that
+ *   flips this default for an existing install that never touched this control specifically,
+ *   without moving it for one that did (either direction).
  * @param minBatteryPercent Do not run below this percentage, UNLESS the phone is charging (see
  *   [WorkRuleEvaluator.evaluate] for why charging always satisfies this one outright). Defaults
  *   to [DEFAULT_MIN_BATTERY_PERCENT]. `0` disables the check entirely (`batteryPercent >= 0` is
@@ -48,7 +53,7 @@ package com.fotoxplorr.app.background
  */
 data class WorkRules(
     val requireIdle: Boolean = false,
-    val requireCharging: Boolean = false,
+    val requireCharging: Boolean = true,
     val minBatteryPercent: Int = DEFAULT_MIN_BATTERY_PERCENT,
     val activeHoursStart: Int = MIN_HOUR_OF_DAY,
     val activeHoursEnd: Int = MAX_HOUR_OF_DAY,

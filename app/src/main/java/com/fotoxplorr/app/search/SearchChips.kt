@@ -33,6 +33,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.ui.HyleGrotesk
+import com.fotoxplorr.core.search.ParsedQuery
+import com.fotoxplorr.core.search.SearchSuggestion
+import com.fotoxplorr.core.search.SearchVocabulary
+import com.fotoxplorr.core.search.alternativesFor
+import com.fotoxplorr.core.search.expansionSuggestions
 
 /**
  * The query, shown back as editable chips — the variables-editor idea from the owner's Quillbot

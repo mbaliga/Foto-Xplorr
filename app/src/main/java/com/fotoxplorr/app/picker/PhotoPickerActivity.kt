@@ -53,11 +53,11 @@ import com.fotoxplorr.app.gallery.GalleryPreferences
 import com.fotoxplorr.app.gallery.MediaGridScreen
 import com.fotoxplorr.app.gallery.browsableAssets
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.core.model.MediaId
 
 /**
  * P0-20 (stretch): lets another app pick photos/videos from this library via

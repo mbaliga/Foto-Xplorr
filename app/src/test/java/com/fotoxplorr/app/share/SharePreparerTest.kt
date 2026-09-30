@@ -4,8 +4,8 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.pro.ProEntitlement
+import com.fotoxplorr.core.model.MediaId
 import java.io.ByteArrayInputStream
 import kotlin.io.path.createTempFile
 import androidx.core.content.FileProvider
@@ -33,12 +33,15 @@ import org.robolectric.annotation.GraphicsMode
  * an untouched copy when the sharer deliberately kept metadata. NATIVE graphics mode for the same
  * reason [MetadataStripperJpegTest] needs it: real `Bitmap.compress`/decode.
  *
- * Every asset here resolves `watermark = false` (a Pro entitlement) and the default [ShareFrame.NONE],
- * so [ShareOptions.requiresRender] is false and these exercise [SharePreparer]'s plain-copy /
- * metadata-strip paths specifically -- the ones this task actually changed. The framed/watermarked
- * render path was already covered by [MetadataStripperJpegTest]'s and P0-03's own coverage of
- * `decodeUpright`, and is unchanged by P0-04 beyond returning a [PreparedItem] instead of a bare
- * [Uri]; it does not get its own per-item batch test here.
+ * Every asset here resolves `watermark = false` (unconditionally, since Phase 1 owner decision 3 --
+ * the entitlement passed to [preparer] no longer matters for this, and is kept `pro = true` only
+ * because that was this test's own value before that decision, not because Pro status is what
+ * resolves it now) and the default [ShareFrame.NONE], so [ShareOptions.requiresRender] is false and
+ * these exercise [SharePreparer]'s plain-copy / metadata-strip paths specifically -- the ones this
+ * task actually changed. The framed/watermarked render path was already covered by
+ * [MetadataStripperJpegTest]'s and P0-03's own coverage of `decodeUpright`, and is unchanged by
+ * P0-04 beyond returning a [PreparedItem] instead of a bare [Uri]; it does not get its own per-item
+ * batch test here.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -54,8 +57,10 @@ class SharePreparerTest {
         override fun recordUnlock() = Unit
     }
 
-    /** Pro, so [ShareOptions]'s default `watermark = true` resolves to false and every test asset
-     * below goes through the plain copy/strip path rather than a render. */
+    /** `pro = true` is not load-bearing since Phase 1 owner decision 3 -- [ShareOptions]'s default
+     * `watermark` is now `false` and resolves to `false` for every entitlement state, so every
+     * test asset below goes through the plain copy/strip path rather than a render regardless of
+     * what this constructs [FakeProEntitlement] with. */
     private fun preparer() = SharePreparer(context, FakeProEntitlement(pro = true))
 
     /**

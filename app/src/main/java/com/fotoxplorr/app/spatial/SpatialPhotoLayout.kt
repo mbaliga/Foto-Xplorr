@@ -23,7 +23,7 @@ data class SpatialPhotoPlacement(
 object SpatialPhotoLayout {
     fun build(
         assets: List<MediaAsset>,
-        metadataById: Map<com.fotoxplorr.app.media.MediaId, GeoMetadata>,
+        metadataById: Map<com.fotoxplorr.core.model.MediaId, GeoMetadata>,
         origin: Location,
         maxCards: Int = DEFAULT_MAX_CARDS,
     ): List<SpatialPhotoPlacement> {

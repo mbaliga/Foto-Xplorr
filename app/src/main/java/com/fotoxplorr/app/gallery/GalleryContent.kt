@@ -81,12 +81,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Dialog
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.organize.LibraryState
 import com.fotoxplorr.app.organize.MediaCollection
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
+import com.fotoxplorr.core.model.MediaId
 import kotlin.math.exp
 import kotlin.math.hypot
 
@@ -844,6 +844,7 @@ fun DiscoverScreen(
             TextButton(onClick = { showingPlaces = false }) { Text("Back to Discover") }
             PlacesScreen(
                 assets = spatial.assets,
+                indexInput = spatial.indexInput,
                 geoState = spatial.geoState,
                 onIndexLocations = spatial.onIndexLocations,
                 onOpenAsset = spatial.onOpenAsset,

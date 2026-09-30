@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.gallery.MAX_SLIDESHOW_INTERVAL_SECONDS
 import com.fotoxplorr.app.gallery.MIN_SLIDESHOW_INTERVAL_SECONDS
+import com.fotoxplorr.app.gallery.ViewerPinchMode
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomRow
 import com.fotoxplorr.app.ui.RoomRule
@@ -57,6 +58,9 @@ fun ViewerSettingsRoom(
     onSetSlideshowShuffle: (Boolean) -> Unit,
     onSetLoopAnimations: (Boolean) -> Unit,
     onSetAutoplayVideos: (Boolean) -> Unit,
+    /** What a pinch means in this screen. See [ViewerPinchMode]'s own doc. */
+    pinchMode: ViewerPinchMode = ViewerPinchMode.OPTICAL_ZOOM,
+    onSetPinchMode: (ViewerPinchMode) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -136,10 +140,42 @@ fun ViewerSettingsRoom(
         RoomRule(Modifier.padding(vertical = 14.dp))
         RoomEyebrow("GESTURES")
 
+        RoomRow(
+            label = "Pinch opens panels",
+            caption = if (pinchMode == ViewerPinchMode.PANEL_SHORTCUTS) {
+                "Pinch in for this photo's details, pinch out for what you can do with it. " +
+                    "Pinch no longer zooms the photo."
+            } else {
+                "Off: pinch zooms the photo, same as it always has."
+            },
+            onClick = {
+                onSetPinchMode(
+                    if (pinchMode == ViewerPinchMode.PANEL_SHORTCUTS) {
+                        ViewerPinchMode.OPTICAL_ZOOM
+                    } else {
+                        ViewerPinchMode.PANEL_SHORTCUTS
+                    },
+                )
+            },
+        ) {
+            RoomToggle(
+                checked = pinchMode == ViewerPinchMode.PANEL_SHORTCUTS,
+                onCheckedChange = {
+                    onSetPinchMode(if (it) ViewerPinchMode.PANEL_SHORTCUTS else ViewerPinchMode.OPTICAL_ZOOM)
+                },
+            )
+        }
+
         Text(
-            text = "Pinch to zoom. Two fingers to turn. Swipe to move between photos. " +
-                "Drag up from the bottom edge for this photo's details, in from the right for " +
-                "what you can do with it.",
+            text = if (pinchMode == ViewerPinchMode.PANEL_SHORTCUTS) {
+                "Two fingers to turn. Swipe to move between photos. Drag up from the bottom " +
+                    "edge for this photo's details, in from the right for what you can do " +
+                    "with it -- exactly what pinch now does too."
+            } else {
+                "Pinch to zoom. Two fingers to turn. Swipe to move between photos. " +
+                    "Drag up from the bottom edge for this photo's details, in from the right " +
+                    "for what you can do with it."
+            },
             color = RoomStyle.InkFaint,
             style = RoomStyle.Caption,
             modifier = Modifier.padding(top = 6.dp, bottom = 8.dp),

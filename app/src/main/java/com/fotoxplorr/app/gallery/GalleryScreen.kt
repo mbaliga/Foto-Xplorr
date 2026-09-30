@@ -90,19 +90,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.ScanState
-import com.fotoxplorr.app.hyle.FloatingPillControl
-import com.fotoxplorr.app.hyle.ActivityShade
 import com.fotoxplorr.app.hyle.ActivityKind
+import com.fotoxplorr.app.hyle.ActivityShade
 import com.fotoxplorr.app.hyle.BackgroundActivity
-import com.fotoxplorr.app.hyle.ShadeState
-import com.fotoxplorr.app.hyle.shadeHeight
+import com.fotoxplorr.app.hyle.FloatingPillControl
+import com.fotoxplorr.app.hyle.PILL_DESIGN_H
 import com.fotoxplorr.app.hyle.SelectionToolbarShape
 import com.fotoxplorr.app.hyle.SelectionTrashShape
-import com.fotoxplorr.app.hyle.TOOLBAR_DESIGN_W
+import com.fotoxplorr.app.hyle.ShadeState
 import com.fotoxplorr.app.hyle.TOOLBAR_DESIGN_H
-import com.fotoxplorr.app.hyle.PILL_DESIGN_H
-import com.fotoxplorr.app.hyle.TRASH_DESIGN_W
+import com.fotoxplorr.app.hyle.TOOLBAR_DESIGN_W
 import com.fotoxplorr.app.hyle.TRASH_DESIGN_H
+import com.fotoxplorr.app.hyle.TRASH_DESIGN_W
+import com.fotoxplorr.app.hyle.shadeHeight
 import androidx.compose.foundation.layout.offset
 import dev.aarso.cellshell.EdgeTimelineScrubber
 import dev.aarso.cellshell.RoomEdge
@@ -111,18 +111,19 @@ import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.SpatialShell
 import dev.aarso.cellshell.rememberSpatialController
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.organize.LibraryState
 import com.fotoxplorr.app.recognition.RecognitionIndex
-import com.fotoxplorr.app.search.ParsedQuery
-import com.fotoxplorr.app.search.SearchDocument
-import com.fotoxplorr.app.search.matchesQuery
-import com.fotoxplorr.app.search.parseSearchQuery
 import com.fotoxplorr.app.recognition.RecognitionProgress
 import com.fotoxplorr.app.spatial.GeoMetadataRepository
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
-import com.fotoxplorr.app.spatial.SpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
+import com.fotoxplorr.app.spatial.SpatialExperience
+import com.fotoxplorr.core.model.MediaId
+import com.fotoxplorr.core.organize.GridIndexMap
+import com.fotoxplorr.core.search.ParsedQuery
+import com.fotoxplorr.core.search.SearchDocument
+import com.fotoxplorr.core.search.matchesQuery
+import com.fotoxplorr.core.search.parseSearchQuery
 import kotlinx.coroutines.launch
 // ---- adaptive package: window sizing, the pinch/scroll zoom ladder, and keyboard shortcuts.
 // See each file's own doc for why this stays pure Kotlin with no Compose/Android import of its
@@ -250,6 +251,10 @@ data class GalleryActions(
     val onSetTimelineGrouping: (TimelineGrouping) -> Unit,
     val onSetThemeMode: (ThemeMode) -> Unit,
     val onSetAccentPalette: (AccentPalette) -> Unit,
+    /** Applies validated custom theme JSON -- see `ThemeJson.kt` and `SettingsTabs.kt`'s
+     *  "Custom…" flow, whose confirm dialog is what actually validates it before this is ever
+     *  called. */
+    val onSetCustomTheme: (String) -> Unit,
     val onSetSlideshowInterval: (Int) -> Unit,
     val onSetDefaultDestination: (HyleDestination) -> Unit,
     val onSetKeepScreenOn: (Boolean) -> Unit,
@@ -326,9 +331,14 @@ fun GalleryScreen(
     val context = LocalContext.current
     val geoState by geoRepository.observe().collectAsStateWithLifecycle()
     val spatialScope = rememberCoroutineScope()
-    // Index input: every non-trashed asset, so a still-locked or hidden photo's location is
-    // already indexed and unlocking the folder never needs a re-index of its own (P0-01).
-    val spatialIndexInput = remember(state.assets) { state.assets.filterNot { it.isTrashed } }
+    // Index input: EVERY asset, trashed included (Phase 1 owner decision 1, 24 Sep 2026,
+    // reversing P0-01's own trashed exclusion here) -- a photo trashed before its location was
+    // ever indexed must not sit permanently unindexed while trashed, and a still-locked or hidden
+    // photo's location is already indexed so unlocking the folder never needs a re-index of its
+    // own. Display filtering (what Places/the map/the 3D scenes actually draw) stays entirely in
+    // `spatialDisplayAssets` below, per the same decision's own "display filtering stays in the
+    // UI" instruction -- this list is never rendered directly.
+    val spatialIndexInput = state.assets
     // Display list: what Places, the map, the compass and the 3D scenes actually draw. Must go
     // through the one visibility filter, or a locked, archived or hidden photo leaks onto them.
     val spatialDisplayAssets = remember(
@@ -358,6 +368,7 @@ fun GalleryScreen(
         ),
         LocalSpatialExperience provides SpatialExperience(
             assets = spatialDisplayAssets,
+            indexInput = spatialIndexInput,
             geoState = geoState,
             onIndexLocations = {
                 spatialScope.launch {
@@ -488,6 +499,13 @@ private fun GalleryBrowser(
     // Orthogonal to the ladder's own rungs -- it is still a Grid rung underneath, just drawn with
     // headers -- so it is its own flag rather than a fourth kind of [GalleryZoomLevel].
     var timelineHeadersOn by remember { mutableStateOf(false) }
+    // Where to land when a tap on [YearScreen]/[DecadeScreen] drills one rung IN (a month tapped
+    // in Year opens Calendar there; a year tapped in Decade opens Year there) -- the same "tap to
+    // drill in" contract Calendar's own day cells already have into the viewer. Null means "the
+    // latest one with photos", which is also what every one of these screens defaults to on its
+    // own, so leaving these untouched (reached by pinch, or by the view switcher) is unaffected.
+    var pendingCalendarMonth by remember { mutableStateOf<YearMonth?>(null) }
+    var pendingYear by remember { mutableStateOf<Int?>(null) }
 
     // Set by the pending-search seeding effect (further down, after the route-change reset it
     // has to outrun) immediately before it changes `route`, so the reset that route change
@@ -778,10 +796,11 @@ private fun GalleryBrowser(
         timelineStops(renderedAssets).map { it.copy(itemIndex = gridIndexMap.gridIndexOf(it.itemIndex)) }
     }
     // Whether the grid (square, masonry, or with Timeline's date headers) is what is actually on
-    // screen right now, as opposed to Calendar or Map -- those two draw their own scrollable
-    // surface and neither shares gridState with it, so the edge scrubber and the density pill
-    // below would be tracking and driving a position nothing on screen agrees with.
-    val gridActive = zoomLevel !is GalleryZoomLevel.Calendar && zoomLevel !is GalleryZoomLevel.MapView
+    // screen right now, as opposed to Calendar, Year, Decade or Map -- none of those four draw
+    // gridState's surface, so the edge scrubber and the density pill below would be tracking and
+    // driving a position nothing on screen agrees with.
+    val gridActive = zoomLevel !is GalleryZoomLevel.Calendar && zoomLevel !is GalleryZoomLevel.Year &&
+        zoomLevel !is GalleryZoomLevel.Decade && zoomLevel !is GalleryZoomLevel.MapView
     // P0-15: masonry's staggered grid keeps its own LazyStaggeredGridState, entirely unreachable
     // from here (see MediaGridScreen's own doc) -- gridState/GridIndexMap describe a grid that,
     // in masonry, is not even the one on screen. Rather than let the scrubber track and drive a
@@ -1117,16 +1136,39 @@ private fun GalleryBrowser(
                                 // One depth now, so opening settings is just opening the room.
                                 onOpenSettings = { shell.open(RoomEdge.RIGHT) },
                             )
-                            // ---- the zoom ladder's two sparse ends (owner: "zoom out past the
-                            // sparsest grid and you reach Calendar; further out, Map") ----
+                            // ---- the zoom ladder's sparse rungs (owner: "zoom out past the
+                            // sparsest grid and you reach Calendar [-> Year -> Decade]; further
+                            // out, Map") ----
                             //
                             // Checked ahead of the route branches below and independent of them
                             // on purpose: the ladder is a property of the whole browsing surface,
                             // not of any one route, so pinching out from inside an album reaches
-                            // Calendar/Map exactly the same as pinching out from the root grid.
+                            // Calendar/Year/Decade/Map exactly the same as pinching out from the
+                            // root grid.
                             zoomLevel is GalleryZoomLevel.MapView -> GalleryMapZoomContent()
+                            // Decade and Year sit between Calendar and Map on the ladder (see
+                            // GalleryZoomLadder.kt's own doc for why there, not elsewhere): each
+                            // drills one rung IN on a tap, landing the next screen down exactly
+                            // on what was tapped via pendingYear/pendingCalendarMonth, seeded
+                            // just before the rung itself changes.
+                            zoomLevel is GalleryZoomLevel.Decade -> DecadeScreen(
+                                assets = scrubberAssets,
+                                onOpenYear = { year, _ ->
+                                    pendingYear = year
+                                    zoomLevel = GalleryZoomLevel.Year
+                                },
+                            )
+                            zoomLevel is GalleryZoomLevel.Year -> YearScreen(
+                                assets = scrubberAssets,
+                                initialYear = pendingYear,
+                                onOpenMonth = { yearMonth, _ ->
+                                    pendingCalendarMonth = yearMonth
+                                    zoomLevel = GalleryZoomLevel.Calendar
+                                },
+                            )
                             zoomLevel is GalleryZoomLevel.Calendar -> CalendarScreen(
                                 assets = scrubberAssets,
+                                initialMonth = pendingCalendarMonth,
                                 // A day's cover opens straight into the viewer with that day as
                                 // the paging context -- the calendar has no route of its own to
                                 // drill into (BrowserRoute has no day-granularity variant, and
@@ -1307,6 +1349,12 @@ private fun GalleryBrowser(
                                 zoomLevel = GalleryZoomLevel.Grid(wrapped)
                                 zoomResidual = 0f
                                 timelineHeadersOn = false
+                                // An explicit jump back to the grid is a deliberate reset, not a
+                                // rung-by-rung climb down -- any drill-in position Year/Decade had
+                                // remembered is stale the moment the user leaves the ladder this
+                                // way, so it is cleared rather than silently kept for next time.
+                                pendingCalendarMonth = null
+                                pendingYear = null
                             },
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
@@ -1322,11 +1370,21 @@ private fun GalleryBrowser(
                         GalleryViewModeSwitcher(
                             active = when {
                                 zoomLevel is GalleryZoomLevel.MapView -> GalleryViewMode.MAP
-                                zoomLevel is GalleryZoomLevel.Calendar -> GalleryViewMode.CALENDAR
+                                // Year and Decade have no button of their own on this switcher --
+                                // they are reached by pinch or by drilling in from Calendar, not
+                                // by a named quick-select -- so both read as "Cal" here, and
+                                // tapping Cal from either is a legitimate way back to it.
+                                zoomLevel is GalleryZoomLevel.Calendar ||
+                                    zoomLevel is GalleryZoomLevel.Year ||
+                                    zoomLevel is GalleryZoomLevel.Decade -> GalleryViewMode.CALENDAR
                                 timelineHeadersOn -> GalleryViewMode.TIMELINE
                                 else -> GalleryViewMode.GRID
                             },
                             onSelect = { mode ->
+                                // Same reasoning as the density pill just above: an explicit named
+                                // jump is a deliberate reset of any remembered drill-in position.
+                                pendingCalendarMonth = null
+                                pendingYear = null
                                 when (mode) {
                                     GalleryViewMode.GRID -> {
                                         zoomLevel = GalleryZoomLevel.Grid(state.preferences.gridColumns)
@@ -1481,6 +1539,7 @@ private fun GalleryMapZoomContent() {
     if (spatial != null) {
         PlacesScreen(
             assets = spatial.assets,
+            indexInput = spatial.indexInput,
             geoState = spatial.geoState,
             onIndexLocations = spatial.onIndexLocations,
             onOpenAsset = spatial.onOpenAsset,
@@ -1495,8 +1554,8 @@ private fun GalleryMapZoomContent() {
 
 /**
  * The four views the switcher below makes directly reachable. Deliberately NOT the same type as
- * [GalleryZoomLevel]: TIMELINE is a Grid rung drawn with date headers, not a fifth rung on the
- * ladder, and encoding it as a `GalleryZoomLevel` would mean either inventing a rung the pure
+ * [GalleryZoomLevel]: TIMELINE is a Grid rung drawn with date headers, not a rung of its own on
+ * the ladder, and encoding it as a `GalleryZoomLevel` would mean either inventing a rung the pure
  * ladder logic knows nothing about, or letting a pinch land on it by accident. Keeping it a
  * separate, UI-only enum is what lets `GalleryBrowser` derive it FROM `(zoomLevel,
  * timelineHeadersOn)` for display, while the two underlying pieces of state stay independently

@@ -23,7 +23,6 @@ import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.SettingsTab
 import com.fotoxplorr.app.gallery.SettingsTabsRoom
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.moments.MomentSource
 import com.fotoxplorr.app.moments.VideoMoment
 import com.fotoxplorr.app.ui.FotoXplorrTheme
@@ -31,6 +30,7 @@ import com.fotoxplorr.app.viewer.ImageExifDetails
 import com.fotoxplorr.app.viewer.KeyMomentBar
 import com.fotoxplorr.app.viewer.MomentScrubber
 import com.fotoxplorr.app.viewer.PhotoDetailRoom
+import com.fotoxplorr.core.model.MediaId
 import com.github.takahirom.roborazzi.captureRoboImage
 import org.junit.Rule
 import org.junit.Test

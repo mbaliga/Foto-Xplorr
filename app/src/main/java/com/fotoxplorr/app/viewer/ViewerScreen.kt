@@ -55,12 +55,16 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.adaptive.PINCH_STEP_THRESHOLD
+import com.fotoxplorr.app.gallery.ViewerPinchMode
 import com.fotoxplorr.app.lift.LiftOverlay
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import dev.aarso.cellshell.ParkStyle
+import dev.aarso.cellshell.RoomEdge
 import dev.aarso.cellshell.SpatialShell
 import dev.aarso.cellshell.rememberSpatialController
+import kotlin.math.ln
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlinx.coroutines.delay
@@ -110,6 +114,16 @@ fun ViewerScreen(
     keepScreenOn: Boolean = false,
     /** Whether the filmstrip appears along the bottom with the rest of the chrome. */
     showFilmstrip: Boolean = true,
+    /**
+     * What a pinch means on this screen. [ViewerPinchMode.OPTICAL_ZOOM] (the default, and this
+     * screen's original behaviour) zooms the photo, unchanged for anyone who never opens this
+     * setting. [ViewerPinchMode.PANEL_SHORTCUTS] repurposes the SAME gesture entirely: pinch-in
+     * opens [PhotoDetailRoom] (the bottom room), pinch-out opens [ViewerActionsRoom] (the right
+     * room), and neither also zooms -- see [ViewerPinchMode]'s own doc for why the two are
+     * mutually exclusive within one gesture.
+     */
+    pinchMode: ViewerPinchMode = ViewerPinchMode.OPTICAL_ZOOM,
+    onSetPinchMode: (ViewerPinchMode) -> Unit = {},
     /** A location the user placed by hand, for a photo whose file carries no GPS tag. */
     manualLatitude: Double? = null,
     manualLongitude: Double? = null,
@@ -269,6 +283,8 @@ fun ViewerScreen(
                 onSetSlideshowShuffle = onSetSlideshowShuffle,
                 onSetLoopAnimations = onSetLoopAnimations,
                 onSetAutoplayVideos = onSetAutoplayVideos,
+                pinchMode = pinchMode,
+                onSetPinchMode = onSetPinchMode,
             )
         },
         right = {
@@ -346,9 +362,14 @@ fun ViewerScreen(
                 // Arbitrating zoom, rotate, pan and page in a single loop is the only way to
                 // decide between them with the whole picture: pointer count and current scale
                 // both matter, and neither is visible to a detector that has already consumed.
-                .pointerInput(asset.id) {
+                // Keyed on pinchMode too, not just asset.id: this is a suspend coroutine that
+                // runs for as long as its key set is stable, so a mode flip mid-viewing has to
+                // restart it or the closure below would keep arbitrating gestures by whichever
+                // mode was in force when the viewer first opened.
+                .pointerInput(asset.id, pinchMode) {
                     detectViewerGestures(
                         scaleProvider = { scale },
+                        pinchMode = pinchMode,
                         onTransform = { zoomChange, panChange, rotationChange ->
                             val next = (scale * zoomChange).coerceIn(MIN_SCALE, MAX_SCALE)
                             rotation += rotationChange
@@ -363,6 +384,17 @@ fun ViewerScreen(
                         },
                         onPage = { forward ->
                             if (forward && hasNext) onNext() else if (!forward && hasPrevious) onPrevious()
+                        },
+                        // PANEL_SHORTCUTS only -- see ViewerPinchMode's own doc. Reuses the SAME
+                        // rooms the shell's own edge-drag gestures already open (ViewerSettingsRoom's
+                        // own "GESTURES" caption: "Drag up from the bottom edge for this photo's
+                        // details, in from the right for what you can do with it"), so this is a
+                        // second way IN to a surface that already exists, not a new one.
+                        onPinch = { direction ->
+                            when (direction) {
+                                PinchDirection.IN -> shell.open(RoomEdge.BOTTOM)
+                                PinchDirection.OUT -> shell.open(RoomEdge.RIGHT)
+                            }
                         },
                         onGestureEnd = {
                             // Free rotation while the fingers are down, squared up on release:
@@ -553,12 +585,16 @@ fun ViewerScreen(
 }
 
 /**
- * Zoom, rotate, pan and page, arbitrated in one pass.
+ * Zoom, rotate, pan and page, arbitrated in one pass -- or, whenever [pinchMode] is
+ * [ViewerPinchMode.PANEL_SHORTCUTS], a two-or-more-finger pinch's net direction instead of zoom,
+ * with rotate/pan/zoom left untouched by that gesture entirely. See [ViewerPinchMode]'s own doc
+ * for why the two are mutually exclusive rather than both firing off one pinch.
  *
  * Compose ships `detectTransformGestures`, but it cannot express this screen's rule: a
  * **one-finger** drag at rest pages to the next photo, while the same drag once zoomed pans the
- * image, and two fingers always transform. That decision needs the pointer count and the current
- * scale together, and any detector that consumes first has already thrown the choice away.
+ * image, and two fingers always transform (or, in PANEL_SHORTCUTS, are tracked for [onPinch]
+ * instead). That decision needs the pointer count and the current scale together, and any
+ * detector that consumes first has already thrown the choice away.
  *
  * Nothing is consumed until the gesture passes touch slop, which is what leaves single taps and
  * double taps to the tap detector layered beside this one.
@@ -567,11 +603,16 @@ fun ViewerScreen(
  *   very function is driving, and a captured copy would decide "is it zoomed?" using a value from
  *   before the pinch.
  * @param onPage forward = true means "next photo".
+ * @param onPinch PANEL_SHORTCUTS only -- called at most once per gesture, at its end, with the
+ *   pinch's net direction. Never called for OPTICAL_ZOOM, and never called at all for a pinch too
+ *   small to cross [resolvePinchDirection]'s own threshold.
  */
 private suspend fun PointerInputScope.detectViewerGestures(
     scaleProvider: () -> Float,
+    pinchMode: ViewerPinchMode,
     onTransform: (zoomChange: Float, panChange: Offset, rotationChange: Float) -> Unit,
     onPage: (forward: Boolean) -> Unit,
+    onPinch: (PinchDirection) -> Unit,
     onGestureEnd: () -> Unit,
 ) {
     awaitEachGesture {
@@ -581,6 +622,12 @@ private suspend fun PointerInputScope.detectViewerGestures(
         var pastSlop = false
         var maxPointers = 1
         var pagingTravel = 0f
+        // Accumulated ln(zoomChange) across every frame this gesture has had 2+ fingers down --
+        // PANEL_SHORTCUTS only, read once at the gesture's end via [resolvePinchDirection]. Log
+        // scale for the same reason [com.fotoxplorr.app.adaptive.ZoomLadder.step] uses it: sums
+        // exactly across many frames where multiplying the raw ratios would drift under float
+        // rounding.
+        var panelPinchLog = 0f
         val slop = viewConfiguration.touchSlop
 
         // requireUnconsumed = false, and the down is deliberately NOT consumed: the tap detector
@@ -589,7 +636,8 @@ private suspend fun PointerInputScope.detectViewerGestures(
         do {
             val event = awaitPointerEvent()
             if (event.changes.any { it.isConsumed }) break
-            maxPointers = maxOf(maxPointers, event.changes.count { it.pressed })
+            val pointersNow = event.changes.count { it.pressed }
+            maxPointers = maxOf(maxPointers, pointersNow)
 
             val zoomChange = event.calculateZoom()
             val rotationChange = event.calculateRotation()
@@ -609,12 +657,20 @@ private suspend fun PointerInputScope.detectViewerGestures(
 
             if (pastSlop) {
                 val zoomed = scaleProvider() > 1.001f
-                // One finger, not zoomed: this is a page turn, and the image must not move with
-                // it -- the photo slides only when there is something to slide within.
-                if (maxPointers == 1 && !zoomed) {
-                    pagingTravel += panChange.x
-                } else {
-                    onTransform(zoomChange, panChange, rotationChange)
+                when {
+                    // PANEL_SHORTCUTS + two or more fingers: track the pinch's net direction
+                    // ONLY -- onTransform is not called, so this gesture never also zooms, pans
+                    // or rotates the photo. Locked in by maxPointers, not the live count, so the
+                    // tail of the gesture (fingers lifting one at a time) still counts as the
+                    // same pinch it started as -- the same reason the page-vs-transform branch
+                    // below locks on maxPointers rather than the current frame's count.
+                    pinchMode == ViewerPinchMode.PANEL_SHORTCUTS && maxPointers >= 2 -> {
+                        if (pointersNow >= 2 && zoomChange > 0f) panelPinchLog += ln(zoomChange)
+                    }
+                    // One finger, not zoomed: this is a page turn, and the image must not move
+                    // with it -- the photo slides only when there is something to slide within.
+                    maxPointers == 1 && !zoomed -> pagingTravel += panChange.x
+                    else -> onTransform(zoomChange, panChange, rotationChange)
                 }
                 event.changes.forEach { if (it.positionChanged()) it.consume() }
             }
@@ -624,8 +680,37 @@ private suspend fun PointerInputScope.detectViewerGestures(
             // Drag left => the next photo comes in from the right.
             onPage(pagingTravel < 0f)
         }
+        if (pinchMode == ViewerPinchMode.PANEL_SHORTCUTS && maxPointers >= 2) {
+            resolvePinchDirection(panelPinchLog)?.let(onPinch)
+        }
         onGestureEnd()
     }
+}
+
+/** Which panel a [ViewerPinchMode.PANEL_SHORTCUTS] pinch opens. */
+internal enum class PinchDirection { IN, OUT }
+
+/**
+ * Resolves one whole PANEL_SHORTCUTS gesture's accumulated log-scale pinch into a direction, or
+ * null if it never crossed [threshold] either way -- pure, so this judgement call can be checked
+ * without a live gesture, the same split [com.fotoxplorr.app.adaptive.ZoomLadder.step] makes
+ * between its own pure arithmetic and the pointer-input code that feeds it.
+ *
+ * Reuses [PINCH_STEP_THRESHOLD] rather than inventing a second "how much pinch counts as
+ * deliberate, not twitchy" number for what is, underneath, the exact same judgement call the
+ * gallery's own zoom ladder already makes -- see that constant's own doc for the reasoning.
+ *
+ * Negative accumulated log (fingers moved together, net, across the gesture) is
+ * [PinchDirection.IN] -- the owner's own naming, and the plain-English one: pinching your fingers
+ * together IS "pinch in". Positive (fingers spread apart) is [PinchDirection.OUT].
+ */
+internal fun resolvePinchDirection(
+    accumulatedLogZoom: Float,
+    threshold: Float = PINCH_STEP_THRESHOLD,
+): PinchDirection? = when {
+    accumulatedLogZoom <= -threshold -> PinchDirection.IN
+    accumulatedLogZoom >= threshold -> PinchDirection.OUT
+    else -> null
 }
 
 /**
