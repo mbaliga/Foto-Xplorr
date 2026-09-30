@@ -129,3 +129,59 @@ Current phase: **Phase 1 — Foundation**. Branch: `claude/fotoz-p1-foundation`.
   manual pin present) pinned at the top and marked MUST PASS BEFORE MERGE. PR #14's own description
   was rewritten as the Phase 1 gate report, summarising every WP and pointing back to this file's
   entries above for the full reasoning behind each deferral. Phase 2 has not started.
+
+## Post-Phase-1 feature work (30 Sep 2026)
+
+Two owner-requested features, outside the WP numbering above (neither is on `MASTER-PLAN.md`) --
+logged here rather than left unrecorded, in the same "what was built / what deviated and why"
+shape the WP entries above use.
+
+- **Configurable pinch gesture, part (a): `Year` and `Decade` rungs on the gallery zoom ladder.**
+  `GalleryZoomLadder.kt`'s ladder already climbed `Grid(columns) -> Calendar -> MapView`
+  (owner: *"zoom out past the sparsest grid and you reach Calendar; further out, Map"*). The
+  owner's fuller ask named four temporal levels -- Decade, Year, Month, Day -- but `CalendarScreen`
+  turned out to already BE the Month/Day pair fused into one screen (a month's days, with
+  prev/next-month arrows for "which month"), confirmed by reading it rather than assumed from the
+  brief's own guess. So only `Year` (a grid of 12 months) and `Decade` (a grid of 10 years) were
+  missing, and both are now inserted between `Calendar` and `MapView` -- `Map` stays the outermost,
+  unchanged rung on purpose, since it is a geographic axis with nothing to do with the owner's
+  purely temporal ask. New rung order, dense to sparse: `Grid(min..max) -> Calendar -> Year ->
+  Decade -> MapView`. `YearScreen`/`DecadeScreen` (new, in `CalendarScreen.kt` alongside the
+  screen they extend) reuse `groupByMonth` as their one data source rather than a second bucketing
+  pass, and mirror Calendar's own shape exactly: a paged heading (`NavArrow`s over years/decades
+  that actually have photos) and a stamp-framed grid of cells. Tapping a month in Year opens
+  Calendar AT that month (`CalendarScreen` gained an `initialMonth: YearMonth? = null` parameter
+  for this, defaulting to the old "always the latest month" behaviour for every other caller);
+  tapping a year in Decade opens Year at that year, the same way. `GalleryZoomLadderTest` extended
+  in place (not duplicated) for the two new rungs' arithmetic; `GalleryScreen.kt`'s `gridActive`
+  flag and the view-mode switcher's active-state mapping both updated to treat Year/Decade as
+  non-grid (Year/Decade fold into the switcher's "Cal" button, since neither has a quick-select
+  button of its own -- they are reached by pinch or by drilling in, not by a named jump).
+
+- **Configurable pinch gesture, part (b): `ViewerPinchMode` in the single-photo viewer.** A new
+  `GalleryPreferencesState.viewerPinchMode` (`OPTICAL_ZOOM` default / `PANEL_SHORTCUTS`), persisted
+  the same way `accentPalette`/`themeMode` are. `OPTICAL_ZOOM` is `ViewerScreen`'s original pinch
+  behaviour, byte-for-byte unchanged. `PANEL_SHORTCUTS` repurposes a two-or-more-finger pinch
+  entirely: pinch-in (fingers moving together -- the plain-English reading of "pinch in", and the
+  owner's own naming) opens the bottom room (`PhotoDetailRoom`, "this photo's details/info"),
+  pinch-out opens the right room (`ViewerActionsRoom`, "what you can do with it" -- which already
+  carries Edit among its nine actions, so this reuses the existing "edit/actions panel" the brief
+  asked to find rather than inventing a second one). Both rooms are the SAME ones the shell's own
+  edge-drag gestures already open (`ViewerSettingsRoom`'s own "GESTURES" caption already documented
+  "drag up... for details, in from the right for what you can do with it") -- pinch is a second way
+  in, not a new surface. In `PANEL_SHORTCUTS`, `onTransform` is never called for a 2+-finger
+  gesture, so pinch cannot also zoom, rotate or pan in that mode; a one-finger drag/page and
+  double-tap-to-zoom are untouched by this setting either way (the brief's mutual-exclusivity ask
+  was about the PINCH gesture specifically). `detectViewerGestures`' own pinch-direction judgement
+  (`resolvePinchDirection`) is factored out pure and unit-tested (`PinchDirectionTest`), mirroring
+  how `ZoomLadder.step` is pure and separately tested from the pointer-input loop that feeds it --
+  and it reuses `PINCH_STEP_THRESHOLD` from the gallery's own ladder rather than inventing a second
+  "how much pinch counts as deliberate" number for the same judgement call. The live dispatch
+  itself (the `pointerInput` wiring in `ViewerScreen.kt`) is exercised by code review and the
+  targeted unit test above, not by a synthetic-touch Compose test -- this codebase's existing
+  gesture code (`detectViewerGestures`'s own predecessor, `snapRotation` aside) has no such test
+  today either, and this task did not introduce a new testing pattern to cover only its own
+  addition. New setting surfaced in `ViewerSettingsRoom.kt`'s own "GESTURES" section (a
+  `RoomRow`/`RoomToggle`, matching that room's existing controls) rather than the gallery's
+  `SettingsTabs.kt`: it changes what happens on the screen you are ALREADY on while looking at a
+  photo, which is exactly that room's own stated scope.

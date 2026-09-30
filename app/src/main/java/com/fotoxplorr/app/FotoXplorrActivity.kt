@@ -1088,6 +1088,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             loopAnimations = preferences.loopAnimations,
             animated = activeAsset.id in animatedIds,
             autoplayVideos = preferences.autoplayVideos,
+            pinchMode = preferences.viewerPinchMode,
             onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
             onSetBlurSensitive = galleryPreferences::setBlurSensitive,
             onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
@@ -1095,6 +1096,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             onSetSlideshowShuffle = galleryPreferences::setSlideshowShuffle,
             onSetLoopAnimations = galleryPreferences::setLoopAnimations,
             onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
+            onSetPinchMode = galleryPreferences::setViewerPinchMode,
             relatedAssets = viewerAssets,
             onSelectAsset = { picked ->
                 if (viewerAssets.any { it.id == picked.id }) {

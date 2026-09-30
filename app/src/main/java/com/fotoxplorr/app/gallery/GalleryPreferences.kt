@@ -33,6 +33,23 @@ enum class AccentPalette {
     MONOCHROME,
 }
 
+/**
+ * The two things a pinch inside the single-photo viewer can mean -- see `ViewerScreen.kt`'s own
+ * gesture arbiter for how each is actually dispatched.
+ *
+ * [OPTICAL_ZOOM] is the default and the viewer's original behaviour, unchanged for anyone who
+ * never touches this setting: pinch zooms the photo, exactly as it always has.
+ *
+ * [PANEL_SHORTCUTS] is the owner's alternate ask (*"pinch in (details/info) and pinch out
+ * (edit/actions)"*): pinch-in opens the photo's details room, pinch-out opens its actions room,
+ * and neither also moves the photo -- the two meanings are mutually exclusive within one gesture,
+ * which is the entire point of making this selectable rather than additive.
+ */
+enum class ViewerPinchMode {
+    OPTICAL_ZOOM,
+    PANEL_SHORTCUTS,
+}
+
 data class GalleryPreferencesState(
     val sort: GallerySort = GallerySort.NEWEST,
     val gridColumns: Int = DEFAULT_GRID_COLUMNS,
@@ -110,6 +127,9 @@ data class GalleryPreferencesState(
     val shareFrame: String = "NONE",
     /** The user's postmark, drawn on stamp-framed shares. */
     val shareSeal: String = "",
+    /** Which pinch-in-the-viewer meaning is active. See [ViewerPinchMode]'s own doc. Defaults to
+     *  the viewer's original behaviour so nobody who never opens this setting sees any change. */
+    val viewerPinchMode: ViewerPinchMode = ViewerPinchMode.OPTICAL_ZOOM,
 )
 
 class GalleryPreferences(context: Context) {
@@ -210,6 +230,10 @@ class GalleryPreferences(context: Context) {
         update(state.value.copy(shareSeal = trimmed)) { putString(KEY_SHARE_SEAL, trimmed) }
     }
 
+    fun setViewerPinchMode(mode: ViewerPinchMode) = update(
+        state.value.copy(viewerPinchMode = mode),
+    ) { putString(KEY_VIEWER_PINCH_MODE, mode.name) }
+
     fun setSlideshowInterval(seconds: Int) {
         val safeSeconds = seconds.coerceIn(MIN_SLIDESHOW_INTERVAL_SECONDS, MAX_SLIDESHOW_INTERVAL_SECONDS)
         update(state.value.copy(slideshowIntervalSeconds = safeSeconds)) {
@@ -257,6 +281,7 @@ class GalleryPreferences(context: Context) {
         shareWatermark = preferences.getBoolean(KEY_SHARE_WATERMARK, false),
         shareFrame = preferences.getString(KEY_SHARE_FRAME, null) ?: "NONE",
         shareSeal = preferences.getString(KEY_SHARE_SEAL, null).orEmpty(),
+        viewerPinchMode = enumValue(KEY_VIEWER_PINCH_MODE, ViewerPinchMode.OPTICAL_ZOOM),
     )
 
     private inline fun <reified T : Enum<T>> enumValue(key: String, fallback: T): T =
@@ -289,6 +314,7 @@ class GalleryPreferences(context: Context) {
         const val KEY_SHARE_WATERMARK = "share_watermark"
         const val KEY_SHARE_FRAME = "share_frame"
         const val KEY_SHARE_SEAL = "share_seal"
+        const val KEY_VIEWER_PINCH_MODE = "viewer_pinch_mode"
         const val MAX_SEAL_CHARS = 12
     }
 }
