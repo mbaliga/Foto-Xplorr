@@ -41,6 +41,18 @@ include(":core:organize")
 include(":core:db")
 include(":core:index")
 
+// WP8.1 (MASTER-PLAN.md Phase 8 / ADR-013 point 2): the Kotlin/Native C API over the core,
+// `libfotozcore.so`. Started ahead of ADR-013/WP8.1's own stated precondition ("P7 released") at
+// the owner's explicit request -- see docs/handoff/MASTER-PROGRESS.md's WP8.1 Decisions. Unlike
+// every `:core:*` module above, this one has NO non-native target at all (it exists purely to be
+// compiled by Kotlin/Native), so -- matching `:benchmarks`' own conditional-include pattern just
+// above, not the `:core:*` modules' unconditional one -- its Gradle PROJECT INCLUSION itself must
+// be gated behind `-Pfotoz.native=true`, or Kotlin's multiplatform plugin fails immediately with
+// "Please initialize at least one Kotlin target" on a plain sync/build.
+if (providers.gradleProperty("fotoz.native").isPresent) {
+    include(":ut:bridge")
+}
+
 // Hyle Design System (dev.aarso:hyle / dev.aarso:crash-recovery), pulled in via the
 // constellation's one sanctioned sharing mechanism (D-A): git submodule + Gradle
 // includeBuild dependency substitution. No vendored Hyle source, no registry publish.

@@ -43,8 +43,14 @@ object MetadataStripper {
      * forward (JPEG's next-marker scan) past what a single streaming pass could hold, and the
      * images this pipeline handles (camera photos, not multi-gigabyte RAW masters) are small
      * enough that this is not a meaningful memory concern.
+     *
+     * Not internal, not private, same reasoning WP1.2 already recorded for [isJpeg]/[isPng]/
+     * [isWebp] just below: `internal` is module-scoped, and this function's real callers now
+     * include `:ut:bridge` (WP8.1's `fotoz_set_metadata`), a different Gradle module -- there is
+     * no JVM-style platform wrapper for Kotlin/Native to call through instead, since [strip]
+     * itself is jvmMain-only. Widened rather than duplicated.
      */
-    internal fun stripBytes(bytes: ByteArray, output: ByteSink): StripResult = when {
+    fun stripBytes(bytes: ByteArray, output: ByteSink): StripResult = when {
         isJpeg(bytes) -> stripJpeg(bytes, output)
         isPng(bytes) -> stripPng(bytes, output)
         isWebp(bytes) -> stripWebp(bytes, output)

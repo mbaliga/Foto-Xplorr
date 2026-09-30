@@ -31,6 +31,8 @@ okio = "3.9.1"
 
 [libraries]
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+# WP8.1: first real consumer -- :ut:bridge's C API request/response envelopes. Was catalog-only
+# since WP1.1 ("no module depends on it yet").
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
 kotlinx-datetime = { group = "org.jetbrains.kotlinx", name = "kotlinx-datetime", version.ref = "datetime" }
 

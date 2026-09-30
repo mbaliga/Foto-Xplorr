@@ -24,6 +24,10 @@ NATIVE_TASKS=(
   :core:organize:linuxX64Test :core:organize:compileKotlinLinuxArm64
   :core:db:linuxX64Test :core:db:compileKotlinLinuxArm64
   :core:index:linuxX64Test :core:index:compileKotlinLinuxArm64
+  # WP8.1: the Kotlin/Native C API over the core, libfotozcore.so (MASTER-PLAN.md Phase 8 /
+  # ADR-013 point 2). Same Tier-2 shape as every module above: linuxX64Test really links and
+  # runs; linuxArm64 only compiles.
+  :ut:bridge:linuxX64Test :ut:bridge:compileKotlinLinuxArm64
 )
 
 ./gradlew --no-daemon -Pfotoz.native=true "${NATIVE_TASKS[@]}"
