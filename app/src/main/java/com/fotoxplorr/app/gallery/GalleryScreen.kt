@@ -251,6 +251,10 @@ data class GalleryActions(
     val onSetTimelineGrouping: (TimelineGrouping) -> Unit,
     val onSetThemeMode: (ThemeMode) -> Unit,
     val onSetAccentPalette: (AccentPalette) -> Unit,
+    /** Applies validated custom theme JSON -- see `ThemeJson.kt` and `SettingsTabs.kt`'s
+     *  "Custom…" flow, whose confirm dialog is what actually validates it before this is ever
+     *  called. */
+    val onSetCustomTheme: (String) -> Unit,
     val onSetSlideshowInterval: (Int) -> Unit,
     val onSetDefaultDestination: (HyleDestination) -> Unit,
     val onSetKeepScreenOn: (Boolean) -> Unit,

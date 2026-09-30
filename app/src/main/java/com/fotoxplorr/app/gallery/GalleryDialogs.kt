@@ -2,6 +2,7 @@
 
 package com.fotoxplorr.app.gallery
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,6 +12,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Remove
@@ -32,11 +36,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.fileops.BulkRenameOutcome
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.organize.MediaCollection
+import com.fotoxplorr.app.ui.ThemeJsonResult
+import com.fotoxplorr.app.ui.parseThemeJson
 import com.fotoxplorr.core.organize.RenamePattern
 import com.fotoxplorr.core.organize.RenameSubject
 import kotlinx.coroutines.launch
@@ -288,6 +296,119 @@ fun BulkRenameDialog(
 
 /** How many expanded names [BulkRenameDialog] shows before collapsing the rest into "… and N more". */
 private const val PREVIEW_COUNT = 6
+
+/** [CustomThemeJsonDialog]'s text input, tagged for tests -- see that composable's own doc. */
+internal const val CUSTOM_THEME_JSON_INPUT_TAG = "customThemeJsonInput"
+
+/** [CustomThemeJsonDialog]'s read-only preview text, tagged for tests. */
+internal const val CUSTOM_THEME_JSON_PREVIEW_TAG = "customThemeJsonPreview"
+
+private enum class CustomThemeStage { EDIT, PREVIEW }
+
+/**
+ * The owner's mandatory JSON preview, applied to a custom theme: paste or import a theme file's
+ * text, and see EXACTLY that text back -- plain, read-only, monospace -- before anything is
+ * applied. *"User should be able to preview the JSON's content as plain text so they are never
+ * caught unawares."*
+ *
+ * Two stages, never skipped: [CustomThemeStage.EDIT] is the paste/import step, which validates
+ * through [parseThemeJson] on "Continue" and shows a specific inline error rather than proceeding
+ * on malformed input (never a crash, never a partial application -- see that function's own
+ * doc). [CustomThemeStage.PREVIEW] is the mandatory preview itself: the raw text, unmodified, in
+ * a plain [Text] (inherently read-only -- unlike [OutlinedTextField], there is no way to type
+ * into it) set in [FontFamily.Monospace] so it reads as a source file rather than as prose. Only
+ * that stage's own "Apply" button calls [onApply]; "Cancel" on either stage calls [onDismiss]
+ * with nothing applied.
+ */
+@Composable
+fun CustomThemeJsonDialog(
+    initialJson: String,
+    onDismiss: () -> Unit,
+    onApply: (String) -> Unit,
+) {
+    var stage by remember { mutableStateOf(CustomThemeStage.EDIT) }
+    var text by remember { mutableStateOf(initialJson) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    when (stage) {
+        CustomThemeStage.EDIT -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Custom theme JSON") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "Paste a theme file's JSON below. You'll see exactly this text again, " +
+                            "as a plain preview, before it is applied.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it; error = null },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 180.dp)
+                            .testTag(CUSTOM_THEME_JSON_INPUT_TAG),
+                        label = { Text("Theme JSON") },
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    )
+                    error?.let { message ->
+                        Text(
+                            message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        when (val result = parseThemeJson(text)) {
+                            is ThemeJsonResult.Valid -> {
+                                error = null
+                                stage = CustomThemeStage.PREVIEW
+                            }
+                            is ThemeJsonResult.Invalid -> error = result.reason
+                        }
+                    },
+                ) { Text("Continue") }
+            },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        )
+        CustomThemeStage.PREVIEW -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Apply this theme?") },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                    Text(
+                        "This is exactly the text that will be saved -- review it before applying.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    SelectionContainer(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp)
+                            .verticalScroll(rememberScrollState())
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(10.dp),
+                    ) {
+                        Text(
+                            text = text,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            modifier = Modifier.testTag(CUSTOM_THEME_JSON_PREVIEW_TAG),
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { onApply(text) }) { Text("Apply") } },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        )
+    }
+}
 
 /**
  * Shown while `MediaFileOperations.renameBatch` is actually running.

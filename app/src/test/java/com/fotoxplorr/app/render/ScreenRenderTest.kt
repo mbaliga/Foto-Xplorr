@@ -380,6 +380,7 @@ internal fun noOpActions() = com.fotoxplorr.app.gallery.GalleryActions(
         onSetTimelineGrouping = { _ -> Unit },
         onSetThemeMode = { _ -> Unit },
         onSetAccentPalette = { _ -> Unit },
+        onSetCustomTheme = { _ -> Unit },
         onSetSlideshowInterval = { _ -> Unit },
         onSetDefaultDestination = { _ -> Unit },
         onSetKeepScreenOn = { _ -> Unit },

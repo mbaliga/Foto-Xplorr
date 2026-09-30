@@ -185,3 +185,47 @@ shape the WP entries above use.
   `RoomRow`/`RoomToggle`, matching that room's existing controls) rather than the gallery's
   `SettingsTabs.kt`: it changes what happens on the screen you are ALREADY on while looking at a
   photo, which is exactly that room's own stated scope.
+
+- **JSON-based theming, with a mandatory plain-text preview.** New `ThemeJson.kt`: a schema
+  (`{"version":1,"name":...,"colors":{"light":{...8 keys...},"dark":{...8 keys...}}}`, the eight
+  keys being exactly `FotoXplorrTheme`'s own `ColorScheme` slots --
+  primary/secondary/tertiary/background/surface/surfaceVariant/onBackground/onSurface), strict
+  `#RRGGBB`/`#AARRGGBB` validation with a specific reason for every rejection
+  (`ThemeJsonResult.Invalid`, never a thrown exception), and a pure parse/build pipeline
+  (`parseThemeJson` -> `ThemeSpec` -> `ThemeColorSet.toColorScheme`) that both the five bundled
+  presets and a pasted custom theme now go through identically. This schema is deliberately
+  IDENTICAL to the one a sibling agent built for Fylz from the same brief, so a person using both
+  apps sees one consistent idea of "a theme file" -- no divergence taken.
+  - **The five existing `AccentPalette` presets converted from alpha-derived to concrete hex.**
+    `FotoXplorrTheme.kt` used to compute `secondary`/`tertiary` as `accent.copy(alpha =
+    0.84f/0.68f)` (dark) or `0.88f/0.72f` (light) -- alpha values the new hex-only schema cannot
+    express. Each preset's `secondary`/`tertiary` is now the ORIGINAL accent alpha-blended over
+    that mode's own `background` colour, computed once (`primary` and the four other shared
+    neutrals were already solid colours and are unchanged) -- e.g. VIOLET dark `secondary` was
+    `#CBB4FF` at 84% opacity over `#0D0D10`, now the concrete `#AD99D9`. Recognisably the same
+    palette, not a pixel-identical one, per the brief's own bar.
+  - **`AccentPalette` gained a sixth value, `CUSTOM`**, rather than introducing a parallel
+    "theme source" enum: it is the same "which palette is active" question `AccentPalette` has
+    always answered, persisted the exact same way (`GalleryPreferences.setAccentPalette`), and
+    `GalleryPreferencesState.customThemeJson` carries the pasted JSON alongside it. Switching to a
+    built-in clears `customThemeJson`; `setCustomTheme` is the one path INTO `CUSTOM`, so the two
+    fields cannot drift into "CUSTOM selected, but stale JSON from an earlier palette".
+    `resolveThemeSpec` falls back to VIOLET if `CUSTOM` is ever selected with empty/unparsable
+    JSON (should not happen -- the settings dialog validates before anything is ever saved -- but
+    `FotoXplorrTheme` itself never crashes on it regardless).
+  - **The mandatory preview**: `SettingsTabs.kt`'s "Accent" row gained a "Custom…" chip
+    (`ThemePaletteRow`) opening `CustomThemeJsonDialog` (`GalleryDialogs.kt`), two stages that are
+    never skipped -- paste/import (validates through `parseThemeJson` on "Continue", a specific
+    inline error on malformed input, never proceeding on one) and then the mandatory preview
+    itself: the pasted text, byte-for-byte, in a plain read-only `Text` (not a swatch, not a
+    re-serialised copy) set in `FontFamily.Monospace`. Only that stage's own "Apply" persists it;
+    "Cancel" on either stage persists nothing. `CustomThemeJsonDialogTest` proves the preview
+    shows the EXACT pasted text (deliberately odd whitespace, to catch any accidental
+    re-serialisation) via a real Compose interaction test (`performTextInput`/`performClick`),
+    not just a unit test of the underlying string.
+  - **Not built: a SAF/file-picker "import".** The brief said "paste/import JSON"; a plain
+    multi-line text field already supports paste (and copy back out, via `SelectionContainer` on
+    the preview) with no extra code, and a real document-picker importer is meaningfully more
+    surface (permissions, MIME filtering, a second way for a malformed file to reach the parser)
+    for a want the brief did not spell out as its own requirement. If a real file-based import is
+    wanted later, it plugs into the exact same `parseThemeJson`/preview pipeline unchanged.

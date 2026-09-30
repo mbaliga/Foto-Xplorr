@@ -1158,6 +1158,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onSetTimelineGrouping = galleryPreferences::setTimelineGrouping,
                 onSetThemeMode = galleryPreferences::setThemeMode,
                 onSetAccentPalette = galleryPreferences::setAccentPalette,
+                onSetCustomTheme = galleryPreferences::setCustomTheme,
                 onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
                 onSetDefaultDestination = galleryPreferences::setDefaultDestination,
                 onSetKeepScreenOn = galleryPreferences::setKeepScreenOn,
