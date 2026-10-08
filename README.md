@@ -1,6 +1,6 @@
 # Foto Xplorr
 
-Foto Xplorr is a local-first, open-source Android gallery for fast everyday browsing, private organisation, reversible file operations and spatial exploration of a personal media library.
+Foto Xplorr is a local-first, source-available Android gallery for fast everyday browsing, private organisation, reversible file operations and spatial exploration of a personal media library.
 
 ## V2 Android experience
 
@@ -111,6 +111,6 @@ The exact v2 acceptance boundary is documented in [`docs/v2-acceptance.md`](docs
 
 Encrypted media-vault storage, face recognition, local or remote AI inference, downloaded offline map packs, user-supplied terrain datasets and a true interactive 3D scene engine require separate security, performance and licensing work. They are not represented as completed v2 features.
 
-## License
+## Licence
 
-Licensed under the Apache License 2.0. See `LICENSE` and `NOTICE` where present for project and third-party attribution details.
+Source-available, free for noncommercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE). If you make money with it, you need a commercial licence: see [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
