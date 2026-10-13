@@ -137,15 +137,36 @@ object DetailFormatting {
     }
 
     /**
-     * The dynamic-range badge on the mockup's EXIF card (P0-16). "ULTRA HDR" when the photo's
-     * XMP actually declares the gain-map namespace ([com.fotoxplorr.core.metadata.XmpPacket.HDR_GAIN_MAP_NS])
-     * a real Ultra
-     * HDR file carries -- a genuine positive answer, not a container-type guess. Null otherwise,
-     * so the row shows "--" the same way every other unanswered row on this card already does,
-     * rather than a confident-sounding "STANDARD"/"HDR CAPABLE" this app cannot actually verify
-     * (a HEIF or AVIF file is merely a container THAT CAN carry a gain map, not proof it does).
+     * The dynamic-range chip on the camera card (P0-16). "ULTRA HDR" when the photo's XMP actually
+     * declares the gain-map namespace ([com.fotoxplorr.core.metadata.XmpPacket.HDR_GAIN_MAP_NS]) a
+     * real Ultra HDR file carries -- a genuine positive answer, not a container-type guess.
+     *
+     * "STANDARD" (the owner's reference chip) is claimed only where it is a genuine NEGATIVE: a
+     * JPEG with no gain-map namespace. Ultra HDR is the one way a JPEG carries HDR, so its absence
+     * there is checkable. For any other container the answer is null and the chip is simply not
+     * drawn: a HEIF or AVIF file can carry HDR through a PQ/HLG transfer or an Apple-style
+     * auxiliary gain map that this check cannot see, and "STANDARD" on an iPhone HDR HEIC -- the
+     * very file the reference shows -- would be a confident falsehood.
      */
-    fun dynamicRangeBadge(hasHdrGainMap: Boolean): String? = if (hasHdrGainMap) "ULTRA HDR" else null
+    fun dynamicRangeBadge(hasHdrGainMap: Boolean, mimeType: String = ""): String? = when {
+        hasHdrGainMap -> "ULTRA HDR"
+        mimeType.substringAfter('/', "").lowercase().trim() in setOf("jpeg", "jpg") -> "STANDARD"
+        else -> null
+    }
+
+    /**
+     * "0 ev" / "-0.3 ev" / "+1 ev": the exposure strip's bias cell. Whole stops print as integers,
+     * fractional ones to a tenth, and anything but zero carries its sign, because "0.7 ev" without
+     * one would read as either direction.
+     */
+    fun exposureBiasText(ev: Double): String {
+        if (ev.isNaN() || ev.isInfinite()) return "—"
+        val tenths = (ev * 10).roundToInt()
+        if (tenths == 0) return "0 ev"
+        val sign = if (tenths > 0) "+" else "-"
+        val magnitude = kotlin.math.abs(tenths)
+        return if (magnitude % 10 == 0) "$sign${magnitude / 10} ev" else "$sign${magnitude / 10}.${magnitude % 10} ev"
+    }
 
     /** Whether the flash glyph on the EXIF card should be lit. EXIF flash bit 0 = fired. */
     fun flashFired(exifFlash: Int?): Boolean = exifFlash != null && (exifFlash and 0x1) == 1

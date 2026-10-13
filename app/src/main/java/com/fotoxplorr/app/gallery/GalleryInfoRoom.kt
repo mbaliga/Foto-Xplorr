@@ -28,10 +28,11 @@ import java.util.Calendar
 /**
  * The gallery's BOTTOM room: what the view you are looking at actually *is*.
  *
- * Exactly where the viewer puts one photo's EXIF, because the model is the edge, not the content
+ * Where the viewer USED to put one photo's EXIF, because the model is the edge, not the content
  * (owner, 2026-08-18: *"the info would be different as well as actions, but the model needs to
- * remain the same"*). Drag up from an open photo and you get that photo's facts; drag up from a
- * grid and you get the grid's.
+ * remain the same"*). The viewer has since deviated on the owner's own later direction: an open
+ * photo's facts are its pull-DOWN room (see `ViewerScreen`), while a grid's facts stay here, below.
+ * The gallery's geography is unchanged.
  *
  * The numbers are counted from the assets actually on screen rather than from the whole library,
  * so the room describes the destination, album or search result you are in — a "Videos" that said
