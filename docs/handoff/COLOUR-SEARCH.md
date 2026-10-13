@@ -9,8 +9,7 @@ nothing when tapped. There was no way to search by colour.
 
 **After:** every recognised photo's palette is stored alongside its faces/labels/text; `colour:`
 is a search field (hex or a colour word, perceptual matching); and `PaletteSwatchRow` is a drop-in
-tappable version of the bar whose tap opens `colour:#rrggbb`. The viewer wiring is left for the
-orchestrator (the viewer is being restructured in parallel) -- the exact snippet is in §6.
+tappable version of the bar whose tap opens `colour:#rrggbb`. The viewer wiring landed in the same push, after the three branches merged (`PhotoDetailRoom.palette`, `ViewerScreen.palette`/`dotColors`, `RecognitionIndex.dominantColoursByMedia`).
 
 Branch: `claude/fotoz-p1-foundation` worktree, on top of `53f7939`. No new Gradle dependency, so
 `docs/DEPENDENCIES.md` is unchanged; no ADR, because nothing here changes a module boundary or a
@@ -192,7 +191,7 @@ allocation, no `sqrt`, no `pow`.
   reports the segment's own ARGB; a 1% sliver is still tappable; hex labels present; empty list
   renders nothing and does not crash.
 
-## 6. Wiring into the viewer (for the orchestrator, after the merge)
+## 6. Wiring into the viewer (done after the merge, as below; kept as the record of how)
 
 Read before writing this: `FotoXplorrActivity` already owns the plumbing a swatch tap needs.
 `onSearchLibrary = { text -> pendingSearch = text; selectedAssetId = null; setViewerAssets(emptyList()); slideshowActive = false }`

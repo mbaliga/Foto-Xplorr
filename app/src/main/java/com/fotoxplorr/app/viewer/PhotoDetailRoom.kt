@@ -77,9 +77,11 @@ import com.fotoxplorr.app.metadata.xmpAttributeUtf8
 import com.fotoxplorr.app.palette.PaletteExtractor
 import com.fotoxplorr.app.palette.PaletteMemo
 import com.fotoxplorr.app.palette.PaletteSwatch
+import com.fotoxplorr.app.palette.PaletteSwatchRow
 import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomStyle
+import com.fotoxplorr.core.search.ColourSearch
 import com.fotoxplorr.core.metadata.XmpPacket
 import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.Dispatchers
@@ -178,6 +180,13 @@ fun PhotoDetailRoom(
     onClearLocation: (() -> Unit)? = null,
     recognizedText: String = "",
     onSearchLibrary: ((String) -> Unit)? = null,
+    /**
+     * This photo's stored palette, off the recognition index (`RecognitionIndex.paletteFor`).
+     * Empty for a photo the indexer has not sampled yet, in which case the row decodes it once
+     * itself -- see [PaletteRow]. Each swatch is a button that searches the library for that
+     * colour through [onSearchLibrary].
+     */
+    palette: List<PaletteSwatch> = emptyList(),
     /** Every tag on this photo, whoever or whatever put it there. */
     tags: Set<String> = emptySet(),
     /** The subset of [tags] the auto-tagger applied. Drawn differently, never separately. */
@@ -272,6 +281,8 @@ fun PhotoDetailRoom(
             manualLongitude = manualLongitude,
             reveal = reveal,
             initiallyExpanded = informationInitiallyExpanded,
+            palette = palette,
+            onSearchLibrary = onSearchLibrary,
         )
         TagsBlock(
             photoId = asset.id,
@@ -1157,6 +1168,9 @@ private fun InformationBlock(
     manualLongitude: Double?,
     reveal: () -> Float,
     initiallyExpanded: Boolean,
+    /** The stored palette and the search a swatch tap opens -- see [PaletteRow]. */
+    palette: List<PaletteSwatch>,
+    onSearchLibrary: ((String) -> Unit)?,
 ) {
     var expanded by remember(asset.id) { mutableStateOf(initiallyExpanded) }
     Column(
@@ -1205,7 +1219,7 @@ private fun InformationBlock(
             )
             // Not a video: MediaImage never decodes a video's frames here, and readImagePalette
             // returns nothing for one anyway — so the row is only worth adding for a still photo.
-            if (!asset.isVideo) PaletteRow(asset)
+            if (!asset.isVideo) PaletteRow(asset = asset, indexed = palette, onSearchLibrary = onSearchLibrary)
         }
     }
 }
@@ -1255,20 +1269,26 @@ private fun InformationRow(label: String, value: String?) {
 
 /**
  * The colour palette, as one more row of Information: a segmented bar, each colour's width its own
- * share of the photo, hex values under it.
+ * share of the photo, hex values under it -- and every segment a button that searches the library
+ * for that colour (`colour:#rrggbb`, through the same [onSearchLibrary] the Search pill uses).
  *
- * Loads asynchronously and starts as the dash every other absent row uses: unlike every other row,
- * which is read straight off [ImageExifDetails], a palette needs the actual pixels decoded first,
- * which [readImagePalette] does off the main thread -- once per photo per process, because the
- * result is memoised in [PaletteMemo] (and that memo is what lets the expanded map colour this
- * photo's dot without decoding anything).
+ * Three sources, in order. The recognition index first ([indexed], sampled by the indexer at the
+ * same 100 px as the decode below, so the two never disagree); then [PaletteMemo], what this
+ * process already decoded; and only for a photo the indexer has not reached yet, one decode of
+ * its own off the main thread via [readImagePalette]. Whatever is shown also goes into the memo,
+ * so the expanded map can colour this photo's dot without decoding anything. Until something is
+ * known the row shows the dash every other absent row uses.
  */
 @Composable
-private fun PaletteRow(asset: MediaAsset) {
+private fun PaletteRow(asset: MediaAsset, indexed: List<PaletteSwatch>, onSearchLibrary: ((String) -> Unit)?) {
     val context = LocalContext.current
-    var swatches by remember(asset.id) { mutableStateOf(PaletteMemo.get(asset.id).orEmpty()) }
-    LaunchedEffect(asset.id, asset.contentUriString) {
-        if (swatches.isEmpty()) {
+    var swatches by remember(asset.id, indexed) {
+        mutableStateOf(indexed.ifEmpty { PaletteMemo.get(asset.id).orEmpty() })
+    }
+    LaunchedEffect(asset.id, asset.contentUriString, indexed) {
+        if (indexed.isNotEmpty()) {
+            PaletteMemo.put(asset.id, indexed)
+        } else if (swatches.isEmpty()) {
             val read = readImagePalette(context, asset)
             PaletteMemo.put(asset.id, read)
             swatches = read
@@ -1278,57 +1298,42 @@ private fun PaletteRow(asset: MediaAsset) {
     Column(Modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth().height(HAIRLINE_HEIGHT).background(HAIRLINE))
         Row(
-            modifier = Modifier.fillMaxWidth().height(ROW_HEIGHT),
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(
-                text = "Palette",
-                color = ROW_LABEL,
-                style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp),
-            )
-            if (swatches.isEmpty()) {
+            // The label sits in the same band every other row's label does; the strip is centred
+            // on that band and its hex line hangs below it.
+            Box(Modifier.height(ROW_HEIGHT), contentAlignment = Alignment.CenterStart) {
                 Text(
-                    text = CameraCardFacts.DASH,
+                    text = "Palette",
                     color = ROW_LABEL,
-                    style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp, fontWeight = FontWeight.Medium),
-                    textAlign = TextAlign.End,
-                    modifier = Modifier.weight(1f),
+                    style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp),
                 )
-            } else {
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(12.dp)
-                        .clip(RoundedCornerShape(4.dp)),
-                ) {
-                    swatches.forEach { swatch ->
-                        Box(
-                            modifier = Modifier
-                                // Row.weight requires a positive value; the quantiser only ever
-                                // emits a proportion above zero, but the floor guards this draw
-                                // call against that invariant ever being loosened upstream.
-                                .weight(swatch.proportion.coerceAtLeast(MIN_SEGMENT_WEIGHT))
-                                .fillMaxHeight()
-                                .background(Color(swatch.argb)),
-                        )
-                    }
-                }
             }
-        }
-        if (swatches.isNotEmpty()) {
-            Text(
-                text = swatches.joinToString("   ") { it.hex },
-                color = ROW_LABEL,
-                style = TextStyle(fontFamily = HyleGrotesk, fontSize = 11.sp, letterSpacing = 0.2.sp),
-                textAlign = TextAlign.End,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-            )
+            if (swatches.isEmpty()) {
+                Box(Modifier.weight(1f).height(ROW_HEIGHT), contentAlignment = Alignment.CenterEnd) {
+                    Text(
+                        text = CameraCardFacts.DASH,
+                        color = ROW_LABEL,
+                        style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                        textAlign = TextAlign.End,
+                    )
+                }
+            } else {
+                PaletteSwatchRow(
+                    swatches = swatches,
+                    // Same path as the Search pill: the activity closes the viewer and seeds the
+                    // grid's search field. With no onSearchLibrary (no catalogue actions) the bar
+                    // stays visible and a tap goes nowhere.
+                    onSwatchTap = { argb -> onSearchLibrary?.invoke(ColourSearch.colourQuery(argb)) },
+                    modifier = Modifier.weight(1f).padding(top = PALETTE_STRIP_TOP, bottom = 6.dp),
+                    labelColor = ROW_LABEL,
+                )
+            }
         }
     }
 }
-
-private const val MIN_SEGMENT_WEIGHT = 0.001f
 
 /**
  * The photo's dominant colours, as a segmented-bar-ready list. Empty for a video, or when the
@@ -1419,6 +1424,9 @@ private val TAGS_GAP = 7.dp
 /** 26.5 dp of row under a 1 dp hairline: the reference's 27.5 dp pitch. */
 private val ROW_HEIGHT = 26.5.dp
 private val HAIRLINE_HEIGHT = 1.dp
+
+/** Centres the swatch row's 14dp strip on the label band, like the value of every other row. */
+private val PALETTE_STRIP_TOP = (ROW_HEIGHT - 14.dp) / 2
 private val CARD_CORNER = 10.dp
 private val CARD_HEADER_HEIGHT = 36.dp
 private val CARD_PAD = 6.dp

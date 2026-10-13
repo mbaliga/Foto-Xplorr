@@ -69,9 +69,11 @@ import com.fotoxplorr.app.lift.LiftOverlay
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.palette.PaletteMemo
+import com.fotoxplorr.app.palette.PaletteSwatch
 import com.fotoxplorr.app.spatial.ExpandedPhotoMap
 import com.fotoxplorr.app.spatial.GeoIndexState
 import com.fotoxplorr.app.spatial.MapFocus
+import com.fotoxplorr.core.model.MediaId
 import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.RoomEdge
 import dev.aarso.cellshell.SpatialShell
@@ -169,6 +171,13 @@ fun ViewerScreen(
      * Null leaves the pill visibly disabled -- see [com.fotoxplorr.app.lens.LensCard].
      */
     onSearchLibrary: ((String) -> Unit)? = null,
+    /** This photo's stored palette, for the details room's swatches. See [PhotoDetailRoom]. */
+    palette: List<PaletteSwatch> = emptyList(),
+    /**
+     * Every indexed photo's dominant colour, for the expanded map's dots
+     * (`RecognitionIndex.dominantColoursByMedia`). Merged with [PaletteMemo] as the map opens.
+     */
+    dotColors: Map<MediaId, Int> = emptyMap(),
     /** This photo's tags and caption, for the details room. See [PhotoDetailRoom]. */
     tags: Set<String> = emptySet(),
     autoTags: Set<String> = emptySet(),
@@ -355,6 +364,7 @@ fun ViewerScreen(
                 // the overlay and the details card must never disagree about what the photo says.
                 recognizedText = liveTextBlocks.joinToString("\n") { it.text },
                 onSearchLibrary = onSearchLibrary,
+                palette = palette,
                 tags = if (catalogueActions) tags else emptySet(),
                 autoTags = if (catalogueActions) autoTags else emptySet(),
                 onRemoveTag = if (catalogueActions) onRemoveTag else null,
@@ -675,12 +685,14 @@ fun ViewerScreen(
             val accent = MaterialTheme.colorScheme.primary.toArgb()
             // The palette colours are read ONCE, as the map opens: PaletteMemo is a memo of what
             // this process has already decoded, never a reason to decode anything for a dot.
-            val focus = remember(asset.id, latitude, longitude, accent) {
+            val focus = remember(asset.id, latitude, longitude, accent, dotColors) {
                 MapFocus(
                     assetId = asset.id,
                     latitude = latitude!!,
                     longitude = longitude!!,
-                    dotColors = PaletteMemo.dominantColours(),
+                    // The index's stored colours, then what this process decoded on top: both
+                    // already known, so no dot ever costs a decode.
+                    dotColors = dotColors + PaletteMemo.dominantColours(),
                     accentArgb = accent,
                 )
             }

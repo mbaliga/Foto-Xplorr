@@ -978,6 +978,10 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // than passed wholesale: the index holds every photo's text, and the viewer needs
             // exactly one photo's worth.
             liveTextBlocks = recognition.textByMedia[activeAsset.id].orEmpty(),
+            // Likewise the palette that pass sampled, and every photo's dominant colour for the
+            // expanded map's dots.
+            palette = recognition.paletteFor(activeAsset.id),
+            dotColors = recognition.dominantColoursByMedia,
             // What this photo carries in the library, as opposed to what its file says. Read
             // from the same LibraryState the grid already renders, so a tag added in the grid's
             // selection menu is on the photo the moment the viewer opens over it.

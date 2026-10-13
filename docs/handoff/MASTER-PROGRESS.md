@@ -241,3 +241,69 @@ shape the WP entries above use.
     surface (permissions, MIME filtering, a second way for a malformed file to reach the parser)
     for a want the brief did not spell out as its own requirement. If a real file-based import is
     wanted later, it plugs into the exact same `parseThemeJson`/preview pipeline unchanged.
+
+## Design-fidelity round (13 Oct 2026)
+
+The owner supplied five reference screenshots (activity strip with three jobs and with one, the
+viewer's filmstrip, the pulled-down details room, the root grid) plus two inline images (the
+zoomed-in viewer's navigator; the swivel that reveals the destination list) and asked for a
+side-by-side comparison "to the tee", for the viewer to be "buttery smooth and lag free", for
+"no crashes", and for each photo's colour palette to be shown and searchable. Three parallel,
+worktree-isolated passes, each gated by `./scripts/verify.sh` before merge; the measured
+per-screenshot match/differs tables live in `docs/handoff/DESIGN-FIDELITY-GALLERY.md`,
+`docs/handoff/DESIGN-FIDELITY-VIEWER.md` and `docs/handoff/COLOUR-SEARCH.md`, and every pass
+renders its surfaces to real PNGs under Robolectric NATIVE graphics (`GalleryRenderTest`,
+`ViewerRenderTest`) so the comparison is pixels against pixels, not a description against code.
+
+- **Gallery chrome to the references.** `ActivityShade`'s collapsed strip is now the screenshot's
+  28dp black strip with one 4dp fill per job on an 8dp track, per-kind glyphs (save / four-arrow
+  move / two-page copy), one job drawn full-width without a glyph (as the one-job reference has
+  it); `ActivityKind` colours re-measured off the screenshots (`BACKING_UP` #4DFF00, `MOVING`
+  #40A0FF, `COPYING` #FFA100 -- was blue -- with distinct hues for scanning/recognising/exporting
+  so no two kinds share one). The destination rail is the inline reference's word wheel: 44sp
+  bold, one word per 80dp row, white for the current destination with a 16dp square bullet, the
+  rest fading by distance (`DestinationWordRail`, app-local because `WordWheelRail`'s type, fade
+  and marker are private constants); the 2026-08-14 "covers in the marker gutter" decision is
+  superseded by the owner's later reference and recorded as such. The search entry is the root
+  grid's 48dp disc at the reference's exact position with a drawn magnifier (`SearchFab`); the
+  floating pill stays, shortened to make room (removing it is a product call, not a styling one).
+  The grid itself then followed: `GRID_GUTTER` 1dp -> 4dp and 144 x 160 tiles (`GRID_TILE_ASPECT`),
+  measured off the root-grid screenshot, replacing the earlier "seamless mosaic" geometry.
+  Flagged, not changed: the swivel's visible band (72dp, a shared-shell constant), the pinned
+  rail width ellipsizing "Screenshots" on wide windows, the ten destinations including Audio.
+- **Viewer to the references.** The details room moves to the TOP room (pull the photo down and
+  it shrinks into its own 80dp map tile; `ViewerSettingsRoom` takes the bottom) -- a deliberate
+  deviation from the 2026-08-18 "one geography" principle on the owner's later direction,
+  recorded in `ViewerScreen`'s KDoc. The room's order is the screenshot's: title and date, camera
+  card (its return reverses the 2026-09-01 de-dup pass; the card now owns the capture facts and
+  the rows no longer repeat them, so "every fact said once" still holds), the 400 x 400 place
+  plate with the photo flown into a bordered tile and pointer, "Add a Caption", Information with
+  Show More/Less, Tags. Connect flavour: a one-shot MapLibre `MapSnapshotter` backs the plate only
+  after the room has settled open (privacy rule kept: no tile fetch on a swipe); a tap grows a
+  full-screen map out of the plate with every located photo as a filled dot in its own dominant
+  colour (offline: `StampMapScreen` in one Canvas pass). The filmstrip rests at the reference's
+  53 x 58 thumbs on a 74dp band and, while the user drags, bulges to 116dp with the centre thumb
+  at 1.7x and drives the focused photo live by nearest-to-centre; a programmatic scroll neither
+  bulges nor reports. The zoom navigator is the inline reference's: bottom-left, 82dp long edge,
+  translucent light-blue field, solid blue viewport, maths in `ZoomViewport` with no per-frame
+  allocation. Crash-case suite (`ViewerEdgeCaseTest`): no EXIF, no GPS, zero dimensions,
+  undecodable file, empty roll, video, room opened mid-swipe, rotation under an open room.
+  Still differs: typeface (Hyle Grotesk vs the mockup's SF), British "Colour", the mockup's blank
+  status-bar band.
+- **Colour palettes: persisted, searchable, tappable.** The indexer samples each photo's palette
+  (100px decode, median cut) alongside faces/labels/text and stores it in `RecognitionStore`'s new
+  `asset_palette` table (DB v4 -> v5; the upgrade keeps every row; a palette-only backfill pass
+  samples photos indexed before this without re-running any recogniser, ~10-20ms each). `:core:search`
+  gains `colour:` (`color`/`hue`/`palette`), accepting `#rrggbb`/`#rgb` or one of twenty colour
+  words, matched by CIE76 ΔE in Lab (hex 14, chromatic words 25, achromatic words 14 -- measured:
+  at 25 "silver" swallowed pure white) against swatches holding at least 8% of the photo; Lab is
+  precomputed once per photo on the reload thread, so a keystroke converts nothing. The details
+  room's palette bar (`PaletteSwatchRow`, one draw call, 48dp targets) reads the stored palette
+  first, this process's memo second, and decodes only for a photo the indexer has not reached;
+  each swatch searches the library for its colour through the same path as the Search pill; the
+  stored dominant colours also feed the expanded map's dots (`RecognitionIndex.dominantColoursByMedia`),
+  so no dot ever costs a decode. Native-target compile of the new search code is part of
+  `scripts/verify-native.sh` (a first push broke it on comma-bearing test names; fixed).
+- **Not on disk:** the two inline reference images (zoom navigator; swivel reveal) were never
+  saved by the upload, so those two surfaces were built from the owner's description and should
+  be re-checked against the originals once re-attached.

@@ -205,6 +205,12 @@ data class RecognitionIndex(
      * Two fields for one fact, so that neither the viewer nor the matcher converts anything.
      */
     val searchPalettesByMedia: Map<MediaId, PaletteSample> = emptyMap(),
+    /**
+     * Each sampled photo's most-represented colour as packed ARGB: what the expanded map colours
+     * its dot with. Derived here, once, rather than on every map open, so opening the map over a
+     * 20k-photo library neither copies the palettes nor decodes anything.
+     */
+    val dominantColoursByMedia: Map<MediaId, Int> = emptyMap(),
 ) {
     /** This photo's stored palette, widest share first. Empty until the indexer has sampled it. */
     fun paletteFor(mediaId: MediaId): List<PaletteSwatch> = palettesByMedia[mediaId].orEmpty()
@@ -273,6 +279,9 @@ data class RecognitionIndex(
                     .associate { it.mediaId to it.caption },
                 palettesByMedia = palettes,
                 searchPalettesByMedia = palettes.mapValues { (_, palette) -> palette.toSearchSample() },
+                dominantColoursByMedia = palettes.mapNotNull { (id, palette) ->
+                    palette.maxByOrNull { it.proportion }?.let { id to it.argb }
+                }.toMap(),
             )
         }
 
