@@ -52,6 +52,12 @@ enum class SearchField(val key: String, val aliases: List<String> = emptyList(),
     WIDTH("width", numeric = true),
     HEIGHT("height", numeric = true),
     SIZE("size", listOf("bytes", "filesize"), numeric = true),
+    /**
+     * A colour the photo is largely made of: `colour:#1a2b3c`, `colour:teal`. Matched perceptually
+     * against the palette the recognition pass stored -- see [ColourSearch] for the distance and
+     * [ColourNames] for the words it knows.
+     */
+    COLOUR("colour", listOf("color", "hue", "palette")),
     ;
 
     companion object {

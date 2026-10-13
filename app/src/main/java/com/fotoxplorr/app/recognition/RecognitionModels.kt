@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.recognition
 
+import com.fotoxplorr.app.palette.PaletteSwatch
 import com.fotoxplorr.core.model.MediaId
 
 /**
@@ -53,6 +54,18 @@ data class AssetRecognition(
     val caption: String = "",
     /** [CaptionGenerator]'s hashtags for [caption]. Ordered -- the words the caption itself used come first. */
     val hashtags: List<String> = emptyList(),
+    /**
+     * The photo's dominant colours, widest share first, from [com.fotoxplorr.app.palette
+     * .PaletteExtractor] over a 100px-long-edge sample of the same bitmap the detectors saw.
+     *
+     * [PaletteSwatch] is reused rather than mirrored by a second near-identical type: it lives in a
+     * file with no Android import at all (its own KDoc makes that a stated property, so a JVM
+     * unit test can pin the quantiser), which is exactly the condition this model needs to stay
+     * plain. Empty when the sample had nothing visible in it (a fully transparent PNG), or for a
+     * row written before palettes were stored -- the indexer's palette-only pass fills those in
+     * without re-running any detector; see `RecognitionIndexer.backfillPalettes`.
+     */
+    val palette: List<PaletteSwatch> = emptyList(),
 ) {
     /** Every OCR run joined, for the search index and the document heuristics. */
     val text: String get() = textBlocks.joinToString("\n") { it.text }

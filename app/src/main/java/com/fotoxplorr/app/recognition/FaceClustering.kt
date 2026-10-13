@@ -1,6 +1,9 @@
 package com.fotoxplorr.app.recognition
 
+import com.fotoxplorr.app.palette.PaletteSwatch
+import com.fotoxplorr.app.palette.toSearchSample
 import com.fotoxplorr.core.model.MediaId
+import com.fotoxplorr.core.search.PaletteSample
 import kotlin.math.sqrt
 
 /**
@@ -185,7 +188,30 @@ data class RecognitionIndex(
      * rather than mapped to "".
      */
     val captionsByMedia: Map<MediaId, String> = emptyMap(),
+    /**
+     * Each photo's dominant colours, as stored on its [AssetRecognition.palette] -- what the
+     * details room draws and what a tap on a swatch searches for. Published here, like
+     * [captionsByMedia], because this index is recognition's only published view: the room reads
+     * the palette from here instead of decoding the photo a second time.
+     *
+     * Sparse like its neighbours: a photo not yet sampled, or with nothing visible in it, is absent.
+     */
+    val palettesByMedia: Map<MediaId, List<PaletteSwatch>> = emptyMap(),
+    /**
+     * [palettesByMedia] in the shape `:core:search` matches `colour:` against, with each colour's
+     * Lab coordinates computed. Derived here, in [from], on the background thread the store
+     * reloads on -- not lazily on first use, because first use is the main thread handling a
+     * keystroke, and converting every colour in a 20k-photo library there is a dropped frame.
+     * Two fields for one fact, so that neither the viewer nor the matcher converts anything.
+     */
+    val searchPalettesByMedia: Map<MediaId, PaletteSample> = emptyMap(),
 ) {
+    /** This photo's stored palette, widest share first. Empty until the indexer has sampled it. */
+    fun paletteFor(mediaId: MediaId): List<PaletteSwatch> = palettesByMedia[mediaId].orEmpty()
+
+    /** [paletteFor], as the search matcher wants it. [PaletteSample.EMPTY] matches no colour term. */
+    fun searchPaletteFor(mediaId: MediaId): PaletteSample = searchPalettesByMedia[mediaId] ?: PaletteSample.EMPTY
+
     /** Every distinct label in the library, for offering search alternatives that exist. */
     val allLabels: Set<String> by lazy(LazyThreadSafetyMode.NONE) {
         labelsByMedia.values.flatMapTo(linkedSetOf()) { it }
@@ -225,6 +251,7 @@ data class RecognitionIndex(
                 .asSequence()
                 .filter { it.mediaIds.size >= SceneClassifier.RECURRING_PERSON_MIN_PHOTOS }
                 .flatMapTo(linkedSetOf()) { it.mediaIds }
+            val palettes = rows.filter { it.palette.isNotEmpty() }.associate { it.mediaId to it.palette }
             return RecognitionIndex(
                 people = people,
                 peopleMediaIds = rows.filter { it.faceCount > 0 }.mapTo(linkedSetOf()) { it.mediaId },
@@ -244,6 +271,8 @@ data class RecognitionIndex(
                 }.filterValues { it.isNotEmpty() },
                 captionsByMedia = rows.filter { it.caption.isNotBlank() }
                     .associate { it.mediaId to it.caption },
+                palettesByMedia = palettes,
+                searchPalettesByMedia = palettes.mapValues { (_, palette) -> palette.toSearchSample() },
             )
         }
 

@@ -31,6 +31,17 @@ data class SearchDocument(
     val width: Int,
     val height: Int,
     val sizeBytes: Long,
+    /**
+     * The photo's dominant colours, for `colour:`. Empty until the recognition pass has sampled this
+     * photo, in which case no colour term matches it -- the same "not known yet" behaviour a photo
+     * with no labels has for `label:`.
+     *
+     * Last, and defaulted, so every existing constructor call keeps compiling. A [PaletteSample]
+     * rather than two parallel lists because the Lab coordinates the matcher compares are computed
+     * when the sample is built -- once, off the main thread, when the recognition index loads --
+     * and a document is rebuilt per photo per keystroke, so nothing per-document may be lazy here.
+     */
+    val palette: PaletteSample = PaletteSample.EMPTY,
 ) {
     /** Every text surface joined, for bare words. Built once and cached on the instance. */
     val haystack: String by lazy(LazyThreadSafetyMode.NONE) {
@@ -91,6 +102,8 @@ private fun matchesField(term: Term.Field, document: SearchDocument): Boolean {
         SearchField.WIDTH -> compareNumbers(term.comparison, document.width.toLong(), value.toLongOrNull())
         SearchField.HEIGHT -> compareNumbers(term.comparison, document.height.toLong(), value.toLongOrNull())
         SearchField.SIZE -> compareNumbers(term.comparison, document.sizeBytes, parseByteSize(value))
+        // Perceptual, not textual: `colour:red` is a region of Lab space, not the string "red".
+        SearchField.COLOUR -> ColourSearch.matches(value, document.palette)
     }
 }
 
