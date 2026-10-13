@@ -1,7 +1,6 @@
 package com.fotoxplorr.app.gallery
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,7 +10,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -42,7 +40,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.aarso.cellshell.WheelItem
-import dev.aarso.cellshell.WordWheelRail
 import com.fotoxplorr.app.curate.ArchiveAdvisor
 import com.fotoxplorr.app.curate.ArchiveReviewItem
 import com.fotoxplorr.app.curate.ArchiveSuggestionsReview
@@ -65,7 +62,10 @@ import com.fotoxplorr.core.model.MediaId
  * Each carried an [androidx.compose.ui.graphics.vector.ImageVector] until the rail's marker
  * became the destination's own covers (owner, 2026-08-14). That icon had exactly one reader --
  * the rail marker -- so once the covers took the gutter, every one of these was dead weight
- * whose only effect would have been to tempt a future surface into drawing a menu.
+ * whose only effect would have been to tempt a future surface into drawing a menu. The covers
+ * have since given way to a plain square bullet (owner's swivel reference, 2026-10 -- see
+ * [DestinationRailPanel]), which reads nothing from the destination at all, so the word stays
+ * the whole of what a destination is.
  */
 enum class HyleDestination(val label: String) {
     PETS("Pets"),
@@ -151,13 +151,23 @@ fun destinationEmptyMessage(
 }
 
 /**
- * The left room: the nine destinations as the constellation's word wheel.
+ * The left room: the destinations as the owner's swivel reference (2026-10) draws them -- large
+ * bold words on black, the current one white with a filled square beside it, the rest dimmed by
+ * their distance from it -- with Settings below.
  *
- * The rail itself is `dev.aarso:cell-shell`'s [WordWheelRail], not a local one. The falloff maths
- * came *from* this app originally — the shared version is a port of `hyle/DestinationRail.kt` —
- * but it now carries the travelling bullet and the drag-driven weighting the owner's reference
- * video shows, and every app in the constellation gets the same wheel rather than each growing
- * its own.
+ * The rail is [DestinationWordRail], an app-local re-cut of `dev.aarso:cell-shell`'s word wheel.
+ * The falloff maths came *from* this app originally and the shared wheel is still the behaviour
+ * (the run turns, release snaps and selects, the marker travels), but its type, fade and marker
+ * are private constants that cannot be set from outside and none of them is the reference's --
+ * see that composable's own doc for the exact gap. The shared library is untouched.
+ *
+ * **The marker is a bullet again, not covers.** On 2026-08-14 the owner replaced the rail's
+ * bullet with a cascade of each destination's own covers (*"the few images are indication
+ * enough... I would rather have them on the left and for them to do the movement dance"*). The
+ * 2026-10 reference draws the bullet and no covers, and a reference is a later decision than a
+ * direction, so this follows it: the covers are gone, and so is the gallery state the panel only
+ * ever took to fetch them. The dance survives -- the square still travels across the rows on a
+ * selection change, stretching along its path as it goes.
  *
  * No scroll wrapper: the wheel measures its own rows against the height it is given and takes
  * care of overflow itself. Wrapping it in a `verticalScroll` would hand it an infinite height to
@@ -168,7 +178,7 @@ fun destinationEmptyMessage(
  * settings should come below the menu nav itself"*). It used to be reachable only by already
  * knowing to swipe in from the right edge -- true, but not discoverable, especially now that
  * removing the header (item 4, previous round) took away the last visible entry point.
- * [WordWheelRail] is handed a bounded height via `Modifier.weight(1f)` so it keeps working
+ * [DestinationWordRail] is handed a bounded height via `Modifier.weight(1f)` so it keeps working
  * exactly as documented above; the settings row is the `Column`'s other, unweighted child.
  */
 @Composable
@@ -176,7 +186,6 @@ fun DestinationRailPanel(
     items: List<WheelItem>,
     selectedId: String,
     onSelect: (String) -> Unit,
-    state: GalleryUiState,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -186,35 +195,16 @@ fun DestinationRailPanel(
             .background(Color.Black)
             .statusBarsPadding(),
     ) {
-        WordWheelRail(
+        DestinationWordRail(
             items = items,
             selectedId = selectedId,
             onSelect = onSelect,
-            inkColor = Color.White,
-            accentColor = MaterialTheme.colorScheme.primary,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                // Tighter than the old 24dp because the marker gutter grew: the covers are wider
-                // than the icon they replaced, and the words must not march away from the edge.
-                .padding(start = 12.dp, end = 16.dp, top = 40.dp),
-            // The covers ARE the marker now, and they ride the left gutter (owner, 2026-08-14: the
-            // icon goes, "the few images are indication enough... I would rather have them on the
-            // left and for them to do the movement dance").
-            //
-            // Putting them in the marker slot rather than the trailing one is what buys the dance
-            // for free: the marker is pinned to its row and animates on a longer curve than the
-            // wheel, so a selection change makes the covers travel across the intervening rows
-            // and dip in scale mid-flight, exactly as the reference video's morphing bullet did.
-            // In the trailing slot they simply appeared beside whichever row was selected.
-            marker = { item ->
-                RailThumbnailCascade(
-                    destinationAssets(HyleDestination.valueOf(item.id), state).take(3),
-                )
-            },
-            // Nothing trails the word any more: the one indicator should not be shown twice.
-            markerWidth = RAIL_MARKER_WIDTH.dp,
-            markerHeight = RAIL_MARKER_HEIGHT.dp,
+                // 16 in, so the 16dp square sits at 16..32 and the words, past the rail's own
+                // 32dp gutter, at the reference's 48.
+                .padding(start = RAIL_INSET.dp, end = 16.dp),
         )
         RailSettingsRow(onClick = onOpenSettings)
     }
@@ -225,7 +215,7 @@ fun DestinationRailPanel(
  * lighter weight, dimmer -- so the eye reads it as secondary without needing a divider line to
  * say so, matching the reference screenshot's own "Settings / Help" treatment.
  *
- * A plain [Text], not a [WordWheelRail] row: this list is never scrolled, is never the wheel's
+ * A plain [Text], not a [DestinationWordRail] row: this list is never scrolled, is never the wheel's
  * subject, and does not participate in its distance-weighted fade -- giving it one would be
  * pretending it is a tenth destination, which is exactly the confusion a fixed row avoids.
  */
@@ -241,9 +231,12 @@ private fun RailSettingsRow(onClick: () -> Unit) {
             // This is now the panel's bottom-most element, so it -- not a hardcoded inset --
             // is what has to clear the gesture-navigation bar.
             .navigationBarsPadding()
-            .padding(start = 12.dp, end = 16.dp, top = 14.dp, bottom = 28.dp),
+            .padding(start = RAIL_INSET.dp, end = 16.dp, top = 14.dp, bottom = 28.dp),
     )
 }
+
+/** The panel's inset from the room's left edge: the bullet's own left edge. */
+private const val RAIL_INSET = 16
 
 /** What a destination actually renders: a grid, the map, or the protected-folder list. */
 @Composable
@@ -419,24 +412,6 @@ private fun ProtectedFoldersPane(
                 )
                 Text(key, color = Color.White, modifier = Modifier.weight(1f))
             }
-        }
-    }
-}
-
-@Composable
-private fun RailThumbnailCascade(assets: List<MediaAsset>) {
-    if (assets.isEmpty()) return
-    Box(Modifier.size(width = 28.dp + 10.dp * (assets.size - 1), height = 28.dp)) {
-        assets.forEachIndexed { index, asset ->
-            MediaImage(
-                asset = asset,
-                modifier = Modifier
-                    .size(26.dp)
-                    .offset(x = (index * 10).dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(6.dp)),
-                contentScale = ContentScale.Crop,
-            )
         }
     }
 }
@@ -699,12 +674,3 @@ fun SettingsPanel(
     }
 }
 
-/**
- * The rail's marker gutter, sized for a three-cover cascade (28dp + 10dp per extra cover = 48dp)
- * with a little air. Handed to the rail so every row reserves it and the words keep one optical
- * left edge whether or not the covers are beside them.
- */
-private const val RAIL_MARKER_WIDTH = 52
-
-/** Cover height, matching [RailThumbnailCascade]'s own 28dp box. */
-private const val RAIL_MARKER_HEIGHT = 28

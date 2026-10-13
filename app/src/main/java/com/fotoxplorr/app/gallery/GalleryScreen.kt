@@ -94,6 +94,9 @@ import com.fotoxplorr.app.hyle.ActivityKind
 import com.fotoxplorr.app.hyle.ActivityShade
 import com.fotoxplorr.app.hyle.BackgroundActivity
 import com.fotoxplorr.app.hyle.FloatingPillControl
+import com.fotoxplorr.app.hyle.SEARCH_FAB_MARGIN_BOTTOM
+import com.fotoxplorr.app.hyle.SEARCH_FAB_MARGIN_END
+import com.fotoxplorr.app.hyle.SearchFab
 import com.fotoxplorr.app.hyle.PILL_DESIGN_H
 import com.fotoxplorr.app.hyle.SelectionToolbarShape
 import com.fotoxplorr.app.hyle.SelectionTrashShape
@@ -961,7 +964,6 @@ private fun GalleryBrowser(
                     shell.closeAll()
                     gridScope.launch { gridState.scrollToItem(0) }
                 },
-                state = state,
                 onOpenSettings = { shell.open(RoomEdge.TOP) },
             )
         },
@@ -1087,7 +1089,6 @@ private fun GalleryBrowser(
                                 presentation = railPresentation,
                                 items = railItems,
                                 selectedId = destination.name,
-                                galleryState = state,
                                 onSelect = { id ->
                                     destination = HyleDestination.valueOf(id)
                                     route = BrowserRoute.Root
@@ -1337,7 +1338,6 @@ private fun GalleryBrowser(
                             } else {
                                 ""
                             },
-                            onSearch = { searchVisible = !searchVisible },
                             onToggleDensity = {
                                 val next = state.preferences.gridColumns + 1
                                 val wrapped = if (next > MAX_GRID_COLUMNS) MIN_GRID_COLUMNS else next
@@ -1359,6 +1359,16 @@ private fun GalleryBrowser(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .navigationBarsPadding(),
+                        )
+                        // The search entry: the round button in the bottom-right corner of the
+                        // owner's root-grid reference (2026-10). It used to be the pill's
+                        // left-hand button; one entry, not two, so the pill no longer has one.
+                        SearchFab(
+                            onClick = { searchVisible = !searchVisible },
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .navigationBarsPadding()
+                                .padding(end = SEARCH_FAB_MARGIN_END.dp, bottom = SEARCH_FAB_MARGIN_BOTTOM.dp),
                         )
                     }
 
@@ -1628,7 +1638,6 @@ private fun PersistentNavRail(
     presentation: NavRailPresentation,
     items: List<dev.aarso.cellshell.WheelItem>,
     selectedId: String,
-    galleryState: GalleryUiState,
     onSelect: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onExpand: () -> Unit,
@@ -1659,7 +1668,6 @@ private fun PersistentNavRail(
             items = items,
             selectedId = selectedId,
             onSelect = onSelect,
-            state = galleryState,
             onOpenSettings = onOpenSettings,
         )
         // The collapse affordance: one tap back to NavRailPresentation.COLLAPSED. Pinned is a
@@ -1678,8 +1686,8 @@ private fun PersistentNavRail(
     }
 }
 
-/** A reasonable fixed width for a permanently-visible rail -- wide enough for WordWheelRail's
- * labels and thumbnail covers, the same content the pull-out room already shows at full width. */
+/** A reasonable fixed width for a permanently-visible rail -- wide enough for the word rail's
+ * labels and bullet, the same content the pull-out room already shows at full width. */
 private const val PINNED_RAIL_WIDTH = 260
 
 /** Just wide enough for a touch/click target and the expand glyph; the whole point of collapsed
