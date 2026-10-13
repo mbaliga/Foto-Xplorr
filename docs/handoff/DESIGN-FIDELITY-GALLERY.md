@@ -135,9 +135,11 @@ to share its centre line (was 52 with a 10dp margin). The disc overlaps the righ
 scrubber's 44dp strip by 20dp; it is drawn above it, as the reference places it.
 
 Residuals: the reference's grid is three columns of 144 x 160 tiles on a **4dp** gutter; the
-app's `TimelineScreen`/`MediaGridScreen` use `GRID_GUTTER = 1.dp` and square tiles. Grid content,
-not chrome — not changed. (`ReferenceGridStandIn` in the render test uses the reference's
-geometry so the chrome comparison is like for like.)
+app's `TimelineScreen`/`MediaGridScreen` used `GRID_GUTTER = 1.dp` and square tiles. Grid content,
+not chrome, so the chrome pass left it alone; the orchestrator then changed it in the same push
+(`GalleryContent.kt`: `GRID_GUTTER = 4.dp`, `GRID_TILE_ASPECT = 144f / 160f` as `MediaTile`'s
+default; the masonry branch still passes each photo's own aspect). (`ReferenceGridStandIn` in the
+render test uses the reference's geometry so the chrome comparison is like for like.)
 
 ## Tests
 
