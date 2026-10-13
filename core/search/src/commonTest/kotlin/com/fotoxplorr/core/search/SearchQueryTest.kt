@@ -198,7 +198,7 @@ class SearchQueryTest {
     // ---- colour ----
 
     @Test
-    fun `colour is a field, with the spellings people actually use`() {
+    fun `colour is a field with the spellings people actually use`() {
         assertEquals(SearchField.COLOUR, SearchField.of("colour"))
         assertEquals(SearchField.COLOUR, SearchField.of("color"))
         assertEquals(SearchField.COLOUR, SearchField.of("hue"))
@@ -211,7 +211,7 @@ class SearchQueryTest {
     }
 
     @Test
-    fun `hex values parse in long, short and bare forms, case-insensitively`() {
+    fun `hex values parse in long short and bare forms case-insensitively`() {
         assertEquals(rgb(0x1A2B3C), ColourSearch.parseHex("#1a2b3c"))
         assertEquals(rgb(0x1A2B3C), ColourSearch.parseHex("#1A2B3C"))
         assertEquals(rgb(0x1A2B3C), ColourSearch.parseHex("1a2b3c"))
@@ -223,7 +223,7 @@ class SearchQueryTest {
     }
 
     @Test
-    fun `a hex term matches the colour itself and a near shade, not a different colour`() {
+    fun `a hex term matches the colour itself and a near shade but not a different colour`() {
         val doc = document(name = "a.jpg", palette = palette(rgb(0x808080) to 0.6f, rgb(0x2244AA) to 0.4f))
 
         assertTrue(matchesQuery(parse("colour:#808080"), doc))
@@ -248,7 +248,7 @@ class SearchQueryTest {
     }
 
     @Test
-    fun `a colour word covers a region of shades, and stops short of its neighbours`() {
+    fun `a colour word covers a region of shades and stops short of its neighbours`() {
         assertTrue(matchesQuery(parse("colour:red"), document(name = "a", palette = palette(rgb(0xFF0000) to 1f))))
         // Firebrick and a Material red: neither is anywhere near pure red in RGB terms.
         assertTrue(matchesQuery(parse("colour:red"), document(name = "a", palette = palette(rgb(0xB22222) to 1f))))
@@ -315,7 +315,7 @@ class SearchQueryTest {
     }
 
     @Test
-    fun `an unknown colour matches nothing, and a photo without a palette matches no colour`() {
+    fun `an unknown colour matches nothing and a photo without a palette matches no colour`() {
         val red = document(name = "a", palette = palette(rgb(0xFF0000) to 1f))
         // Consistent with label:nosuchlabel -- a term the matcher cannot read never widens a search.
         assertFalse(matchesQuery(parse("colour:nosuchcolour"), red))
@@ -328,7 +328,7 @@ class SearchQueryTest {
     }
 
     @Test
-    fun `colourQuery is exactly what a swatch tap opens, and it round-trips through the parser`() {
+    fun `colourQuery is exactly what a swatch tap opens and it round-trips through the parser`() {
         assertEquals("colour:#1a2b3c", ColourSearch.colourQuery(rgb(0x1A2B3C)))
         // Alpha is not part of the colour.
         assertEquals("colour:#1a2b3c", ColourSearch.colourQuery(0x001A2B3C))
@@ -339,7 +339,7 @@ class SearchQueryTest {
     }
 
     @Test
-    fun `a colour chip offers the nearest colour words, and a bare colour word offers the scoped form`() {
+    fun `a colour chip offers the nearest colour words and a bare colour word offers the scoped form`() {
         val navyish = parse("colour:#000080")
         val alternatives = alternativesFor(navyish, 0, SearchVocabulary(), zone)
         assertEquals("colour: navy", alternatives.first().label)
