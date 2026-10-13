@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import androidx.core.database.sqlite.transaction
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.palette.PaletteSwatch
 import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +35,10 @@ import java.nio.ByteOrder
  * verdict. What it does not do is leave the device — this database is app-private, and in the
  * `offline` flavour the process holds no INTERNET permission at all, so there is no path off the
  * phone even for code that wanted one.
+ *
+ * **Palettes are persisted too** (v5): up to five dominant colours per photo, each a packed ARGB
+ * int and a share of the image. That is the whole of what `colour:` search and the details room's
+ * tappable swatches need, and it says nothing about the photo a thumbnail does not already say.
  */
 class RecognitionStore(context: Context) {
     private val helper = RecognitionOpenHelper(context.applicationContext)
@@ -78,6 +83,31 @@ class RecognitionStore(context: Context) {
     }
 
     /**
+     * Assets already recognised at their current revision whose palette has never been sampled --
+     * in practice, every photo indexed before palettes were stored (v5). They need one cheap
+     * decode each, not a second run of the three detectors, which is why this is a separate
+     * question from [pendingAssets] and the indexer answers it in a separate pass.
+     *
+     * "Never sampled" means no row at all in the palette table: a photo whose sample turned out
+     * to contain nothing visible is still recorded (see the helper's `writePalette`), so it is
+     * asked once, not on every pass. The same bounded-retry rule as [pendingAssets] applies, so a
+     * file that cannot be decoded for its palette is also given up on after
+     * [MAX_FAILURE_ATTEMPTS].
+     */
+    suspend fun pendingPaletteOnly(assets: List<MediaAsset>): List<MediaAsset> = withContext(Dispatchers.IO) {
+        val revisions = helper.revisions()
+        val sampled = helper.paletteMediaIds()
+        val failures = helper.failures()
+        assets.filter { asset ->
+            if (asset.isVideo || asset.isTrashed) return@filter false
+            val revision = asset.recognitionRevision()
+            if (revisions[asset.id] != revision || asset.id in sampled) return@filter false
+            val failure = failures[asset.id]
+            !(failure != null && failure.revision == revision && failure.attempts >= MAX_FAILURE_ATTEMPTS)
+        }
+    }
+
+    /**
      * Records that analysing [mediaId] at [revision] failed: a repeat failure at the SAME
      * revision increments the attempt count, while a revision change (the file was replaced)
      * resets it to 1, since a different file deserves a fresh three attempts (P0-12).
@@ -112,10 +142,29 @@ class RecognitionStore(context: Context) {
         if (rows.isEmpty()) return@withContext
         val dueForReload = mutex.withLock {
             helper.upsert(rows)
-            val now = System.currentTimeMillis()
-            (now - lastReloadAtMs >= RELOAD_THROTTLE_MS).also { due -> if (due) lastReloadAtMs = now }
+            reloadDue()
         }
         if (dueForReload) reload()
+    }
+
+    /**
+     * Writes palettes for photos whose recognition rows already exist -- the palette-only pass's
+     * own upsert. Replaces whatever palette rows those photos had; touches nothing else about
+     * them. Throttled exactly as [upsert] is, for exactly the same reason.
+     */
+    suspend fun upsertPalettes(palettes: Map<MediaId, List<PaletteSwatch>>) = withContext(Dispatchers.IO) {
+        if (palettes.isEmpty()) return@withContext
+        val dueForReload = mutex.withLock {
+            helper.upsertPalettes(palettes)
+            reloadDue()
+        }
+        if (dueForReload) reload()
+    }
+
+    /** Guarded by [mutex]: has [RELOAD_THROTTLE_MS] passed since the last reload this allowed? */
+    private fun reloadDue(): Boolean {
+        val now = System.currentTimeMillis()
+        return (now - lastReloadAtMs >= RELOAD_THROTTLE_MS).also { due -> if (due) lastReloadAtMs = now }
     }
 
     suspend fun removeMissing(availableIds: Set<MediaId>) = withContext(Dispatchers.IO) {
@@ -204,6 +253,7 @@ private class RecognitionOpenHelper(context: Context) :
         // looks up, so it gets the one index.
         db.execSQL("CREATE INDEX ${TABLE_TEXT}_media ON $TABLE_TEXT (media_id)")
         createFailureTable(db)
+        createPaletteTable(db)
     }
 
     /**
@@ -213,6 +263,14 @@ private class RecognitionOpenHelper(context: Context) :
      * additive: it only adds the new table, keeping every existing asset/face/text row. An
      * upgrade from further back (pre-v3) still drops and rebuilds those three, exactly as
      * before, since that policy predates and is unrelated to this task.
+     *
+     * v5 added [TABLE_PALETTE], and is additive for a different reason: the palette IS a derived
+     * cache, but dropping the asset/face/text rows to get it would cost every photo a second run
+     * of three detectors it already sat through, when all a palette needs is one 100px decode.
+     * So the step creates the (empty) palette table and keeps every existing row; the indexer's
+     * palette-only pass then fills the table in without touching anything else -- see
+     * [RecognitionStore.pendingPaletteOnly]. Both `CREATE TABLE IF NOT EXISTS` calls are
+     * idempotent, so any v3+ start version lands on the same v5 schema.
      */
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 3) {
@@ -220,10 +278,32 @@ private class RecognitionOpenHelper(context: Context) :
             db.execSQL("DROP TABLE IF EXISTS $TABLE_TEXT")
             db.execSQL("DROP TABLE IF EXISTS $TABLE_FACES")
             db.execSQL("DROP TABLE IF EXISTS $TABLE_ASSETS")
+            db.execSQL("DROP TABLE IF EXISTS $TABLE_PALETTE")
             onCreate(db)
             return
         }
         createFailureTable(db)
+        createPaletteTable(db)
+    }
+
+    /**
+     * One row per stored colour. `argb` is the packed opaque colour, `proportion` its share of
+     * the sampled image in 0..1. A photo that was sampled and found to have nothing visible gets
+     * a single row with `proportion = 0` -- the "asked, nothing there" marker that keeps it out of
+     * the palette-only pass; see [paletteMediaIds] and [writePalette].
+     */
+    private fun createPaletteTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_PALETTE (
+                media_id INTEGER NOT NULL,
+                swatch_index INTEGER NOT NULL,
+                argb INTEGER NOT NULL,
+                proportion REAL NOT NULL,
+                PRIMARY KEY (media_id, swatch_index)
+            )
+            """.trimIndent(),
+        )
     }
 
     private fun createFailureTable(db: SQLiteDatabase) {
@@ -281,7 +361,95 @@ private class RecognitionOpenHelper(context: Context) :
         writableDatabase.delete(TABLE_FAILURES, "media_id = ?", arrayOf(mediaId.value.toString()))
     }
 
+    /** Every photo with ANY palette row -- including the "sampled, nothing visible" marker row. */
+    fun paletteMediaIds(): Set<MediaId> = buildSet {
+        readableDatabase.query(
+            true, TABLE_PALETTE, arrayOf("media_id"),
+            null, null, null, null, null, null,
+        ).use { cursor ->
+            while (cursor.moveToNext()) add(MediaId(cursor.getLong(0)))
+        }
+    }
+
+    /**
+     * Every stored palette by media id, in swatch order. Omits photos whose only row is the
+     * nothing-visible marker.
+     *
+     * Never throws on a bad row. A photo whose rows cannot be read as a palette -- a NULL where a
+     * number belongs, a share that is not finite or is above 1 -- comes back with no palette at
+     * all, rather than a half-garbage one or an exception that takes the whole index down with
+     * it. A share of zero or less is skipped silently: that is the marker row, and it is also what
+     * SQLite hands back for text that is not a number, which is the right answer for both.
+     */
+    private fun readPalettes(): Map<Long, List<PaletteSwatch>> {
+        val palettes = HashMap<Long, MutableList<PaletteSwatch>>()
+        val malformed = HashSet<Long>()
+        readableDatabase.query(
+            TABLE_PALETTE, arrayOf("media_id", "argb", "proportion"),
+            null, null, null, null, "media_id ASC, swatch_index ASC",
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val mediaId = cursor.getLong(0)
+                if (cursor.isNull(1) || cursor.isNull(2)) {
+                    malformed += mediaId
+                    continue
+                }
+                val proportion = cursor.getFloat(2)
+                if (proportion.isNaN() || proportion > MAX_PROPORTION) {
+                    malformed += mediaId
+                    continue
+                }
+                if (proportion <= 0f) continue
+                palettes.getOrPut(mediaId) { mutableListOf() } +=
+                    PaletteSwatch(argb = cursor.getInt(1) or OPAQUE, proportion = proportion)
+            }
+        }
+        malformed.forEach(palettes::remove)
+        return palettes
+    }
+
+    fun upsertPalettes(palettes: Map<MediaId, List<PaletteSwatch>>) {
+        writableDatabase.transaction {
+            palettes.forEach { (mediaId, palette) -> writePalette(mediaId, palette) }
+        }
+    }
+
+    /**
+     * Replaces [mediaId]'s palette rows. An empty palette still writes one marker row (share 0),
+     * so "sampled, nothing visible" is told apart from "never sampled" -- without it every fully
+     * transparent PNG in the library would be decoded again on every pass, forever.
+     */
+    private fun SQLiteDatabase.writePalette(mediaId: MediaId, palette: List<PaletteSwatch>) {
+        delete(TABLE_PALETTE, "media_id = ?", arrayOf(mediaId.value.toString()))
+        if (palette.isEmpty()) {
+            insertWithOnConflict(
+                TABLE_PALETTE, null,
+                ContentValues().apply {
+                    put("media_id", mediaId.value)
+                    put("swatch_index", 0)
+                    put("argb", 0)
+                    put("proportion", 0f)
+                },
+                SQLiteDatabase.CONFLICT_REPLACE,
+            )
+            return
+        }
+        palette.forEachIndexed { index, swatch ->
+            insertWithOnConflict(
+                TABLE_PALETTE, null,
+                ContentValues().apply {
+                    put("media_id", mediaId.value)
+                    put("swatch_index", index)
+                    put("argb", swatch.argb)
+                    put("proportion", swatch.proportion)
+                },
+                SQLiteDatabase.CONFLICT_REPLACE,
+            )
+        }
+    }
+
     fun readAll(): List<AssetRecognition> {
+        val palettes = readPalettes()
         val blocks = HashMap<Long, MutableList<TextBlock>>()
         readableDatabase.query(
             TABLE_TEXT, arrayOf("media_id", "text", "left", "top", "right", "bottom"),
@@ -339,6 +507,7 @@ private class RecognitionOpenHelper(context: Context) :
                             categories = decodeCategories(cursor.getString(6)),
                             caption = cursor.getString(7).orEmpty(),
                             hashtags = decodeLabels(cursor.getString(8)),
+                            palette = palettes[mediaId].orEmpty(),
                         ),
                     )
                 }
@@ -393,6 +562,7 @@ private class RecognitionOpenHelper(context: Context) :
                         SQLiteDatabase.CONFLICT_REPLACE,
                     )
                 }
+                writePalette(row.mediaId, row.palette)
             }
         }
     }
@@ -409,6 +579,7 @@ private class RecognitionOpenHelper(context: Context) :
                 val args = arrayOf(id.value.toString())
                 delete(TABLE_TEXT, "media_id = ?", args)
                 delete(TABLE_FACES, "media_id = ?", args)
+                delete(TABLE_PALETTE, "media_id = ?", args)
                 delete(TABLE_ASSETS, "media_id = ?", args)
                 delete(TABLE_FAILURES, "media_id = ?", args)
             }
@@ -419,6 +590,7 @@ private class RecognitionOpenHelper(context: Context) :
         writableDatabase.apply {
             delete(TABLE_TEXT, null, null)
             delete(TABLE_FACES, null, null)
+            delete(TABLE_PALETTE, null, null)
             delete(TABLE_ASSETS, null, null)
             delete(TABLE_FAILURES, null, null)
         }
@@ -431,12 +603,19 @@ private class RecognitionOpenHelper(context: Context) :
         // Recognition data in the first three tables is a derived cache, so bumping across THOSE
         // is a version bump and a wider CREATE TABLE, not a migration; TABLE_FAILURES itself is
         // not a derived cache (a failure needs to survive a process restart), which is exactly
-        // why its own arrival is additive rather than another drop-and-recreate.
-        const val DATABASE_VERSION = 4
+        // why its own arrival is additive rather than another drop-and-recreate. v5 added
+        // TABLE_PALETTE, also additively -- see onUpgrade for why a derived cache still earns an
+        // additive step this time.
+        const val DATABASE_VERSION = 5
         const val TABLE_ASSETS = "asset_recognition"
         const val TABLE_FACES = "face_descriptor"
         const val TABLE_FAILURES = "recognition_failure"
+        const val TABLE_PALETTE = "asset_palette"
         const val TABLE_TEXT = "asset_text_block"
+
+        /** A share above this cannot have come from the quantiser; the row is garbage. */
+        const val MAX_PROPORTION = 1.0001f
+        const val OPAQUE = 0xFF shl 24
 
         fun <T : Enum<T>> enumOrNone(stored: String?, values: List<T>, fallback: T): T =
             values.firstOrNull { it.name == stored } ?: fallback

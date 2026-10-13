@@ -1967,6 +1967,8 @@ internal fun MediaAsset.matchesGallerySearch(
             tags = tags,
             labels = recognition.labelsByMedia[id].orEmpty().toSet(),
             text = recognition.textOf(id),
+            // Pre-converted on the index (Lab computed once, off-thread): a map lookup per asset.
+            palette = recognition.searchPaletteFor(id),
             // P0-16: the same category set the now-deleted search/GallerySearch.kt (P0-14) had,
             // this time actually reachable from the live search path -- see docs/handoff.
             categories = buildSet {

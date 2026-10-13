@@ -141,6 +141,7 @@ private fun fieldAlternatives(
     term: Term.Field,
     vocabulary: SearchVocabulary,
 ): List<SearchSuggestion> {
+    if (term.field == SearchField.COLOUR) return colourAlternatives(query, index, term)
     val pool = when (term.field) {
         SearchField.LABEL -> vocabulary.labels
         SearchField.TAG -> vocabulary.tags
@@ -163,6 +164,32 @@ private fun fieldAlternatives(
             )
         }
         .toList()
+}
+
+/**
+ * The colour words nearest to this term's colour, nearest first -- the sibling-month idea applied
+ * to colour: `colour:#1a2b3c` offers `navy` and `black`, `colour:pink` offers `magenta` before
+ * `green`. Drawn from the fixed [ColourNames] table rather than [SearchVocabulary], because unlike
+ * labels or folders the words a person might type are not a property of this library.
+ *
+ * A value that is neither a hex nor a known word gets the first few words in spectrum order, so a
+ * misspelt colour still has somewhere to go.
+ */
+private fun colourAlternatives(query: ParsedQuery, index: Int, term: Term.Field): List<SearchSuggestion> {
+    val current = term.value
+    val anchor = ColourSearch.representativeArgb(current)
+    val names = if (anchor != null) {
+        ColourNames.nearest(anchor, MAX_ALTERNATIVES, excluding = current)
+    } else {
+        ColourNames.canonical.take(MAX_ALTERNATIVES)
+    }
+    return names.map { name ->
+        SearchSuggestion(
+            label = "${term.field.key}: $name",
+            query = rewrite(query, index, "${term.field.key}:$name"),
+            kind = SearchSuggestion.Kind.ALTERNATIVE,
+        )
+    }
 }
 
 /**
@@ -191,6 +218,15 @@ private fun wordAlternatives(
         out += SearchSuggestion(
             "Only tag #$word",
             rewrite(query, index, "tag:${quoteIfNeeded(word)}"),
+            SearchSuggestion.Kind.NARROW,
+        )
+    }
+    // A bare "red" matches the string in a filename or a label; the person very likely meant the
+    // colour of the photo, which only the scoped form looks at.
+    if (ColourNames.isName(lower)) {
+        out += SearchSuggestion(
+            "Only photos coloured $word",
+            rewrite(query, index, "${SearchField.COLOUR.key}:$lower"),
             SearchSuggestion.Kind.NARROW,
         )
     }

@@ -195,6 +195,180 @@ class SearchQueryTest {
         assertEquals(null, parseByteSize("abc"))
     }
 
+    // ---- colour ----
+
+    @Test
+    fun `colour is a field, with the spellings people actually use`() {
+        assertEquals(SearchField.COLOUR, SearchField.of("colour"))
+        assertEquals(SearchField.COLOUR, SearchField.of("color"))
+        assertEquals(SearchField.COLOUR, SearchField.of("hue"))
+        assertEquals(SearchField.COLOUR, SearchField.of("palette"))
+
+        val term = parse("color:#1A2B3C").terms.filterIsInstance<Term.Field>().single()
+        assertEquals(SearchField.COLOUR, term.field)
+        assertEquals("#1A2B3C", term.value)
+        assertEquals(Comparison.EQ, term.comparison)
+    }
+
+    @Test
+    fun `hex values parse in long, short and bare forms, case-insensitively`() {
+        assertEquals(rgb(0x1A2B3C), ColourSearch.parseHex("#1a2b3c"))
+        assertEquals(rgb(0x1A2B3C), ColourSearch.parseHex("#1A2B3C"))
+        assertEquals(rgb(0x1A2B3C), ColourSearch.parseHex("1a2b3c"))
+        assertEquals(rgb(0xAABBCC), ColourSearch.parseHex("#abc"))
+        assertEquals(null, ColourSearch.parseHex("#12345"))
+        assertEquals(null, ColourSearch.parseHex("#gggggg"))
+        assertEquals(null, ColourSearch.parseHex(""))
+        assertEquals(null, ColourSearch.parseHex("red"))
+    }
+
+    @Test
+    fun `a hex term matches the colour itself and a near shade, not a different colour`() {
+        val doc = document(name = "a.jpg", palette = palette(rgb(0x808080) to 0.6f, rgb(0x2244AA) to 0.4f))
+
+        assertTrue(matchesQuery(parse("colour:#808080"), doc))
+        // ΔE 13.4 from #808080 -- inside HEX_MAX_DELTA_E.
+        assertTrue(matchesQuery(parse("colour:#a3a3a3"), doc))
+        // ΔE 14.9 -- just outside it.
+        assertFalse(matchesQuery(parse("colour:#a7a7a7"), doc))
+        assertFalse(matchesQuery(parse("colour:#ff0000"), doc))
+        // The second swatch counts too: a photo is all of its colours, not only its widest.
+        assertTrue(matchesQuery(parse("colour:#2244aa"), doc))
+    }
+
+    @Test
+    fun `the hex threshold's edge cases really do sit either side of the constant`() {
+        // Pins the arithmetic behind the previous test, so a change to the Lab conversion that
+        // moved these distances would be caught here rather than read as a threshold change.
+        val grey = ColourSearch.labOf(rgb(0x808080))
+        val inside = ColourSearch.deltaE(grey, ColourSearch.labOf(rgb(0xA3A3A3)))
+        val outside = ColourSearch.deltaE(grey, ColourSearch.labOf(rgb(0xA7A7A7)))
+        assertTrue(inside > 13f && inside <= ColourSearch.HEX_MAX_DELTA_E, "inside = $inside")
+        assertTrue(outside > ColourSearch.HEX_MAX_DELTA_E && outside < 16f, "outside = $outside")
+    }
+
+    @Test
+    fun `a colour word covers a region of shades, and stops short of its neighbours`() {
+        assertTrue(matchesQuery(parse("colour:red"), document(name = "a", palette = palette(rgb(0xFF0000) to 1f))))
+        // Firebrick and a Material red: neither is anywhere near pure red in RGB terms.
+        assertTrue(matchesQuery(parse("colour:red"), document(name = "a", palette = palette(rgb(0xB22222) to 1f))))
+        assertTrue(matchesQuery(parse("colour:red"), document(name = "a", palette = palette(rgb(0xD32F2F) to 1f))))
+        assertFalse(matchesQuery(parse("colour:red"), document(name = "a", palette = palette(rgb(0x0000FF) to 1f))))
+        assertFalse(matchesQuery(parse("colour:red"), document(name = "a", palette = palette(rgb(0x808080) to 1f))))
+
+        // blue and navy are separate words for a reason: each stays out of the other's anchors.
+        val navy = document(name = "a", palette = palette(rgb(0x000080) to 1f))
+        assertTrue(matchesQuery(parse("colour:navy"), navy))
+        assertFalse(matchesQuery(parse("colour:blue"), navy))
+        assertTrue(matchesQuery(parse("colour:navy"), document(name = "a", palette = palette(rgb(0x191970) to 1f))))
+
+        // Either spelling.
+        val grey = document(name = "a", palette = palette(rgb(0x808080) to 1f))
+        assertTrue(matchesQuery(parse("colour:grey"), grey))
+        assertTrue(matchesQuery(parse("colour:gray"), grey))
+    }
+
+    @Test
+    fun `achromatic words keep to their own band of lightness`() {
+        val white = document(name = "a", palette = palette(rgb(0xFFFFFF) to 1f))
+        assertTrue(matchesQuery(parse("colour:white"), white))
+        assertTrue(matchesQuery(parse("colour:white"), document(name = "a", palette = palette(rgb(0xDDDDDD) to 1f))))
+        // At the chromatic threshold silver would take pure white; at its own it does not.
+        assertFalse(matchesQuery(parse("colour:silver"), white))
+        assertFalse(matchesQuery(parse("colour:grey"), document(name = "a", palette = palette(rgb(0x222222) to 1f))))
+
+        // black's edge: #525252 is ΔE 13.6 from its farthest anchor, #585858 is 16.2.
+        assertTrue(matchesQuery(parse("colour:black"), document(name = "a", palette = palette(rgb(0x222222) to 1f))))
+        assertTrue(matchesQuery(parse("colour:black"), document(name = "a", palette = palette(rgb(0x525252) to 1f))))
+        assertFalse(matchesQuery(parse("colour:black"), document(name = "a", palette = palette(rgb(0x585858) to 1f))))
+    }
+
+    @Test
+    fun `a colour has to cover a real share of the photo to count`() {
+        val sliver = document(name = "a", palette = palette(rgb(0x00FF00) to 0.95f, rgb(0xFF0000) to 0.05f))
+        assertFalse(matchesQuery(parse("colour:red"), sliver))
+        assertTrue(matchesQuery(parse("colour:green"), sliver))
+
+        val accent = document(name = "a", palette = palette(rgb(0x00FF00) to 0.92f, rgb(0xFF0000) to ColourSearch.MIN_PROPORTION))
+        assertTrue(matchesQuery(parse("colour:red"), accent))
+    }
+
+    @Test
+    fun `negated colour terms and alternatives behave like every other field`() {
+        val red = document(name = "red.jpg", palette = palette(rgb(0xFF0000) to 1f))
+        val blue = document(name = "blue.jpg", palette = palette(rgb(0x0000FF) to 1f))
+        val both = document(name = "both.jpg", palette = palette(rgb(0xFF0000) to 0.5f, rgb(0x0000FF) to 0.5f))
+
+        assertFalse(matchesQuery(parse("-colour:red"), red))
+        assertTrue(matchesQuery(parse("-colour:red"), blue))
+        assertTrue(matchesQuery(parse("not colour:red"), blue))
+
+        val either = parse("colour:red or colour:blue")
+        assertTrue(either.terms.single() is Term.AnyOf)
+        assertTrue(matchesQuery(either, red))
+        assertTrue(matchesQuery(either, blue))
+
+        // Two terms AND together, as everywhere else in the language.
+        val bothTerms = parse("colour:red colour:blue")
+        assertTrue(matchesQuery(bothTerms, both))
+        assertFalse(matchesQuery(bothTerms, red))
+    }
+
+    @Test
+    fun `an unknown colour matches nothing, and a photo without a palette matches no colour`() {
+        val red = document(name = "a", palette = palette(rgb(0xFF0000) to 1f))
+        // Consistent with label:nosuchlabel -- a term the matcher cannot read never widens a search.
+        assertFalse(matchesQuery(parse("colour:nosuchcolour"), red))
+        assertTrue(matchesQuery(parse("-colour:nosuchcolour"), red))
+
+        val unsampled = document(name = "a")
+        assertFalse(matchesQuery(parse("colour:red"), unsampled))
+        assertFalse(matchesQuery(parse("colour:#000000"), unsampled))
+        assertTrue(matchesQuery(parse("-colour:red"), unsampled))
+    }
+
+    @Test
+    fun `colourQuery is exactly what a swatch tap opens, and it round-trips through the parser`() {
+        assertEquals("colour:#1a2b3c", ColourSearch.colourQuery(rgb(0x1A2B3C)))
+        // Alpha is not part of the colour.
+        assertEquals("colour:#1a2b3c", ColourSearch.colourQuery(0x001A2B3C))
+        assertEquals("colour:#000000", ColourSearch.colourQuery(rgb(0x000000)))
+
+        val doc = document(name = "a", palette = palette(rgb(0x1A2B3C) to 1f))
+        assertTrue(matchesQuery(parse(ColourSearch.colourQuery(rgb(0x1A2B3C))), doc))
+    }
+
+    @Test
+    fun `a colour chip offers the nearest colour words, and a bare colour word offers the scoped form`() {
+        val navyish = parse("colour:#000080")
+        val alternatives = alternativesFor(navyish, 0, SearchVocabulary(), zone)
+        assertEquals("colour: navy", alternatives.first().label)
+        assertEquals("Remove this", alternatives.last().label)
+        // Every offered rewrite is itself a colour term the parser reads back.
+        alternatives.dropLast(1).forEach { suggestion ->
+            val term = parse(suggestion.query).terms.single()
+            assertTrue(term is Term.Field && term.field == SearchField.COLOUR, suggestion.query)
+        }
+
+        val word = parse("red")
+        val scoped = alternativesFor(word, 0, SearchVocabulary(), zone).single { it.label == "Only photos coloured red" }
+        assertEquals("colour:red", scoped.query)
+    }
+
+    @Test
+    fun `a rewritten colour term survives the round trip`() {
+        val query = parse("colour:#1a2b3c flower")
+        assertEquals("colour:navy flower", rewrite(query, 0, "colour:navy"))
+        assertEquals("colour:#1a2b3c flower", rewrite(query, 1, "flower"))
+    }
+
+    private fun rgb(hex: Int): Int = (0xFF shl 24) or hex
+
+    private fun palette(vararg colours: Pair<Int, Float>): PaletteSample = PaletteSample.of(
+        argb = IntArray(colours.size) { colours[it].first },
+        proportions = FloatArray(colours.size) { colours[it].second },
+    )
+
     // ---- suggestions ----
 
     @Test
@@ -235,6 +409,7 @@ class SearchQueryTest {
         takenAt: Long = instant(2025, 1, 1),
         iso: Int? = null,
         sizeBytes: Long = 1_000_000,
+        palette: PaletteSample = PaletteSample.EMPTY,
     ) = SearchDocument(
         mediaId = MediaId(1L),
         name = name,
@@ -250,5 +425,6 @@ class SearchQueryTest {
         width = 4000,
         height = 3000,
         sizeBytes = sizeBytes,
+        palette = palette,
     )
 }
