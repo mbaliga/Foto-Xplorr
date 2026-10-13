@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.viewer
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -157,6 +158,71 @@ class PlaceMorphTest {
     fun `coordinates carry their hemisphere`() {
         assertEquals("17.4435° N · 78.3772° E", PlaceMorph.coordinateLine(17.4435, 78.3772))
         assertEquals("33.8688° S · 78.3772° W", PlaceMorph.coordinateLine(-33.8688, -78.3772))
+    }
+
+    @Test
+    fun `the text slides up as it fades in, and lands at zero`() {
+        // Before the text window opens it sits its full slide below rest and is invisible.
+        assertEquals(18f, PlaceMorph.textOffsetDp(0f), TOLERANCE)
+        assertEquals(0f, PlaceMorph.textAlpha(0f), TOLERANCE)
+        // Fully open: in place, fully visible.
+        assertEquals(0f, PlaceMorph.textOffsetDp(1f), TOLERANCE)
+        assertEquals(1f, PlaceMorph.textAlpha(1f), TOLERANCE)
+        // Monotonic: a reversing drag runs the slide backwards, never jumps.
+        var previous = Float.MAX_VALUE
+        var reveal = 0f
+        while (reveal <= 1f) {
+            val offset = PlaceMorph.textOffsetDp(reveal)
+            assertTrue("text moved down at $reveal", offset <= previous + TOLERANCE)
+            previous = offset
+            reveal += 0.02f
+        }
+    }
+
+    @Test
+    fun `the pointer waits for the tile to all but land`() {
+        assertEquals(0f, PlaceMorph.pointerAlpha(thumbnailScale = 4.6f, landed = 1f), TOLERANCE)
+        assertEquals(0f, PlaceMorph.pointerAlpha(thumbnailScale = 1.3f, landed = 1f), TOLERANCE)
+        assertEquals(0.5f, PlaceMorph.pointerAlpha(thumbnailScale = 1.125f, landed = 1f), TOLERANCE)
+        assertEquals(1f, PlaceMorph.pointerAlpha(thumbnailScale = 1f, landed = 1f), TOLERANCE)
+        // Never brighter than the plate it hangs off.
+        assertEquals(0.4f, PlaceMorph.pointerAlpha(thumbnailScale = 1f, landed = 0.4f), TOLERANCE)
+        assertEquals(0f, PlaceMorph.pointerAlpha(thumbnailScale = 0.9f, landed = -1f), TOLERANCE)
+    }
+
+    @Test
+    fun `the pin is the reference's 80 dp tile with a 2 dp border and a 14 x 7 pointer`() {
+        assertEquals(80, PlaceMorph.PIN_SIZE_DP)
+        assertEquals(2, PlaceMorph.PIN_BORDER_DP)
+        assertEquals(14, PlaceMorph.POINTER_WIDTH_DP)
+        assertEquals(7, PlaceMorph.POINTER_HEIGHT_DP)
+        assertEquals(87, PlaceMorph.PIN_GROUP_HEIGHT_DP)
+    }
+
+    @Test
+    fun `the hero spans most of the plate and never shrinks below pin size`() {
+        // A 400 dp plate: the photo starts at 92% of it, which is 4.6x an 80 dp pin.
+        assertEquals(4.6f, PlaceMorph.heroScale(400f), 1e-3f)
+        assertEquals(1f, PlaceMorph.heroScale(0f), TOLERANCE)
+        assertEquals(1f, PlaceMorph.heroScale(40f), TOLERANCE)
+    }
+
+    @Test
+    fun `only a real coordinate is drawable`() {
+        assertTrue(PlaceMorph.isDrawable(17.4435, 78.3772))
+        assertTrue(PlaceMorph.isDrawable(-90.0, 180.0))
+        assertFalse(PlaceMorph.isDrawable(null, 78.0))
+        assertFalse(PlaceMorph.isDrawable(17.0, null))
+        assertFalse(PlaceMorph.isDrawable(Double.NaN, 78.0))
+        assertFalse(PlaceMorph.isDrawable(17.0, Double.POSITIVE_INFINITY))
+        assertFalse(PlaceMorph.isDrawable(91.0, 0.0))
+        assertFalse(PlaceMorph.isDrawable(0.0, -181.0))
+    }
+
+    @Test
+    fun `graticule fractions survive a NaN coordinate`() {
+        assertTrue(PlaceMorph.graticuleFractions(Double.NaN).isEmpty())
+        assertTrue(PlaceMorph.graticuleFractions(Double.POSITIVE_INFINITY).isEmpty())
     }
 
     @Test
