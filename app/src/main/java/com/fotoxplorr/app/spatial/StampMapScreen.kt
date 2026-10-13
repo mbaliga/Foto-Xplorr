@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -49,6 +51,8 @@ import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.ui.FotoStamp
+import com.fotoxplorr.app.viewer.PlaceMorph
+import com.fotoxplorr.app.viewer.PlacePin
 import com.fotoxplorr.core.model.MediaId
 import kotlin.math.roundToInt
 
@@ -77,12 +81,31 @@ fun StampMapScreen(
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Opened from one photo's details room: that photo is drawn as its white-bordered tile, and
+     * every other located photo as a filled colour dot rather than a stamp -- see [MapFocus].
+     * Null is the Places map exactly as it always was.
+     */
+    focus: MapFocus? = null,
 ) {
     BackHandler(onBack = onClose)
 
-    val located = remember(assets, geoState.metadataById) {
-        assets.mapNotNull { asset ->
+    val located = remember(assets, geoState.metadataById, focus) {
+        val fromIndex = assets.mapNotNull { asset ->
             if (asset.isTrashed) null else geoState.metadataById[asset.id]?.let { asset to it }
+        }
+        // The focused photo may be located by its own EXIF and absent from the geo index (the
+        // index is built on demand); it is still the one place this map is about, so it is
+        // added -- never duplicated -- from the focus itself.
+        if (focus != null && fromIndex.none { it.first.id == focus.assetId }) {
+            val self = assets.firstOrNull { it.id == focus.assetId }
+            if (self != null && PlaceMorph.isDrawable(focus.latitude, focus.longitude)) {
+                fromIndex + (self to GeoMetadata(self.id, focus.latitude, focus.longitude, null, null))
+            } else {
+                fromIndex
+            }
+        } else {
+            fromIndex
         }
     }
     val bounds = remember(located) {
@@ -150,7 +173,48 @@ fun StampMapScreen(
                 Graticule()
             }
 
-            stamps.forEach { (asset, geo) ->
+            if (focus != null) {
+                // Every located photo as one filled dot in its own colour, drawn in a single
+                // Canvas pass: thousands of dots are one draw call each, no composables, and the
+                // pan/zoom state is read inside the draw lambda so a drag re-draws without
+                // recomposing. The focused photo is left out of the dots -- it is the tile.
+                val dotRadiusPx = with(density) { FOCUS_DOT_DP.dp.toPx() }
+                val dots = remember(located, bounds, focus) {
+                    located.filter { it.first.id != focus.assetId }.map { (asset, geo) ->
+                        val p = StampMapProjection.project(geo.latitude, geo.longitude, bounds)
+                        Triple(p.x, p.y, Color(focus.colorFor(asset.id)))
+                    }
+                }
+                Canvas(Modifier.fillMaxSize()) {
+                    dots.forEach { (x, y, color) ->
+                        drawCircle(
+                            color = color,
+                            radius = dotRadiusPx,
+                            center = Offset(
+                                x = (x - 0.5f) * widthPx * zoom + widthPx / 2f + panX,
+                                y = (y - 0.5f) * heightPx * zoom + heightPx / 2f + panY,
+                            ),
+                        )
+                    }
+                }
+                val self = located.firstOrNull { it.first.id == focus.assetId }
+                if (self != null) {
+                    val point = StampMapProjection.project(self.second.latitude, self.second.longitude, bounds)
+                    val pinWidthPx = with(density) { PlaceMorph.PIN_SIZE_DP.dp.toPx() }
+                    val pinHeightPx = with(density) { PlaceMorph.PIN_GROUP_HEIGHT_DP.dp.toPx() }
+                    PlacePin(
+                        asset = self.first,
+                        modifier = Modifier.offset {
+                            IntOffset(
+                                x = ((point.x - 0.5f) * widthPx * zoom + widthPx / 2f - pinWidthPx / 2f + panX).roundToInt(),
+                                y = ((point.y - 0.5f) * heightPx * zoom + heightPx / 2f - pinHeightPx / 2f + panY).roundToInt(),
+                            )
+                        },
+                    )
+                }
+            }
+
+            if (focus == null) stamps.forEach { (asset, geo) ->
                 val point = StampMapProjection.project(geo.latitude, geo.longitude, bounds)
                 val isSelected = selected == asset.id
                 val scale by animateFloatAsState(
@@ -207,15 +271,15 @@ fun StampMapScreen(
             )
             Column(Modifier.padding(start = 4.dp)) {
                 Text(
-                    "PLACES",
+                    if (focus != null) "WHERE THIS WAS TAKEN" else "PLACES",
                     color = Color.White.copy(alpha = 0.6f),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
                     // Says both numbers when they differ, so a thinned map never looks like it
-                    // silently lost photos.
-                    if (stamps.size == located.size) "${located.size} located"
+                    // silently lost photos. In focus mode nothing is thinned: every dot is real.
+                    if (focus != null || stamps.size == located.size) "${located.size} located"
                     else "${stamps.size} of ${located.size} located",
                     color = Color.White,
                     style = MaterialTheme.typography.titleMedium,
@@ -225,7 +289,7 @@ fun StampMapScreen(
 
         // The immersive half of the reference: selecting a stamp opens it as a poster with the
         // rest of that place's photos beneath it.
-        selected?.let { id ->
+        if (focus == null) selected?.let { id ->
             val asset = stamps.firstOrNull { it.first.id == id }?.first
             if (asset != null) {
                 val nearby = remember(stamps) { stamps.map { it.first } }
@@ -384,7 +448,7 @@ private fun EmptyMap(
                         "Foto Xplorr reads each photo's own GPS tag on this device. Nothing is uploaded."
                     else ->
                         "Photos saved from messaging apps and websites usually have their location " +
-                            "removed before they reach your phone. Open a photo and drag up for its " +
+                            "removed before they reach your phone. Open a photo and drag it down for its " +
                             "details to place one by hand."
                 },
                 color = Color.White.copy(alpha = 0.6f),
@@ -426,6 +490,8 @@ private val FIELD = Color(0xFF11141C)
 private val FIELD_DEEP = Color(0xFF0A0C12)
 private val STAMP_PAPER = Color(0xFFF5F1E8)
 private const val STAMP_SIZE = 64
+/** Radius of one located photo's dot in focus mode: filled, no stroke, its own colour. */
+private const val FOCUS_DOT_DP = 5
 private const val GRATICULE_ROWS = 8
 
 /**

@@ -24,8 +24,11 @@ import com.fotoxplorr.app.ui.RoomStyle
 import com.fotoxplorr.app.ui.RoomToggle
 
 /**
- * The viewer's TOP room: everything about *looking at a photo*, put where you are while looking at
- * one (owner, 2026-08-14: *"make the settings room at the top"*).
+ * The viewer's BOTTOM room: everything about *looking at a photo*, put where you are while looking
+ * at one. It was the top room (owner, 2026-08-14: *"make the settings room at the top"*) until the
+ * owner's design-fidelity reference put the photo's DETAILS at the top, pulled down over the photo;
+ * settings moved to the bottom edge to make room. The gallery keeps TOP settings -- the viewer is
+ * the one screen that deviates, and ViewerScreen's own KDoc records why.
  *
  * Grouped into what is on screen, how a slideshow runs, and what plays by itself, because the room
  * now carries enough to need grouping (owner, 2026-08-18: the top and bottom rooms should carry
@@ -67,9 +70,9 @@ fun ViewerSettingsRoom(
         modifier = modifier
             .fillMaxWidth()
             .background(Color.Black)
-            // The shell insets a top room by its band at the BOTTOM (that is where the parked card
-            // sits), so the system bar to clear here is the navigation bar, not the status bar --
-            // the opposite of what a top-anchored surface usually wants.
+            // The shell insets a bottom room by its band at the TOP (that is where the parked
+            // card's bottom edge sits), so the system bar to clear here is the navigation bar at
+            // the foot of this room.
             .navigationBarsPadding()
             // Scrollable because the room is now taller than the 70% of screen height the shell
             // gives a vertical room on a short phone. Without this the last group would simply be
@@ -166,15 +169,18 @@ fun ViewerSettingsRoom(
             )
         }
 
+        // The viewer's geography (owner, design-fidelity round): details are the PULL-DOWN room,
+        // settings the pull-up one -- the opposite of the gallery's TOP settings / BOTTOM
+        // what-this-is, and deliberately so for this one screen. See ViewerScreen's own KDoc.
         Text(
             text = if (pinchMode == ViewerPinchMode.PANEL_SHORTCUTS) {
-                "Two fingers to turn. Swipe to move between photos. Drag up from the bottom " +
-                    "edge for this photo's details, in from the right for what you can do " +
-                    "with it -- exactly what pinch now does too."
+                "Two fingers to turn. Swipe to move between photos. Drag the photo down for " +
+                    "its details, in from the right for what you can do with it, up from the " +
+                    "bottom for settings -- and pinch in or out does the first two as well."
             } else {
                 "Pinch to zoom. Two fingers to turn. Swipe to move between photos. " +
-                    "Drag up from the bottom edge for this photo's details, in from the right " +
-                    "for what you can do with it."
+                    "Drag the photo down for its details, in from the right for what you can " +
+                    "do with it, up from the bottom for settings."
             },
             color = RoomStyle.InkFaint,
             style = RoomStyle.Caption,

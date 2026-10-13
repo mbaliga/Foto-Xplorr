@@ -984,6 +984,12 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             tags = library.tagsFor(activeAsset.id),
             autoTags = library.autoTagsFor(activeAsset.id),
             onRemoveTag = { tag -> libraryStore.removeTag(setOf(activeAsset.id), tag) },
+            onAddTag = { tag -> libraryStore.addTag(setOf(activeAsset.id), tag) },
+            // For the map the details room's plate grows into: every located photo in the library
+            // becomes a dot on it, so it needs the whole library and its geo index, not only the
+            // assets being paged through.
+            geoState = geoState,
+            libraryAssets = assets,
             caption = library.captionFor(activeAsset.id),
             captionIsMachineWritten = library.isMachineCaption(activeAsset.id),
             onSetCaption = { text -> libraryStore.setCaption(activeAsset.id, text) },
@@ -1099,7 +1105,14 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             onSetPinchMode = galleryPreferences::setViewerPinchMode,
             relatedAssets = viewerAssets,
             onSelectAsset = { picked ->
+                // From the filmstrip, or from a dot on the expanded map. The filmstrip only ever
+                // offers assets being paged through; the map offers the whole library, and a photo
+                // outside the current run is opened on its own so the dot is never a dead tap.
                 if (viewerAssets.any { it.id == picked.id }) {
+                    selectedAssetId = picked.id
+                    slideshowActive = false
+                } else if (assets.any { it.id == picked.id }) {
+                    setViewerAssets(listOf(picked))
                     selectedAssetId = picked.id
                     slideshowActive = false
                 }

@@ -3,15 +3,16 @@
 package com.fotoxplorr.app.viewer
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -25,15 +26,22 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.util.lerp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroidSize
@@ -60,6 +68,10 @@ import com.fotoxplorr.app.gallery.ViewerPinchMode
 import com.fotoxplorr.app.lift.LiftOverlay
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.palette.PaletteMemo
+import com.fotoxplorr.app.spatial.ExpandedPhotoMap
+import com.fotoxplorr.app.spatial.GeoIndexState
+import com.fotoxplorr.app.spatial.MapFocus
 import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.RoomEdge
 import dev.aarso.cellshell.SpatialShell
@@ -67,17 +79,27 @@ import dev.aarso.cellshell.rememberSpatialController
 import kotlin.math.ln
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
- * The full-screen viewer, as a spatial shell with three rooms around it: settings at the top,
- * the nine photo actions at the right, and what this photo is (and where it was taken) at the
- * bottom, in [PhotoDetailRoom] -- with the photo itself still alive on the parked card behind
- * whichever one is open. The bottom room replaces two separate surfaces that used to say
- * overlapping things about the same file: a bottom `MetadataPanel` behind an "Info" button, and a
- * full-screen Material details screen behind a "Details" button. Two buttons, two layouts and two
- * half-answers about one photo is exactly the drift `docs/fonebrew-navigation.md` describes; the
- * room is the single answer.
+ * The full-screen viewer, as a spatial shell with three rooms around it: what this photo is (and
+ * where it was taken) at the TOP, in [PhotoDetailRoom], pulled DOWN over the photo; the nine photo
+ * actions at the right; and settings at the bottom -- with the photo itself still alive on the
+ * parked card behind whichever one is open. The details room replaces two separate surfaces that
+ * used to say overlapping things about the same file: a bottom `MetadataPanel` behind an "Info"
+ * button, and a full-screen Material details screen behind a "Details" button. Two buttons, two
+ * layouts and two half-answers about one photo is exactly the drift `docs/fonebrew-navigation.md`
+ * describes; the room is the single answer.
+ *
+ * **This screen deviates from the app's one geography, on purpose.** The gallery's rule is TOP =
+ * settings, BOTTOM = what-this-is (owner, 2026-08-18: *"the model needs to remain the same"*, see
+ * `GalleryScreen`), and the viewer followed it until the owner's design-fidelity reference put the
+ * photo's details at the top: *pull the photo down* for what it is. The viewer now does that, and
+ * settings take the bottom edge; the gallery's rooms are untouched. Recorded in
+ * `docs/handoff/DESIGN-FIDELITY-VIEWER.md` as a documented deviation rather than quietly left to
+ * drift.
  *
  * The left edge has no room, so the shell refuses drags from it and draws no peek there.
  */
@@ -118,9 +140,9 @@ fun ViewerScreen(
      * What a pinch means on this screen. [ViewerPinchMode.OPTICAL_ZOOM] (the default, and this
      * screen's original behaviour) zooms the photo, unchanged for anyone who never opens this
      * setting. [ViewerPinchMode.PANEL_SHORTCUTS] repurposes the SAME gesture entirely: pinch-in
-     * opens [PhotoDetailRoom] (the bottom room), pinch-out opens [ViewerActionsRoom] (the right
-     * room), and neither also zooms -- see [ViewerPinchMode]'s own doc for why the two are
-     * mutually exclusive within one gesture.
+     * opens [PhotoDetailRoom] (the TOP room, pulled down), pinch-out opens [ViewerActionsRoom]
+     * (the right room), and neither also zooms -- see [ViewerPinchMode]'s own doc for why the two
+     * are mutually exclusive within one gesture.
      */
     pinchMode: ViewerPinchMode = ViewerPinchMode.OPTICAL_ZOOM,
     onSetPinchMode: (ViewerPinchMode) -> Unit = {},
@@ -206,6 +228,17 @@ fun ViewerScreen(
      * with" both stay, since neither depends on the asset being catalogued.
      */
     catalogueActions: Boolean = true,
+    /** Adds a tag typed into the details room. Null leaves the "Add Tags…" line inert. */
+    onAddTag: ((String) -> Unit)? = null,
+    /**
+     * The library's geo index and the library itself, for the map the details room's plate grows
+     * into: every located photo becomes a dot on it. Empty by default, so a caller with no library
+     * (the external viewer) gets a map with only this photo on it.
+     */
+    geoState: GeoIndexState = GeoIndexState(),
+    libraryAssets: List<MediaAsset> = emptyList(),
+    /** Test seam for the plate's map backdrop; null is the flavour's own. See [PhotoDetailRoom]. */
+    plateMapBackdrop: (@Composable BoxScope.(settled: Boolean) -> Unit)? = null,
 ) {
     // Chrome starts HIDDEN and stays hidden across a swipe.
     //
@@ -254,6 +287,44 @@ fun ViewerScreen(
         }
     }
 
+    // "Settled": the details room fully open AND at rest, with no finger on it -- the only moment
+    // PlacePlate lets the connect flavour fetch its one-shot map. The controller cannot say
+    // whether a finger is down, so this waits a beat after the room reports open: a finger that
+    // pulled the room to its stop and is still holding it will move again (and un-settle it)
+    // long before the debounce lands, and a release that settles at full open lands just after.
+    val detailsOpen = shell.openRoom == RoomEdge.TOP
+    var detailsSettled by remember { mutableStateOf(false) }
+    LaunchedEffect(detailsOpen) {
+        detailsSettled = false
+        if (detailsOpen) {
+            delay(SETTLE_DEBOUNCE_MILLIS)
+            detailsSettled = true
+        }
+    }
+
+    // The expanded map: grows out of the plate's own rectangle (shared-element style) into the
+    // whole screen, and Back shrinks it back. The origin is remembered per photo so a map opened
+    // on one photo cannot survive a page swipe onto another.
+    var mapOrigin by remember(asset.id) { mutableStateOf<Rect?>(null) }
+    val mapExpansion = remember { Animatable(0f) }
+    var overlayOrigin by remember { mutableStateOf(Offset.Zero) }
+    val scope = rememberCoroutineScope()
+    val collapseMap: () -> Unit = {
+        scope.launch {
+            mapExpansion.animateTo(0f, EXPAND_SPEC)
+            mapOrigin = null
+        }
+    }
+    LaunchedEffect(mapOrigin) {
+        if (mapOrigin != null) mapExpansion.animateTo(1f, EXPAND_SPEC) else mapExpansion.snapTo(0f)
+    }
+    BackHandler(enabled = mapOrigin != null) { collapseMap() }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { overlayOrigin = it.positionInRoot() },
+    ) {
     SpatialShell(
         controller = shell,
         accentColor = MaterialTheme.colorScheme.primary,
@@ -267,24 +338,44 @@ fun ViewerScreen(
         // rectangle sliding off -- the Magic Portal shape. The shrink is kept; the swivel is
         // added to it.
         parkStyle = ParkStyle.SWIVEL,
+        // TOP = what this photo is, pulled DOWN over it (owner's reference, 6.png). See this
+        // screen's KDoc for the deviation from the gallery's geography this is.
         top = {
-            ViewerSettingsRoom(
-                slideshowIntervalSeconds = slideshowIntervalSeconds,
-                blurSensitive = blurSensitive,
-                showFilmstrip = showFilmstrip,
-                keepScreenOn = keepScreenOn,
-                slideshowShuffle = slideshowShuffle,
-                loopAnimations = loopAnimations,
-                autoplayVideos = autoplayVideos,
-                onSetSlideshowInterval = onSetSlideshowInterval,
-                onSetBlurSensitive = onSetBlurSensitive,
-                onSetShowFilmstrip = onSetShowFilmstrip,
-                onSetKeepScreenOn = onSetKeepScreenOn,
-                onSetSlideshowShuffle = onSetSlideshowShuffle,
-                onSetLoopAnimations = onSetLoopAnimations,
-                onSetAutoplayVideos = onSetAutoplayVideos,
-                pinchMode = pinchMode,
-                onSetPinchMode = onSetPinchMode,
+            PhotoDetailRoom(
+                asset = asset,
+                exif = exif,
+                isFavorite = isFavorite,
+                isSensitive = isSensitive,
+                manualLatitude = manualLatitude,
+                manualLongitude = manualLongitude,
+                onSetLocation = if (catalogueActions) onSetLocation else null,
+                onClearLocation = if (catalogueActions) onClearLocation else null,
+                // Derived from the blocks this screen already receives rather than taken as a
+                // second parameter: two sources for the same text is how they drift apart, and
+                // the overlay and the details card must never disagree about what the photo says.
+                recognizedText = liveTextBlocks.joinToString("\n") { it.text },
+                onSearchLibrary = onSearchLibrary,
+                tags = if (catalogueActions) tags else emptySet(),
+                autoTags = if (catalogueActions) autoTags else emptySet(),
+                onRemoveTag = if (catalogueActions) onRemoveTag else null,
+                onAddTag = if (catalogueActions) onAddTag else null,
+                caption = if (catalogueActions) caption else "",
+                captionIsMachineWritten = captionIsMachineWritten,
+                onSetCaption = if (catalogueActions) onSetCaption else null,
+                onSetRating = onSetRating,
+                onSetCreator = onSetCreator,
+                onSetCopyright = onSetCopyright,
+                onEmbedKeywords = onEmbedKeywords,
+                settled = detailsSettled,
+                onExpandMap = { from -> mapOrigin = from },
+                plateMapBackdrop = plateMapBackdrop,
+                // POSITIVE, and this is not cosmetic. A TOP room opens with vProgress running
+                // POSITIVE (SpatialMotion's sign convention: +1 = TOP open, -1 = BOTTOM open),
+                // while PlaceMorph.stagger clamps its input to 0..1 -- so feeding a negated
+                // value, as the room needed when it was the BOTTOM room, would hold every
+                // stagger at zero and render the plate and its text at alpha 0. The room would
+                // be *invisible*, with nothing thrown and PlaceMorphTest still green.
+                reveal = { shell.vProgress },
             )
         },
         right = {
@@ -309,37 +400,26 @@ fun ViewerScreen(
                 catalogueActions = catalogueActions,
             )
         },
+        // BOTTOM = settings, pulled UP from the bottom edge. It was the top room until the
+        // details took that edge -- see this screen's KDoc.
         bottom = {
-            PhotoDetailRoom(
-                asset = asset,
-                exif = exif,
-                isFavorite = isFavorite,
-                isSensitive = isSensitive,
-                manualLatitude = manualLatitude,
-                manualLongitude = manualLongitude,
-                onSetLocation = if (catalogueActions) onSetLocation else null,
-                onClearLocation = if (catalogueActions) onClearLocation else null,
-                // Derived from the blocks this screen already receives rather than taken as a
-                // second parameter: two sources for the same text is how they drift apart, and
-                // the overlay and the details card must never disagree about what the photo says.
-                recognizedText = liveTextBlocks.joinToString("\n") { it.text },
-                onSearchLibrary = onSearchLibrary,
-                tags = if (catalogueActions) tags else emptySet(),
-                autoTags = if (catalogueActions) autoTags else emptySet(),
-                onRemoveTag = if (catalogueActions) onRemoveTag else null,
-                caption = if (catalogueActions) caption else "",
-                captionIsMachineWritten = captionIsMachineWritten,
-                onSetCaption = if (catalogueActions) onSetCaption else null,
-                onSetRating = onSetRating,
-                onSetCreator = onSetCreator,
-                onSetCopyright = onSetCopyright,
-                onEmbedKeywords = onEmbedKeywords,
-                // NEGATED, and this is not cosmetic. The bottom room opens with vProgress
-                // running NEGATIVE (SpatialMotion's sign convention), while PlaceMorph.stagger
-                // clamps its input to 0..1 -- so feeding the raw value would hold every stagger
-                // at zero and render the plate and its text at alpha 0. The room would be
-                // *invisible*, with nothing thrown and PlaceMorphTest still green.
-                reveal = { -shell.vProgress },
+            ViewerSettingsRoom(
+                slideshowIntervalSeconds = slideshowIntervalSeconds,
+                blurSensitive = blurSensitive,
+                showFilmstrip = showFilmstrip,
+                keepScreenOn = keepScreenOn,
+                slideshowShuffle = slideshowShuffle,
+                loopAnimations = loopAnimations,
+                autoplayVideos = autoplayVideos,
+                onSetSlideshowInterval = onSetSlideshowInterval,
+                onSetBlurSensitive = onSetBlurSensitive,
+                onSetShowFilmstrip = onSetShowFilmstrip,
+                onSetKeepScreenOn = onSetKeepScreenOn,
+                onSetSlideshowShuffle = onSetSlideshowShuffle,
+                onSetLoopAnimations = onSetLoopAnimations,
+                onSetAutoplayVideos = onSetAutoplayVideos,
+                pinchMode = pinchMode,
+                onSetPinchMode = onSetPinchMode,
             )
         },
     ) {
@@ -387,12 +467,13 @@ fun ViewerScreen(
                         },
                         // PANEL_SHORTCUTS only -- see ViewerPinchMode's own doc. Reuses the SAME
                         // rooms the shell's own edge-drag gestures already open (ViewerSettingsRoom's
-                        // own "GESTURES" caption: "Drag up from the bottom edge for this photo's
-                        // details, in from the right for what you can do with it"), so this is a
-                        // second way IN to a surface that already exists, not a new one.
+                        // own "GESTURES" caption: "Drag the photo down for its details, in from
+                        // the right for what you can do with it"), so this is a second way IN to
+                        // a surface that already exists, not a new one. Pinch IN = the details,
+                        // which are the TOP room now.
                         onPinch = { direction ->
                             when (direction) {
-                                PinchDirection.IN -> shell.open(RoomEdge.BOTTOM)
+                                PinchDirection.IN -> shell.open(RoomEdge.TOP)
                                 PinchDirection.OUT -> shell.open(RoomEdge.RIGHT)
                             }
                         },
@@ -540,19 +621,21 @@ fun ViewerScreen(
                 )
             }
 
-            // Only meaningful once the user has actually zoomed in, and now also gated on the
-            // chrome: it was the one piece of UI that drew over the photo regardless.
-            if (chromeVisible && !asset.isVideo && scale > 1.05f) {
+            // Only meaningful once the user has actually zoomed in. Not gated on the chrome: a
+            // navigator that only appears when the chrome does is a navigator nobody finds while
+            // zoomed, and the owner's reference shows it over the bare photo. It is the one
+            // thing drawn over the photo without asking, and only while the photo is zoomed.
+            if (!asset.isVideo && scale > MINIMAP_SCALE_THRESHOLD) {
                 ZoomMinimap(
                     asset = asset,
-                    scale = scale,
-                    offsetX = offsetX,
-                    offsetY = offsetY,
+                    scale = { scale },
+                    offsetX = { offsetX },
+                    offsetY = { offsetY },
                     containerSize = containerSize,
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .navigationBarsPadding()
-                        .padding(16.dp),
+                        .padding(start = MINIMAP_INSET_START, bottom = MINIMAP_INSET_BOTTOM),
                 )
             }
 
@@ -581,6 +664,58 @@ fun ViewerScreen(
                 )
             }
         }
+    }
+
+    // The map, grown out of the plate. Above the shell, so it can fill the screen the room's
+    // bottom band would otherwise cut off; drawn only while there is an origin to grow from.
+    mapOrigin?.let { from ->
+        val latitude = exif.latitude ?: manualLatitude
+        val longitude = exif.longitude ?: manualLongitude
+        if (PlaceMorph.isDrawable(latitude, longitude)) {
+            val accent = MaterialTheme.colorScheme.primary.toArgb()
+            // The palette colours are read ONCE, as the map opens: PaletteMemo is a memo of what
+            // this process has already decoded, never a reason to decode anything for a dot.
+            val focus = remember(asset.id, latitude, longitude, accent) {
+                MapFocus(
+                    assetId = asset.id,
+                    latitude = latitude!!,
+                    longitude = longitude!!,
+                    dotColors = PaletteMemo.dominantColours(),
+                    accentArgb = accent,
+                )
+            }
+            // One shape per whole dp of corner radius, made once: the layer lambda below runs
+            // every frame of the growth and must not allocate a shape each time.
+            val cornerShapes = remember { Array(PLATE_CORNER_DP + 1) { RoundedCornerShape(it.dp) } }
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        // From the plate's rectangle to the whole screen, as one scale-and-slide
+                        // about the top-left corner: at 0 the layer sits exactly over the plate
+                        // (its rounded corners included); at 1 it is the screen.
+                        val progress = mapExpansion.value.coerceIn(0f, 1f)
+                        val fromLeft = from.left - overlayOrigin.x
+                        val fromTop = from.top - overlayOrigin.y
+                        transformOrigin = TransformOrigin(0f, 0f)
+                        scaleX = lerp((from.width / size.width).coerceAtLeast(0.01f), 1f, progress)
+                        scaleY = lerp((from.height / size.height).coerceAtLeast(0.01f), 1f, progress)
+                        translationX = fromLeft * (1f - progress)
+                        translationY = fromTop * (1f - progress)
+                        shape = cornerShapes[(PLATE_CORNER_DP * (1f - progress)).roundToInt().coerceIn(0, PLATE_CORNER_DP)]
+                        clip = true
+                    },
+            ) {
+                ExpandedPhotoMap(
+                    focus = focus,
+                    assets = libraryAssets.ifEmpty { relatedAssets.ifEmpty { listOf(asset) } },
+                    geoState = geoState,
+                    onOpenAsset = { picked -> onSelectAsset(picked) },
+                    onClose = collapseMap,
+                )
+            }
+        }
+    }
     }
 }
 
@@ -771,67 +906,71 @@ private fun ViewerPositionChip(
 }
 
 /**
- * A small semi-transparent rectangle showing where the current pinch-zoomed viewport sits
- * within the full image. The math assumes [MediaImage] is laid out to fill the container
- * (ContentScale.Fit, centred) and that the pinch-zoom graphicsLayer scales/translates about
- * that same centre -- true for how this screen drives `scale`/`offsetX`/`offsetY` above, but
- * this has only been checked against that code, not against a running app (no device/emulator
- * available in this environment).
+ * The zoom navigator, to the owner's reference: bottom-left, a translucent light-blue rectangle
+ * the shape of the whole image with NO border, and inside it a solid blue filled rectangle for the
+ * part of the image the screen currently shows. [ZoomViewport.fractions] is the maths; it is
+ * evaluated inside the draw lambda from the live `scale`/`offset` providers, so a pan re-draws the
+ * viewport rectangle every frame with no recomposition and no lag behind the finger.
+ *
+ * The maths assumes [MediaImage] is laid out to fill the container (ContentScale.Fit, centred)
+ * and that the pinch-zoom graphicsLayer scales/translates about that same centre -- true for how
+ * this screen drives `scale`/`offsetX`/`offsetY` above.
  */
 @Composable
-private fun ZoomMinimap(
+internal fun ZoomMinimap(
     asset: MediaAsset,
-    scale: Float,
-    offsetX: Float,
-    offsetY: Float,
+    scale: () -> Float,
+    offsetX: () -> Float,
+    offsetY: () -> Float,
     containerSize: IntSize,
     modifier: Modifier = Modifier,
 ) {
-    val containerW = containerSize.width.toFloat()
-    val containerH = containerSize.height.toFloat()
-    if (containerW <= 0f || containerH <= 0f) return
-
-    val imageAspect = if (asset.width > 0 && asset.height > 0) {
-        asset.width.toFloat() / asset.height.toFloat()
-    } else {
-        1f
-    }
-    val containerAspect = containerW / containerH
-    val fittedWidth = if (imageAspect > containerAspect) containerW else containerH * imageAspect
-    val fittedHeight = if (imageAspect > containerAspect) containerW / imageAspect else containerH
-    val centerX = containerW / 2f
-    val centerY = containerH / 2f
-
-    val leftFraction = (0.5f + (0f - centerX - offsetX) / scale / fittedWidth).coerceIn(0f, 1f)
-    val rightFraction = (0.5f + (containerW - centerX - offsetX) / scale / fittedWidth).coerceIn(0f, 1f)
-    val topFraction = (0.5f + (0f - centerY - offsetY) / scale / fittedHeight).coerceIn(0f, 1f)
-    val bottomFraction = (0.5f + (containerH - centerY - offsetY) / scale / fittedHeight).coerceIn(0f, 1f)
-
+    if (containerSize.width <= 0 || containerSize.height <= 0) return
+    val (boxWidthDp, boxHeightDp) = ZoomViewport.boxSizeDp(asset.width, asset.height, MINIMAP_LONG_EDGE_DP)
     Box(
         modifier = modifier
-            .size(width = 72.dp, height = (72.dp / imageAspect.coerceIn(0.4f, 2.5f)))
-            .background(Color.Black.copy(alpha = 0.45f))
-            .border(1.dp, Color.White.copy(alpha = 0.55f)),
-    ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .drawBehind {
-                    val strokeWidthPx = 1.5.dp.toPx()
-                    val left = (leftFraction * size.width).coerceAtMost(size.width - strokeWidthPx)
-                    val top = (topFraction * size.height).coerceAtMost(size.height - strokeWidthPx)
-                    val right = (rightFraction * size.width).coerceAtLeast(left + strokeWidthPx)
-                    val bottom = (bottomFraction * size.height).coerceAtLeast(top + strokeWidthPx)
+            .size(width = boxWidthDp.dp, height = boxHeightDp.dp)
+            .drawBehind {
+                drawRect(MINIMAP_FIELD)
+                // The inline form: four floats handed to the block, no object per frame.
+                ZoomViewport.withFractions(
+                    imageWidth = asset.width,
+                    imageHeight = asset.height,
+                    containerWidth = containerSize.width.toFloat(),
+                    containerHeight = containerSize.height.toFloat(),
+                    scale = scale(),
+                    offsetX = offsetX(),
+                    offsetY = offsetY(),
+                ) { leftFraction, topFraction, rightFraction, bottomFraction ->
+                    val minimumPx = 2.dp.toPx()
+                    val left = (leftFraction * size.width).coerceAtMost(size.width - minimumPx)
+                    val top = (topFraction * size.height).coerceAtMost(size.height - minimumPx)
+                    val right = (rightFraction * size.width).coerceAtLeast(left + minimumPx)
+                    val bottom = (bottomFraction * size.height).coerceAtLeast(top + minimumPx)
                     drawRect(
-                        color = Color.White,
+                        color = MINIMAP_VIEWPORT,
                         topLeft = Offset(left, top),
                         size = Size(right - left, bottom - top),
-                        style = Stroke(width = strokeWidthPx),
                     )
-                },
-        )
-    }
+                }
+            },
+    )
 }
+
+/** The navigator's field: light blue at about half strength, no border -- the reference's look. */
+private val MINIMAP_FIELD = Color(0xFF9DB8FF).copy(alpha = 0.55f)
+/** The visible viewport: solid blue, filled. */
+private val MINIMAP_VIEWPORT = Color(0xFF5A8BFF)
+private const val MINIMAP_LONG_EDGE_DP = 82f
+private const val MINIMAP_SCALE_THRESHOLD = 1.05f
+private val MINIMAP_INSET_START = 18.dp
+private val MINIMAP_INSET_BOTTOM = 16.dp
+
+/** How long the details room must sit fully open before it counts as settled. */
+private const val SETTLE_DEBOUNCE_MILLIS = 160L
+
+/** The map's growth out of the plate, and back. Eased, no overshoot -- a place you arrive at. */
+private val EXPAND_SPEC = tween<Float>(durationMillis = 360, easing = FastOutSlowInEasing)
 
 private const val SWIPE_THRESHOLD_PX = 180f
 
