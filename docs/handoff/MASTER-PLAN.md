@@ -4,6 +4,7 @@
 **Baseline:** `main` @ `5e59d56`, plus the Phase 0 branch (`claude/fylz-fotoz-complete-y60pfw`, P0-01…P0-08 done).
 **Companion files:**
 - `docs/handoff/PHASE-0-BRIEF.md` (finish it first)
+- `docs/handoff/PORTING-PLAN.md` (proposed amendment: iOS/iPadOS, macOS and Windows phases; Phases 8 and 9 stay as written; PLAN, not approved)
 - the owner's doc "Foto Xplorr — gap analysis: every format + USB drives"
 
 **Kickoff line for the owner to paste into Claude Code:**
