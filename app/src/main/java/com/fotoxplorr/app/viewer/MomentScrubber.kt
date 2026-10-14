@@ -273,6 +273,8 @@ private const val MOMENT_HIGHLIGHT_HALF_WIDTH_MS = 1_200L
 
 private val TRACK_GREY = Color.White.copy(alpha = 0.28f)
 
+// Fixed on purpose (reference design): a fixed key-moment highlight matched to the reference, like
+// the job-kind hues.
 /**
  * A warm pink/salmon, matching the owner's reference screenshot as closely as this environment
  * lets a colour be matched -- there is no source image to sample a hex from here, only the

@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.gallery
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +49,11 @@ import com.fotoxplorr.app.background.formatHourOfDay
 import com.fotoxplorr.app.background.summarize
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.pro.LocalProEntitlement
+import com.fotoxplorr.app.ui.BUILT_IN_THEMES
+import com.fotoxplorr.app.ui.ThemeJsonResult
+import com.fotoxplorr.app.ui.accentFor
+import com.fotoxplorr.app.ui.builtInThemeJson
+import com.fotoxplorr.app.ui.parseThemeJson
 
 /**
  * The settings room's tabs (owner, 2026-08-14: *"The settings are pathetically few. And 'more
@@ -126,7 +134,7 @@ fun SettingsTabsRoom(
                 val selected = entry == tab
                 Text(
                     text = entry.label,
-                    color = if (selected) Color.Black else Color.White.copy(alpha = 0.75f),
+                    color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White.copy(alpha = 0.75f),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                     modifier = Modifier
@@ -155,11 +163,10 @@ fun SettingsTabsRoom(
                         preferences.themeMode,
                         actions.onSetThemeMode,
                     )
-                    ChoiceRow(
-                        "Accent",
-                        AccentPalette.entries.map { it to it.name.lowercase().replaceFirstChar(Char::uppercase) },
-                        preferences.accentPalette,
-                        actions.onSetAccentPalette,
+                    ThemePaletteRow(
+                        preferences = preferences,
+                        onSetAccentPalette = actions.onSetAccentPalette,
+                        onSetCustomTheme = actions.onSetCustomTheme,
                     )
                     StepperRow(
                         label = "Grid columns",
@@ -175,7 +182,7 @@ fun SettingsTabsRoom(
                     if (state.partialMediaAccess) {
                         SectionLabel("MEDIA ACCESS")
                         Text(
-                            "Foto Xplorr can only see the photos and videos you selected.",
+                            "Fotoz can only see the photos and videos you selected.",
                             color = Color.White.copy(alpha = 0.65f),
                             style = MaterialTheme.typography.bodyMedium,
                         )
@@ -306,7 +313,7 @@ fun SettingsTabsRoom(
                     SectionLabel("BACKUP")
                     Text(
                         "A backup holds your collections, tags, favourites and sensitive marks -- " +
-                            "everything Foto Xplorr knows that the files themselves do not. It " +
+                            "everything Fotoz knows that the files themselves do not. It " +
                             "never contains your photos: those are already on your device, and " +
                             "copying them into a backup would only make a second place to lose " +
                             "them from.",
@@ -319,7 +326,7 @@ fun SettingsTabsRoom(
                     SectionLabel("LIBRARY")
                     ActionText("Rescan for new photos", actions.onRefresh)
                     Text(
-                        "Foto Xplorr watches for new photos on its own; this is for when you " +
+                        "Fotoz watches for new photos on its own; this is for when you " +
                             "want to be certain.",
                         color = Color.White.copy(alpha = 0.5f),
                         style = MaterialTheme.typography.bodySmall,
@@ -440,7 +447,7 @@ fun SettingsTabsRoom(
                         if (com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES) {
                             "Skips a pass entirely while on mobile data."
                         } else {
-                            "Not available in this build -- Foto Xplorr's offline build has no " +
+                            "Not available in this build -- Fotoz's offline build has no " +
                                 "network connection of any kind, so there is no metered connection " +
                                 "to avoid."
                         },
@@ -482,10 +489,10 @@ fun SettingsTabsRoom(
                     SectionLabel(if (isPro) "YOU HAVE PRO" else "FREE PLAN")
                     Text(
                         if (isPro) {
-                            "Every share leaves the Foto Xplorr mark off. Thank you for " +
+                            "Every share leaves the Fotoz mark off. Thank you for " +
                                 "supporting the app."
                         } else {
-                            "Every share carries a small Foto Xplorr mark in the corner, " +
+                            "Every share carries a small Fotoz mark in the corner, " +
                                 "unless you unlock Pro."
                         },
                         color = Color.White.copy(alpha = 0.75f),
@@ -494,7 +501,7 @@ fun SettingsTabsRoom(
 
                     SectionLabel("WHAT PRO REMOVES")
                     Text(
-                        "The Foto Xplorr mark that shared and exported photos carry by default " +
+                        "The Fotoz mark that shared and exported photos carry by default " +
                             "-- the small signature bottom-right. Nothing else changes: Pro is " +
                             "not a paywall on any feature, only on that one mark.",
                         color = Color.White.copy(alpha = 0.65f),
@@ -534,7 +541,7 @@ fun SettingsTabsRoom(
 
                     SectionLabel("MORE FROM A SYSTEM OF CELLS")
                     Text(
-                        "Foto Xplorr is one of a family of apps that share the same navigation " +
+                        "Fotoz is one of a family of apps that share the same navigation " +
                             "and the same refusal to phone home.",
                         color = Color.White.copy(alpha = 0.7f),
                         style = MaterialTheme.typography.bodyMedium,
@@ -549,7 +556,7 @@ fun SettingsTabsRoom(
                     )
                     SectionLabel("OPEN SOURCE")
                     Text(
-                        "Foto Xplorr uses AndroidX and Jetpack Compose, Coil, ML Kit and " +
+                        "Fotoz uses AndroidX and Jetpack Compose, Coil, ML Kit and " +
                             "SQLite, each under its own licence. Recognition runs entirely on " +
                             "this device.",
                         color = Color.White.copy(alpha = 0.7f),
@@ -672,7 +679,7 @@ private fun <T> ChoiceRow(
                 val isSelected = value == selected
                 Text(
                     text = text,
-                    color = if (isSelected) Color.Black else Color.White.copy(alpha = 0.75f),
+                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else Color.White.copy(alpha = 0.75f),
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier
                         .background(
@@ -684,6 +691,116 @@ private fun <T> ChoiceRow(
                 )
             }
         }
+    }
+}
+
+/**
+ * The theme palette picker: the five bundled presets (now JSON-backed -- see `ThemeJson.kt`),
+ * plus "Custom…" for a theme pasted or imported as JSON -- the owner's JSON-theming ask, applied
+ * to this app's own accent palette.
+ *
+ * A built-in chip applies immediately, exactly as this row always worked -- nothing about
+ * choosing VIOLET/OCEAN/FOREST/AMBER/MONOCHROME changed. "Custom…" is different on purpose: it
+ * opens [CustomThemeJsonDialog], whose own doc covers the mandatory preview-before-apply flow.
+ */
+@Composable
+private fun ThemePaletteRow(
+    preferences: GalleryPreferencesState,
+    onSetAccentPalette: (AccentPalette) -> Unit,
+    onSetCustomTheme: (String) -> Unit,
+) {
+    var showCustomDialog by remember { mutableStateOf(false) }
+    val builtIns = remember { AccentPalette.entries.filter { it != AccentPalette.CUSTOM } }
+    // Each chip previews the accent it will apply, in the mode the app is showing right now, so a
+    // person can see Forest before choosing it. The mode is read off the live theme's own ground
+    // (ThemeMode.SYSTEM resolves to light or dark there), not off the stored preference.
+    val darkNow = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val customSwatch = remember(preferences.customThemeJson, darkNow) {
+        (parseThemeJson(preferences.customThemeJson) as? ThemeJsonResult.Valid)?.spec?.accentFor(darkNow)
+    }
+
+    Column {
+        Text("Accent", color = Color.White, style = MaterialTheme.typography.bodyLarge)
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(top = 8.dp),
+        ) {
+            items(builtIns, key = { it.name }) { palette ->
+                ThemeChip(
+                    label = palette.name.lowercase().replaceFirstChar(Char::uppercase),
+                    selected = preferences.accentPalette == palette,
+                    onClick = { onSetAccentPalette(palette) },
+                    swatch = BUILT_IN_THEMES[palette]?.accentFor(darkNow),
+                )
+            }
+            item(key = "custom") {
+                ThemeChip(
+                    label = "Custom…",
+                    selected = preferences.accentPalette == AccentPalette.CUSTOM,
+                    onClick = { showCustomDialog = true },
+                    swatch = customSwatch,
+                )
+            }
+        }
+        if (preferences.accentPalette == AccentPalette.CUSTOM) {
+            // Re-parsed here rather than trusted as already-valid: this reads back whatever is
+            // actually persisted, which is the honest thing to show even in the (should-not-
+            // happen) case that it is no longer parsable -- see resolveThemeSpec's own doc for
+            // why FotoXplorrTheme itself falls back safely in that same case.
+            val activeName = (parseThemeJson(preferences.customThemeJson) as? ThemeJsonResult.Valid)?.spec?.name
+            Text(
+                text = if (activeName != null) "Active: $activeName -- tap to edit" else "Tap to fix the active custom theme",
+                color = Color.White.copy(alpha = 0.55f),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .clickable { showCustomDialog = true },
+            )
+        }
+    }
+
+    if (showCustomDialog) {
+        CustomThemeJsonDialog(
+            // A fresh custom theme starts from the bundled JSON of the accent in force -- a valid,
+            // familiar template to edit rather than a blank box, so choosing Custom... while on
+            // Ocean starts from Ocean. It is the SAME text BUILT_IN_THEMES itself is parsed from
+            // (see builtInThemeJson's own doc), not a second copy of it; VIOLET is the fallback.
+            initialJson = preferences.customThemeJson.ifBlank {
+                builtInThemeJson(preferences.accentPalette)
+                    ?: builtInThemeJson(AccentPalette.VIOLET).orEmpty()
+            },
+            onDismiss = { showCustomDialog = false },
+            onApply = { json ->
+                onSetCustomTheme(json)
+                showCustomDialog = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun ThemeChip(label: String, selected: Boolean, onClick: () -> Unit, swatch: Color? = null) {
+    val ink = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White.copy(alpha = 0.75f)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.10f),
+                RoundedCornerShape(50),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        if (swatch != null) {
+            Box(
+                Modifier
+                    .size(10.dp)
+                    .background(swatch, CircleShape)
+                    .border(1.dp, ink.copy(alpha = 0.6f), CircleShape),
+            )
+        }
+        Text(text = label, color = ink, style = MaterialTheme.typography.labelLarge)
     }
 }
 

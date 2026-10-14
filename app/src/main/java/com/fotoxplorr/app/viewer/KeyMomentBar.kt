@@ -340,6 +340,7 @@ private val PILL_TEXT = TextStyle(fontFamily = HyleGrotesk, fontSize = 15.sp, fo
 private val MENU_TEXT = TextStyle(fontFamily = HyleGrotesk, fontSize = 15.sp)
 private val TIME_TEXT = TextStyle(fontFamily = HyleGrotesk, fontSize = 12.sp)
 
+// Fixed on purpose (reference design): a neutral scrim, no accent role.
 /**
  * The same dark chrome fill [LiveTextOverlay]'s own action bar uses there as `ACTION_FILL`,
  * repeated here (that constant is private to that file, so it cannot be imported) rather than

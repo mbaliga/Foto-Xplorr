@@ -32,12 +32,12 @@ import com.fotoxplorr.app.curate.ArchiveAdvisor.ArchiveReasonCategory
 import com.fotoxplorr.app.curate.ArchiveAdvisor.ArchiveSuggestion
 import com.fotoxplorr.app.hyle.HyleToggle
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomRule
 import com.fotoxplorr.app.ui.RoomStyle
+import com.fotoxplorr.core.model.MediaId
 
 /**
  * One [ArchiveSuggestion] paired with the asset it is about.

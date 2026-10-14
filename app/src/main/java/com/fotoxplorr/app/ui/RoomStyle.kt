@@ -69,6 +69,8 @@ object RoomStyle {
         letterSpacing = (-0.5).sp,
     )
 
+    // Fixed on purpose (reference design): the black-ground, white-ink room language, the on state
+    // is a filled block and not a hue.
     /** Full-strength ink. */
     val Ink = Color.White
 

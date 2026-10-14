@@ -63,7 +63,7 @@ import kotlin.math.roundToInt
  * number and the pin moves. Two controls over one fact, which is the only arrangement that does
  * not eventually disagree with itself.
  *
- * The location is written to Foto Xplorr's own index, not into the photo's EXIF — see
+ * The location is written to Fotoz's own index, not into the photo's EXIF — see
  * [GeoMetadataRepository.setManualLocation] for why, and the caption below says so plainly rather
  * than letting someone believe the file itself was changed.
  */
@@ -172,7 +172,7 @@ fun LocationPicker(
 
         Text(
             text = if (placed) {
-                "Saved in Foto Xplorr, not written into the photo file itself."
+                "Saved in Fotoz, not written into the photo file itself."
             } else {
                 "This photo carries no GPS tag. Photos saved from messaging apps and websites " +
                     "usually have theirs removed before they arrive."
@@ -272,6 +272,8 @@ private fun trim(value: Double): String = ((value * 100_000).roundToInt() / 100_
 private const val MAX_LATITUDE = 85.05112878f
 private const val PIN_SIZE = 28
 private const val SPIN_MILLIS = 24_000
+// Fixed on purpose (semantic): map ground, red set-pin and unset-pin grey are conventional map and
+// status colours.
 private val FIELD_DARK = Color(0xFF0E111A)
 private val PIN_UNSET = Color(0xFF8A8F9E)
 private val PIN_SET = Color(0xFFE65A58)

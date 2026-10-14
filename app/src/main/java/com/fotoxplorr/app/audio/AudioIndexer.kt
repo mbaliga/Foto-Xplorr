@@ -1,7 +1,7 @@
 package com.fotoxplorr.app.audio
 
-import com.fotoxplorr.app.media.ScanPlan
 import com.fotoxplorr.app.media.ScanWatermark
+import com.fotoxplorr.core.organize.ScanPlan
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 

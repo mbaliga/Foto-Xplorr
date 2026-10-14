@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.media
 
+import com.fotoxplorr.core.model.MediaId
 import kotlin.random.Random
 import org.junit.Assert.assertEquals
 import org.junit.Test

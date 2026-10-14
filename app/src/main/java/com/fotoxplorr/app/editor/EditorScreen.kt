@@ -382,7 +382,7 @@ fun EditorScreen(
                         val selected = entry == tool
                         Text(
                             entry.label,
-                            color = if (selected) Color.Black else Color.White,
+                            color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
                             style = MaterialTheme.typography.labelLarge,
                             modifier = Modifier
                                 .background(
@@ -402,7 +402,7 @@ fun EditorScreen(
                 val proOn = tier == EditorTier.PRO
                 Text(
                     "Pro tools",
-                    color = if (proOn) Color.Black else Color.White.copy(alpha = 0.7f),
+                    color = if (proOn) MaterialTheme.colorScheme.onPrimary else Color.White.copy(alpha = 0.7f),
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier
                         .background(
@@ -476,7 +476,7 @@ fun EditorScreen(
                             val selected = adjust.rgbCurve == preset.curve
                             Text(
                                 preset.label,
-                                color = if (selected) Color.Black else Color.White,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
                                 style = MaterialTheme.typography.labelLarge,
                                 modifier = Modifier
                                     .background(
@@ -579,6 +579,7 @@ private fun SaveChoiceSheet(
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Column(
             Modifier
+                // Fixed on purpose (reference design): a neutral panel, no accent role.
                 .background(Color(0xFF121212), RoundedCornerShape(18.dp))
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -656,7 +657,7 @@ private fun SaveChoiceSheet(
 private fun FormatChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Text(
         label,
-        color = if (selected) Color.Black else Color.White,
+        color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
         style = MaterialTheme.typography.labelSmall,
         modifier = Modifier
             .background(

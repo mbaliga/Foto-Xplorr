@@ -169,6 +169,8 @@ private const val MARK_RADIUS = 4
 private const val MARK_STROKE = 2
 private const val MARK_DOT = 1
 
+// Fixed on purpose (reference design): control-sheet neutrals, the on state is the knob's position
+// and not a hue.
 private val HYLE_TRACK = Color(0xFFD7D7D9)
 private val HYLE_TRACK_DISABLED = Color(0xFFE6E6E8)
 private val HYLE_KNOB = Color(0xFF0B0B0D)

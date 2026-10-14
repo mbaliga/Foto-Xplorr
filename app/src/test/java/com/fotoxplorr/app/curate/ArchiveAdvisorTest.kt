@@ -3,7 +3,7 @@ package com.fotoxplorr.app.curate
 import com.fotoxplorr.app.curate.ArchiveAdvisor.ArchiveCandidate
 import com.fotoxplorr.app.curate.ArchiveAdvisor.ArchiveReasonCategory
 import com.fotoxplorr.app.curate.ArchiveAdvisor.ArchiveSuggestion
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

@@ -1,5 +1,7 @@
 package com.fotoxplorr.app.media
 
+import com.fotoxplorr.core.organize.ScanPlan
+import com.fotoxplorr.core.organize.SweepPolicy
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 

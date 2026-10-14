@@ -43,15 +43,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.audio.AudioAsset
 import com.fotoxplorr.app.audio.AudioConversionWriter
 import com.fotoxplorr.app.audio.AudioPlayerScreen
+import com.fotoxplorr.app.curate.AutoCurationPass
 import com.fotoxplorr.app.editor.EditedCopyWriter
 import com.fotoxplorr.app.editor.EditorScreen
 import com.fotoxplorr.app.favorites.FavoriteStore
-import com.fotoxplorr.app.share.PreparedItem
-import com.fotoxplorr.app.share.SharePreparer
-import com.fotoxplorr.app.share.ZipExporter
-import com.fotoxplorr.app.share.ShareOptionsSheet
-import com.fotoxplorr.app.share.ShareOptions
-import com.fotoxplorr.app.share.ShareFrame
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.gallery.GalleryActions
 import com.fotoxplorr.app.gallery.GalleryPreferences
@@ -61,24 +56,29 @@ import com.fotoxplorr.app.gallery.GalleryUiState
 import com.fotoxplorr.app.gallery.folderIdentity
 import com.fotoxplorr.app.gallery.rememberGeoRepository
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
-import com.fotoxplorr.app.curate.AutoCurationPass
 import com.fotoxplorr.app.metadata.GpsCoordinate
 import com.fotoxplorr.app.metadata.MetadataEdit
 import com.fotoxplorr.app.metadata.MetadataWriter
 import com.fotoxplorr.app.metadata.isMetadataWritable
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
-import com.fotoxplorr.app.video.VideoConversionWriter
-import com.fotoxplorr.app.videoeditor.VideoEditorScreen
+import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.recognition.RecognitionIndexer
 import com.fotoxplorr.app.recognition.RecognitionStore
-import com.fotoxplorr.app.privacy.SensitiveStore
+import com.fotoxplorr.app.share.PreparedItem
+import com.fotoxplorr.app.share.ShareFrame
+import com.fotoxplorr.app.share.ShareOptions
+import com.fotoxplorr.app.share.ShareOptionsSheet
+import com.fotoxplorr.app.share.SharePreparer
+import com.fotoxplorr.app.share.ZipExporter
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.app.ui.crashRecoveryStyle
+import com.fotoxplorr.app.video.VideoConversionWriter
+import com.fotoxplorr.app.videoeditor.VideoEditorScreen
 import com.fotoxplorr.app.viewer.ExternalViewerActivity
 import com.fotoxplorr.app.viewer.ViewerScreen
+import com.fotoxplorr.core.model.MediaId
 import dev.aarso.crashrecovery.CrashRecovery
-import dev.aarso.crashrecovery.CrashRecoveryStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -91,7 +91,7 @@ class FotoXplorrActivity : ComponentActivity() {
         // First thing, per dev.aarso:crash-recovery's documented contract: if a crash was
         // captured last run, show the recovery screen instead of this activity's real
         // content and finish this instance.
-        if (CrashRecovery.maybeShowRecovery(this, appLabel = "Foto Xplorr", style = CRASH_STYLE)) return
+        if (CrashRecovery.maybeShowRecovery(this, appLabel = "Fotoz", style = crashRecoveryStyle(this))) return
         enableEdgeToEdge()
         setContent {
             val galleryPreferences = remember { GalleryPreferences(applicationContext) }
@@ -116,22 +116,6 @@ class FotoXplorrActivity : ComponentActivity() {
         const val EXTRA_OPEN_MEDIA_ID = "com.fotoxplorr.app.EXTRA_OPEN_MEDIA_ID"
     }
 }
-
-/**
- * Foto Xplorr's accent, handed to the recovery screen.
- *
- * The screen ships its own neutral paper/ink surface and only ever takes an accent from its
- * host, deliberately: a crash surface that arrives in a stranger's colours is one more thing
- * that does not look like the app the user was just in. These are the theme's VIOLET pair —
- * the app's default — as plain @ColorInt values, because crash-recovery holds no dependency on
- * Compose or on any design system and must be handed platform colours.
- */
-private val CRASH_STYLE = CrashRecoveryStyle.accent(
-    light = 0xFF6E49B8.toInt(),
-    onLight = 0xFFFFFFFF.toInt(),
-    dark = 0xFFCBB4FF.toInt(),
-    onDark = 0xFF221636.toInt(),
-)
 
 // MEDIA_CHANGE_DEBOUNCE_MS moved to LibraryRuntime.kt (P0-09) along with the change-observer
 // subscription it debounces.
@@ -332,7 +316,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     fun requestMediaOperation(items: List<MediaAsset>, operation: PendingMediaOperation) {
         if (items.isEmpty()) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            userMessage = "System trash operations require Android 11 or newer. Foto Xplorr will not delete media directly."
+            userMessage = "System trash operations require Android 11 or newer. Fotoz will not delete media directly."
             return
         }
         runCatching {
@@ -490,7 +474,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         // resolves, not racing it.
         scope.launch {
             if (!isMetadataWritable(contentResolver, asset)) {
-                userMessage = "Foto Xplorr can't write metadata into ${asset.mimeType} files yet"
+                userMessage = "Fotoz can't write metadata into ${asset.mimeType} files yet"
                 finishMetadataWrite()
                 return@launch
             }
@@ -978,12 +962,22 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // than passed wholesale: the index holds every photo's text, and the viewer needs
             // exactly one photo's worth.
             liveTextBlocks = recognition.textByMedia[activeAsset.id].orEmpty(),
+            // Likewise the palette that pass sampled, and every photo's dominant colour for the
+            // expanded map's dots.
+            palette = recognition.paletteFor(activeAsset.id),
+            dotColors = recognition.dominantColoursByMedia,
             // What this photo carries in the library, as opposed to what its file says. Read
             // from the same LibraryState the grid already renders, so a tag added in the grid's
             // selection menu is on the photo the moment the viewer opens over it.
             tags = library.tagsFor(activeAsset.id),
             autoTags = library.autoTagsFor(activeAsset.id),
             onRemoveTag = { tag -> libraryStore.removeTag(setOf(activeAsset.id), tag) },
+            onAddTag = { tag -> libraryStore.addTag(setOf(activeAsset.id), tag) },
+            // For the map the details room's plate grows into: every located photo in the library
+            // becomes a dot on it, so it needs the whole library and its geo index, not only the
+            // assets being paged through.
+            geoState = geoState,
+            libraryAssets = assets,
             caption = library.captionFor(activeAsset.id),
             captionIsMachineWritten = library.isMachineCaption(activeAsset.id),
             onSetCaption = { text -> libraryStore.setCaption(activeAsset.id, text) },
@@ -1088,6 +1082,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             loopAnimations = preferences.loopAnimations,
             animated = activeAsset.id in animatedIds,
             autoplayVideos = preferences.autoplayVideos,
+            pinchMode = preferences.viewerPinchMode,
             onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
             onSetBlurSensitive = galleryPreferences::setBlurSensitive,
             onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
@@ -1095,9 +1090,17 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             onSetSlideshowShuffle = galleryPreferences::setSlideshowShuffle,
             onSetLoopAnimations = galleryPreferences::setLoopAnimations,
             onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
+            onSetPinchMode = galleryPreferences::setViewerPinchMode,
             relatedAssets = viewerAssets,
             onSelectAsset = { picked ->
+                // From the filmstrip, or from a dot on the expanded map. The filmstrip only ever
+                // offers assets being paged through; the map offers the whole library, and a photo
+                // outside the current run is opened on its own so the dot is never a dead tap.
                 if (viewerAssets.any { it.id == picked.id }) {
+                    selectedAssetId = picked.id
+                    slideshowActive = false
+                } else if (assets.any { it.id == picked.id }) {
+                    setViewerAssets(listOf(picked))
                     selectedAssetId = picked.id
                     slideshowActive = false
                 }
@@ -1156,6 +1159,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 onSetTimelineGrouping = galleryPreferences::setTimelineGrouping,
                 onSetThemeMode = galleryPreferences::setThemeMode,
                 onSetAccentPalette = galleryPreferences::setAccentPalette,
+                onSetCustomTheme = galleryPreferences::setCustomTheme,
                 onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
                 onSetDefaultDestination = galleryPreferences::setDefaultDestination,
                 onSetKeepScreenOn = galleryPreferences::setKeepScreenOn,
@@ -1212,7 +1216,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     )
                 }
             },
-            onExportMetadata = { exportMetadataLauncher.launch("foto-xplorr-metadata.json") },
+            onExportMetadata = { exportMetadataLauncher.launch("fotoz-metadata.json") },
                 onImportMetadata = { importMetadataLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
                 onOpenAsset = { asset, visible ->
                     setViewerAssets(visible)

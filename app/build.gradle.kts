@@ -52,6 +52,22 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("sideload")
         }
+        // WP1.8 (FX-005): OPT-IN via `-Pfotoz.benchmarks`, matching `-Pfotoz.native`'s own
+        // pattern -- see benchmarks/README.md for the full story. Kept out of the default variant
+        // matrix so the everyday offline/connect x debug/release grid stays exactly as small as
+        // it's always been; only present at all when :benchmarks itself is (settings.gradle.kts
+        // gates that module on the same property), so a plain build never even sees this build
+        // type declared. Macrobenchmark refuses a debuggable target -- its numbers lie -- so this
+        // initializes from release (minified, shrunk) but signs with the same debug-backed
+        // "sideload" config release itself uses, so it installs on any device with no release
+        // keys present.
+        if (providers.gradleProperty("fotoz.benchmarks").isPresent) {
+            create("benchmark") {
+                initWith(getByName("release"))
+                signingConfig = signingConfigs.getByName("sideload")
+                matchingFallbacks += listOf("release")
+            }
+        }
     }
 
     // One APK per ABI instead of one fat APK carrying every native library.
@@ -116,6 +132,14 @@ android {
         // Locale-dependent String.format is used throughout for EXIF/size readouts that are
         // numeric-only; the app has no translations, so this is noise rather than a defect.
         disable += "DefaultLocale"
+        // WP1.1 (ADR-009) added gradle/libs.versions.toml so the new :core:* modules share one
+        // pinned version each -- the moment ANY catalog file exists, this check starts flagging
+        // every OTHER already-existing hardcoded dependency coordinate in this file (35 of them,
+        // none touched by that work package) as "should use the catalog too". Migrating this
+        // module's whole existing dependency block into the catalog is real, unplanned scope
+        // Phase 1 never asked for; disabling this one check keeps the signal that IS actionable
+        // (GradleDependency's "a newer version exists") without that unrelated noise.
+        disable += "UseTomlInstead"
     }
 
     testOptions {
@@ -172,6 +196,22 @@ configurations.all {
 }
 
 dependencies {
+    // ADR-010 (WP1.2): the shared KMP core. :app -> :core:* only -- these modules never depend
+    // back on :app (enforced by the WP1.9 governance check).
+    implementation(project(":core:model"))
+    implementation(project(":core:formats"))
+    implementation(project(":core:metadata"))
+    implementation(project(":core:search"))
+    implementation(project(":core:organize"))
+    implementation(project(":core:db"))
+    implementation(project(":core:index"))
+
+    // WP1.3 (ADR-011): :core:db declares Room as `implementation`, not `api`, so it doesn't leak
+    // transitively -- :app needs its own direct dependency to construct FotozDatabase/
+    // FotozVectorsDatabase via Room.databaseBuilder itself (LibraryRuntime).
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.sqlite.bundled)
+
     // Screenshot rendering of the real composables, on the JVM, no emulator. Test-only, so it
     // never reaches the runtime classpath the offline gate guards.
     testImplementation("org.robolectric:robolectric:4.14.1")

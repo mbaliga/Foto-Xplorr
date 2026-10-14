@@ -1,4 +1,4 @@
-# Foto Xplorr v2 acceptance specification
+# Fotoz v2 acceptance specification
 
 This document is the implementation contract for the v2 Android release. A feature counts as complete only when it is reachable in the app, handles empty/error/permission states, preserves user data, and is covered by build or test validation where practical.
 

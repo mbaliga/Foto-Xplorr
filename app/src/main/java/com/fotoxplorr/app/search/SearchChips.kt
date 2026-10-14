@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.search
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -33,6 +35,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.ui.HyleGrotesk
+import com.fotoxplorr.core.search.ColourSearch
+import com.fotoxplorr.core.search.ParsedQuery
+import com.fotoxplorr.core.search.SearchField
+import com.fotoxplorr.core.search.SearchSuggestion
+import com.fotoxplorr.core.search.SearchVocabulary
+import com.fotoxplorr.core.search.Term
+import com.fotoxplorr.core.search.alternativesFor
+import com.fotoxplorr.core.search.expansionSuggestions
 
 /**
  * The query, shown back as editable chips — the variables-editor idea from the owner's Quillbot
@@ -74,6 +84,23 @@ fun SearchQueryChips(
                         .padding(start = 12.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // A colour term shows the colour it means beside its text -- beside, never
+                    // instead of: the label still says `colour: #1a2b3c`, so the dot adds to the
+                    // chip rather than being the only thing that carries its meaning (TRAPS #14).
+                    val colourDot = if (term is Term.Field && term.field == SearchField.COLOUR) {
+                        remember(term.value) { ColourSearch.representativeArgb(term.value) }
+                    } else {
+                        null
+                    }
+                    if (colourDot != null) {
+                        Box(
+                            Modifier
+                                .size(10.dp)
+                                .background(Color(colourDot), CircleShape)
+                                .border(1.dp, CHIP_INK.copy(alpha = 0.3f), CircleShape),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
                     Text(
                         text = term.label(),
                         color = CHIP_INK,
@@ -194,6 +221,8 @@ fun SearchExpansionFooter(
 }
 
 private const val CHIP_RADIUS = 10
+// Fixed on purpose (semantic): the widen/narrow/alternative marks are a direction code and must
+// stay distinct from each other.
 private val CHIP_FILL = Color(0xFF1E1E22)
 private val CHIP_INK = Color(0xFFECE8E4)
 private val FOOTER_LABEL = Color(0xFF8E8E96)

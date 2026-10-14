@@ -1,7 +1,7 @@
 package com.fotoxplorr.app.audio
 
 import android.net.Uri
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 
 /**
  * One standalone audio file — a song, a recording, a podcast episode — as distinct from
