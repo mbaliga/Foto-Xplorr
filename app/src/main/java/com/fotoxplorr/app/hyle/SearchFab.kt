@@ -38,6 +38,8 @@ fun SearchFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
         modifier
             .size(SEARCH_FAB_DP.dp)
             .clip(CircleShape)
+            // Fixed on purpose (reference design): the root-grid reference draws a black disc with
+            // a white magnifier.
             .background(Color.Black)
             .semantics { contentDescription = "Search" }
             .clickable(

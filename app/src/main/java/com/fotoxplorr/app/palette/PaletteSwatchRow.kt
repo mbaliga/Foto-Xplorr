@@ -137,5 +137,6 @@ private val STRIP_HEIGHT = 14.dp
 private val STRIP_RADIUS = 4.dp
 private val LABEL_GAP = 6.dp
 
+// Fixed on purpose (semantic): swatches are the photo's own colours and the label is neutral text.
 /** The details room's own secondary text colour, so the hex line matches the rows around it. */
 private val DEFAULT_LABEL_COLOR = Color(0xFF8A8A8A)

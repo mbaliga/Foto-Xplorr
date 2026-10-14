@@ -1023,7 +1023,7 @@ fun LibraryScreen(
             }
         }
 
-        item { SectionHeading("Tags", "Searchable labels stored only in Foto Xplorr") }
+        item { SectionHeading("Tags", "Searchable labels stored only in Fotoz") }
         item {
             if (library.allTags.isEmpty()) {
                 Text("Select media and choose Add tag to create your first tag.")

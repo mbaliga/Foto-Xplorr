@@ -128,7 +128,7 @@ Current phase: **Phase 1 — Foundation**. Branch: `claude/fotoz-p1-foundation`.
 
 ## Owner questions
 
-1. **Monetization model for Foto Xplorr** (the watermark is off meanwhile). Options on file:
+1. **Monetization model for Fotoz** (the watermark is off meanwhile). Options on file:
    - no paid tier;
    - cosmetic Pro (frames and seals);
    - Fonebrew-style one-time unlock for pro tools (RAW develop, network sources, batch conversion, AI packs), with viewing, sharing and organising free forever and the sideload build fully unlocked.
@@ -307,3 +307,100 @@ renders its surfaces to real PNGs under Robolectric NATIVE graphics (`GalleryRen
 - **Not on disk:** the two inline reference images (zoom navigator; swivel reveal) were never
   saved by the upload, so those two surfaces were built from the owner's description and should
   be re-checked against the originals once re-attached.
+
+## Rename to Fotoz, and accent theming that reaches everything (13 Oct 2026)
+
+**Owner decision.** The apps are named **Fotoz** and **Fylz**. This repository is Fotoz (it was
+Foto Xplorr). The owner also asked that both apps be themeable at least at the level of an accent
+colour, and for APK links for both.
+
+### What was built
+
+- **Rename, user-visible text only.** The launcher label now comes from a new
+  `res/values/strings.xml` (`app_name` = `Fotoz`) and the manifest points at it, so the recents
+  title, Settings > Apps entry, permission dialogs and the "Open with" chooser entry all say Fotoz.
+  Every in-app string (settings, about, share sheet, watermark text, empty states, permission
+  explainers, support-email subject, crash-recovery label), the zip name offered when sharing
+  several items (`Fotoz 3 photos.zip`), the suggested metadata-export file name
+  (`fotoz-metadata.json`), the CI artifact names and the release title (`.github/workflows`), the
+  README and the docs prose were renamed. Package, `applicationId`, FileProvider authority, class
+  and file names, Gradle names, persisted preference keys, database names, the Keystore alias,
+  MapLibre layer ids, repository URLs and the `Foto-Xplorr` repo name were left exactly as they
+  are. The README gains one line saying Fotoz was previously Foto Xplorr and which identifiers keep
+  the old name. Two quoted titles of an external document ("Foto Xplorr -- gap analysis ...") in
+  `MASTER-PLAN.md` and `PHASE-0-BRIEF.md` keep the old name because they are quotations.
+- **Compatibility for anything written under the old name.** Only one thing is written to the
+  device by name and read back: the fallback folders for edited copies and conversions
+  (`MediaStoreDestination`). New saves go to `Pictures/Fotoz/`, `Movies/Fotoz/` and
+  `Music/Fotoz/`. The old `Pictures|Movies|Music/Foto Xplorr/` folders are never renamed or moved,
+  are still indexed (the scanners have no folder filter), and a source already inside one keeps its
+  exact path because the top folder is an allowed one, so editing an older copy still saves beside
+  it. That last rule is now pinned by a test (`a source already in the legacy Foto Xplorr folder
+  keeps its exact path`) and explained in `mediaStoreRelativePath`'s KDoc. The share zip name lives
+  in a cache directory that is wiped on every share, the metadata export is imported through a
+  document picker with no name filter and no app name in the JSON, so neither needed compat code.
+  The watermark text and the recovery label of a crash stored by an older build keep the old text
+  where they were already produced; nothing reads them back by name.
+- **Accent: the chosen accent now drives every accent-role element.** `toColorScheme` derives the
+  five Material slots the schema never carried (`onPrimary`, `primaryContainer`,
+  `onPrimaryContainer`, `secondaryContainer`, `onSecondaryContainer`) from the existing eight keys,
+  so buttons, the floating action button, selected filter chips, slider tracks, the album and
+  Places cover tiles and the selected-tile tick follow the accent instead of Material's baseline
+  purple. The theme JSON schema is unchanged, so stored custom themes keep working. The ink drawn
+  on an accent is `onPrimary` (white or near-black, whichever reads better) instead of a hard
+  `Color.Black`, at eleven pill and bubble sites. The "Show More/Less" link, the live-text
+  selection fill, the Hyle field's focus wedge, border and cursor, the connect-flavour Places
+  cluster bubbles and the crash-recovery screen's accent now follow the choice too; `MapFocus` no
+  longer has a theme-blind default accent.
+- **Picker.** It was already reachable (Settings > Appearance > Accent), persisted
+  (`GalleryPreferences`) and live (`FotoXplorrTheme`). Gaps closed: the Settings button on the
+  Albums, Discover and Library screens opened the Actions room instead of Settings; each accent
+  chip now shows a swatch of its colour in the mode being shown; "Custom..." starts from the active
+  accent's JSON instead of always Violet; a dead second picker (`GallerySettingsList`, no callers,
+  with an inert Custom chip) was deleted; `FotoXplorrTheme` now remembers the resolved scheme
+  instead of re-parsing a custom theme's JSON on every recomposition.
+- **Fixed on purpose.** Every colour left alone has a one-line comment at its definition saying
+  why it is fixed (reference design or semantic): job-kind hues, the activity strip and track
+  greys, the error salmon, the rail's white marker, the room's dark neutrals, the zoom navigator's
+  blues, the search disc and pill, toggle and stepper neutrals, the widen/narrow/alternative
+  marks, the trash red, map pins and compass north, categorical cluster hues, exported share
+  frames, and the static window and status-bar colours.
+- **Tests.** New `AccentThemeTest`: each bundled accent yields a different primary and a different
+  primary container in both modes, no accent-role slot is left on Material's baseline, the ink on
+  an accent has contrast of at least 4.5 for every bundled accent in both modes, a running
+  composition re-themes when the accent changes, and the persisted accent (bundled or custom) is
+  restored into the theme after a restart. `MediaStoreDestinationTest` and `ZipExporterTest` were
+  updated for the new names.
+
+### What deviated and why
+
+- The repository has no `CLAUDE.md`; this log and the docs under `docs/` were the conventions
+  followed.
+- The Grid / Cal / Map / Time view switcher's selected pill is now accent-filled (it was white).
+  The audit marked this a judgement call; every other selected pill in the app uses the accent, and
+  nothing in the references sets it apart. Revert that one line if the owner wants it neutral.
+- The Hyle field's focus state uses one accent for the wedge and the border; the control sheet
+  drew the border blue and the wedge violet, and a single user-chosen accent cannot honour a
+  two-tone default. The field is a fixed light control, so it reads the light-mode form of the
+  accent in every theme mode (`LocalAccentOnLight`).
+- `FilmstripScrubber` has no colour literals, so it got no "fixed" comment.
+- `XmpPacketTest` still writes "Added by Foto Xplorr" and `ExifCopierTest` a camera Make of
+  "Fotoxplorr Cam Co": both are self-contained fixtures, not app strings.
+- The Android debug workflow is now titled "Fotoz debug APK" and its artifacts are `fotoz-*`; any
+  external script that fetches APKs by the old artifact names (`foto-xplorr-debug`,
+  `fotoxplorr-arm64-INSTALL-THIS`) must switch to the new names. Old-named artifacts age out under
+  `cleanup-artifacts.yml`.
+
+### Residual, for the owner
+
+- Folder identity is derived from the path, so a user who locked or hid the old
+  `Pictures/Foto Xplorr` album has no lock on the new `Pictures/Fotoz` album. Aliasing the two
+  keys would change what `PrivateFolderStore` means, so it is left as a separate owner decision.
+- The `shared-libraries` submodule still has "Foto Xplorr" in comments and test fixtures; that is a
+  separate repository and was not touched.
+- The Ubuntu Touch bridge's example data directory in a KDoc still says `fotoxplorr`; the future Qt
+  shell should choose `fotoz` when it picks the real directory.
+
+Gate: `./scripts/verify.sh` is green on both flavours (1017 unit tests each, lint, both debug
+assemblies, the offline enforcement gates). Nothing under `core/` changed, so
+`scripts/verify-native.sh` was not needed.

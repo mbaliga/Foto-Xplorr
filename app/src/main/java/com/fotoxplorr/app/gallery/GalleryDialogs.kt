@@ -5,7 +5,6 @@ package com.fotoxplorr.app.gallery
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -15,15 +14,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -489,183 +482,3 @@ fun BulkRenameResultDialog(outcome: BulkRenameOutcome, onDismiss: () -> Unit) {
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
     )
 }
-
-/**
- * Every gallery setting, as a plain list.
- *
- * This used to be the body of a Material `AlertDialog`. The dialog is retired along with the
- * rest of the old chrome: settings are a *room* now (a surface parked off the right edge that
- * the home grid lifts and parts to reveal), and a modal window floating over that would be a
- * second, contradictory idea of where you are. Same content, no dialog — so it also inherits
- * the app's own dark theme instead of the platform's dialog surface.
- */
-@Composable
-fun GallerySettingsList(
-    preferences: GalleryPreferencesState,
-    actions: GalleryActions,
-    modifier: Modifier = Modifier,
-) {
-            LazyColumn(
-                modifier = modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                item {
-                    SettingsSection("Sort order") {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(GallerySort.entries, key = { it.name }) { sort ->
-                                FilterChip(
-                                    selected = preferences.sort == sort,
-                                    onClick = { actions.onSetSort(sort) },
-                                    label = { Text(sort.label()) },
-                                )
-                            }
-                        }
-                    }
-                }
-                item {
-                    SettingsSection("Timeline grouping") {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(TimelineGrouping.entries, key = { it.name }) { grouping ->
-                                FilterChip(
-                                    selected = preferences.timelineGrouping == grouping,
-                                    onClick = { actions.onSetTimelineGrouping(grouping) },
-                                    label = { Text(grouping.label()) },
-                                )
-                            }
-                        }
-                    }
-                }
-                item {
-                    SettingsSection("Grid density") {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            IconButton(
-                                enabled = preferences.gridColumns > MIN_GRID_COLUMNS,
-                                onClick = { actions.onSetGridColumns(preferences.gridColumns - 1) },
-                            ) { Icon(Icons.Outlined.Remove, contentDescription = "Larger thumbnails") }
-                            Text("${preferences.gridColumns} columns")
-                            IconButton(
-                                enabled = preferences.gridColumns < MAX_GRID_COLUMNS,
-                                onClick = { actions.onSetGridColumns(preferences.gridColumns + 1) },
-                            ) { Icon(Icons.Outlined.Add, contentDescription = "Smaller thumbnails") }
-                        }
-                    }
-                }
-                item { SettingsSwitch("Show videos", preferences.showVideos, actions.onSetShowVideos) }
-                item { SettingsSwitch("Blur sensitive media", preferences.blurSensitive, actions.onSetBlurSensitive) }
-                item { SettingsSwitch("Hide sensitive media from timeline", preferences.hideSensitive, actions.onSetHideSensitive) }
-                item {
-                    SettingsSection("Theme") {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(ThemeMode.entries, key = { it.name }) { mode ->
-                                FilterChip(
-                                    selected = preferences.themeMode == mode,
-                                    onClick = { actions.onSetThemeMode(mode) },
-                                    label = { Text(mode.label()) },
-                                )
-                            }
-                        }
-                    }
-                }
-                item {
-                    SettingsSection("Accent") {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(AccentPalette.entries, key = { it.name }) { palette ->
-                                FilterChip(
-                                    selected = preferences.accentPalette == palette,
-                                    onClick = { actions.onSetAccentPalette(palette) },
-                                    label = { Text(palette.label()) },
-                                )
-                            }
-                        }
-                    }
-                }
-                item {
-                    // The nine primary destinations from the mockups, not the four retired
-                    // bottom-nav tabs this list used to offer.
-                    SettingsSection("Default View") {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(HyleDestination.entries, key = { it.name }) { candidate ->
-                                FilterChip(
-                                    selected = preferences.defaultDestination == candidate,
-                                    onClick = { actions.onSetDefaultDestination(candidate) },
-                                    label = { Text(candidate.label) },
-                                )
-                            }
-                        }
-                    }
-                }
-                item {
-                    SettingsSection("Slideshow interval") {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            IconButton(
-                                enabled = preferences.slideshowIntervalSeconds > MIN_SLIDESHOW_INTERVAL_SECONDS,
-                                onClick = { actions.onSetSlideshowInterval(preferences.slideshowIntervalSeconds - 1) },
-                            ) { Icon(Icons.Outlined.Remove, null) }
-                            Text("${preferences.slideshowIntervalSeconds} seconds")
-                            IconButton(
-                                enabled = preferences.slideshowIntervalSeconds < MAX_SLIDESHOW_INTERVAL_SECONDS,
-                                onClick = { actions.onSetSlideshowInterval(preferences.slideshowIntervalSeconds + 1) },
-                            ) { Icon(Icons.Outlined.Add, null) }
-                        }
-                    }
-                }
-            }
-}
-
-@Composable
-private fun SettingsSwitch(
-    title: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(title, modifier = Modifier.weight(1f))
-        com.fotoxplorr.app.hyle.HyleToggle(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            description = title,
-        )
-    }
-}
-
-@Composable
-private fun SettingsSection(
-    title: String,
-    content: @Composable () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text(title, style = MaterialTheme.typography.titleSmall)
-        content()
-    }
-}
-
-private fun GallerySort.label() = when (this) {
-    GallerySort.NEWEST -> "Newest"
-    GallerySort.OLDEST -> "Oldest"
-    GallerySort.NAME -> "Name"
-    GallerySort.SIZE -> "Size"
-}
-
-private fun TimelineGrouping.label() = when (this) {
-    TimelineGrouping.DAY -> "Day"
-    TimelineGrouping.MONTH -> "Month"
-    TimelineGrouping.NONE -> "None"
-}
-
-private fun ThemeMode.label() = when (this) {
-    ThemeMode.SYSTEM -> "System"
-    ThemeMode.LIGHT -> "Light"
-    ThemeMode.DARK -> "Dark"
-}
-
-private fun AccentPalette.label() = name.lowercase().replaceFirstChar { it.titlecase() }

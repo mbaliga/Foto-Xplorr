@@ -20,12 +20,8 @@ data class MapFocus(
     val latitude: Double,
     val longitude: Double,
     val dotColors: Map<MediaId, Int> = emptyMap(),
-    val accentArgb: Int = DEFAULT_ACCENT_ARGB,
+    val accentArgb: Int,
 ) {
     /** The dot colour for [id]: its own palette colour when known, the accent otherwise. */
     fun colorFor(id: MediaId): Int = dotColors[id] ?: accentArgb
-
-    private companion object {
-        const val DEFAULT_ACCENT_ARGB = 0xFF5A8BFF.toInt()
-    }
 }

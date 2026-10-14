@@ -969,6 +969,8 @@ internal fun ZoomMinimap(
     )
 }
 
+// Fixed on purpose (reference design): the zoom navigator's blues are specified by the owner's
+// reference, not the accent.
 /** The navigator's field: light blue at about half strength, no border -- the reference's look. */
 private val MINIMAP_FIELD = Color(0xFF9DB8FF).copy(alpha = 0.55f)
 /** The visible viewport: solid blue, filled. */

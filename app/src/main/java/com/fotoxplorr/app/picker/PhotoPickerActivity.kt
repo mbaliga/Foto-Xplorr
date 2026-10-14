@@ -117,7 +117,7 @@ class PhotoPickerActivity : ComponentActivity() {
         val resultIntent = Intent().apply {
             data = uris.first()
             if (uris.size > 1) {
-                clipData = ClipData.newUri(contentResolver, "Foto Xplorr selection", uris.first()).also { clip ->
+                clipData = ClipData.newUri(contentResolver, "Fotoz selection", uris.first()).also { clip ->
                     uris.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
                 }
             }
@@ -195,7 +195,7 @@ private fun PickerBody(
         PickerTopBar(allowMultiple = false, selectedCount = 0, onCancel = onCancel, onConfirm = null)
         PickerMessage(
             title = "Choose the photos and videos to allow",
-            message = "Foto Xplorr needs access to your media library before you can pick from it.",
+            message = "Fotoz needs access to your media library before you can pick from it.",
             actionLabel = "Grant access",
             onAction = onGrantPermission,
         )

@@ -294,8 +294,10 @@ object FrameRenderer {
     private const val WATERMARK_SIZE = 0.026f
     private const val WATERMARK_INSET = 0.035f
     private const val WATERMARK_ALPHA = 130
-    private const val WATERMARK_TEXT = "Foto Xplorr"
+    private const val WATERMARK_TEXT = "Fotoz"
 
+    // Fixed on purpose (semantic): pixels written into exported images must not vary with the
+    // viewer's UI accent.
     private val POLAROID_PAPER = Color.rgb(250, 249, 245)
     private val POLAROID_INK = Color.rgb(40, 38, 35)
     private val APERTURE_EDGE = Color.argb(40, 0, 0, 0)

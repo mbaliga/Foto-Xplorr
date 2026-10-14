@@ -53,6 +53,8 @@ data class BackgroundActivity(
  *   16dp drawing has the reference's 12dp mark.
  */
 enum class ActivityKind(val label: String, val accent: Color, val glyph: ImageVector) {
+    // Fixed on purpose (semantic): per-kind job hues must stay distinct from each other, so they
+    // never follow the accent.
     SCANNING("Reading your library", Color(0xFF00E5FF), ActivityGlyphs.Scan),
     RECOGNISING("Recognising", Color(0xFFE040FB), ActivityGlyphs.Recognise),
     MOVING("Moving", Color(0xFF40A0FF), ActivityGlyphs.Move),

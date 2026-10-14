@@ -56,6 +56,7 @@ fun AlbumStack(
                 Box(
                     Modifier
                         .fillMaxSize()
+                        // Fixed on purpose (reference design): a neutral surface, no accent role.
                         .background(Color(0xFF141414))
                         .border(1.dp, Color.White.copy(alpha = 0.12f)),
                 )

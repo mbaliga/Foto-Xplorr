@@ -503,6 +503,8 @@ private fun formatBytes(bytes: Long): String = when {
     else -> "$bytes B"
 }
 
+// Fixed on purpose (semantic): categorical data colours, clusters must stay distinct from each
+// other.
 private val CLUSTER_COLORS = listOf(
     Color(0xFF65D1FF), Color(0xFFFF6B9A), Color(0xFFFFCC66), Color(0xFF7BE495),
     Color(0xFFB897FF), Color(0xFFFF8C69), Color(0xFF48D1CC), Color(0xFFF38BA8),

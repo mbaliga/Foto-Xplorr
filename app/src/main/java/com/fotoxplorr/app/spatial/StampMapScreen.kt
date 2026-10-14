@@ -445,7 +445,7 @@ private fun EmptyMap(
                     geoState.isIndexing ->
                         "Checked ${geoState.scannedCount} of ${geoState.totalCount} so far."
                     geoState.scannedCount == 0 ->
-                        "Foto Xplorr reads each photo's own GPS tag on this device. Nothing is uploaded."
+                        "Fotoz reads each photo's own GPS tag on this device. Nothing is uploaded."
                     else ->
                         "Photos saved from messaging apps and websites usually have their location " +
                             "removed before they reach your phone. Open a photo and drag it down for its " +
@@ -486,6 +486,8 @@ private fun SpinningField(modifier: Modifier = Modifier) {
     }
 }
 
+// Fixed on purpose (reference design): the offline stamp map's own ground and paper, not an accent
+// role.
 private val FIELD = Color(0xFF11141C)
 private val FIELD_DEEP = Color(0xFF0A0C12)
 private val STAMP_PAPER = Color(0xFFF5F1E8)

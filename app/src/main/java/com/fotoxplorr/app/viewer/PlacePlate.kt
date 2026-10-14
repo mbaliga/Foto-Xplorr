@@ -232,5 +232,7 @@ private const val PLATE_ASPECT = 1f
 internal const val PLATE_CORNER_DP = 12
 private const val GRATICULE_STROKE_DP = 1
 
+// Fixed on purpose (reference design): map-plate neutrals and the white pin frame, measured off the
+// reference.
 private val PLATE_GROUND = Color(0xFF12161C)
 private val GRATICULE = Color(0xFF2E3946)

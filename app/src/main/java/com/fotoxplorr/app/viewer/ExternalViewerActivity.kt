@@ -34,9 +34,9 @@ import com.fotoxplorr.app.share.ShareFrame
 import com.fotoxplorr.app.share.ShareOptions
 import com.fotoxplorr.app.share.SharePreparer
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.app.ui.crashRecoveryStyle
 import com.fotoxplorr.core.model.MediaId
 import dev.aarso.crashrecovery.CrashRecovery
-import dev.aarso.crashrecovery.CrashRecoveryStyle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -45,7 +45,7 @@ import java.util.Locale
 import kotlinx.coroutines.withContext
 
 /**
- * "Open with Foto Xplorr" (P0-18): the only entry point besides the launcher. A photo or video
+ * "Open with Fotoz" (P0-18): the only entry point besides the launcher. A photo or video
  * tapped in another app -- the Files app, including on a USB drive -- lands here, never in
  * [FotoXplorrActivity], since this activity needs no gallery and must never touch this app's own
  * catalogue for a file that catalogue has never scanned.
@@ -64,7 +64,7 @@ import kotlinx.coroutines.withContext
 class ExternalViewerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (CrashRecovery.maybeShowRecovery(this, appLabel = "Foto Xplorr", style = EXTERNAL_CRASH_STYLE)) return
+        if (CrashRecovery.maybeShowRecovery(this, appLabel = "Fotoz", style = crashRecoveryStyle(this))) return
         enableEdgeToEdge()
 
         val uri = intent?.data
@@ -189,19 +189,6 @@ class ExternalViewerActivity : ComponentActivity() {
         }
     }
 }
-
-/**
- * Foto Xplorr's accent, for the recovery screen -- identical values to [FotoXplorrActivity]'s own
- * private `CRASH_STYLE`. Not shared as a single top-level constant across the two files: neither
- * activity is the "owner" of the app's accent colour more than the other, and duplicating four
- * @ColorInt literals costs far less than the coupling a shared file would add for it.
- */
-private val EXTERNAL_CRASH_STYLE = CrashRecoveryStyle.accent(
-    light = 0xFF6E49B8.toInt(),
-    onLight = 0xFFFFFFFF.toInt(),
-    dark = 0xFFCBB4FF.toInt(),
-    onDark = 0xFF221636.toInt(),
-)
 
 /**
  * Null unless [uri] is a `content://media/...` row this app's own catalogue has already scanned --

@@ -1,4 +1,4 @@
-# Foto Xplorr release rules.
+# Fotoz release rules.
 #
 # The release build is minified AND resource-shrunk, which is what makes a sideloadable APK a
 # reasonable size. Both of those are whole-program transforms, so anything reached by reflection

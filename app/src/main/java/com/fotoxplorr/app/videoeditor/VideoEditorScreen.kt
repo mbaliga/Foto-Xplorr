@@ -183,7 +183,7 @@ fun VideoEditorScreen(
                     val selected = speedFactor == preset
                     Text(
                         speedLabel(preset),
-                        color = if (selected) Color.Black else Color.White,
+                        color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
                         style = MaterialTheme.typography.labelLarge,
                         modifier = Modifier
                             .background(

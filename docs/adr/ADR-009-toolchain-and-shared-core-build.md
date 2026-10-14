@@ -7,7 +7,7 @@
 
 ## Context
 
-Foto Xplorr consumes `hyle-design-system` and `shared-libraries` (`Shared-Libraries-asoc`) as git submodules through Gradle `includeBuild` (decision D-A). A composite build hard-fails when its builds use different Android Gradle Plugin versions (D-Q, TRAPS #3).
+Fotoz consumes `hyle-design-system` and `shared-libraries` (`Shared-Libraries-asoc`) as git submodules through Gradle `includeBuild` (decision D-A). A composite build hard-fails when its builds use different Android Gradle Plugin versions (D-Q, TRAPS #3).
 
 **Current pins, identical in all three repos:**
 - AGP 8.9.1
@@ -16,7 +16,7 @@ Foto Xplorr consumes `hyle-design-system` and `shared-libraries` (`Shared-Librar
 - Compose BOM 2025.05.01
 - Hyle additionally pins KSP `2.1.0-1.0.29` and Room 2.7.1.
 
-These are not Foto Xplorr's to move alone. Hyle and shared-libraries are composite-included by **other apps** too (Fonebrew and others). Bumping them forces every consumer to move its own AGP and Kotlin at the same moment, or break.
+These are not Fotoz's to move alone. Hyle and shared-libraries are composite-included by **other apps** too (Fonebrew and others). Bumping them forces every consumer to move its own AGP and Kotlin at the same moment, or break.
 
 **What Phase 1 actually needs from the toolchain:**
 
@@ -53,7 +53,7 @@ Source for the Room facts: [Room release notes](https://developer.android.com/je
    CI turns the property on in a separate job (item 5). `scripts/verify.sh` stays unchanged for local use and gains a `--native` flag that passes the property.
 4. **The Android side of new KMP modules uses the classic plugins available on AGP 8.9.1:** `org.jetbrains.kotlin.multiplatform` + `com.android.library` with `androidTarget()`, only for modules that need Android APIs (for example `:core:db`, for Room's Android builder). Pure modules use `jvm()` + (opt-in) native, and the Android app consumes their JVM variant. Don't use `com.android.kotlin.multiplatform.library`: it needs a newer AGP.
 5. **CI:** add a job `core-native` to `.github/workflows/android-debug.yml` that runs `./gradlew -Pfotoz.native=true <every native-ready module>:linuxX64Test <every native-ready module>:compileKotlinLinuxArm64`. It can't *run* `linuxArm64` tests on an x86 runner; compiling them is enough in Phase 1. It is **required** once WP1.2 lands.
-6. **The constellation-wide upgrade becomes its own project**, not a Foto Xplorr work package. Write `docs/handoff/CONSTELLATION-TOOLCHAIN-UPGRADE.md` (a short plan, no code): which repos include Hyle and shared-libraries, and the target AGP/Kotlin/Gradle/Compose. The order is Hyle → shared-libraries → each consumer, with merge commits and pin bumps. The trigger is Phase 9 (Compose Multiplatform Desktop), or any earlier dependency that needs Kotlin > 2.1.
+6. **The constellation-wide upgrade becomes its own project**, not a Fotoz work package. Write `docs/handoff/CONSTELLATION-TOOLCHAIN-UPGRADE.md` (a short plan, no code): which repos include Hyle and shared-libraries, and the target AGP/Kotlin/Gradle/Compose. The order is Hyle → shared-libraries → each consumer, with merge commits and pin bumps. The trigger is Phase 9 (Compose Multiplatform Desktop), or any earlier dependency that needs Kotlin > 2.1.
    - Also list which consumer repos you can see. A mention in docs is enough; don't clone repos you weren't given.
 
 ## Consequences
@@ -66,5 +66,5 @@ Source for the Room facts: [Room release notes](https://developer.android.com/je
 ## Rejected alternatives
 
 - **Upgrade all three repos now.** It blocks on other apps' readiness, forces an owner merge mid-run, and buys nothing Phase 1 needs.
-- **Decouple from the composite (consume Hyle as published artifacts).** It would free Foto Xplorr's toolchain but reverses decision D-A for the whole constellation. That's an owner-level change; record it in the constellation upgrade plan as an option.
+- **Decouple from the composite (consume Hyle as published artifacts).** It would free Fotoz's toolchain but reverses decision D-A for the whole constellation. That's an owner-level change; record it in the constellation upgrade plan as an option.
 - **SQLDelight instead of Room KMP.** Viable (native Linux driver since 2.0.1), but Hyle and the team already use Room. Room KMP gives the same `BundledSQLiteDriver` SQLite everywhere, and its Kotlin-2.0 floor is already met.

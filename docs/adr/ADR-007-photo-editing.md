@@ -28,7 +28,7 @@ permission reaches the offline merged manifest, and `verifyOfflineRuntimeClasspa
 networking library reaches the offline runtime classpath. The allowlist holds exactly one entry,
 by exact coordinate. There is no escape hatch for the classpath gate.
 
-**2. Licence.** Foto Xplorr is not a GPL application. A GPL-3.0 dependency would make it one.
+**2. Licence.** Fotoz is not a GPL application. A GPL-3.0 dependency would make it one.
 
 | Candidate | Licence | Verdict |
 |---|---|---|

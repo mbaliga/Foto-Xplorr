@@ -61,7 +61,7 @@ fun AudioLibraryScreen(
                     style = TextStyle(fontSize = 17.sp),
                 )
                 Text(
-                    "Foto Xplorr can list the voice recordings, podcasts and music stored on " +
+                    "Fotoz can list the voice recordings, podcasts and music stored on " +
                         "this device. Nothing is uploaded.",
                     modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
                     color = Color.White.copy(alpha = 0.55f),

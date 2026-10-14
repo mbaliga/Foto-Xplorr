@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Fixed on purpose (reference design): static pre-Compose window chrome (status bar, navigation
+         bar, window background) cannot follow a runtime accent choice and is neutral in any case. -->
     <style name="Theme.FotoXplorr" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">false</item>

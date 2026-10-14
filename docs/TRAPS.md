@@ -56,7 +56,7 @@ change that needs saying out loud. Source: the 6 Aug 2026 handoff plus plan FX-I
     `verifyOfflineRuntimeClasspath`, then a *targeted* FQCN denylist — in that order of
     authority.
 13. **Never the standalone word `Synced`.** Four operating modes, four different
-    promises. `Syncthing · Replicated local folder`, never `Synced by Foto Xplorr`.
+    promises. `Syncthing · Replicated local folder`, never `Synced by Fotoz`.
 14. **Never encode state in colour alone.** Pair every state with shape, label or icon.
 15. **Phase C of a migration is forward-only.** The user writes to the live catalogue
     throughout a backfill; restoring the pre-migration backup to "fix" a failed batch

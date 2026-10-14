@@ -8,7 +8,7 @@ import com.fotoxplorr.app.BuildConfig
 import java.util.concurrent.TimeUnit
 
 /**
- * Arms and disarms the ONE platform job Foto Xplorr uses for every rule-gated background pass,
+ * Arms and disarms the ONE platform job Fotoz uses for every rule-gated background pass,
  * via the platform's own `android.app.job.JobScheduler` -- no WorkManager, no new dependency
  * (this app may not add one: the `offline` flavour's Gradle gates fail the build on any network
  * or scheduling library reaching its classpath, and `JobScheduler` is a framework class, not a
@@ -156,7 +156,7 @@ class BackgroundScheduler(context: Context) {
     }
 
     private companion object {
-        // Arbitrary, but stable and unique to this app: nothing else in Foto Xplorr schedules a
+        // Arbitrary, but stable and unique to this app: nothing else in Fotoz schedules a
         // JobScheduler job today (there was none before this feature), so any fixed value works;
         // this one just avoids 0 and small round numbers a future unrelated job might reach for
         // first.

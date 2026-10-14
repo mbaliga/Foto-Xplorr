@@ -108,6 +108,8 @@ fun ActivityShade(
                     // Opaque, because it is the app's own background coming forward rather than a
                     // translucent overlay. A scrim here would show the photographs through the
                     // progress bar and make both harder to read.
+                    // Fixed on purpose (reference design): the strip ground is the pure black
+                    // sampled from the owner's screenshots.
                     .background(Color.Black)
                     .draggable(
                         orientation = Orientation.Vertical,
@@ -276,6 +278,8 @@ private fun HeroPanel(activity: BackgroundActivity) {
                             .size(width = 72.dp, height = 84.dp)
                             .graphicsLayer { rotationZ = angle }
                             .clip(RoundedCornerShape(8.dp))
+                            // Fixed on purpose (reference design): the back plate is the sampled
+                            // neutral, the kind colour is the only hue.
                             .background(if (front) activity.kind.accent else Color(0xFF1C1C22))
                             .then(
                                 if (front) {
@@ -468,10 +472,13 @@ private const val FILL_INSET = 2
 private const val GLYPH_SLOT = 12
 private const val GLYPH_GAP = 4
 
+// Fixed on purpose (reference design): the track greys are sampled from the strip screenshots.
 /** The track's grey, lightening a little from top to bottom, as the screenshots draw it. */
 private val TRACK_TOP = Color(0xFF383838)
 private val TRACK_BOTTOM = Color(0xFF4D4D4D)
 
+// Fixed on purpose (semantic): the error salmon, the same value as the Material dark error, never
+// the accent.
 /** What a failed job's bar and name turn. Nothing in [ActivityKind] may use it. */
 private val ERROR_ACCENT = Color(0xFFFFB4AB)
 

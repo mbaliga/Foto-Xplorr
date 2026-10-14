@@ -444,7 +444,11 @@ class ViewerEdgeCaseTest {
                     onIndexLocations = {},
                     onOpenAsset = { _, _ -> },
                     onClose = {},
-                    focus = MapFocus(roll[4].id, 17.4435, 78.3772, dotColors = mapOf(MediaId(100L) to 0xFFFF0000.toInt())),
+                    focus = MapFocus(
+                        roll[4].id, 17.4435, 78.3772,
+                        dotColors = mapOf(MediaId(100L) to 0xFFFF0000.toInt()),
+                        accentArgb = 0xFF5A8BFF.toInt(),
+                    ),
                 )
             }
         }

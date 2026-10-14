@@ -3,7 +3,7 @@
 > Owner direction (2026-08-05): *"I expected the navigation pattern of fonebrew to be followed
 > everywhere."* This file is the written form of that pattern, distilled from the owner's two
 > reference videos, the fonebrew (Android-IDE-core "Workbench") rooms implementation, and the
-> correction round on the first Foto Xplorr / Fylz test builds. It exists so no future build
+> correction round on the first Fotoz / Fylz test builds. It exists so no future build
 > session re-derives the pattern from memory — or worse, ships hamburgers and bottom nav bars
 > again.
 
@@ -32,7 +32,7 @@ navigation act and it happens **on the content**, not through chrome.
   why pull-to-refresh / pull-to-backup are banned everywhere in the constellation.
 - The top room is NOT yet required in any app (owner, 2026-08-05). What is required now is
   keeping its gesture unclaimed and its copy off the screen — no "PULL TO …" static text.
-- Foto Xplorr built the first one (2026-08-09), after the owner's third reference video showed
+- Fotoz built the first one (2026-08-09), after the owner's third reference video showed
   what belongs in it: a photo's own facts, and a plate of *where it was taken* that the photo
   itself flies into. The flight is the argument for the room — the same content on a pushed
   screen would just be a form. The video's ordering is the one to copy, and the implementation
@@ -60,7 +60,7 @@ These are the things the first test builds got wrong. Do not reintroduce them:
   a `Menu` icon opening a drawer-style list.
 - **No bottom `NavigationBar` / tab bar.** (Fylz shipped "Files / Recovery" tabs — wrong.)
 - **No slide-over panels either.** A slide-over covers the screen you were on; the owner was
-  explicit that the current view should *move a bit and then swivel away*. Foto Xplorr's
+  explicit that the current view should *move a bit and then swivel away*. Fotoz's
   `SlideInPanel` was the first attempt at this and was wrong; `SpatialShell` replaced it.
 - **No full-screen Material settings dialogs.** Settings are the right-hand room, rendered in
   the app's own theme. A modal window floating over a room is two contradictory ideas of where
@@ -73,7 +73,7 @@ These are the things the first test builds got wrong. Do not reintroduce them:
 | App | Has | Needs |
 |---|---|---|
 | fonebrew (IDE-core) | rooms implementation (`ui/rooms/`) | is the reference |
-| Foto Xplorr | **adopted.** Rail = left room, settings = right room. Hamburger, app bar, `SlideInPanel` and the settings dialog all retired. Date-keyed edge scrubber over the grid. **Top room built, in the viewer**: `PhotoDetailRoom` — the file's facts and a place plate the photo flies into. The `ImageDetailScreen` Material screen and the bottom `MetadataPanel` it duplicated are both retired | the top room on the *grid*, if something ever earns it |
+| Fotoz | **adopted.** Rail = left room, settings = right room. Hamburger, app bar, `SlideInPanel` and the settings dialog all retired. Date-keyed edge scrubber over the grid. **Top room built, in the viewer**: `PhotoDetailRoom` — the file's facts and a place plate the photo flies into. The `ImageDetailScreen` Material screen and the bottom `MetadataPanel` it duplicated are both retired | the top room on the *grid*, if something ever earns it |
 | Fylz | **adopted.** Locations = left room, Tools + settings = right room, Recovery = bottom room. Bottom tabs, workspace chips and the light Tools screen retired. Sort-keyed edge scrubber | as above |
 | csapp / assay | standard Material consoles | pattern adoption once the two testable apps validate it |
 

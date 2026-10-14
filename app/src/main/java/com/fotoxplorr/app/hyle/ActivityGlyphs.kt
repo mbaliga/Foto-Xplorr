@@ -38,6 +38,8 @@ internal object ActivityGlyphs {
         viewportHeight = GLYPH_DP,
     ).apply {
         // Body with its two cut-outs. Even-odd so the inner rectangles read as holes.
+        // Fixed on purpose (reference design): every glyph is the strip reference's white, the kind
+        // colour sits behind it.
         path(fill = SolidColor(Color.White), pathFillType = PathFillType.EvenOdd) {
             moveTo(2f, 2f)
             lineTo(10f, 2f)

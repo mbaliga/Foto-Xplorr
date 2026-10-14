@@ -1,19 +1,19 @@
 # Constellation toolchain upgrade — a plan, not a Phase 1 work package
 
-**Written:** 24 Sep 2026, as part of Foto Xplorr WP1.1 (ADR-009 decision 6).
+**Written:** 24 Sep 2026, as part of Fotoz WP1.1 (ADR-009 decision 6).
 **Status:** not started. This document exists so the eventual bump has a plan; it commits
 nobody to executing it, and Phase 1 needs none of it (ADR-009).
 
 ## Why this is its own project
 
 `hyle-design-system` and `shared-libraries` (`Shared-Libraries-asoc`) are consumed by more than
-one app through Gradle composite builds (`includeBuild`, decision D-A in Foto Xplorr's own
+one app through Gradle composite builds (`includeBuild`, decision D-A in Fotoz's own
 history). A composite build hard-fails the moment its members disagree on Android Gradle Plugin
-version (D-Q, Foto Xplorr's TRAPS #3): "Using multiple versions of the Android Gradle Plugin ...
+version (D-Q, Fotoz's TRAPS #3): "Using multiple versions of the Android Gradle Plugin ...
 is not allowed." That means neither submodule repo can bump AGP alone, and neither can a single
 consumer — the bump has to land in the submodules first, then propagate to every consumer in one
 coordinated pass. That coordination is a project of its own, not a line item inside any one
-consumer's roadmap. See ADR-009 for the Foto Xplorr-side decision this document is the flip side
+consumer's roadmap. See ADR-009 for the Fotoz-side decision this document is the flip side
 of: Phase 1 stays on the current pins and defers this entirely.
 
 ## Repos that include Hyle and/or shared-libraries (visible to this session)
@@ -42,7 +42,7 @@ The owner should extend this table before actually executing the upgrade.
 | `Fyl-Manager` | 8.9.1 | **2.1.20** | 8.14.3 | (not checked — not this repo's concern) | **Already diverges** from the other three on Kotlin's exact patch. AGP and Gradle agree, which is why the composite build doesn't hard-fail (D-Q is an AGP rule, not a Kotlin one) — but it means the constellation is not actually at one Kotlin version today, and the eventual bump should reconcile this rather than assume a clean starting line. |
 
 The Kotlin divergence in `Fyl-Manager` was found by inspection while writing this document, not
-introduced by it. It is not Foto Xplorr's to fix; noting it here so whoever executes the
+introduced by it. It is not Fotoz's to fix; noting it here so whoever executes the
 constellation bump doesn't discover it mid-bump.
 
 ## Target versions
@@ -58,7 +58,7 @@ would be stale long before anyone executes this. Instead, pick the latest stable
 | Compose Multiplatform Desktop (Phase 9's own trigger) | Compose MP's stated minimum Kotlin for the desktop target |
 | `compileSdk` at bump time | AGP version supporting it |
 | Hyle's and shared-libraries' own dependencies | Re-verify each still resolves at the new Kotlin/AGP before committing |
-| The `kotlin-stdlib` force-pin in Foto Xplorr's `app/build.gradle.kts` | Either widen it to the new version or confirm it can be dropped (ADR-009 consequence: some Android deps already compile against a newer stdlib than the pin) |
+| The `kotlin-stdlib` force-pin in Fotoz's `app/build.gradle.kts` | Either widen it to the new version or confirm it can be dropped (ADR-009 consequence: some Android deps already compile against a newer stdlib than the pin) |
 
 Re-run the same due-diligence ADR-009 did for Phase 1 (a needs-table against current pins)
 before choosing numbers, rather than upgrading because a newer version merely exists.
@@ -84,8 +84,8 @@ Execute this upgrade when either:
    - update its submodule pin (`git submodule update --remote` or equivalent, committed
      explicitly, not silently picked up);
    - bump its own root `build.gradle.kts` / plugin versions to match;
-   - re-verify: `./scripts/verify.sh` (Foto Xplorr) or the equivalent gate in each other consumer;
-   - for Foto Xplorr specifically: re-check the `kotlin-stdlib` force-pin (see Target versions
+   - re-verify: `./scripts/verify.sh` (Fotoz) or the equivalent gate in each other consumer;
+   - for Fotoz specifically: re-check the `kotlin-stdlib` force-pin (see Target versions
      above) and the native-target (`-Pfotoz.native=true`) build, since Kotlin/Native toolchains
      are version-sensitive in ways the JVM/Android targets aren't.
 4. Known consumers to update in step 3, from the table above: `Foto-Xplorr`, `Fyl-Manager`, plus

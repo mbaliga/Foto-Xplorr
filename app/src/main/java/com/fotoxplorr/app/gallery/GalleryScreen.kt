@@ -387,7 +387,7 @@ fun GalleryScreen(
         when {
             !state.permissionGranted -> GalleryEmptyState(
                 title = "Your gallery stays on this device",
-                message = "Choose the photos and videos Foto Xplorr may index. Nothing is uploaded.",
+                message = "Choose the photos and videos Fotoz may index. Nothing is uploaded.",
                 actionLabel = "Choose media",
                 onAction = actions.onRequestPermission,
             )
@@ -404,7 +404,7 @@ fun GalleryScreen(
             )
             state.assets.isEmpty() -> GalleryEmptyState(
                 title = "No media found",
-                message = "Foto Xplorr could not find any permitted photos or videos.",
+                message = "Fotoz could not find any permitted photos or videos.",
                 actionLabel = "Scan again",
                 onAction = actions.onRefresh,
             )
@@ -1108,6 +1108,8 @@ private fun GalleryBrowser(
                                     .fillMaxWidth()
                                     .padding(horizontal = 16.dp, vertical = 8.dp),
                                 placeholder = "Search names, albums, types and tags",
+                                // Fixed on purpose (reference design): the Hyle idle-wedge neutral
+                                // on the light search field, not an accent.
                                 leading = { Icon(Icons.Outlined.Search, null, tint = Color(0xFF3A3A44)) },
                                 trailing = {
                                     if (query.isNotEmpty()) {
@@ -1134,8 +1136,9 @@ private fun GalleryBrowser(
                                 onRequestUnlock = { key, name ->
                                     passwordRequest = PasswordRequest(PasswordAction.UNLOCK, key, name)
                                 },
-                                // One depth now, so opening settings is just opening the room.
-                                onOpenSettings = { shell.open(RoomEdge.RIGHT) },
+                                // Settings is the TOP room (the right room is the Actions room), so this is
+                                // how the Appearance > Accent picker is reached from these screens.
+                                onOpenSettings = { shell.open(RoomEdge.TOP) },
                             )
                             // ---- the zoom ladder's sparse rungs (owner: "zoom out past the
                             // sparsest grid and you reach Calendar [-> Year -> Decade]; further
@@ -1275,7 +1278,7 @@ private fun GalleryBrowser(
                             },
                             inkColor = Color.White,
                             accentColor = MaterialTheme.colorScheme.primary,
-                            bubbleTextColor = Color.Black,
+                            bubbleTextColor = MaterialTheme.colorScheme.onPrimary,
                             // The strip stops sitting ON the photos (owner, 2026-08-14: "the
                             // timeline thing is overlapping with the pictures"): it is invisible
                             // while the mosaic is still, fades in with the scroll it describes,
@@ -1605,11 +1608,11 @@ private fun GalleryViewModeSwitcher(
 private fun GalleryViewModeButton(label: String, selected: Boolean, onClick: () -> Unit) {
     Text(
         text = label.uppercase(),
-        color = if (selected) Color.Black else Color.White.copy(alpha = 0.75f),
+        color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White.copy(alpha = 0.75f),
         style = MaterialTheme.typography.labelSmall,
         modifier = Modifier
             .clickable(onClickLabel = "$label view", onClick = onClick)
-            .background(if (selected) Color.White else Color.Transparent, RoundedCornerShape(14.dp))
+            .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(14.dp))
             .padding(horizontal = 10.dp, vertical = 6.dp),
     )
 }
@@ -1923,6 +1926,7 @@ private const val TRASH_RIGHT = 15
 private const val TRASH_BOX_W = 110
 private const val SELECTION_TRASH_GLYPH = 32
 
+// Fixed on purpose (semantic): destructive red stays the same whatever accent is chosen.
 /**
  * The trash's fill, sampled from the mockups — the one saturated colour anywhere in this app's
  * chrome, spent on the one action that destroys something. Deliberately not a Material error
@@ -2119,7 +2123,7 @@ private fun SettingsRoom(
                 context.startActivity(
                     android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
                         data = android.net.Uri.parse("mailto:$SUPPORT_EMAIL")
-                        putExtra(android.content.Intent.EXTRA_SUBJECT, "Foto Xplorr")
+                        putExtra(android.content.Intent.EXTRA_SUBJECT, "Fotoz")
                     },
                 )
             }

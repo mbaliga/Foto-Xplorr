@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -151,8 +152,11 @@ fun RichPhotoMapScreen(
     // focus itself.
     val focusAsset = focus?.let { assetsById[it.assetId] }
 
+    // The cluster bubbles are the accent role, so they take the chosen accent. Read once, as the
+    // controller is made: the accent cannot change while this full-screen map is open.
+    val accentArgb = MaterialTheme.colorScheme.primary.toArgb()
     val controller = remember(focus) {
-        RichPhotoMapController(focus = focus) { mediaId -> selectedId = mediaId }
+        RichPhotoMapController(focus = focus, accentArgb = accentArgb) { mediaId -> selectedId = mediaId }
     }
     val mapView = remember(context) {
         MapLibre.getInstance(context.applicationContext)
@@ -331,6 +335,7 @@ fun RichPhotoMapScreen(
 
 private class RichPhotoMapController(
     private val focus: MapFocus? = null,
+    private val accentArgb: Int,
     private val onSelected: (MediaId) -> Unit,
 ) {
     private var map: MapLibreMap? = null
@@ -417,7 +422,7 @@ private class RichPhotoMapController(
         val clusters: Layer = CircleLayer(CLUSTER_LAYER, PHOTO_SOURCE).apply {
             setFilter(Expression.has("point_count"))
             setProperties(
-                circleColor(Color.rgb(94, 77, 176)),
+                circleColor(accentArgb),
                 circleRadius(22f),
                 circleOpacity(0.88f),
                 circleStrokeColor(Color.WHITE),
@@ -439,6 +444,8 @@ private class RichPhotoMapController(
                 )
             } else {
                 setProperties(
+                    // Fixed on purpose (semantic): map style colours (point, selection ring,
+                    // terrain, extrusion) are not accent roles.
                     circleColor(Color.rgb(255, 171, 64)),
                     circleRadius(8.5f),
                     circleOpacity(0.94f),

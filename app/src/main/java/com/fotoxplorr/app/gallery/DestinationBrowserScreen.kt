@@ -346,6 +346,7 @@ private fun PeopleStrip(
                     modifier = Modifier
                         .size(56.dp)
                         .clip(RoundedCornerShape(28.dp))
+                        // Fixed on purpose (reference design): a neutral surface, no accent role.
                         .background(Color(0xFF1A1A1A))
                         .clickable { onOpenPerson(cluster.mediaIds.toSet()) },
                 ) {

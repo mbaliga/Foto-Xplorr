@@ -173,6 +173,7 @@ private fun DayCell(cell: DayCellData, onOpen: () -> Unit) {
                         // The stamp is a real clip, so the photo itself is stamp-shaped against
                         // the black rather than having notches painted over it.
                         .clip(FotoStamp)
+                        // Fixed on purpose (reference design): a neutral surface, no accent role.
                         .background(Color(0xFF101010))
                         .clickable(onClick = onOpen),
                 ) {

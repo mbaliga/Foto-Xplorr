@@ -80,7 +80,7 @@ internal fun allExifTags(): Set<String> =
  *    are excluded above.
  *  - [ExifInterface.TAG_MAKER_NOTE]: manufacturer-proprietary and widely documented to embed
  *    absolute byte offsets into the SOURCE file that a copy invalidates (see e.g. ExifTool's own
- *    MakerNotes documentation on offset fix-ups) -- not a Foto Xplorr guess.
+ *    MakerNotes documentation on offset fix-ups) -- not a Fotoz guess.
  *  - [ExifInterface.TAG_XMP]: handled by the caller's own XMP-specific copy path (parse, reset
  *    `tiff:Orientation`, re-serialize -- see [XmpPacket]), richer than a flat string copy since it
  *    preserves every XMP property this app has no model for, which a raw tag copy would not.

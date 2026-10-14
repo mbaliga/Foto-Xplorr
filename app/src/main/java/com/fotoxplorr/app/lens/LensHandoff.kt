@@ -58,7 +58,7 @@ object LensHandoff {
 
     /**
      * A plain web search for [query] -- the card's own label on the control that fires this
-     * says "leaves Foto Xplorr" before this is ever called, not after, per this feature's
+     * says "leaves Fotoz" before this is ever called, not after, per this feature's
      * requirement that sending text off-device is labelled plainly ahead of time rather than
      * discovered by the person mid-action.
      */

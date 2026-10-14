@@ -3,7 +3,7 @@ package com.fotoxplorr.app.share
 /**
  * How a shared photo is dressed on its way out of the app.
  *
- * Foto Xplorr's own visual language, applied at the one moment a photo leaves for somewhere the
+ * Fotoz's own visual language, applied at the one moment a photo leaves for somewhere the
  * app does not control (owner, 2026-08-15: *"make the share options nicer, Fotoz-branded, like
  * adding a frame that makes it look like a polaroid, or the postage stamp we have already
  * designed"*). The stamp is not a new invention here -- it is the same motif the map and the
@@ -49,7 +49,7 @@ enum class ShareFrame(val label: String, val description: String) {
  * @param stripMetadata remove GPS, camera and timestamp EXIF from the shared copy. Defaults to
  *   **true** on owner direction: the safe thing should be what happens when nobody thinks about
  *   it, and the advanced sheet is where someone deliberately turns it off.
- * @param watermark draw the Foto Xplorr mark in the corner. Defaults to **false** (Phase 1 owner
+ * @param watermark draw the Fotoz mark in the corner. Defaults to **false** (Phase 1 owner
  *   decision 3, 24 Sep 2026: the watermark is off by default for everyone, superseding the
  *   2026-08-21 free-tier-mark decision this field's default used to encode). This field alone
  *   never decided whether the mark actually gets drawn — [resolveWatermark] and [resolvedFor] are

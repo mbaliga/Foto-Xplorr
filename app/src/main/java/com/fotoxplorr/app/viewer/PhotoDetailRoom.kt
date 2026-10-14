@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -89,6 +90,8 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 // ── The room's palette, every value sampled off the owner's reference (6.png) ─────────────────
+// Fixed on purpose: these are dark neutrals measured off the reference, not accent roles (the one
+// accent-role element, the Show More/Less link, reads the theme's primary instead).
 private val ROOM_BACKGROUND = Color.Black
 /** The slightly-raised panel the date line and the camera card sit on. */
 private val PANEL_BACKGROUND = Color(0xFF09090A)
@@ -110,7 +113,6 @@ private val SECTION_TEXT = Color(0xFFDDDDDD)
 private val ROW_LABEL = Color(0xFF949695)
 private val ROW_VALUE = Color(0xFFDCDCDC)
 private val HAIRLINE = Color(0xFF141414)
-private val LINK_TEXT = Color(0xFF3F99F9)
 private val PLACEHOLDER_TEXT = Color(0xFF474A4A)
 internal val SECONDARY_TEXT = Color(0xFF8A8A8A)
 internal val MUTED_TEXT = Color(0xFF6A6A6A)
@@ -354,7 +356,7 @@ private fun RoomHeader(asset: MediaAsset, reveal: () -> Float) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false),
         )
-        // Foto Xplorr has no cloud-backup subsystem, so this reports the one backup state it can
+        // Fotoz has no cloud-backup subsystem, so this reports the one backup state it can
         // actually establish: whether the file is still present locally in MediaStore (on device)
         // or has been moved to the system trash. It is not a claim about any cloud service.
         Icon(
@@ -711,7 +713,7 @@ private fun TagsBlock(
         }
         // Tags above live in this app's own library. This is the bridge to the file: a
         // photographer's tags, written into the file's own XMP keyword list, so they travel with
-        // a copy or a share rather than staying legible only inside Foto Xplorr.
+        // a copy or a share rather than staying legible only inside Fotoz.
         if (onEmbedKeywords != null && tags.isNotEmpty()) {
             Text(
                 text = "Embed these tags as keywords in the file →",
@@ -1186,7 +1188,7 @@ private fun InformationBlock(
             SectionTitle("Information", modifier = Modifier.weight(1f))
             Text(
                 text = if (expanded) "Show Less" else "Show More",
-                color = LINK_TEXT,
+                color = MaterialTheme.colorScheme.primary, // the link role follows the chosen accent
                 style = TextStyle(fontFamily = HyleGrotesk, fontSize = 14.sp),
                 modifier = Modifier.clickable(
                     interactionSource = remember { MutableInteractionSource() },

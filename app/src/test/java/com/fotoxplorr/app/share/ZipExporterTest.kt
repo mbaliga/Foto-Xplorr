@@ -132,10 +132,10 @@ class ZipExporterTest {
 
     @Test
     fun `archiveName pluralizes photo or item, and says item for a single video-inclusive selection`() {
-        assertEquals("Foto Xplorr 1 photo.zip", archiveName(1, includesVideo = false))
-        assertEquals("Foto Xplorr 3 photos.zip", archiveName(3, includesVideo = false))
-        assertEquals("Foto Xplorr 1 item.zip", archiveName(1, includesVideo = true))
-        assertEquals("Foto Xplorr 5 items.zip", archiveName(5, includesVideo = true))
+        assertEquals("Fotoz 1 photo.zip", archiveName(1, includesVideo = false))
+        assertEquals("Fotoz 3 photos.zip", archiveName(3, includesVideo = false))
+        assertEquals("Fotoz 1 item.zip", archiveName(1, includesVideo = true))
+        assertEquals("Fotoz 5 items.zip", archiveName(5, includesVideo = true))
     }
 
     // --- uniqueName ----------------------------------------------------------------------------

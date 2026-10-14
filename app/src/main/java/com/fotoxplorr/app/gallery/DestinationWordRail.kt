@@ -206,6 +206,8 @@ fun DestinationWordRail(
                     scaleY = 1f + MARKER_STRETCH * stretch
                     scaleX = 1f - MARKER_SQUEEZE * stretch
                 }
+                // Fixed on purpose (reference design): the white marker and distance-fade greys are
+                // transcribed from the rail reference.
                 .background(Color.White),
         )
     }

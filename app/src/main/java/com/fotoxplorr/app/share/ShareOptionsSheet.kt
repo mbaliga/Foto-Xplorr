@@ -45,6 +45,8 @@ import com.fotoxplorr.app.pro.LocalProEntitlement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+// Fixed on purpose (reference design): neutral sheet surfaces, the accent roles in this sheet use
+// primary.
 private val SHEET_BACKGROUND = Color(0xFF141414)
 private val PRIMARY_TEXT = Color.White
 private val SECONDARY_TEXT = Color.White.copy(alpha = 0.65f)
@@ -153,7 +155,7 @@ fun ShareOptionsSheet(
                     val selected = options.frame == frame
                     Text(
                         text = frame.label,
-                        color = if (selected) Color.Black else PRIMARY_TEXT,
+                        color = if (selected) MaterialTheme.colorScheme.onPrimary else PRIMARY_TEXT,
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                         modifier = Modifier
@@ -258,7 +260,7 @@ private fun SheetSwitch(
 @Composable
 private fun WatermarkRow() {
     SheetSwitch(
-        label = "No Foto Xplorr mark",
+        label = "No Fotoz mark",
         caption = "Off for every share for now.",
         checked = false,
         onCheckedChange = null,

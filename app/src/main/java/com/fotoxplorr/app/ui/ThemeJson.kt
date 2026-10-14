@@ -4,6 +4,8 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
 import com.fotoxplorr.app.gallery.AccentPalette
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import org.json.JSONException
@@ -35,11 +37,13 @@ import org.json.JSONObject
  *   }
  * }
  * ```
- * The eight keys are exactly [FotoXplorrTheme]'s own `darkColorScheme`/`lightColorScheme` call --
- * `primary`/`secondary`/`tertiary`/`background`/`surface`/`surfaceVariant`/`onBackground`/
- * `onSurface` -- and nothing else: this app has never varied any other Material3 slot by palette,
- * so the schema does not carry one either, rather than shipping fields that would silently do
- * nothing.
+ * The eight keys are the ones a theme file chooses -- `primary`/`secondary`/`tertiary`/
+ * `background`/`surface`/`surfaceVariant`/`onBackground`/`onSurface`. The five slots Material3
+ * components also read for an accent-role element (`onPrimary`, `primaryContainer`,
+ * `onPrimaryContainer`, `secondaryContainer`, `onSecondaryContainer`) are NOT in the schema: they
+ * are derived from those eight in [toColorScheme], so the schema stays exactly as it was (every
+ * stored custom theme keeps working) while a Button, a FloatingActionButton, a selected chip or
+ * a slider track follows the chosen accent instead of Material3's baseline purple.
  *
  * `#RRGGBB` and `#AARRGGBB` are both accepted (an omitted alpha means fully opaque); anything
  * else -- a 3-digit shorthand, a named colour, a value with no `#` -- is refused, naming the
@@ -165,15 +169,16 @@ private fun requireHexColor(obj: JSONObject, prefix: String, key: String): Strin
 
 /** [requireHexColor] is the only thing that should ever hand this a string, so it trusts the
  *  input rather than re-validating it. An omitted alpha (`#RRGGBB`) means fully opaque. */
-private fun hexToColor(hex: String): Color {
+internal fun hexToColor(hex: String): Color {
     val digits = hex.removePrefix("#")
     val argb = if (digits.length == 6) (0xFF000000L or digits.toLong(16)) else digits.toLong(16)
     return Color(argb)
 }
 
-/** Builds the real [ColorScheme] [FotoXplorrTheme] hands `MaterialTheme` -- the exact
- *  `darkColorScheme`/`lightColorScheme` call this app has always made, just fed from parsed JSON
- *  hex instead of hardcoded [Color] literals. */
+/** Builds the real [ColorScheme] [FotoXplorrTheme] hands `MaterialTheme`: the eight chosen colours
+ *  straight from the parsed hex, plus the five accent-role slots derived from them (see
+ *  [readableOn] and the schema note on this file) so nothing falls back to Material3's baseline
+ *  purple whatever accent is picked. */
 fun ThemeColorSet.toColorScheme(dark: Boolean): ColorScheme {
     val primaryColor = hexToColor(primary)
     val secondaryColor = hexToColor(secondary)
@@ -183,10 +188,18 @@ fun ThemeColorSet.toColorScheme(dark: Boolean): ColorScheme {
     val surfaceVariantColor = hexToColor(surfaceVariant)
     val onBackgroundColor = hexToColor(onBackground)
     val onSurfaceColor = hexToColor(onSurface)
+    val onPrimaryColor = readableOn(primaryColor)
+    val primaryContainerColor = primaryColor.copy(alpha = CONTAINER_ALPHA).compositeOver(backgroundColor)
+    val secondaryContainerColor = secondaryColor.copy(alpha = CONTAINER_ALPHA).compositeOver(backgroundColor)
     return if (dark) {
         darkColorScheme(
             primary = primaryColor,
+            onPrimary = onPrimaryColor,
+            primaryContainer = primaryContainerColor,
+            onPrimaryContainer = primaryColor,
             secondary = secondaryColor,
+            secondaryContainer = secondaryContainerColor,
+            onSecondaryContainer = onSurfaceColor,
             tertiary = tertiaryColor,
             background = backgroundColor,
             surface = surfaceColor,
@@ -197,7 +210,12 @@ fun ThemeColorSet.toColorScheme(dark: Boolean): ColorScheme {
     } else {
         lightColorScheme(
             primary = primaryColor,
+            onPrimary = onPrimaryColor,
+            primaryContainer = primaryContainerColor,
+            onPrimaryContainer = primaryColor,
             secondary = secondaryColor,
+            secondaryContainer = secondaryContainerColor,
+            onSecondaryContainer = onSurfaceColor,
             tertiary = tertiaryColor,
             background = backgroundColor,
             surface = surfaceColor,
@@ -207,6 +225,23 @@ fun ThemeColorSet.toColorScheme(dark: Boolean): ColorScheme {
         )
     }
 }
+
+/** This theme's accent (its `primary`) as it appears in the given mode, e.g. for a swatch that
+ *  previews what picking the theme will look like. */
+fun ThemeSpec.accentFor(dark: Boolean): Color = hexToColor((if (dark) this.dark else light).primary)
+
+/** How much of the accent a derived container slot carries over the mode's own background. */
+private const val CONTAINER_ALPHA = 0.30f
+
+/** Near-black ink for a pale accent, white for a dark one. 0.179 is the relative luminance at
+ *  which black and white text have the same contrast against a fill, so whichever of the two is
+ *  returned is the more legible one on [fill] for any accent, bundled or pasted. */
+internal fun readableOn(fill: Color): Color = if (fill.luminance() > READABLE_LUMINANCE_CROSSOVER) DARK_INK else Color.White
+
+private const val READABLE_LUMINANCE_CROSSOVER = 0.179f
+
+/** The ink drawn on a light accent; not pure black so it sits with the app's near-black rooms. */
+internal val DARK_INK = Color(0xFF111114)
 
 // =====================================================================================
 // The five bundled presets, as literal schema-shaped JSON -- FotoXplorrTheme.kt used to compute

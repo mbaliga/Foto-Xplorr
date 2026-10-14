@@ -221,6 +221,8 @@ fun SearchExpansionFooter(
 }
 
 private const val CHIP_RADIUS = 10
+// Fixed on purpose (semantic): the widen/narrow/alternative marks are a direction code and must
+// stay distinct from each other.
 private val CHIP_FILL = Color(0xFF1E1E22)
 private val CHIP_INK = Color(0xFFECE8E4)
 private val FOOTER_LABEL = Color(0xFF8E8E96)

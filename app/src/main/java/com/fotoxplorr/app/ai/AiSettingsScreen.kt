@@ -57,6 +57,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 
 private val PANEL_BACKGROUND = Color.Black
+// Fixed on purpose (semantic): a neutral card and the Hyle danger red, the accent roles on this
+// screen already use primary.
 private val CARD_BACKGROUND = Color(0xFF141414)
 private val PRIMARY_TEXT = Color.White
 private val SECONDARY_TEXT = Color.White.copy(alpha = 0.65f)
@@ -257,7 +259,7 @@ private fun SimilaritySection(
     DarkCard {
         Text("Find similar photos", color = PRIMARY_TEXT, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text(
-            "Foto Xplorr can look for photos that look alike -- entirely on this device, " +
+            "Fotoz can look for photos that look alike -- entirely on this device, " +
                 "nothing uploaded. It needs a small on-device model to do that comparison.",
             color = SECONDARY_TEXT,
             style = MaterialTheme.typography.bodyMedium,

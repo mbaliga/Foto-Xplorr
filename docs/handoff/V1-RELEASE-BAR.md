@@ -1,4 +1,4 @@
-# Foto Xplorr Android v1.0 — the release bar
+# Fotoz Android v1.0 — the release bar
 
 These are the conditions under which the architect review (Claude, in the planning chat) will call a build **the first production version**. **Every line must be true, with the evidence named.** A green CI is necessary but never sufficient: this app handles irreplaceable files, and most of its risk only shows on a real phone with a real library.
 
@@ -43,5 +43,5 @@ These are the conditions under which the architect review (Claude, in the planni
 ## Where v1 is expected to stand against the field (for the owner's positioning)
 
 - **Against Linux phone galleries** (lomiri-gallery-app, Imaginario, KDE Photos, Maui Pix, Loupe, FuriOS Gallery): ahead on every axis once this bar is met. No Linux phone app has on-device faces, semantic search, duplicates, XMP round-trip, bulk rename or removable-drive offline previews.
-- **Against Linux desktop tools:** comparable with Shotwell and gThumb, ahead on search, AI and ease of use. **digiKam stays deeper** in raw metadata tooling, face workflows and batch processing, and **darktable** in RAW development. Foto Xplorr's claim against them is ease of use, phone-first design, and one library across phone and desktop, not depth.
+- **Against Linux desktop tools:** comparable with Shotwell and gThumb, ahead on search, AI and ease of use. **digiKam stays deeper** in raw metadata tooling, face workflows and batch processing, and **darktable** in RAW development. Fotoz's claim against them is ease of use, phone-first design, and one library across phone and desktop, not depth.
 - **Against Android galleries:** parity-plus with Aves/Fossify on formats and privacy, plus capabilities they lack (semantic search, drive sources, rule rename, culling). Against Google Photos and Samsung Gallery: parity on local features, with a stronger privacy position and no cloud dependency.

@@ -113,6 +113,8 @@ private fun PillIconButton(
     }
 }
 
+// Fixed on purpose (reference design): the dark pill from the mockups, it has no selected or active
+// state.
 private val PILL_BACKGROUND = Color(0xFF141414)
 
 /** As tall as the search disc beside it, so the two share a centre line. */

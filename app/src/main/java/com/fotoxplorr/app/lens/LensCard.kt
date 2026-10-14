@@ -276,7 +276,7 @@ fun LensCard(
         // honestly up front: unlike the in-library Search tile above it, this one sends the
         // photo's text off-device.
         Text(
-            text = "Search the web instead — leaves Foto Xplorr",
+            text = "Search the web instead — leaves Fotoz",
             color = MUTED_TEXT,
             style = TextStyle(fontFamily = HyleGrotesk, fontSize = 12.sp),
             modifier = Modifier
@@ -409,5 +409,6 @@ private val TILE_EDGE = 84.dp
  *  seam in one direction than the other. */
 private val TILE_GAP = 8.dp
 
+// Fixed on purpose (reference design): a neutral tile ground, no accent role.
 private val TILE_BACKGROUND = Color(0xFF262626)
 private val TILE_BACKGROUND_DISABLED = Color(0xFF1A1A1A)

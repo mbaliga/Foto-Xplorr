@@ -207,7 +207,7 @@ fun SpatialPhotoSceneScreen(
         when {
             geoState.scannedCount == 0 -> SpatialOptInPanel(
                 title = "Read embedded coordinates first",
-                message = "Foto Xplorr reads each photo's GPS tag on this device. Nothing is uploaded.",
+                message = "Fotoz reads each photo's GPS tag on this device. Nothing is uploaded.",
                 action = "Read locations",
                 onAction = onIndexLocations,
             )
@@ -551,6 +551,7 @@ private fun sensorStatusMessage(accuracy: Int): String = when (accuracy) {
 /** Scrim behind overlaid text, so a bright photo behind it cannot make the label unreadable. */
 private val SCRIM = ComposeColor.Black.copy(alpha = 0.62f)
 
+// Fixed on purpose (semantic): compass north is conventionally red, whatever accent is chosen.
 /** North on the bezel. The one tick that has to be findable at a glance. */
 private val NORTH = ComposeColor(0xFFE65A58)
 

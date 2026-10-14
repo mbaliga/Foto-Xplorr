@@ -219,7 +219,7 @@ fun GalleryActionsRoom(
 
         RoomRow(
             label = "Rescan the library",
-            caption = "Look for photos added or removed outside Foto Xplorr.",
+            caption = "Look for photos added or removed outside Fotoz.",
             onClick = actions.onRefresh,
         )
 
