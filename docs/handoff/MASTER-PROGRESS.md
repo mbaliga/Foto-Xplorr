@@ -676,8 +676,9 @@ publish pinned). **Core** `ceb2243` (`AlphaSniffer`). **Rooms and navigation** `
 
 ### Found, not fixed (outside the units that found them)
 
-- **`decodeUpright` returns null on API 26 and 27** (TRAPS #34): its bounds-only `BitmapFactory` pass
-  returns null by design and the line ends `?: return null`. The `ImageDecoder` path is fine.
+- **`decodeUpright` returned null on API 26 and 27** (TRAPS #34): fixed. Its bounds-only `BitmapFactory`
+  pass returns null by design and the line ended `?: return null`; it now ignores that result and
+  `BitmapDecodingBitmapFactoryTest` covers upright and alpha at SDK 26.
 - `ViewerActionsRoom.ActionRow` still makes only the 22 dp icon clickable; `LiveTextOverlay` still
   swallows taps and long presses on a photo with recognised text while the chrome is up (TRAPS #50).
 - `EditedCopyWriter`'s class KDoc still says overwrite refuses "a source holding IPTC-IIM or extended

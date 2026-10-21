@@ -101,7 +101,10 @@ private fun decodeWithBitmapFactory(
 ): DecodedBitmap? {
     val resolver = context.contentResolver
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+    // A bounds-only decode returns null by design; its answer is in `bounds`, so only a missing
+    // stream (not a null bitmap) ends the decode here.
+    val stream = resolver.openInputStream(uri) ?: return null
+    stream.use { BitmapFactory.decodeStream(it, null, bounds) }
     val rawW = bounds.outWidth
     val rawH = bounds.outHeight
     if (rawW <= 0 || rawH <= 0) return null

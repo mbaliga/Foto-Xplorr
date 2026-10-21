@@ -263,12 +263,12 @@ power of two under it. Nine call sites decoded independently before P0-03, each 
 orientation and under-shooting its own target size. A new decode path that calls `BitmapFactory` or
 `ImageDecoder` directly reintroduces both bugs at once.
 
-Known defect, found in batch 2 and **not fixed**: `decodeWithBitmapFactory` (the path below API 28)
-does its bounds-only pass with `BitmapFactory.decodeStream(stream, null, bounds)` and ends the
-line `?: return null`. A bounds-only decode returns null by design, so the function returns null
-for every image on API 26 and 27 (confirmed by running `decodeUpright` at SDK 26 under
-Robolectric). Read `outWidth`/`outHeight` from the options and ignore the return value. The
-`ImageDecoder` path (API 28+) is fine.
+Fixed after batch 2: `decodeWithBitmapFactory` (the path below API 28, and the fallback when
+`ImageDecoder` throws) used to end its bounds-only pass with `?: return null`. A bounds-only decode
+returns null by design, so every image failed on API 26 and 27. It now returns null only when the
+stream itself is missing and reads `outWidth`/`outHeight` from the options; the `ImageDecoder` path
+was never affected. `BitmapDecodingBitmapFactoryTest` runs it at SDK 26. Keep it that way: never
+use the return value of a bounds-only `decodeStream`.
 
 ## 35. A metadata write goes temp → verify → original, never through a redacted view
 

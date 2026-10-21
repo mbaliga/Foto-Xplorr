@@ -25,9 +25,8 @@ import org.robolectric.annotation.GraphicsMode
  * A 4 x 2 PNG: the left half fully transparent, the right half opaque red, through the
  * [android.graphics.ImageDecoder] path (API 28 and up). NATIVE graphics, like
  * [BitmapDecodingImageDecoderExifTest], because the legacy shadow decodes nothing real. The
- * [android.graphics.BitmapFactory] fallback below API 28 is not covered here: its bounds pass
- * returns null from `decodeStream` by design and the code treats that as a failure, so it never
- * gets as far as a pixel.
+ * [android.graphics.BitmapFactory] fallback below API 28 is covered by
+ * [BitmapDecodingBitmapFactoryTest].
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
