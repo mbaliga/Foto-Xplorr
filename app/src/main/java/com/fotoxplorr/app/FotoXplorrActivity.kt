@@ -55,9 +55,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.fotoxplorr.app.audio.AudioAsset
-import com.fotoxplorr.app.audio.AudioConversionWriter
-import com.fotoxplorr.app.audio.AudioPlayerScreen
 import com.fotoxplorr.app.curate.AutoCurationPass
 import com.fotoxplorr.app.editor.EditedCopyWriter
 import com.fotoxplorr.app.editor.EditorScreen
@@ -172,7 +169,7 @@ class FotoXplorrActivity : ComponentActivity() {
 /**
  * "No media id": the default for an Intent extra that was never set (P0-18's
  * [FotoXplorrActivity.EXTRA_OPEN_MEDIA_ID]). Every real [MediaId] comes from MediaStore's own
- * `_ID` column, which is never negative. (The ids of the open photo / editor / audio track are
+ * `_ID` column, which is never negative. (The ids of the open photo / editor are
  * saved across process death by [AppStateViewModel]'s SavedStateHandle, not here.)
  */
 private const val NO_MEDIA_ID = -1L
@@ -189,7 +186,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // full scan, on every single Activity recreation -- see LibraryRuntime's own KDoc.
     val runtime = remember { LibraryRuntime.get(applicationContext) }
     val repository = runtime.repository
-    val audioRepository = runtime.audioRepository
     val favoriteStore = remember { FavoriteStore(applicationContext) }
     val sensitiveStore = remember { SensitiveStore(applicationContext) }
     val privateFolderStore = remember { PrivateFolderStore(applicationContext) }
@@ -205,7 +201,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // the device (the BYOK remote-AI path stays separate and strictly opt-in).
     val recognitionStore = remember { RecognitionStore(applicationContext) }
     val recognitionIndexer = remember { RecognitionIndexer(applicationContext, recognitionStore) }
-    val audioConversionWriter = remember { AudioConversionWriter(applicationContext) }
     val scope = rememberCoroutineScope()
     // One geo index for the whole app: the gallery reads it for the map and compass, the viewer
     // writes hand-placed locations into it. Two instances over the same file would each hold
@@ -214,7 +209,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val geoState by geoRepository.observe().collectAsStateWithLifecycle()
 
     val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
-    val audioAssets by audioRepository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val sensitiveIds by sensitiveStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val lockedFolders by privateFolderStore.observeLockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
@@ -228,9 +222,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
 
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
     var partialMediaAccess by remember { mutableStateOf(hasPartialMediaAccess(applicationContext)) }
-    // Independent of permissionGranted above and requested separately, only once the user opens
-    // the Audio library (P0-10) -- see hasAudioPermission's own KDoc for why.
-    var audioPermissionGranted by remember { mutableStateOf(hasAudioPermission(applicationContext)) }
     // P0-09: the scan itself, and the request channel driving it, now live entirely in
     // LibraryRuntime -- this is a read-only view onto its process-wide state, so recomposing (or
     // recreating) this Activity never resets progress or re-triggers a full scan.
@@ -238,18 +229,15 @@ private fun FotoXplorrActivity.FotoXplorrApp(
 
     // Every one of these used to be `remember { mutableStateOf(...) }`, which any Activity
     // recreation tore down along with the whole composable tree -- closing the
-    // viewer/editor/audio player, forgetting the current selection, and cancelling whatever
+    // viewer/editor, forgetting the current selection, and cancelling whatever
     // `rememberCoroutineScope()` job happened to be mid-flight. (The manifest's `configChanges`
     // keeps a plain rotation from recreating the Activity at all, P0-09, but not every
     // configuration change, and never process death.) Delegating to a property on `viewModel`
     // (`by viewModel::field`) keeps every downstream read/write in this function exactly as it
-    // was; only the storage moved, to survive the recreation (and, for the three ids `viewModel`
+    // was; only the storage moved, to survive the recreation (and, for the two ids `viewModel`
     // mirrors into `SavedStateHandle`, process death).
     var viewerAssets by viewModel::viewerAssets
     var selectedAssetId by viewModel::selectedAssetId
-    var audioQueue by viewModel::audioQueue
-    var selectedAudioAssetId by viewModel::selectedAudioAssetId
-    var convertingAudioId by viewModel::convertingAudioId
     var slideshowActive by viewModel::slideshowActive
     var pendingOperation by viewModel::pendingOperation
     var pendingOperationIds by viewModel::pendingOperationIds
@@ -420,7 +408,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val activeAsset = viewerAssets.getOrNull(selectedIndex)?.let { fromList ->
         if (fromList.isExternal) fromList else assets.firstOrNull { it.id == fromList.id } ?: fromList
     }
-    val activeAudioAsset = selectedAudioAssetId?.let { id -> audioQueue.firstOrNull { it.id == id } }
 
     // Open-with / share-to: classifies whatever this Activity was started or re-delivered with
     // (see onNewIntent's own doc on incomingIntentGeneration) and routes it straight to the
@@ -445,9 +432,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         )
     }
 
-    // Process death: `selectedAssetId`/`editingAssetId`/`selectedAudioAssetId` themselves survived
+    // Process death: `selectedAssetId`/`editingAssetId` themselves survived
     // (SavedStateHandle) and so did `savedViewerAssetIds` (rememberSaveable), but `viewerAssets`/
-    // `editingAsset`/`audioQueue` did not -- a fresh ViewModel instance starts those empty.
+    // `editingAsset` did not -- a fresh ViewModel instance starts those empty.
     // Rebuilds each one, by id, the FIRST time the relevant repository has something to look the
     // id up in; a no-op on an ordinary configuration change, where they were never emptied.
     // Restored through browsableNow: the unlocked folders live in memory, so after process death a
@@ -475,14 +462,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 val restored = browsable.firstOrNull { it.id == id }
                 // Dropping the id too, so it cannot resurface on a later rescan once unlocked.
                 viewModel.setEditingAsset(restored)
-            }
-        }
-    }
-    LaunchedEffect(audioAssets) {
-        if (audioAssets.isEmpty()) return@LaunchedEffect
-        viewModel.selectedAudioAssetId?.let { id ->
-            if (audioQueue.isEmpty()) {
-                audioAssets.firstOrNull { it.id == id }?.let { restored -> audioQueue = listOf(restored) }
             }
         }
     }
@@ -882,28 +861,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
     }
 
-    // AudioConversionWriter's own doc explains why this too needs no permission dance: like a
-    // video conversion, it inserts a brand-new MediaStore row this app owns rather than touching
-    // the source file. Same job-runner treatment as requestVideoConversion, immediately above.
-    fun requestAudioConversion(asset: AudioAsset) {
-        if (convertingAudioId != null) return
-        convertingAudioId = asset.id
-        viewModel.jobRunner.launch(
-            title = "Converting ${asset.displayName}",
-            kind = ActivityKind.EXPORTING,
-        ) { onProgress ->
-            onProgress(null)
-            try {
-                audioConversionWriter.convertToAac(asset).also { outcome ->
-                    outcome.onSuccess { runtime.requestAudioScan(false) }
-                }.map { "Converted to M4A (AAC)." }
-            } finally {
-                // Same reason as requestVideoConversion's: also runs when the job is cancelled.
-                convertingAudioId = null
-            }
-        }
-    }
-
     val treeLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
     ) { treeUri ->
@@ -970,18 +927,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         if (permissionGranted) runtime.requestScan(false)
     }
 
-    val audioPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions(),
-    ) {
-        audioPermissionGranted = hasAudioPermission(applicationContext)
-        if (audioPermissionGranted) runtime.ensureInitialAudioScan()
-    }
-
-    fun requestAudioPermission() {
-        val permissions = requiredAudioPermissions()
-        if (permissions.isNotEmpty()) audioPermissionLauncher.launch(permissions)
-    }
-
     fun requestMediaPermissionOrOpenSettings() {
         if (mediaPermissionPermanentlyDenied) {
             runCatching {
@@ -1004,10 +949,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         permissionGranted = hasMediaPermission()
         partialMediaAccess = hasPartialMediaAccess(applicationContext)
         if (!hadPermission && permissionGranted) runtime.requestScan(false)
-
-        val hadAudioPermission = audioPermissionGranted
-        audioPermissionGranted = hasAudioPermission(applicationContext)
-        if (!hadAudioPermission && audioPermissionGranted) runtime.ensureInitialAudioScan()
     }
 
     val exportMetadataLauncher = rememberLauncherForActivityResult(
@@ -1196,14 +1137,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         runtime.ensureInitialScan()
     }
 
-    // Kept separate from the effect above (P0-10): audio permission is granted independently, and
-    // often much later -- the Audio library is unreachable until permissionGranted is already
-    // true (see GalleryScreen's own top-level `when`), so this fires on its own key rather than
-    // waiting for another change to permissionGranted that may never come again.
-    LaunchedEffect(audioPermissionGranted) {
-        if (audioPermissionGranted) runtime.ensureInitialAudioScan()
-    }
-
     LaunchedEffect(Unit) { recognitionStore.reload() }
 
     // Guarded on a generation counter rather than the asset list itself, so a recomposition
@@ -1228,13 +1161,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             selectedAssetId = null
             setViewerAssets(emptyList())
             slideshowActive = false
-        }
-    }
-
-    LaunchedEffect(selectedAudioAssetId, activeAudioAsset) {
-        if (selectedAudioAssetId != null && activeAudioAsset == null) {
-            selectedAudioAssetId = null
-            audioQueue = emptyList()
         }
     }
 
@@ -1512,32 +1438,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 }
             },
         )
-    } else if (activeAudioAsset != null) {
-        BackHandler {
-            selectedAudioAssetId = null
-            audioQueue = emptyList()
-        }
-        AudioPlayerScreen(
-            asset = activeAudioAsset,
-            queue = audioQueue,
-            onClose = {
-                selectedAudioAssetId = null
-                audioQueue = emptyList()
-            },
-            onSelect = { picked -> selectedAudioAssetId = picked.id },
-            isConverting = convertingAudioId == activeAudioAsset.id,
-            onConvertToAac = { requestAudioConversion(activeAudioAsset) },
-        )
     } else {
         GalleryScreen(
             geoRepository = geoRepository,
-            audioAssets = audioAssets,
-            onPlayAudio = { asset, queue ->
-                audioQueue = queue
-                selectedAudioAssetId = asset.id
-            },
-            audioPermissionGranted = audioPermissionGranted,
-            onRequestAudioPermission = ::requestAudioPermission,
             state = GalleryUiState(
                 assets = assets,
                 favoriteIds = favoriteIds,
@@ -1547,7 +1450,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 library = library,
                 permissionGranted = permissionGranted,
                 partialMediaAccess = partialMediaAccess,
-                audioPermissionGranted = audioPermissionGranted,
                 mediaPermissionPermanentlyDenied = mediaPermissionPermanentlyDenied,
                 scanState = scanState,
                 preferences = preferences,
@@ -1558,7 +1460,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             ),
             actions = GalleryActions(
                 onRequestPermission = ::requestMediaPermissionOrOpenSettings,
-                onRequestAudioPermission = ::requestAudioPermission,
                 onRefresh = { runtime.requestScan(true) },
                 onSetSort = galleryPreferences::setSort,
                 onSetGridColumns = galleryPreferences::setGridColumns,
@@ -1671,23 +1572,6 @@ private fun requiredMediaPermissions(): Array<String> =
         // the person tries to do prompts them again for a permission that reads, to them, like
         // the one they already granted a moment ago.
         mediaReadPermissions() + requiredWriteStoragePermission()
-    }
-
-/**
- * The Audio library's own grant (P0-10), requested the first time the Audio destination is opened
- * rather than upfront with the photo/video grant -- see [hasAudioPermission]'s KDoc (in
- * LibraryRuntime.kt) for why this is never folded into [mediaReadPermissions], and
- * [GalleryUiState.audioPermissionGranted]'s own doc.
- *
- * API 33+ also asks for POST_NOTIFICATIONS in the same sheet, since the background-playback
- * notification is dropped silently without it. Below 33 `READ_EXTERNAL_STORAGE` is the audio grant
- * (the photo/video flow already holds it, so this resolves instantly).
- */
-private fun requiredAudioPermissions(): Array<String> =
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        arrayOf(Manifest.permission.READ_MEDIA_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
-    } else {
-        arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
 
 /**

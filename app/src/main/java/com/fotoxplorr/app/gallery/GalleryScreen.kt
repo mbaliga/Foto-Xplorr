@@ -217,11 +217,6 @@ data class GalleryUiState(
     val permissionGranted: Boolean,
     /** Android 14+ selected-photos grant rather than full-library access. */
     val partialMediaAccess: Boolean = false,
-    /** READ_MEDIA_AUDIO (Android 13+) -- requested only when the Audio destination is first
-     *  opened, not upfront with the photo/video grant, so a person who never uses that
-     *  destination is never asked for a permission this app has not yet needed. True below API
-     *  33, where audio is already covered by the same grant as photos/video. */
-    val audioPermissionGranted: Boolean = true,
     /** True once the media permission has been asked for and Android will not show its own
      *  rationale again -- Android's own signal for "the user said no and checked don't ask
      *  again" (or, on some OEM skins, no again at all). The empty state's button relabels itself
@@ -324,9 +319,6 @@ data class GalleryActions(
     val onRejectArchiveSuggestions: (Set<MediaId>) -> Unit,
     /** Reopens Android's media grant sheet so a partial-access user can change selection. */
     val onManageSelectedMedia: () -> Unit = {},
-    /** Requests READ_MEDIA_AUDIO (and POST_NOTIFICATIONS) the first time the Audio destination is
-     *  opened -- see [GalleryUiState.audioPermissionGranted]. */
-    val onRequestAudioPermission: () -> Unit = {},
 )
 
 @Composable
@@ -339,17 +331,6 @@ fun GalleryScreen(
      * appear on the map until the app was restarted.
      */
     geoRepository: GeoMetadataRepository = rememberGeoRepository(),
-    /** The Audio destination's own catalogue and its way to start playback — see
-     *  [com.fotoxplorr.app.audio.LocalAudioLibrary]'s own doc for why this rides a composition
-     *  local into [DestinationContent] rather than a parameter threaded through every
-     *  intermediate composable, the same shape [geoRepository] uses for Places. */
-    audioAssets: List<com.fotoxplorr.app.audio.AudioAsset> = emptyList(),
-    onPlayAudio: (com.fotoxplorr.app.audio.AudioAsset, List<com.fotoxplorr.app.audio.AudioAsset>) -> Unit = { _, _ -> },
-    /** Whether `READ_MEDIA_AUDIO` (or its pre-Tiramisu equivalent) is granted -- independent of
-     *  [audioAssets] being non-empty, so the Audio pane can tell "denied" apart from "granted but
-     *  no audio files exist" (P0-10). */
-    audioPermissionGranted: Boolean = false,
-    onRequestAudioPermission: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val geoState by geoRepository.observe().collectAsStateWithLifecycle()
@@ -383,12 +364,6 @@ fun GalleryScreen(
     }
 
     CompositionLocalProvider(
-        com.fotoxplorr.app.audio.LocalAudioLibrary provides com.fotoxplorr.app.audio.AudioLibraryExperience(
-            assets = audioAssets,
-            onPlay = onPlayAudio,
-            permissionGranted = audioPermissionGranted,
-            onRequestPermission = onRequestAudioPermission,
-        ),
         LocalSpatialExperience provides SpatialExperience(
             assets = spatialDisplayAssets,
             indexInput = spatialIndexInput,
@@ -710,17 +685,6 @@ private fun GalleryBrowser(
     LaunchedEffect(currentIds) {
         if (selection.isActive) selection = selection.retainAvailable(currentIds)
     }
-    // Asked for lazily, the moment the destination whose content actually needs it is opened,
-    // rather than bundled into the upfront photo/video grant -- someone who never opens Audio is
-    // never asked for a permission this app has not yet needed. Re-firing on every visit is
-    // harmless: `onRequestAudioPermission`'s own launcher is a no-op once the grant already
-    // stands (see FotoXplorrActivity's audioPermissionLauncher).
-    LaunchedEffect(destination) {
-        if (destination == HyleDestination.AUDIO && !state.audioPermissionGranted) {
-            actions.onRequestAudioPermission()
-        }
-    }
-
     LaunchedEffect(destination, route) {
         selection = selection.clear()
         // A route change the seeding effect below made on purpose carries a search with it;

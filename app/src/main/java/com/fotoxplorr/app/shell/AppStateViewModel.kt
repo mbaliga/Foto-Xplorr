@@ -7,7 +7,6 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.fotoxplorr.app.audio.AudioAsset
 import com.fotoxplorr.app.jobs.JobRunner
 import com.fotoxplorr.app.jobs.JobRunnerRegistry
 import com.fotoxplorr.app.media.MediaAsset
@@ -26,9 +25,9 @@ import kotlinx.coroutines.launch
  *    `mutableStateOf` property here (the viewer's asset list, the editor's open asset, a pending
  *    copy/move) survives it with no extra work, the same way it always has for any ViewModel.
  *  - **Process death** does not preserve this instance at all; only [savedStateHandle] comes back,
- *    and only what was written into it as a primitive. The three ids below are exactly what
+ *    and only what was written into it as a primitive. The two ids below are exactly what
  *    [com.fotoxplorr.app.FotoXplorrActivity] needs to REBUILD its navigation once the repository
- *    has reloaded — open the same photo, keep editing the same asset, resume the same audio track
+ *    has reloaded — open the same photo, keep editing the same asset
  *    — even though the richer objects those ids pointed to (the surrounding [viewerAssets] list,
  *    the decoded [pendingOverwriteBitmap]) are gone and are not attempted to be recovered.
  */
@@ -101,21 +100,6 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
      */
     var overwriteDeclined: Boolean by mutableStateOf(false)
 
-    // ---- audio ----
-
-    var audioQueue: List<AudioAsset> by mutableStateOf(emptyList())
-
-    private var selectedAudioAssetIdState: MediaId? by mutableStateOf(readId(KEY_SELECTED_AUDIO_ID))
-
-    var selectedAudioAssetId: MediaId?
-        get() = selectedAudioAssetIdState
-        set(value) {
-            selectedAudioAssetIdState = value
-            writeId(KEY_SELECTED_AUDIO_ID, value)
-        }
-
-    var convertingAudioId: MediaId? by mutableStateOf(null)
-
     // ---- video ----
 
     var convertingVideoId: MediaId? by mutableStateOf(null)
@@ -162,12 +146,6 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
      */
     var initialScanSent: Boolean by mutableStateOf(false)
 
-    /** The audio pipeline's own copy of [initialScanSent] -- kept separate because the two scans
-     *  run on independent request channels and can legitimately reach their first pass at
-     *  different times (audio permission is granted later than photo/video permission; see
-     *  `requiredAudioPermissions`). */
-    var initialAudioScanSent: Boolean by mutableStateOf(false)
-
     override fun onCleared() {
         jobRunner.cancelAll()
     }
@@ -181,6 +159,5 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
     private companion object {
         const val KEY_SELECTED_ASSET_ID = "shell.selectedAssetId"
         const val KEY_EDITING_ASSET_ID = "shell.editingAssetId"
-        const val KEY_SELECTED_AUDIO_ID = "shell.selectedAudioAssetId"
     }
 }

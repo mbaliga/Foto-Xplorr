@@ -50,10 +50,9 @@ import com.fotoxplorr.app.spatial.PlacesScreen
 import com.fotoxplorr.core.model.MediaId
 
 /**
- * The primary destinations from the owner's mockups, plus Audio (added for standalone audio
- * file browsing/playback — the one destination here with no [com.fotoxplorr.app.media.MediaAsset]
- * behind it at all; see [destinationAssets] and [com.fotoxplorr.app.audio.LocalAudioLibrary]).
- * These are the app's top-level information architecture -- reached from the rail room, not from
+ * The primary destinations from the owner's mockups. Fotoz is visuals only, so there is no Audio
+ * destination; a saved default of the old Audio value falls back to Photos (see
+ * `GalleryPreferences`). These are the app's top-level information architecture -- reached from the rail room, not from
  * a route -- and have replaced the retired four-tab bottom navigation (Photos / Albums / Discover
  * / Library) as the default IA.
  *
@@ -74,10 +73,6 @@ enum class HyleDestination(val label: String) {
     SCREENSHOTS("Screenshots"),
     PHOTOS("Photos"),
     VIDEOS("Videos"),
-    // Right after Videos, not after Protected: Audio is the other media-TYPE destination (as
-    // opposed to Favourites/Places/Protected, which are cross-cutting views over the same photos
-    // and videos), so it reads naturally beside the destination it is most like.
-    AUDIO("Audio"),
     FAVOURITES("Favourites"),
     PLACES("Places"),
     PROTECTED("Protected"),
@@ -115,9 +110,8 @@ fun destinationAssets(
         HyleDestination.PEOPLE -> everyday().filter { it.id in state.recognition.peopleMediaIds }
         HyleDestination.PETS -> everyday().filter { it.id in state.recognition.petMediaIds }
         HyleDestination.IDENTITY -> everyday().filter { it.id in state.recognition.identityMediaIds }
-        // Rendered by their own panes rather than a flat grid. AUDIO has no MediaAsset behind it
-        // at all -- its own list comes from LocalAudioLibrary, read directly in DestinationContent.
-        HyleDestination.PLACES, HyleDestination.PROTECTED, HyleDestination.AUDIO -> emptyList()
+        // Rendered by their own panes rather than a flat grid.
+        HyleDestination.PLACES, HyleDestination.PROTECTED -> emptyList()
     }
     if (query.isBlank()) return base
     return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds, state.animatedIds, state.library.archivedIds) }
@@ -273,25 +267,6 @@ fun DestinationContent(
             unlockedFolders = state.unlockedFolders,
             onOpenFolder = { key -> onRequestUnlock(key, key) },
         )
-        HyleDestination.AUDIO -> {
-            val audio = com.fotoxplorr.app.audio.LocalAudioLibrary.current
-            if (!state.audioPermissionGranted) {
-                DestinationPermissionPrompt(
-                    message = "Foto Xplorr needs permission to see audio files on this device.",
-                    actionLabel = "Allow access",
-                    onAction = actions.onRequestAudioPermission,
-                )
-            } else if (audio != null) {
-                com.fotoxplorr.app.audio.AudioLibraryScreen(
-                    assets = audio.assets,
-                    onPlay = { asset -> audio.onPlay(asset, audio.assets) },
-                    permissionGranted = audio.permissionGranted,
-                    onRequestPermission = audio.onRequestPermission,
-                )
-            } else {
-                DestinationMessage("Audio is unavailable here")
-            }
-        }
         else -> Column(Modifier.fillMaxSize()) {
             if (destination == HyleDestination.PEOPLE && state.recognition.people.isNotEmpty()) {
                 PeopleStrip(
@@ -385,22 +360,6 @@ private fun DestinationMessage(message: String) {
             style = TextStyle(fontSize = 15.sp),
             color = Color.White.copy(alpha = 0.55f),
         )
-    }
-}
-
-/** [DestinationMessage] plus a real way forward, for a destination that is empty because a
- *  permission has not been granted rather than because there is genuinely nothing to show. */
-@Composable
-private fun DestinationPermissionPrompt(message: String, actionLabel: String, onAction: () -> Unit) {
-    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-        Column(
-            modifier = Modifier.padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text(message, style = TextStyle(fontSize = 15.sp), color = Color.White.copy(alpha = 0.75f))
-            TextButton(onClick = onAction) { Text(actionLabel) }
-        }
     }
 }
 

@@ -116,13 +116,12 @@ class DestinationEmptyMessageDistinctnessTest {
 class HyleDestinationTest {
 
     @Test
-    fun `the mockup destinations exist in the mockups order, with Audio right after Videos`() {
-        // Audio moved next to Videos (2026-09-16): the other media-type destination, rather than
-        // trailing after the cross-cutting views (Favourites/Places/Protected) at the end.
+    fun `the mockup destinations exist in the mockups order, nine words with no Audio`() {
+        // Fotoz is visuals only: the Audio destination was removed outright.
         assertEquals(
             listOf(
                 "Pets", "People", "Identity", "Screenshots", "Photos",
-                "Videos", "Audio", "Favourites", "Places", "Protected",
+                "Videos", "Favourites", "Places", "Protected",
             ),
             HyleDestination.entries.map { it.label },
         )

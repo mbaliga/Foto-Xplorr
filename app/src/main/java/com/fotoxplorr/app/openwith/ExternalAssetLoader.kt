@@ -5,7 +5,6 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
-import com.fotoxplorr.app.audio.AudioAsset
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.core.model.MediaId
 import kotlin.math.abs
@@ -15,9 +14,9 @@ import kotlinx.coroutines.withContext
 /**
  * Whatever could be read off an external `content://` Uri without owning a MediaStore
  * row for it. Pure data -- [ExternalAssetLoader] is the only thing that populates one, by
- * querying [OpenableColumns], decoding [BitmapFactory.Options] bounds and (for video/audio)
+ * querying [OpenableColumns], decoding [BitmapFactory.Options] bounds and (for video)
  * reading [MediaMetadataRetriever] -- kept apart from that I/O so the mapping into
- * [MediaAsset]/[AudioAsset] can be pinned with plain JUnit.
+ * [MediaAsset] can be pinned with plain JUnit.
  */
 data class ExternalMediaMetadata(
     val displayName: String? = null,
@@ -71,28 +70,9 @@ fun externalMediaAsset(uri: String, metadata: ExternalMediaMetadata, isVideo: Bo
     )
 }
 
-/** [uri] as an [AudioAsset], the audio counterpart of [externalMediaAsset]. */
-fun externalAudioAsset(uri: String, metadata: ExternalMediaMetadata): AudioAsset {
-    val modified = metadata.lastModifiedMillis ?: 0L
-    val name = metadata.displayName?.takeIf { it.isNotBlank() } ?: fallbackName(uri, isVideo = false)
-    return AudioAsset(
-        id = syntheticNegativeMediaId(uri),
-        contentUriString = uri,
-        displayName = name,
-        title = name,
-        artist = null,
-        album = null,
-        mimeType = metadata.mimeType ?: "audio/*",
-        durationMillis = metadata.durationMillis ?: 0L,
-        sizeBytes = metadata.sizeBytes ?: 0L,
-        dateAddedSeconds = modified / 1000,
-        dateModifiedSeconds = modified / 1000,
-    )
-}
-
 /**
  * A plain-string equivalent of `Uri.parse(uri).lastPathSegment`, deliberately not using
- * [android.net.Uri] itself: this function backs [externalMediaAsset]/[externalAudioAsset], which
+ * [android.net.Uri] itself: this function backs [externalMediaAsset], which
  * this file keeps pure and Android-free on purpose so their mapping is pinnable with plain JUnit,
  * with no Robolectric needed just to call `Uri.parse`.
  */
@@ -102,7 +82,7 @@ private fun fallbackName(uri: String, isVideo: Boolean): String =
 
 /**
  * Reads [ExternalMediaMetadata] off a `content://` Uri this app was handed rather than
- * one it scanned itself, and turns it into a [MediaAsset] or [AudioAsset].
+ * one it scanned itself, and turns it into a [MediaAsset].
  *
  * `MediaMetadataRetriever` is released with `.release()`, not `.close()` -- `AutoCloseable` on
  * that class only arrived in API 29, and this app's minSdk is 26.
@@ -128,12 +108,6 @@ class ExternalAssetLoader(context: Context) {
             )
         }
         externalMediaAsset(uri.toString(), metadata, isVideo = true)
-    }
-
-    suspend fun loadAudio(uri: Uri): AudioAsset = withContext(Dispatchers.IO) {
-        val retrieverMetadata = readVideoMetadata(uri)
-        val metadata = readOpenableMetadata(uri).copy(durationMillis = retrieverMetadata.durationMillis)
-        externalAudioAsset(uri.toString(), metadata)
     }
 
     /** Backstop for [classifyIncomingIntent]'s content-only rule: nothing else may reach the

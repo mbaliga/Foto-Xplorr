@@ -73,9 +73,9 @@ class DestinationWordRailComposeTest {
 
     @Test
     fun `selection at the last row`() {
-        val host = Host(HyleDestination.AUDIO.name)
+        val host = Host(HyleDestination.PROTECTED.name)
         mount(host)
-        compose.onNodeWithText("Audio").assertIsSelected()
+        compose.onNodeWithText("Protected").assertIsSelected()
         HyleDestination.entries.forEach { compose.onNodeWithText(it.label).assertExists() }
     }
 
@@ -110,7 +110,7 @@ class DestinationWordRailComposeTest {
         val host = Host(HyleDestination.PETS.name)
         mount(host)
         compose.mainClock.advanceTimeBy(100)
-        compose.runOnIdle { host.selectedId = HyleDestination.AUDIO.name }
+        compose.runOnIdle { host.selectedId = HyleDestination.PROTECTED.name }
         // Frame by frame through the 320ms settle and the marker's 420ms travel, with a second
         // change landing while the first is still in flight.
         repeat(12) { compose.mainClock.advanceTimeBy(16) }
@@ -118,7 +118,7 @@ class DestinationWordRailComposeTest {
         repeat(40) { compose.mainClock.advanceTimeBy(16) }
         compose.mainClock.advanceTimeBy(1_000)
         compose.onNodeWithText("Pets").assertIsSelected()
-        compose.onNodeWithText("Audio").assertIsNotSelected()
+        compose.onNodeWithText("Protected").assertIsNotSelected()
         HyleDestination.entries.forEach { compose.onNodeWithText(it.label).assertExists() }
         compose.onRoot().assertExists()
     }
