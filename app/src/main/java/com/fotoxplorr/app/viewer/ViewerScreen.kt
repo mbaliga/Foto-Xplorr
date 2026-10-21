@@ -902,10 +902,16 @@ fun ViewerScreen(
                     // until asked otherwise, and tap targets over the picture are an obstruction
                     // even when they are invisible.
                     if (chromeVisible && liveTextBlocks.isNotEmpty()) {
+                        // The boxes are normalised to the UPRIGHT decoded bitmap, so the frame
+                        // they are laid over is the displayed size (TRAPS 48), not MediaStore's
+                        // stored width/height, which an EXIF-rotated portrait reports landscape.
+                        val textFrame = PlaceMorph.restingImageSize(
+                            asset.width, asset.height, exif.displayWidth, exif.displayHeight,
+                        )
                         LiveTextOverlay(
                             blocks = liveTextBlocks,
-                            imageWidth = asset.width,
-                            imageHeight = asset.height,
+                            imageWidth = textFrame.width.toInt(),
+                            imageHeight = textFrame.height.toInt(),
                         )
                     }
                 }
