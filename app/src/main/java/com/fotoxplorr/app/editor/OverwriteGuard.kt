@@ -847,9 +847,7 @@ private fun replaceBackedUp(
             message = if (restore.written) {
                 "Replacing the photo failed partway, so the original was put back exactly as it was."
             } else {
-                "Replacing the photo failed and the original could not be put back, so it may be damaged. " +
-                    "Save a copy of your edit now. A safety copy of the original is kept in Fotoz's private " +
-                    "storage; the next time Fotoz starts it offers to share that copy so you can put it back."
+                originalNotPutBackMessage(label)
             },
             cause = t,
         )
@@ -858,6 +856,26 @@ private fun replaceBackedUp(
     // to storage could not be confirmed (a full-size copy kept for a week is not a safeguard worth
     // that much space, and nothing here can say what a crash would find).
     discardSafetyCopy(backup)
+}
+
+/**
+ * [name] as it is written inside a sentence: in quotes, control characters (which a file name can
+ * hold and a dialog would break on) turned into spaces; null when there is nothing to show.
+ */
+internal fun quotedPhotoName(name: String?): String? =
+    name?.replace(Regex("[\\u0000-\\u001F\\u007F]"), " ")?.trim()?.takeIf { it.isNotEmpty() }?.let { "\"$it\"" }
+
+/**
+ * What [OverwriteException.FailedAfterWrite] says when the original of [label] was truncated and
+ * could not be put back. It names the photo, because once the editor closes this is the only
+ * thing that says which one is damaged; the safety copy it mentions is announced in a dialog
+ * right away (see [OverwriteRecovery.pendingCopies]), not at some later start.
+ */
+internal fun originalNotPutBackMessage(label: String): String {
+    val photo = quotedPhotoName(label)?.let { "Replacing $it" } ?: "Replacing the photo"
+    return "$photo failed and the original could not be put back, so it may be damaged. " +
+        "Save a copy of your edit now. A safety copy of the original is kept in Fotoz's private " +
+        "storage, and Fotoz now offers to share it so you can put it back."
 }
 
 /** Flushes this stream's file to storage when it is backed by a file descriptor; false when that

@@ -100,13 +100,14 @@ import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.shell.AppStateViewModel
-import com.fotoxplorr.app.shell.COPY_SAVED_ORIGINAL_AT_RISK_MESSAGE
+import com.fotoxplorr.app.shell.copySavedOriginalAtRiskMessage
 import com.fotoxplorr.app.shell.OVERWRITE_NOT_STARTED_MESSAGE
 import com.fotoxplorr.app.shell.OVERWRITE_NOT_ALLOWED_MESSAGE
 import com.fotoxplorr.app.shell.OverwriteFailure
 import com.fotoxplorr.app.shell.PendingMediaOperation
 import com.fotoxplorr.app.shell.PendingTreeOperation
 import com.fotoxplorr.app.shell.overwriteFailureOf
+import com.fotoxplorr.app.shell.shouldRefreshRecoveryNotice
 import com.fotoxplorr.app.video.VideoExportOptions
 import com.fotoxplorr.app.recognition.RecognitionIndexer
 import com.fotoxplorr.app.recognition.RecognitionStore
@@ -292,10 +293,24 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // be damaged" state are always set together with the flag that shows it. Ignored when the
     // replace it reports no longer belongs to the open editor (see overwriteOutcomeApplies); a
     // failure that left the original damaged is then still said out loud, as it has no banner.
+    //
+    // The pending recovery notice (the dialog naming a photo whose safety copy was kept) is
+    // computed at start; [refreshRecoveryNotice] recomputes it so a copy kept by a failure of THIS
+    // session is announced now, not at the next cold start. Entries are kept as a string so the
+    // dialog survives a recreation.
+    var recoveryEncoded by rememberSaveable { mutableStateOf("") }
+    fun refreshRecoveryNotice() {
+        scope.launch {
+            recoveryEncoded = withContext(Dispatchers.IO) {
+                OverwriteRecovery.pendingCopies(applicationContext).toRecoveryEntries().encodeRecoveryEntries()
+            }
+        }
+    }
     fun declineOverwrite(failure: OverwriteFailure) {
         if (!viewModel.recordOverwriteFailure(failure) && failure.originalAtRisk) {
             viewModel.userMessage = failure.message
         }
+        if (shouldRefreshRecoveryNotice(failure)) refreshRecoveryNotice()
     }
 
     // P0-09 item 6 (process death): the ViewModel above keeps `viewerAssets` across an Activity
@@ -329,7 +344,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // warning that a photo may be damaged). Nothing is recorded until the dialog is answered, so a
     // process death or a recreation before then just shows it again; the entries are kept as a
     // string so the dialog itself survives a recreation. See OverwriteRecovery.pendingCopies.
-    var recoveryEncoded by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(Unit) {
         recoveryEncoded = withContext(Dispatchers.IO) {
             OverwriteRecovery.sweepOrphans(applicationContext)
@@ -957,7 +971,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     transientNotice = TransientNotice("Saved a copy.") { openViewerForSavedUri(uri) }
                     // The copy does not repair the original, and the safety copy of it is still
                     // kept (the notice for it stays pending until it has been answered).
-                    if (originalStillAtRisk) userMessage = COPY_SAVED_ORIGINAL_AT_RISK_MESSAGE
+                    if (originalStillAtRisk) userMessage = copySavedOriginalAtRiskMessage(asset.displayName)
+                    // Offered again if the earlier dialog was dismissed without an answer.
+                    if (shouldRefreshRecoveryNotice(copySavedOriginalAtRisk = originalStillAtRisk)) refreshRecoveryNotice()
                     runtime.requestScan(false)
                 },
                 onFailure = { error -> userMessage = humanMessage(error, "Could not save a copy of the edit.") },

@@ -8,6 +8,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fotoxplorr.app.editor.OverwriteException
+import com.fotoxplorr.app.editor.quotedPhotoName
 import com.fotoxplorr.app.jobs.JobRunner
 import com.fotoxplorr.app.jobs.JobRunnerRegistry
 import com.fotoxplorr.app.media.MediaAsset
@@ -295,7 +296,7 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
      */
     fun settleInterruptedWrite() {
         overwriteCopySaving = false
-        if (overwriteInFlight) recordOverwriteFailure(OverwriteFailure(OVERWRITE_INTERRUPTED_MESSAGE, originalAtRisk = true))
+        if (overwriteInFlight) recordOverwriteFailure(OverwriteFailure(overwriteInterruptedMessage(pendingOverwriteAsset?.displayName), originalAtRisk = true))
     }
 
     // ---- video ----
@@ -364,12 +365,26 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
 data class OverwriteFailure(val message: String, val originalAtRisk: Boolean)
 
 /** Shown when a replace stopped without saying how it ended; see [AppStateViewModel.settleInterruptedWrite]. */
-const val OVERWRITE_INTERRUPTED_MESSAGE = "A save was interrupted. The original photo may be damaged. Save a copy of your edit now."
+fun overwriteInterruptedMessage(photoName: String?): String {
+    val photo = quotedPhotoName(photoName)?.let { "The original photo $it" } ?: "The original photo"
+    return "A save was interrupted. $photo may be damaged. Save a copy of your edit now."
+}
 
 /** Said when "Save a copy" succeeded after a replace that left the original at risk: the copy does not repair it. */
-const val COPY_SAVED_ORIGINAL_AT_RISK_MESSAGE =
-    "Saved a copy of your edit. The original may still be damaged. Fotoz kept a private safety copy of it " +
-        "and will offer to share it the next time it starts."
+fun copySavedOriginalAtRiskMessage(photoName: String?): String {
+    val photo = quotedPhotoName(photoName)?.let { "The original $it" } ?: "The original"
+    return "Saved a copy of your edit. $photo may still be damaged. Fotoz kept a private safety copy of it " +
+        "and offers to share it."
+}
+
+/**
+ * Whether the pending recovery notice must be recomputed now: a replace ended with the original
+ * possibly damaged ([failure]), or a copy was saved while it still was ([copySavedOriginalAtRisk]).
+ * The notice is otherwise computed once at start, so without this the safety copy kept by an
+ * in-process failure would not be announced until the next cold start.
+ */
+fun shouldRefreshRecoveryNotice(failure: OverwriteFailure? = null, copySavedOriginalAtRisk: Boolean = false): Boolean =
+    failure?.originalAtRisk == true || copySavedOriginalAtRisk
 
 /** Shown when a replace could not start because another save of the editor had not finished. */
 const val OVERWRITE_NOT_STARTED_MESSAGE = "That edit was not saved. Finish the current save first, then try again."

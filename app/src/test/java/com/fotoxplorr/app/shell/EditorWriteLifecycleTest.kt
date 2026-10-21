@@ -114,7 +114,7 @@ class EditorWriteLifecycleTest {
 
         assertTrue(vm.overwriteDeclined)
         assertTrue(vm.overwriteOriginalAtRisk)
-        assertEquals(OVERWRITE_INTERRUPTED_MESSAGE, vm.overwriteFailureMessage)
+        assertEquals(overwriteInterruptedMessage("IMG_1.jpg"), vm.overwriteFailureMessage)
         assertFalse(vm.overwriteInFlight)
         assertTrue("only Save a copy is left", vm.editorCloseBlocked)
         assertSame(a, vm.editingAsset)

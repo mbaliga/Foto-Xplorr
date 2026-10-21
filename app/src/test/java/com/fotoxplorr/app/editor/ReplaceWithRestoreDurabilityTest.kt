@@ -130,7 +130,7 @@ class ReplaceWithRestoreDurabilityTest {
     }
 
     @Test
-    fun `the wording for an original that could not be put back says the copy is kept and offered at the next start`() {
+    fun `the wording for an original that could not be put back names the photo and says the copy is kept and offered`() {
         val original = object : OriginalFile {
             var writes = 0
             override fun openForRead(): InputStream? = originalFile.inputStream()
