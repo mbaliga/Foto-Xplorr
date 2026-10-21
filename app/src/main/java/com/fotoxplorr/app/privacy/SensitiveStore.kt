@@ -31,6 +31,9 @@ class SensitiveStore(context: Context) {
         persist(updated)
     }
 
+    /** Makes [ids] exactly the sensitive photos, in one write; a restore that replaces what was here. */
+    fun replaceAll(ids: Set<MediaId>) = persist(ids)
+
     private fun persist(ids: Set<MediaId>) {
         val immutable = ids.toSet()
         state.value = immutable

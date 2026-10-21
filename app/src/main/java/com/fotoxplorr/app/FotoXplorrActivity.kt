@@ -58,6 +58,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.withResumed
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.fotoxplorr.app.backup.rememberMetadataBackup
 import com.fotoxplorr.app.curate.AutoCurationPass
 import com.fotoxplorr.app.editor.EditedCopyWriter
 import com.fotoxplorr.app.editor.EditorScreen
@@ -131,8 +132,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 import com.fotoxplorr.app.ui.HelpCopy
 
 class FotoXplorrActivity : ComponentActivity() {
@@ -1111,54 +1110,16 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         if (!hadPermission && permissionGranted) runtime.requestScan(false)
     }
 
-    val exportMetadataLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json"),
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        viewModel.jobRunner.launch(title = "Backing up", kind = ActivityKind.BACKING_UP) { onProgress ->
-            onProgress(null)
-            runCatching {
-                val root = JSONObject().apply {
-                    put("schema", 1)
-                    put("exportedAtMillis", System.currentTimeMillis())
-                    put("library", libraryStore.exportJson())
-                    put("favoriteIds", JSONArray(favoriteIds.map { it.value }))
-                    put("sensitiveIds", JSONArray(sensitiveIds.map { it.value }))
-                }
-                withContext(Dispatchers.IO) {
-                    contentResolver.openOutputStream(uri, "w")?.bufferedWriter()?.use { writer ->
-                        writer.write(root.toString(2))
-                    } ?: error("Unable to open backup destination")
-                }
-                "Metadata backup exported."
-            }
-        }
-    }
-
-    val importMetadataLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        viewModel.jobRunner.launch(title = "Restoring backup", kind = ActivityKind.BACKING_UP) { onProgress ->
-            onProgress(null)
-            runCatching {
-                val json = withContext(Dispatchers.IO) {
-                    contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                        ?: error("Unable to open backup")
-                }
-                val root = JSONObject(json)
-                val libraryRoot = root.optJSONObject("library") ?: root
-                libraryStore.importJson(libraryRoot).getOrThrow()
-                val importedFavorites = root.optJSONArray("favoriteIds").toMediaIds()
-                val importedSensitive = root.optJSONArray("sensitiveIds").toMediaIds()
-                favoriteStore.setFavorite(favoriteIds, false)
-                favoriteStore.setFavorite(importedFavorites, true)
-                sensitiveStore.setSensitive(sensitiveIds, false)
-                sensitiveStore.setSensitive(importedSensitive, true)
-                "Metadata backup imported."
-            }
-        }
-    }
+    // The plain tags-and-collections backup: pickers, the review a file must pass and the confirmed
+    // Replace all live in backup/MetadataBackupUi.kt; nothing is written before the person has seen it.
+    val metadataBackup = rememberMetadataBackup(
+        jobRunner = viewModel.jobRunner,
+        libraryStore = libraryStore,
+        favoriteStore = favoriteStore,
+        sensitiveStore = sensitiveStore,
+        photos = { assets },
+        onMessage = { userMessage = it },
+    )
 
     fun shareUris(uris: List<Uri>, mimeType: String, title: String) {
         if (uris.isEmpty()) return
@@ -1790,8 +1751,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                             }
                         }
                     },
-                    onExportMetadata = { exportMetadataLauncher.launch("fotoz-metadata.json") },
-                    onImportMetadata = { importMetadataLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
+                    onExportMetadata = metadataBackup.saveToFile,
+                    onImportMetadata = metadataBackup.restoreFromFile,
                     onOpenAsset = { asset, visible ->
                         setViewerAssets(visible)
                         selectedAssetId = asset.id
@@ -1969,16 +1930,6 @@ private fun List<Uri>.toClipData(
     label: String,
 ): ClipData = ClipData.newUri(resolver, label, first()).also { clip ->
     drop(1).forEach { uri -> clip.addItem(ClipData.Item(uri)) }
-}
-
-private fun JSONArray?.toMediaIds(): Set<MediaId> {
-    if (this == null) return emptySet()
-    return buildSet {
-        for (index in 0 until length()) {
-            val value = optLong(index, -1L)
-            if (value >= 0L) add(MediaId(value))
-        }
-    }
 }
 
 // ScanState moved to LibraryRuntime.kt (P0-09): it is no longer only ever produced from this

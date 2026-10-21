@@ -98,7 +98,12 @@ class HelpCopyTest {
         assertTrue(HelpCopy.Hint.STRIP_METADATA.contains("GPS"))
         assertTrue(HelpCopy.Caption.SAVE_REPLACE.contains("can't be recovered"))
         assertTrue(HelpCopy.Caption.TAGS_SUGGESTED.contains("permanent"))
+        // The plain tags-and-collections file: not photos, and not encrypted. "Not your photos" is
+        // said only about this option; the encrypted backup's own copy says the opposite.
         assertTrue(HelpCopy.Hint.BACKUP.contains("Not your photos"))
+        assertTrue(HelpCopy.Hint.BACKUP_NOT_ENCRYPTED.startsWith("Not encrypted"))
+        assertTrue(HelpCopy.Hint.BACKUP_NOT_ENCRYPTED.contains("can read your captions and tags"))
+        assertTrue(HelpCopy.Hint.BACKUP_RESTORE.contains("Replacing needs a second confirmation"))
     }
 
     @Test

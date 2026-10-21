@@ -1082,17 +1082,17 @@ fun LibraryScreen(
             }
         }
 
-        item { SectionHeading("Metadata backup", "Collections, tags and archive state") }
+        item { SectionHeading("Tags and collections", "Saved to a file. Not encrypted.") }
         item {
             // Rows in the rooms' own language rather than Material text buttons.
             Column {
                 RoomRow(
-                    label = "Export",
+                    label = "Save to a file",
                     onClick = onExportMetadata,
                     trailing = { Icon(Icons.Outlined.UploadFile, contentDescription = null, tint = RoomStyle.InkMuted) },
                 )
                 RoomRow(
-                    label = "Import",
+                    label = "Restore from a file",
                     onClick = onImportMetadata,
                     trailing = { Icon(Icons.Outlined.Collections, contentDescription = null, tint = RoomStyle.InkMuted) },
                 )

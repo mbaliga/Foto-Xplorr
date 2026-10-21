@@ -361,10 +361,14 @@ fun SettingsTabsRoom(
                 }
 
                 SettingsTab.DATA -> {
-                    SectionLabel("BACKUP", first = true)
+                    // Two named options, never one "backup" that could mean either. This one is the
+                    // plain file; the encrypted whole-library backup gets its own section below it.
+                    SectionLabel("BACKUP: TAGS AND COLLECTIONS", first = true)
                     Paragraph(HelpCopy.Hint.BACKUP, strong = true)
-                    ActionText("Back up now", actions.onExportMetadata)
-                    ActionText("Restore from a backup", actions.onImportMetadata)
+                    Paragraph(HelpCopy.Hint.BACKUP_NOT_ENCRYPTED)
+                    ActionText("Save tags and collections to a file", actions.onExportMetadata)
+                    ActionText("Restore tags and collections from a file", actions.onImportMetadata)
+                    Paragraph(HelpCopy.Hint.BACKUP_RESTORE)
 
                     SectionLabel("LIBRARY")
                     ActionText("Rescan for new photos", actions.onRefresh)

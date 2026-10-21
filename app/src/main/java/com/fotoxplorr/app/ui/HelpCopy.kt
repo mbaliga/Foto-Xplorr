@@ -80,7 +80,11 @@ internal object HelpCopy {
      */
     object Hint {
         const val PROTECTED_FOLDERS = "Set up protected folders from an album's menu. Passwords are never stored here."
-        const val BACKUP = "Saves your tags, collections, favourites and sensitive marks. Not your photos."
+        const val BACKUP = "Tags, collections, captions, favourites, sensitive marks. Not your photos."
+
+        /** The plain file's one privacy fact, shown wherever it is offered: it is readable by anyone who has it. */
+        const val BACKUP_NOT_ENCRYPTED = "Not encrypted. Anyone who gets the file can read your captions and tags."
+        const val BACKUP_RESTORE = "Restoring adds to what you have. Replacing needs a second confirmation."
         const val RESCAN_AUTO = "Fotoz spots new photos by itself. Use this to force a check."
         const val BILLING = "Nothing is charged yet. This only remembers Pro on this device."
 
