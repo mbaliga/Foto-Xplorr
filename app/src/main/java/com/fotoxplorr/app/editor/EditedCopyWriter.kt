@@ -22,6 +22,7 @@ import com.fotoxplorr.app.metadata.ExifCopier
 import com.fotoxplorr.app.metadata.ExifCopyReport
 import com.fotoxplorr.app.metadata.UNCARRIED_SCAN_BYTES
 import com.fotoxplorr.app.metadata.UncarriedMetadata
+import com.fotoxplorr.app.metadata.metadataNeedsFullWalk
 import com.fotoxplorr.app.metadata.uncarriedMetadataIn
 import com.fotoxplorr.app.metadata.xmpAttributeUtf8
 import com.fotoxplorr.app.metadata.xmpCarriesLocation
@@ -284,19 +285,22 @@ class EditedCopyWriter(context: Context) {
                     recoveryDir = recoveryDir,
                     label = source.displayName,
                     originalSizeBytes = source.sizeBytes,
-                ) {
-                    // What reads back must be exactly the staged bytes, and still a photo of the
-                    // edited size, or the original is put back.
-                    val identical = original.openForRead()?.use { written ->
-                        tempFile.inputStream().use { staged -> sameBytes(written, staged) }
-                    } ?: false
-                    check(identical) { "The replaced file does not read back as written" }
-                    val dimensions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    original.openForRead()?.use { BitmapFactory.decodeStream(it, null, dimensions) }
-                    check(dimensions.outWidth == bitmap.width && dimensions.outHeight == bitmap.height) {
-                        "The replaced file does not decode to the edited photo's dimensions"
-                    }
-                }
+                    originUri = source.contentUri.toString(),
+                    mimeType = source.mimeType,
+                    verifyWritten = {
+                        // What reads back must be exactly the staged bytes, and still a photo of the
+                        // edited size, or the original is put back.
+                        val identical = original.openForRead()?.use { written ->
+                            tempFile.inputStream().use { staged -> sameBytes(written, staged) }
+                        } ?: false
+                        check(identical) { "The replaced file does not read back as written" }
+                        val dimensions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        original.openForRead()?.use { BitmapFactory.decodeStream(it, null, dimensions) }
+                        check(dimensions.outWidth == bitmap.width && dimensions.outHeight == bitmap.height) {
+                            "The replaced file does not decode to the edited photo's dimensions"
+                        }
+                    },
+                )
             } finally {
                 tempFile.delete()
             }
@@ -413,7 +417,18 @@ class EditedCopyWriter(context: Context) {
                 // the same single pass both parses the EXIF and lets uncarriedMetadataIn see the
                 // segments ExifInterface cannot (IPTC-IIM, extended XMP).
                 val head = stream.readUpTo(UNCARRIED_SCAN_BYTES)
-                uncarried = uncarriedMetadataIn(head)
+                uncarried = if (metadataNeedsFullWalk(head)) {
+                    // A PNG or WebP that fills the window can keep its text after any amount of
+                    // image data: walk its chunk list end to end on a second read (headers and
+                    // skips, no pixels). Unreadable the second time fails the copy, so a replace
+                    // is refused rather than assumed clean.
+                    val again = openForLocationRead(requested, source.contentUri) { uri ->
+                        appContext.contentResolver.openInputStream(uri)
+                    } ?: error("The source could not be read a second time")
+                    again.first.use { uncarriedMetadataIn(it) }
+                } else {
+                    uncarriedMetadataIn(head)
+                }
                 val sourceExif = ExifInterface(SequenceInputStream(ByteArrayInputStream(head), stream))
                 val targetExif = ExifInterface(tempFile.absolutePath)
                 report = ExifCopier.copy(sourceExif, targetExif, keepLocation)

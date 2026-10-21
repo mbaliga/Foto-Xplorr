@@ -13,6 +13,8 @@ import com.fotoxplorr.app.jobs.JobRunnerRegistry
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.core.model.MediaId
 import com.fotoxplorr.app.metadata.MetadataEdit
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
@@ -106,15 +108,33 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
      *  - a replace of the original is in flight ([overwriteInFlight]): the write is running or its
      *    consent sheet is up, and closing now would drop the bitmap while the file is half written;
      *  - a copy of the edit is being saved ([overwriteCopySaving]);
+     *  - a save is still being rendered or written ([saveInProgress]);
      *  - the replace failed after the original was opened and it could not be put back, so the
      *    edited bitmap held here is the only good version. Back and close then change nothing and
      *    the banner (which offers only "Save a copy") stays up.
      */
     val editorCloseBlocked: Boolean
-        get() = overwriteInFlight || overwriteCopySaving || (overwriteDeclined && overwriteOriginalAtRisk)
+        get() = saveInProgress || overwriteInFlight || overwriteCopySaving || (overwriteDeclined && overwriteOriginalAtRisk)
 
     /** Closes the editor unless [editorCloseBlocked]; true when it closed. */
     fun closeEditor(): Boolean = setEditingAsset(null)
+
+    /**
+     * Closes the editor only if it is still open on the photo [assetId], for a save that reports
+     * back late: its result must not close an editor that has since been pointed at another photo.
+     */
+    fun closeEditorFor(assetId: MediaId): Boolean =
+        editingAssetState?.id == assetId && setEditingAsset(null)
+
+    /**
+     * True from Save being tapped until that save has reached its outcome, a copy or a replace
+     * request (which then holds the editor itself, see [overwriteInFlight]). The render alone takes
+     * seconds, and the editor reports it from its own `saving`; without this the editor could be
+     * switched to another photo meanwhile (an EDIT or SEND intent), and the late result of the
+     * first photo's save would land on the second photo's editor. Always cleared by the editor
+     * when the save ends or the editor leaves composition.
+     */
+    var saveInProgress: Boolean by mutableStateOf(false)
 
     /** Forgets a failed overwrite and the photo and bitmap it was holding for "Save a copy". */
     fun clearOverwriteFailure() {
@@ -233,13 +253,49 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
      * original, however damaged, is no longer the only place it lives) and the editor closes. On
      * failure everything stays as it was: the banner, the at-risk flag and the held bitmap, so the
      * person can retry.
+     *
+     * Returns true when the copy was saved and the state it cleared had the original at risk: the
+     * copy does not repair the original, so the caller must say that it may still be damaged.
      */
-    fun finishCopyOfDeclinedOverwrite(saved: Boolean) {
+    fun finishCopyOfDeclinedOverwrite(saved: Boolean): Boolean {
         overwriteCopySaving = false
         if (saved && overwriteOutcomeApplies()) {
+            val wasAtRisk = overwriteOriginalAtRisk
             clearOverwriteFailure()
             setEditingAsset(null)
+            return wasAtRisk
         }
+        return false
+    }
+
+    /**
+     * Runs a replace or a "Save a copy" on this ViewModel's scope instead of the composition's: an
+     * Activity recreation cancels the composition's coroutines, which left the lock flags above set
+     * for good (the editor stuck, no at-risk banner even if the write had failed). The write itself
+     * is blocking file I/O and runs to its end either way; what this keeps alive is the code that
+     * records how it ended.
+     *
+     * Backstop: if [block] dies without recording an outcome, [settleInterruptedWrite] does, so
+     * the flags cannot stay set. (A cancellation by [onCleared] needs none: the state goes too.)
+     */
+    fun launchWrite(block: suspend () -> Unit): Job = viewModelScope.launch {
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            settleInterruptedWrite()
+        }
+    }
+
+    /**
+     * A write that was started ended without an outcome being recorded: nothing says what state
+     * the original is in, so a replace is recorded as a failure with the original at risk, and a
+     * copy that did not finish is released so it can be tried again.
+     */
+    fun settleInterruptedWrite() {
+        overwriteCopySaving = false
+        if (overwriteInFlight) recordOverwriteFailure(OverwriteFailure(OVERWRITE_INTERRUPTED_MESSAGE, originalAtRisk = true))
     }
 
     // ---- video ----
@@ -288,9 +344,6 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
      */
     var initialScanSent: Boolean by mutableStateOf(false)
 
-    /** True once this process has swept the editor's leftover safety copies, so a rotation does not repeat it. */
-    var recoverySweepDone: Boolean = false
-
     override fun onCleared() {
         jobRunner.cancelAll()
     }
@@ -309,6 +362,17 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
 
 /** What to tell the person when replacing the original failed; see [overwriteFailureOf]. */
 data class OverwriteFailure(val message: String, val originalAtRisk: Boolean)
+
+/** Shown when a replace stopped without saying how it ended; see [AppStateViewModel.settleInterruptedWrite]. */
+const val OVERWRITE_INTERRUPTED_MESSAGE = "A save was interrupted. The original photo may be damaged. Save a copy of your edit now."
+
+/** Said when "Save a copy" succeeded after a replace that left the original at risk: the copy does not repair it. */
+const val COPY_SAVED_ORIGINAL_AT_RISK_MESSAGE =
+    "Saved a copy of your edit. The original may still be damaged. Fotoz kept a private safety copy of it " +
+        "and will offer to share it the next time it starts."
+
+/** Shown when a replace could not start because another save of the editor had not finished. */
+const val OVERWRITE_NOT_STARTED_MESSAGE = "That edit was not saved. Finish the current save first, then try again."
 
 /** Shown when Android itself refused write access to the original (a declined consent sheet, or a
  *  [SecurityException]); the only cause this wording is true for. */

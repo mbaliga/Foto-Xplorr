@@ -2,6 +2,7 @@ package com.fotoxplorr.app.metadata
 
 import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.core.metadata.XmpPacket
+import java.io.InputStream
 import java.lang.reflect.Modifier
 
 /**
@@ -86,13 +87,13 @@ enum class UncarriedMetadata(val label: String) {
 }
 
 /**
- * How much of a file's start [uncarriedMetadataIn] looks at: a JPEG keeps all of this before the scan,
- * and a PNG or WebP keeps its metadata chunks ahead of the image data in the files this app writes.
+ * How much of a file's start the head form of [uncarriedMetadataIn] looks at: a JPEG keeps all of
+ * this before the scan, so a window is exact for it.
  *
- * It is a window, not a whole-file scan, so it fails open past its end: a PNG that puts a text
- * chunk after more than this much image data, or a WebP whose extra chunk follows a large bitstream,
- * is not seen. Image generators and editors write their text ahead of `IDAT`, which is why this is
- * accepted rather than reading a whole file that can be tens of megabytes.
+ * It is a window, not a whole-file scan, so it fails open past its end. That is acceptable for a
+ * JPEG, never for a PNG or WebP, whose text and extra chunks can follow any amount of image data:
+ * for those, a file that fills the window ([metadataNeedsFullWalk]) is walked end to end by the
+ * stream form of [uncarriedMetadataIn], which reads chunk headers and skips the image data.
  */
 internal const val UNCARRIED_SCAN_BYTES = 256 * 1024
 
@@ -111,9 +112,9 @@ internal const val UNCARRIED_SCAN_BYTES = 256 * 1024
  *  - WebP: any chunk other than image data, EXIF, XMP and a colour profile.
  *
  * Anything else answers empty; a segment or chunk cut off by the end of [head] is not seen, though
- * a chunk whose header is there is reported even when its body is cut off. [head] is at most
- * [UNCARRIED_SCAN_BYTES] long in practice, so metadata that sits beyond that window is not seen
- * either (see that constant).
+ * a chunk whose header is there is reported even when its body is cut off. This form sees only what
+ * is in [head]: for a PNG or WebP that fills the window ([metadataNeedsFullWalk]) the caller uses
+ * the stream form, which walks the whole file.
  *
  * Not covered, on purpose: `MakerNote` and the embedded thumbnail, which [EXCLUDED_TAGS] drops for
  * a stated reason and which nearly every camera file has, so refusing on them would refuse nearly
@@ -123,6 +124,27 @@ internal fun uncarriedMetadataIn(head: ByteArray): Set<UncarriedMetadata> = when
     isPng(head) -> uncarriedPngMetadata(head)
     isWebp(head) -> uncarriedWebpMetadata(head)
     else -> uncarriedJpegMetadata(head)
+}
+
+/** True when [head], read with a window of [windowBytes], is a PNG or WebP that may continue past it. */
+internal fun metadataNeedsFullWalk(head: ByteArray, windowBytes: Int = UNCARRIED_SCAN_BYTES): Boolean =
+    head.size >= windowBytes && (isPng(head) || isWebp(head))
+
+/**
+ * [uncarriedMetadataIn] for a whole file read from the start of [stream]: a PNG's chunk list or a
+ * WebP's RIFF chunk list is walked to its end by reading each header and skipping the data (only a
+ * text chunk's keyword is read), so a prompt written after the image data is seen however large the
+ * file is. Anything else is judged from its first [UNCARRIED_SCAN_BYTES], as the head form does.
+ * A truncated chunk list ends the walk with what it found; a read error propagates, so the caller
+ * can refuse rather than assume the file is clean.
+ */
+internal fun uncarriedMetadataIn(stream: InputStream): Set<UncarriedMetadata> {
+    // Exactly the signature first: a PNG's next bytes are already its first chunk header.
+    val signature = stream.readFullyUpTo(PNG_SIGNATURE.size)
+    if (isPng(signature)) return uncarriedPngMetadata(stream)
+    val riff = signature + stream.readFullyUpTo(12 - signature.size)
+    if (isWebp(riff)) return uncarriedWebpMetadata(stream)
+    return uncarriedMetadataIn(riff + stream.readFullyUpTo(UNCARRIED_SCAN_BYTES - riff.size))
 }
 
 private val PNG_SIGNATURE = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
@@ -142,31 +164,58 @@ private fun uncarriedPngMetadata(head: ByteArray): Set<UncarriedMetadata> {
         val at = pos.toInt()
         val length = ((head[at].toLong() and 0xFF) shl 24) or ((head[at + 1].toLong() and 0xFF) shl 16) or
             ((head[at + 2].toLong() and 0xFF) shl 8) or (head[at + 3].toLong() and 0xFF)
-        when (val type = fourCc(head, at + 4)) {
-            "IEND" -> break
-            "tEXt", "zTXt" -> {
-                val start = at + 8
-                val end = minOf(pos + 8 + length, head.size.toLong()).toInt()
-                // A keyword that is cut off cannot be told from a prompt, so it counts.
-                if (!isIgnorablePngTextKeyword(pngTextKeyword(head, start, end))) found += UncarriedMetadata.PNG_TEXT
-            }
-            "iTXt" -> {
-                val start = at + 8
-                val end = minOf(pos + 8 + length, head.size.toLong()).toInt()
-                // The one iTXt ExifInterface carries is the XMP packet; one whose keyword is cut
-                // off cannot be told from a prompt, so it counts.
-                if (!startsWith(head, start, end, XMP_ITXT_KEYWORD) &&
-                    !isIgnorablePngTextKeyword(pngTextKeyword(head, start, end))
-                ) {
-                    found += UncarriedMetadata.PNG_TEXT
-                }
-            }
-            else -> Unit
-        }
+        val type = fourCc(head, at + 4)
+        if (type == "IEND") break
+        val start = at + 8
+        val end = minOf(pos + 8 + length, head.size.toLong()).toInt()
+        if (pngChunkIsContent(type, head.copyOfRange(start, end))) found += UncarriedMetadata.PNG_TEXT
         // Length, type, data, CRC.
         pos += 12 + length
     }
     return found
+}
+
+/** [uncarriedPngMetadata] over a stream positioned after the signature: headers read, data skipped. */
+private fun uncarriedPngMetadata(stream: InputStream): Set<UncarriedMetadata> {
+    val found = mutableSetOf<UncarriedMetadata>()
+    val header = ByteArray(8)
+    while (stream.readFullyInto(header) == header.size) {
+        val length = ((header[0].toLong() and 0xFF) shl 24) or ((header[1].toLong() and 0xFF) shl 16) or
+            ((header[2].toLong() and 0xFF) shl 8) or (header[3].toLong() and 0xFF)
+        val type = fourCc(header, 4)
+        if (type == "IEND") break
+        // Only a text chunk's keyword is wanted, and a keyword is short: the rest is skipped.
+        val isText = type == "tEXt" || type == "zTXt" || type == "iTXt"
+        val wanted = if (isText) minOf(length, PNG_KEYWORD_WINDOW.toLong()).toInt() else 0
+        val prefix = ByteArray(wanted)
+        if (stream.readFullyInto(prefix) < wanted) {
+            // Cut off inside the keyword: it cannot be told from a prompt, so it counts.
+            found += UncarriedMetadata.PNG_TEXT
+            break
+        }
+        if (isText && pngChunkIsContent(type, prefix)) found += UncarriedMetadata.PNG_TEXT
+        // The rest of the data and the CRC.
+        if (!stream.skipExactly(length - wanted + 4)) break
+    }
+    return found
+}
+
+/** How much of a text chunk's start is read to find its keyword (at most 79 bytes plus the NUL). */
+private const val PNG_KEYWORD_WINDOW = 96
+
+/**
+ * Whether the PNG chunk [type] whose data starts with [prefix] (all of it, or the first bytes
+ * when it is longer) is text a person would miss. Not a text chunk, or only the XMP packet or a
+ * boilerplate keyword, is not.
+ */
+private fun pngChunkIsContent(type: String, prefix: ByteArray): Boolean = when (type) {
+    // A keyword that is cut off cannot be told from a prompt, so it counts.
+    "tEXt", "zTXt" -> !isIgnorablePngTextKeyword(pngTextKeyword(prefix, 0, prefix.size))
+    // The one iTXt ExifInterface carries is the XMP packet; one whose keyword is cut off cannot be
+    // told from a prompt, so it counts.
+    "iTXt" -> !startsWith(prefix, 0, prefix.size, XMP_ITXT_KEYWORD) &&
+        !isIgnorablePngTextKeyword(pngTextKeyword(prefix, 0, prefix.size))
+    else -> false
 }
 
 /** The keyword of the text chunk whose data is `[from, end)` (Latin-1 up to the first NUL), or null
@@ -213,6 +262,53 @@ private fun uncarriedWebpMetadata(head: ByteArray): Set<UncarriedMetadata> {
         pos += 8 + size + (size and 1)
     }
     return found
+}
+
+/** [uncarriedWebpMetadata] over a stream positioned after the 12-byte RIFF header: chunk headers read, payloads skipped. */
+private fun uncarriedWebpMetadata(stream: InputStream): Set<UncarriedMetadata> {
+    val found = mutableSetOf<UncarriedMetadata>()
+    val header = ByteArray(8)
+    while (stream.readFullyInto(header) == header.size) {
+        if (fourCc(header, 0) !in WEBP_CARRIED_CHUNKS) found += UncarriedMetadata.WEBP_CHUNK
+        val size = (header[4].toLong() and 0xFF) or ((header[5].toLong() and 0xFF) shl 8) or
+            ((header[6].toLong() and 0xFF) shl 16) or ((header[7].toLong() and 0xFF) shl 24)
+        if (!stream.skipExactly(size + (size and 1))) break
+    }
+    return found
+}
+
+/** Reads into [buffer] until it is full or the stream ends; how many bytes it holds. */
+private fun InputStream.readFullyInto(buffer: ByteArray): Int {
+    var total = 0
+    while (total < buffer.size) {
+        val n = read(buffer, total, buffer.size - total)
+        if (n < 0) break
+        total += n
+    }
+    return total
+}
+
+private fun InputStream.readFullyUpTo(limit: Int): ByteArray {
+    val buffer = ByteArray(limit.coerceAtLeast(0))
+    val n = readFullyInto(buffer)
+    return if (n == buffer.size) buffer else buffer.copyOf(n)
+}
+
+/** Skips exactly [count] bytes; false when the stream ends first. A stream that will not skip is read through. */
+private fun InputStream.skipExactly(count: Long): Boolean {
+    var left = count
+    val scratch = ByteArray(8 * 1024)
+    while (left > 0) {
+        val skipped = skip(left)
+        if (skipped > 0) {
+            left -= skipped
+            continue
+        }
+        val n = read(scratch, 0, minOf(left, scratch.size.toLong()).toInt())
+        if (n < 0) return false
+        left -= n
+    }
+    return true
 }
 
 private fun uncarriedJpegMetadata(head: ByteArray): Set<UncarriedMetadata> {

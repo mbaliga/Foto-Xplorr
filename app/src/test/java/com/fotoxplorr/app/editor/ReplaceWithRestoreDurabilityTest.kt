@@ -63,7 +63,7 @@ class ReplaceWithRestoreDurabilityTest {
         verify: () -> Unit = {},
     ) = replaceWithRestore(original, staged, persistentDir, persistentDir, "original.jpg", recorded, usableSpace, verify)
 
-    private fun backups() = persistentDir.listFiles().orEmpty().filter { it.name.startsWith("backup-") }
+    private fun backups() = persistentDir.listFiles().orEmpty().filter { it.name.startsWith("backup-") && it.name.endsWith(".bin") }
 
     @Test
     fun `the safety copy exists in the given directory and holds the original while the write is verified`() {
@@ -130,7 +130,7 @@ class ReplaceWithRestoreDurabilityTest {
     }
 
     @Test
-    fun `the wording for an original that could not be put back promises no way to get it back`() {
+    fun `the wording for an original that could not be put back says the copy is kept and offered at the next start`() {
         val original = object : OriginalFile {
             var writes = 0
             override fun openForRead(): InputStream? = originalFile.inputStream()
@@ -144,8 +144,8 @@ class ReplaceWithRestoreDurabilityTest {
         assertFalse(failure.restored)
         val message = failure.message!!
         assertTrue(message, "Save a copy" in message)
-        assertFalse(message, "kept inside Fotoz" in message)
-        assertTrue(message, "cannot open" in message)
+        assertFalse(message, "cannot open" in message || "do not rely" in message)
+        assertTrue(message, "offers to share" in message)
         assertTrue("the copy is kept", failure.recoveryFile!!.exists())
     }
 
@@ -172,12 +172,13 @@ class ReplaceWithRestoreDurabilityTest {
     }
 
     @Test
-    fun `sweeping deletes in-flight copies older than the limit and keeps younger ones`() {
+    fun `sweeping deletes an answered in-flight copy once its keeping time is over and keeps a younger one`() {
         val now = 1_000_000_000_000L
-        val old = orphan("backup-111.bin", ageMillis = 8 * DAY, now = now)
-        val young = orphan("backup-222.bin", ageMillis = 1 * DAY, now = now)
+        val old = orphan("backup-111.bin", ageMillis = 30 * DAY, now = now)
+        val young = orphan("backup-222.bin", ageMillis = 30 * DAY, now = now)
+        val answered = mapOf(old.name to now - 8 * DAY, young.name to now - 1 * DAY)
 
-        val remaining = sweepOrphanBackups(persistentDir, now, maxAgeMillis = 7 * DAY)
+        val remaining = sweepOrphanBackups(persistentDir, now, answered, maxAgeMillis = 7 * DAY)
 
         assertFalse(old.exists())
         assertTrue(young.exists())
@@ -185,26 +186,62 @@ class ReplaceWithRestoreDurabilityTest {
     }
 
     @Test
-    fun `sweeping keeps a recovery file for a month and never deletes an unrelated one`() {
+    fun `a copy nobody has been told about is never swept however old it is`() {
         val now = 1_000_000_000_000L
-        val recent = orphan("IMG_0001.jpg.1700000000000.bak", ageMillis = 20 * DAY, now = now)
-        val other = orphan("notes.txt", ageMillis = 400 * DAY, now = now)
+        val ancient = orphan("backup-333.bin", ageMillis = 400 * DAY, now = now)
+        val ancientBak = orphan("IMG_0003.jpg.1500000000000.bak", ageMillis = 400 * DAY, now = now)
 
-        val remaining = sweepOrphanBackups(persistentDir, now, maxAgeMillis = 7 * DAY)
+        val remaining = sweepOrphanBackups(persistentDir, now, emptyMap(), maxAgeMillis = 7 * DAY)
 
-        assertTrue(recent.exists() && other.exists())
-        assertEquals(setOf(recent, other), remaining.toSet())
+        assertTrue(ancient.exists() && ancientBak.exists())
+        assertEquals(setOf(ancient, ancientBak), remaining.toSet())
     }
 
     @Test
-    fun `sweeping deletes a recovery file once it is older than its own longer limit`() {
+    fun `sweeping keeps an answered recovery file for a month and never deletes an unrelated one`() {
+        val now = 1_000_000_000_000L
+        val recent = orphan("IMG_0001.jpg.1700000000000.bak", ageMillis = 90 * DAY, now = now)
+        val other = orphan("notes.txt", ageMillis = 400 * DAY, now = now)
+
+        val remaining = sweepOrphanBackups(persistentDir, now, mapOf(recent.name to now - 20 * DAY), maxAgeMillis = 7 * DAY)
+
+        assertTrue(recent.exists() && other.exists())
+        assertEquals(listOf(recent), remaining)
+    }
+
+    @Test
+    fun `sweeping deletes an answered recovery file and its sidecar once older than its own longer limit`() {
         val now = 1_000_000_000_000L
         val old = orphan("IMG_0002.jpg.1600000000000.bak", ageMillis = 31 * DAY, now = now)
+        writeSidecar(old, "content://m/2", "IMG_0002.jpg", "image/jpeg", 3L)
 
-        val remaining = sweepOrphanBackups(persistentDir, now, maxAgeMillis = 7 * DAY)
+        val remaining = sweepOrphanBackups(persistentDir, now, mapOf(old.name to now - 31 * DAY), maxAgeMillis = 7 * DAY)
 
-        assertFalse(old.exists())
+        assertFalse(old.exists() || sidecarOf(old).exists())
         assertTrue(remaining.isEmpty())
+    }
+
+    @Test
+    fun `sweeping never deletes a copy a running replace owns`() {
+        val now = 1_000_000_000_000L
+        val live = orphan("backup-444.bin", ageMillis = 400 * DAY, now = now)
+
+        val remaining = sweepOrphanBackups(persistentDir, now, mapOf(live.name to 0L), maxAgeMillis = 7 * DAY) { it.name == live.name }
+
+        assertTrue(live.exists())
+        assertTrue("a live copy is not a leftover", remaining.isEmpty())
+    }
+
+    @Test
+    fun `sweeping removes a sidecar whose copy is gone`() {
+        val now = 1_000_000_000_000L
+        val gone = File(persistentDir.also { it.mkdirs() }, "backup-555.bin")
+        writeSidecar(gone, "content://m/5", "IMG_5.jpg", "image/jpeg", 3L)
+        assertTrue(sidecarOf(gone).exists())
+
+        sweepOrphanBackups(persistentDir, now, emptyMap())
+
+        assertFalse(sidecarOf(gone).exists())
     }
 
     @Test
@@ -236,7 +273,7 @@ class ReplaceWithRestoreDurabilityTest {
 
     @Test
     fun `sweeping a directory that does not exist is empty and does not throw`() {
-        assertTrue(sweepOrphanBackups(File(root, "nowhere"), 0L, 1L).isEmpty())
+        assertTrue(sweepOrphanBackups(File(root, "nowhere"), 0L).isEmpty())
     }
 
     @Test
@@ -247,7 +284,9 @@ class ReplaceWithRestoreDurabilityTest {
             File(persistentDir, "backup-$i.bin").also { it.writeBytes(byteArrayOf(1)); it.setLastModified(now - 30 * DAY) }
         }
 
-        val remaining = sweepOrphanBackups(persistentDir, now, maxAgeMillis = 7 * DAY)
+        val answered = (0 until MAX_SWEPT_FILES + 20).associate { "backup-$it.bin" to now - 30 * DAY }
+
+        val remaining = sweepOrphanBackups(persistentDir, now, answered, maxAgeMillis = 7 * DAY)
 
         assertEquals("the overflow is left for a later start", 20, remaining.size)
         assertEquals(20, persistentDir.listFiles().orEmpty().size)

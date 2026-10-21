@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -60,6 +61,11 @@ import com.fotoxplorr.app.curate.AutoCurationPass
 import com.fotoxplorr.app.editor.EditedCopyWriter
 import com.fotoxplorr.app.editor.EditorScreen
 import com.fotoxplorr.app.editor.OverwriteRecovery
+import com.fotoxplorr.app.editor.RecoveryEntry
+import com.fotoxplorr.app.editor.decodeRecoveryEntries
+import com.fotoxplorr.app.editor.encodeRecoveryEntries
+import com.fotoxplorr.app.editor.recoveryNoticeMessage
+import com.fotoxplorr.app.editor.toRecoveryEntries
 import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.gallery.GalleryActions
@@ -94,6 +100,8 @@ import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.shell.AppStateViewModel
+import com.fotoxplorr.app.shell.COPY_SAVED_ORIGINAL_AT_RISK_MESSAGE
+import com.fotoxplorr.app.shell.OVERWRITE_NOT_STARTED_MESSAGE
 import com.fotoxplorr.app.shell.OVERWRITE_NOT_ALLOWED_MESSAGE
 import com.fotoxplorr.app.shell.OverwriteFailure
 import com.fotoxplorr.app.shell.PendingMediaOperation
@@ -107,6 +115,7 @@ import com.fotoxplorr.app.share.ShareFrame
 import com.fotoxplorr.app.share.ShareOptions
 import com.fotoxplorr.app.share.ShareOptionsSheet
 import com.fotoxplorr.app.share.SharePreparer
+import com.fotoxplorr.app.share.fileProviderAuthority
 import com.fotoxplorr.app.share.ZipExporter
 import com.fotoxplorr.app.ui.FotoXplorrTheme
 import com.fotoxplorr.app.ui.crashRecoveryStyle
@@ -314,17 +323,17 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
     }
 
-    // Once per process, off the main thread: ages out the editor's leftover safety copies and, if
-    // a copy of a photo that was not put back still remains, says so in a dialog that waits for an
-    // answer (a three-second notice is too easy to miss for a warning that a photo may be damaged).
-    // Said once per set of copies, not on every start: see OverwriteRecovery.noticeToShow.
-    var recoveryDialogMessage by remember { mutableStateOf<String?>(null) }
+    // On every start, off the main thread: ages out the leftover safety copies the person has
+    // already been told about and, if a copy of a photo that was not put back is still waiting,
+    // says so in a dialog that waits for an answer (a three-second notice is too easy to miss for a
+    // warning that a photo may be damaged). Nothing is recorded until the dialog is answered, so a
+    // process death or a recreation before then just shows it again; the entries are kept as a
+    // string so the dialog itself survives a recreation. See OverwriteRecovery.pendingCopies.
+    var recoveryEncoded by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(Unit) {
-        if (viewModel.recoverySweepDone) return@LaunchedEffect
-        viewModel.recoverySweepDone = true
-        recoveryDialogMessage = withContext(Dispatchers.IO) {
-            val remaining = OverwriteRecovery.sweepOrphans(applicationContext)
-            OverwriteRecovery.noticeToShow(applicationContext, remaining)
+        recoveryEncoded = withContext(Dispatchers.IO) {
+            OverwriteRecovery.sweepOrphans(applicationContext)
+            OverwriteRecovery.pendingCopies(applicationContext).toRecoveryEntries().encodeRecoveryEntries()
         }
     }
 
@@ -855,7 +864,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         if (!viewModel.overwriteOutcomeApplies()) {
             // A result for a replace nobody is waiting on any more: nothing to write or to show.
         } else if (result.resultCode == Activity.RESULT_OK && asset != null && bitmap != null) {
-            scope.launch { finishOverwrite(editedCopyWriter.overwrite(asset, bitmap)) }
+            viewModel.launchWrite { finishOverwrite(editedCopyWriter.overwrite(asset, bitmap)) }
         } else {
             // Declined, not merely cancelled -- see finishOverwrite's own doc for why this is
             // NOT treated the way a trash/rename cancellation is (nulling the pending state and
@@ -870,8 +879,12 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // labour requestMetadataWrite already has with MetadataWriter.
     fun requestOverwrite(asset: MediaAsset, bitmap: Bitmap) {
         // A second request while one is in flight (or for another photo) is dropped; the editor
-        // disables Save and Cancel for the duration, so this is the belt to that brace.
-        if (!viewModel.beginOverwrite(asset, bitmap)) return
+        // disables Save and Cancel for the duration, so this is the belt to that brace. Said out
+        // loud: the edit it carried is not being saved.
+        if (!viewModel.beginOverwrite(asset, bitmap)) {
+            transientNotice = TransientNotice(OVERWRITE_NOT_STARTED_MESSAGE)
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             runCatching {
                 MediaStore.createWriteRequest(contentResolver, listOf(asset.contentUri))
@@ -884,7 +897,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 declineOverwrite(OverwriteFailure(OVERWRITE_NOT_ALLOWED_MESSAGE, originalAtRisk = false))
             }
         } else {
-            scope.launch {
+            viewModel.launchWrite {
                 val outcome = editedCopyWriter.overwrite(asset, bitmap)
                 val error = outcome.exceptionOrNull()
                 if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q && error is RecoverableSecurityException) {
@@ -932,15 +945,19 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         val bitmap = pendingOverwriteBitmap ?: return
         // A second tap while the first copy is being written would save the same edit twice.
         if (!viewModel.beginCopyOfDeclinedOverwrite()) return
-        scope.launch {
+        // On the ViewModel's scope, like the replace: a recreation must not strand the lock.
+        viewModel.launchWrite {
             val outcome = editedCopyWriter.save(asset, bitmap)
             // The failure state is forgotten only once a copy exists: if the copy failed too (the
             // same full storage, say) the banner, the at-risk flag and the held bitmap are all
             // still here, and the person can try again.
-            viewModel.finishCopyOfDeclinedOverwrite(saved = outcome.isSuccess)
+            val originalStillAtRisk = viewModel.finishCopyOfDeclinedOverwrite(saved = outcome.isSuccess)
             outcome.fold(
                 onSuccess = { uri ->
                     transientNotice = TransientNotice("Saved a copy.") { openViewerForSavedUri(uri) }
+                    // The copy does not repair the original, and the safety copy of it is still
+                    // kept (the notice for it stays pending until it has been answered).
+                    if (originalStillAtRisk) userMessage = COPY_SAVED_ORIGINAL_AT_RISK_MESSAGE
                     runtime.requestScan(false)
                 },
                 onFailure = { error -> userMessage = humanMessage(error, "Could not save a copy of the edit.") },
@@ -1139,6 +1156,23 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     }
 
     /**
+     * Hands the private safety copy [entry] names to the system share sheet, under the photo's own
+     * name, so the person can put it back over the damaged original with any app. The private file
+     * is copied into the share directory first and never exposed itself.
+     */
+    fun shareSafetyCopy(entry: RecoveryEntry) {
+        scope.launch {
+            val staged = withContext(Dispatchers.IO) { OverwriteRecovery.stageForShare(applicationContext, entry.fileName) }
+            if (staged == null) {
+                userMessage = "The safety copy could not be found any more."
+                return@launch
+            }
+            val uri = FileProvider.getUriForFile(applicationContext, fileProviderAuthority(applicationContext), staged.first)
+            shareUris(listOf(uri), staged.second, "Share the safety copy")
+        }
+    }
+
+    /**
      * Prepare and hand off to the system share sheet.
      *
      * EVERY share goes through SharePreparer now, not just the one behind an opt-in menu item.
@@ -1292,23 +1326,43 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         )
     }
 
-    recoveryDialogMessage?.let { message ->
+    val recoveryEntries = remember(recoveryEncoded) { decodeRecoveryEntries(recoveryEncoded) }
+    recoveryNoticeMessage(recoveryEntries)?.let { message ->
+        val names = recoveryEntries.map { it.fileName }
+        // Dismissing without answering (a tap outside) records nothing: the notice is offered again.
         AlertDialog(
-            onDismissRequest = { recoveryDialogMessage = null },
+            onDismissRequest = { recoveryEncoded = "" },
             title = { Text("A save did not finish") },
             text = {
-                Text(
-                    message + "\n\nFotoz kept a private copy of each original from before the save. The app cannot " +
-                        "open it for you, and it is deleted on its own after a while. Delete the copies now if " +
-                        "the photos look fine; that cannot be undone.",
-                )
+                Column {
+                    Text(
+                        message + "\n\nFotoz kept a private copy of each original from before the save. Share it to " +
+                            "put the photo back with any app. The copies are deleted on their own some days " +
+                            "after you tap OK; delete them now only if the photos look fine, which cannot be undone.",
+                    )
+                    recoveryEntries.forEach { entry ->
+                        TextButton(onClick = { shareSafetyCopy(entry) }) {
+                            Text(if (entry.photoName.isBlank()) "Share the safety copy" else "Share the copy of ${entry.photoName}")
+                        }
+                    }
+                }
             },
-            confirmButton = { TextButton(onClick = { recoveryDialogMessage = null }) { Text("OK") } },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        recoveryEncoded = ""
+                        OverwriteRecovery.markNoticeSeen(applicationContext, names)
+                    },
+                ) { Text("OK") }
+            },
             dismissButton = {
                 TextButton(
                     onClick = {
-                        recoveryDialogMessage = null
-                        scope.launch(Dispatchers.IO) { OverwriteRecovery.deleteSafetyCopies(applicationContext) }
+                        recoveryEncoded = ""
+                        scope.launch(Dispatchers.IO) {
+                            OverwriteRecovery.markNoticeSeen(applicationContext, names)
+                            OverwriteRecovery.deleteCopies(applicationContext, names)
+                        }
                     },
                 ) { Text("Delete copies") }
             },
@@ -1385,11 +1439,13 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 locked = viewModel.editorCloseBlocked,
                 onClose = { viewModel.closeEditor() },
                 onSaved = { message ->
-                    viewModel.setEditingAsset(null)
+                    // Only if the editor is still on the photo this save belonged to.
+                    viewModel.closeEditorFor(editing.id)
                     transientNotice = TransientNotice(message)
                     // The copy is a new file, so the library has to learn about it.
                     runtime.requestScan(false)
                 },
+                onSaveInProgress = { viewModel.saveInProgress = it },
                 onOverwrite = ::requestOverwrite,
                 onSavedUri = ::openViewerForSavedUri,
             )

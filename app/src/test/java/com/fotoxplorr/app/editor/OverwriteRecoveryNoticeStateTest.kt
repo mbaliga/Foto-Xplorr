@@ -5,11 +5,10 @@ import java.nio.file.Files
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Which safety copies are news to the person, and letting go of them. */
+/** Which safety copies are still news to the person, and letting go of them. */
 class OverwriteRecoveryNoticeStateTest {
 
     private val dir: File = Files.createTempDirectory("fx-recovery").toFile()
@@ -19,61 +18,84 @@ class OverwriteRecoveryNoticeStateTest {
         dir.deleteRecursively()
     }
 
-    private fun file(name: String, ageMillis: Long, now: Long): File =
+    private fun file(name: String, now: Long, ageMillis: Long = 1000): File =
         File(dir, name).also {
             it.writeBytes(byteArrayOf(1))
             it.setLastModified(now - ageMillis)
         }
 
     @Test
-    fun `a copy already announced is not news but a new one is`() {
-        val a = File("IMG_1.jpg.1.bak")
-        val b = File("IMG_2.jpg.2.bak")
+    fun `a copy already answered is not news but a new one is`() {
+        val now = 1_000_000_000_000L
+        val a = file("IMG_1.jpg.1.bak", now)
+        val b = file("IMG_2.jpg.2.bak", now)
 
-        assertTrue(unseenSafetyCopies(listOf(a), setOf(a.name)).isEmpty())
-        assertEquals(listOf(b), unseenSafetyCopies(listOf(a, b), setOf(a.name)))
-        assertEquals(listOf(a), unseenSafetyCopies(listOf(a), emptySet()))
+        assertEquals(listOf(b.name), unresolvedSafetyCopies(dir, setOf(a.name)).map { it.file.name })
+        assertEquals(setOf(a.name, b.name), unresolvedSafetyCopies(dir, emptySet()).map { it.file.name }.toSet())
     }
 
     @Test
     fun `files that are not safety copies are never news`() {
-        assertTrue(unseenSafetyCopies(listOf(File("notes.txt"), File("backup-1.tmp")), emptySet()).isEmpty())
-    }
-
-    @Test
-    fun `the notice counts only safety copies`() {
-        assertNull(orphanedBackupNotice(listOf(File("notes.txt"))))
-        assertEquals(
-            "2 earlier saves over a photo did not finish. Check the photos you edited last.",
-            orphanedBackupNotice(listOf(File("a.1.bak"), File("backup-9.bin"), File("x.txt"))),
-        )
-    }
-
-    @Test
-    fun `deleting safety copies removes every bak and old in-flight copy and nothing else`() {
         val now = 1_000_000_000_000L
-        val bak = file("IMG_1.jpg.1.bak", ageMillis = 1000, now = now)
-        val oldBin = file("backup-1.bin", ageMillis = 2 * IN_FLIGHT_GRACE_MS, now = now)
-        val other = file("notes.txt", ageMillis = 100 * IN_FLIGHT_GRACE_MS, now = now)
+        file("notes.txt", now)
+        file("backup-1.tmp", now)
+        file("IMG_1.jpg.1.bak.meta", now)
 
-        assertEquals(2, deleteSafetyCopies(dir, now))
+        assertTrue(unresolvedSafetyCopies(dir, emptySet()).isEmpty())
+    }
 
-        assertFalse(bak.exists() || oldBin.exists())
+    @Test
+    fun `a copy a running replace owns is not news however young or old`() {
+        val now = 1_000_000_000_000L
+        val live = file("backup-live.bin", now, ageMillis = 5)
+        val orphan = file("backup-dead.bin", now, ageMillis = 5)
+
+        val news = unresolvedSafetyCopies(dir, emptySet()) { it.name == live.name }
+
+        assertEquals(listOf(orphan.name), news.map { it.file.name })
+    }
+
+    @Test
+    fun `listing is free of side effects`() {
+        val now = 1_000_000_000_000L
+        file("IMG_1.jpg.1.bak", now)
+
+        val first = unresolvedSafetyCopies(dir, emptySet()).map { it.file.name }
+        val second = unresolvedSafetyCopies(dir, emptySet()).map { it.file.name }
+
+        assertEquals(first, second)
+        assertEquals(1, first.size)
+    }
+
+    @Test
+    fun `deleting safety copies removes every copy and its sidecar and nothing else`() {
+        val now = 1_000_000_000_000L
+        val bak = file("IMG_1.jpg.1.bak", now)
+        val bin = file("backup-1.bin", now)
+        writeSidecar(bak, "content://m/1", "IMG_1.jpg", "image/jpeg", 1L)
+        val other = file("notes.txt", now, ageMillis = 100_000_000)
+
+        assertEquals(2, deleteSafetyCopies(dir))
+
+        assertFalse(bak.exists() || bin.exists() || sidecarOf(bak).exists())
         assertTrue(other.exists())
     }
 
     @Test
-    fun `deleting safety copies leaves a young in-flight copy a running replace may need`() {
+    fun `deleting only the named copies leaves the others and never touches a live one`() {
         val now = 1_000_000_000_000L
-        val young = file("backup-2.bin", ageMillis = IN_FLIGHT_GRACE_MS / 2, now = now)
+        val a = file("a.1.bak", now)
+        val b = file("b.2.bak", now)
+        val live = file("backup-live.bin", now)
 
-        assertEquals(0, deleteSafetyCopies(dir, now))
+        assertEquals(1, deleteSafetyCopies(dir, only = setOf(a.name, live.name)) { it.name == live.name })
 
-        assertTrue(young.exists())
+        assertFalse(a.exists())
+        assertTrue(b.exists() && live.exists())
     }
 
     @Test
     fun `deleting safety copies in a directory that does not exist is zero and does not throw`() {
-        assertEquals(0, deleteSafetyCopies(File(dir, "nowhere"), 0L))
+        assertEquals(0, deleteSafetyCopies(File(dir, "nowhere")))
     }
 }

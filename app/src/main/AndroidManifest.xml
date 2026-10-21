@@ -147,13 +147,16 @@
             android:exported="true"
             android:launchMode="singleTop"
             android:supportsPictureInPicture="true"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density">
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density|locale|layoutDirection|fontScale|colorMode">
             <!-- P0-09: Compose reacts to every one of these through LocalConfiguration without
                  needing the Activity recreated: confirmed no values-night/values-land/locale-
                  qualified resource directories exist in res/ (only density-qualified mipmaps,
                  resolved per request regardless of recreation) and onCreate() itself reads no
                  resource directly outside setContent {}. This covers rotation, folding, external
-                 keyboards/hubs and desktop mode; it does NOT cover process death, which
+                 keyboards/hubs and desktop mode, and also locale, layout direction, font scale
+                 and colour mode, so changing one of those mid-save does not recreate the
+                 Activity under a write (AppStateViewModel.launchWrite is the real guard for any
+                 recreation that still happens); it does NOT cover process death, which
                  FotoXplorrActivity.kt's own rememberSaveable viewer/editor state (P0-09 item 6)
                  handles separately. singleTop + supportsPictureInPicture come from the media3
                  viewer work (onNewIntent for open-with / share-to, and in-app video PiP). -->

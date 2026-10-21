@@ -29,11 +29,13 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -138,6 +140,12 @@ fun EditorScreen(
      * never a failure. Additive: existing callers that only pass [onSaved] see no change at all.
      */
     onSavedUri: ((Uri) -> Unit)? = null,
+    /**
+     * Told true when a save starts and false when it ends (or this screen leaves composition), so
+     * the host can refuse to point the editor at another photo while a save of this one is still
+     * rendering: its late result would otherwise land on the wrong photo.
+     */
+    onSaveInProgress: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val recipeStore = remember(context) { RecipeStore(context) }
@@ -162,6 +170,13 @@ fun EditorScreen(
     var source by remember(asset.id) { mutableStateOf<Bitmap?>(null) }
     var preview by remember(asset.id) { mutableStateOf<Bitmap?>(null) }
     var saving by remember { mutableStateOf(false) }
+    val currentOnSaveInProgress by rememberUpdatedState(onSaveInProgress)
+    // The one way [saving] changes, so the host is always told.
+    fun setSaving(value: Boolean) {
+        saving = value
+        currentOnSaveInProgress(value)
+    }
+    DisposableEffect(Unit) { onDispose { currentOnSaveInProgress(false) } }
     var saveRequested by remember { mutableStateOf(false) }
     val writer = remember(context) { EditedCopyWriter(context) }
     val scope = rememberCoroutineScope()
@@ -264,7 +279,7 @@ fun EditorScreen(
         val bitmap = pendingSaveToBitmap
         pendingSaveToBitmap = null
         if (uri == null || bitmap == null) {
-            if (saving) { saving = false; onSaved("Cancelled — nothing was saved") }
+            if (saving) { setSaving(false); onSaved("Cancelled — nothing was saved") }
             return@rememberLauncherForActivityResult
         }
         scope.launch {
@@ -273,7 +288,7 @@ fun EditorScreen(
                 uri, asset, bitmap, pendingSaveToFormat, pendingSaveToQuality,
                 onSteppedDown = { w, h -> steppedNote = " at reduced size ($w × $h)" },
             )
-            saving = false
+            setSaving(false)
             result.onSuccess { onSavedUri?.invoke(uri) }
             onSaved(
                 result.fold(
@@ -353,7 +368,10 @@ fun EditorScreen(
         // and, for the same reason, ignores the sheet's quality and long-edge controls entirely.
         fun performSave(mode: EditorSaveMode, options: ExportOptions) {
             saveRequested = false
-            saving = true
+            setSaving(true)
+            // True only while the system file picker owns the rest of the save: every other way out
+            // ends the save below, so [saving] (and the host's lock) cannot be left set by a throw.
+            var pickerHasIt = false
             scope.launch {
                 val overwriting = mode == EditorSaveMode.OVERWRITE && canOverwriteInPlace
                 // An overwrite is rendered at the absolute ceiling and on a single rung, never the
@@ -376,19 +394,20 @@ fun EditorScreen(
                     targetFormat.takeIf { it != OutputFormat.HEIC },
                 )
                 if (rendered == null) {
-                    saving = false
+                    setSaving(false)
                     onSaved("Could not read the photo at full size")
                     return@launch
                 }
                 val full = rendered.bitmap
 
                 if (overwriting && !rendered.downscaled) {
-                    saving = false
                     // Hands off to the Activity and does NOT close this screen -- see onOverwrite's
                     // own doc. The host closes on success and, on a declined consent prompt, is
                     // expected to keep this editor open (the edit is still right here) and offer a
-                    // copy instead.
+                    // copy instead. [saving] ends only after the hand-off, which locks the editor
+                    // itself, so there is no moment when neither holds it.
                     onOverwrite(asset, full)
+                    setSaving(false)
                     return@launch
                 }
 
@@ -403,6 +422,7 @@ fun EditorScreen(
                     // HEIC has no MediaStore fast path in this app (see EditedCopyWriter's HEIC
                     // section) -- every HEIC export goes through the same SAF picker "Save to…"
                     // uses, saving that path from having to exist twice.
+                    pickerHasIt = true
                     saveToLauncher.launch(SaveToRequest(editedName(asset.displayName, resolvedFormat), resolvedFormat.mimeType))
                     return@launch
                 }
@@ -418,7 +438,7 @@ fun EditorScreen(
                     onMetadata = { metadataNote = it.savedNote() },
                     onSteppedDown = { w, h -> steppedNote = " at reduced size ($w × $h)" },
                 )
-                saving = false
+                setSaving(false)
                 result.onSuccess { uri -> onSavedUri?.invoke(uri) }
                 onSaved(
                     result.fold(
@@ -449,12 +469,13 @@ fun EditorScreen(
                         onFailure = { it.message ?: "Could not save the edited photo" },
                     ),
                 )
-            }
+            }.invokeOnCompletion { if (!pickerHasIt) setSaving(false) }
         }
 
         fun performSaveTo(options: ExportOptions) {
             saveRequested = false
-            saving = true
+            setSaving(true)
+            var pickerHasIt = false
             scope.launch {
                 val resolvedFormat = options.format ?: outputFormatFor(asset.mimeType)
                 val rendered = renderFullSize(
@@ -462,7 +483,7 @@ fun EditorScreen(
                     resolvedFormat.takeIf { it != OutputFormat.HEIC },
                 )
                 if (rendered == null) {
-                    saving = false
+                    setSaving(false)
                     onSaved("Could not read the photo at full size")
                     return@launch
                 }
@@ -470,8 +491,9 @@ fun EditorScreen(
                 pendingSaveToFormat = resolvedFormat
                 pendingSaveToQuality = options.resolvedQuality(resolvedFormat)
                 pendingSaveToNote = rendered.reducedSizeNote
+                pickerHasIt = true
                 saveToLauncher.launch(SaveToRequest(editedName(asset.displayName, resolvedFormat), resolvedFormat.mimeType))
-            }
+            }.invokeOnCompletion { if (!pickerHasIt) setSaving(false) }
         }
 
         if (saveRequested) {

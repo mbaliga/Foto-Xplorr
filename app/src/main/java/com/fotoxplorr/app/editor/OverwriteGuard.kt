@@ -9,10 +9,14 @@ import com.fotoxplorr.app.metadata.UncarriedMetadata
 import com.fotoxplorr.core.formats.AlphaSniffer
 import com.fotoxplorr.core.formats.AnimationSniffer
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.InputStreamReader
 import java.io.OutputStream
+import java.io.OutputStreamWriter
+import java.util.Properties
 
 /**
  * What [EditedCopyWriter.overwrite] reports when it does not replace the original, as the
@@ -414,59 +418,135 @@ internal const val BACKUP_SLACK_BYTES = 1L * 1024 * 1024
  * deleted when the replace verifies, or when the original was put back and read back at its right
  * size (whether or not the flush could be confirmed: a full-size copy is not worth keeping for
  * that). One that survives (the process died mid-write) is the only intact copy of a truncated
- * original, so it is kept for [ORPHAN_MAX_AGE_MS] by [sweepOrphans] before it is let go. A `.bak`
- * (the file could not be put back) is kept for the longer [KEPT_MAX_AGE_MS] and then deleted too:
- * each is a full-size private copy, so they cannot be kept for ever. Nothing in the app opens
- * either kind: they exist so the bytes are not destroyed, [noticeToShow] is how the person is told
- * one remains (once per set of files), and [deleteSafetyCopies] is how they let go of them sooner.
+ * original; a `.bak` is the same thing after a failed put-back. Each has a small sidecar
+ * (`<copy>.meta`, see [writeSidecar]) written before the original is truncated, naming the photo
+ * it belongs to.
+ *
+ * A surviving copy is UNRESOLVED until the person has been shown it: [pendingCopies] lists them,
+ * the dialog's OK / Delete handlers call [markNoticeSeen], and only then does the age limit start
+ * ([ORPHAN_MAX_AGE_MS] for an interrupted write, [KEPT_MAX_AGE_MS] for a `.bak`) after which
+ * [sweepOrphans] lets the copy go. A copy a replace of THIS process is still using is never a
+ * leftover ([startBackup] / [endBackup] keep that list), so a second activity started in that
+ * window neither announces nor sweeps it. Nothing here restores a photo by itself:
+ * [stageForShare] puts a copy where the system share sheet can send it, so the person can put it
+ * back with any app.
  */
 object OverwriteRecovery {
     private const val DIR_NAME = "overwrite-recovery"
     private const val PREFS_NAME = "overwrite_recovery_notice"
-    private const val KEY_SEEN = "seen"
 
-    /** How long an orphaned in-flight safety copy is kept before [sweepOrphans] deletes it. */
+    /** One preference per announced copy: `ack:<file name>` -> when the person answered the notice. */
+    private const val KEY_ACK_PREFIX = "ack:"
+
+    /** How long after the notice was answered an interrupted write's copy is kept before [sweepOrphans] deletes it. */
     const val ORPHAN_MAX_AGE_MS: Long = 7L * 24 * 60 * 60 * 1000
 
-    /** How long a `.bak` (an original that could not be put back) is kept before [sweepOrphans] deletes it. */
+    /** How long after the notice was answered a `.bak` (an original that could not be put back) is kept. */
     const val KEPT_MAX_AGE_MS: Long = 30L * 24 * 60 * 60 * 1000
+
+    private val lock = Any()
+
+    /** Names of the `backup-*.bin` files a replace running in this process is using right now. */
+    private val active = HashSet<String>()
 
     fun dir(context: Context): File = File(context.filesDir, DIR_NAME)
 
+    /** Creates the in-flight safety copy file in [dir] and registers it as live, atomically with
+     *  respect to the listings below, so no listing can see it without knowing it is live. */
+    internal fun startBackup(dir: File): File = synchronized(lock) {
+        File.createTempFile("backup-", ".bin", dir).also { active += it.name }
+    }
+
+    /** The replace using [file] is over (it was deleted, or it is now a leftover). */
+    internal fun endBackup(file: File) {
+        synchronized(lock) { active -= file.name }
+    }
+
     /**
-     * Deletes the in-flight safety copies in [dir] that are older than [maxAgeMillis] and the
-     * `.bak` files older than [keptMaxAgeMillis], and returns every file that remains there, so
-     * the caller can tell the user a copy of a photo is still kept. Call it once at app start, off
-     * the main thread. Cheap and bounded: one non-recursive listing, at most [MAX_SWEPT_FILES]
-     * entries acted on, nothing read, and it never throws.
+     * Deletes the leftovers the person has already been told about and whose keeping time is over,
+     * plus sidecars whose copy is gone, and returns the safety copies that remain. A copy not yet
+     * announced is never deleted, however old. Call it off the main thread; cheap and bounded: one
+     * non-recursive listing, at most [MAX_SWEPT_FILES] entries acted on, nothing read, never throws.
      */
     fun sweepOrphans(
         context: Context,
         nowMillis: Long = System.currentTimeMillis(),
         maxAgeMillis: Long = ORPHAN_MAX_AGE_MS,
         keptMaxAgeMillis: Long = KEPT_MAX_AGE_MS,
-    ): List<File> = sweepOrphanBackups(dir(context), nowMillis, maxAgeMillis, keptMaxAgeMillis)
+    ): List<File> = try {
+        synchronized(lock) {
+            val acknowledged = acknowledgedAt(context)
+            val remaining = sweepOrphanBackups(dir(context), nowMillis, acknowledged, maxAgeMillis, keptMaxAgeMillis) { it.name in active }
+            val kept = remaining.mapTo(HashSet()) { it.name }
+            val stale = acknowledged.keys.filter { it !in kept }
+            if (stale.isNotEmpty()) {
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                    .apply { stale.forEach { remove(KEY_ACK_PREFIX + it) } }.apply()
+            }
+            remaining
+        }
+    } catch (e: Exception) {
+        emptyList()
+    }
 
     /**
-     * The notice to show now for the safety copies in [remaining], or null when there is none or
-     * the person has already been told about every one of them. What was shown is remembered in
-     * the app's private preferences, so a copy that stays for weeks is announced once, not on
-     * every start; a copy that appears later is announced again. Off the main thread, like
-     * [sweepOrphans].
+     * The safety copies the person has not yet been told about, oldest first. Derived from the
+     * directory and the preferences on every call and free of side effects: nothing is recorded
+     * until [markNoticeSeen], so a dialog that never appeared (the process died, the screen was
+     * recreated) is simply offered again. Off the main thread, like [sweepOrphans].
      */
-    fun noticeToShow(context: Context, remaining: List<File>): String? = try {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val seen = prefs.getStringSet(KEY_SEEN, emptySet()).orEmpty()
-        val copies = remaining.filter(::isSafetyCopy)
-        prefs.edit().putStringSet(KEY_SEEN, copies.mapTo(mutableSetOf()) { it.name }).apply()
-        if (unseenSafetyCopies(copies, seen).isEmpty()) null else orphanedBackupNotice(copies)
+    fun pendingCopies(context: Context): List<SafetyCopy> = try {
+        synchronized(lock) {
+            unresolvedSafetyCopies(dir(context), acknowledgedAt(context).keys) { it.name in active }
+        }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    /** Records that the person answered the notice for [fileNames] (OK or Delete): from now on they are not announced again and may age out. */
+    fun markNoticeSeen(context: Context, fileNames: Collection<String>, nowMillis: Long = System.currentTimeMillis()) {
+        try {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .apply { fileNames.forEach { putLong(KEY_ACK_PREFIX + it, nowMillis) } }.apply()
+        } catch (e: Exception) {
+            // Not recorded: the notice comes back at the next start, which is the safe direction.
+        }
+    }
+
+    /** Deletes the named safety copies (and their sidecars) unless a replace is using them; returns how many went. */
+    fun deleteCopies(context: Context, fileNames: Collection<String>): Int = try {
+        synchronized(lock) { deleteSafetyCopies(dir(context), fileNames.toSet()) { it.name in active } }
+    } catch (e: Exception) {
+        0
+    }
+
+    /**
+     * Copies the safety copy named [fileName] into the share directory under the photo's own name,
+     * and returns the copy with its MIME type for the share sheet, or null when it is gone or
+     * cannot be copied. The private file itself is never exposed. Off the main thread.
+     */
+    fun stageForShare(context: Context, fileName: String): Pair<File, String>? = try {
+        val copy = File(dir(context), fileName)
+        if (File(fileName).name != fileName || !copy.isFile || !isSafetyCopy(copy)) {
+            null
+        } else {
+            val info = readSidecar(copy)
+            val safeName = (info.photoName ?: "photo.jpg").filter { it.isLetterOrDigit() || it == '.' || it == '-' || it == '_' }
+                .take(80).ifEmpty { "photo.jpg" }
+            val target = File(File(context.cacheDir, "outgoing-share/safety-copy/${copy.name}"), safeName)
+            target.parentFile?.mkdirs()
+            copy.copyTo(target, overwrite = true)
+            target to (info.mimeType ?: "image/*")
+        }
     } catch (e: Exception) {
         null
     }
 
-    /** Deletes every safety copy that is not plausibly part of a replace running right now; returns how many went. */
-    fun deleteSafetyCopies(context: Context, nowMillis: Long = System.currentTimeMillis()): Int =
-        deleteSafetyCopies(dir(context), nowMillis)
+    private fun acknowledgedAt(context: Context): Map<String, Long> =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).all
+            .filterKeys { it.startsWith(KEY_ACK_PREFIX) }
+            .entries.mapNotNull { (key, value) -> (value as? Long)?.let { key.removePrefix(KEY_ACK_PREFIX) to it } }
+            .toMap()
 }
 
 internal const val MAX_SWEPT_FILES = 500
@@ -475,61 +555,158 @@ internal const val MAX_SWEPT_FILES = 500
 internal fun isSafetyCopy(file: File): Boolean =
     file.name.endsWith(".bak") || (file.name.startsWith("backup-") && file.name.endsWith(".bin"))
 
-/** The safety copies in [copies] whose names are not in [seenNames], i.e. not yet announced. */
-internal fun unseenSafetyCopies(copies: List<File>, seenNames: Set<String>): List<File> =
-    copies.filter { isSafetyCopy(it) && it.name !in seenNames }
+/** What is known about one leftover safety copy; the fields after [file] come from its sidecar and are null for a copy that has none. */
+class SafetyCopy(
+    val file: File,
+    val photoName: String?,
+    val mimeType: String?,
+    val contentUri: String?,
+    val originalSizeBytes: Long,
+)
+
+private const val SIDECAR_SUFFIX = ".meta"
+
+/** The sidecar that names the photo [copy] belongs to. */
+internal fun sidecarOf(copy: File): File = File(copy.parentFile, copy.name + SIDECAR_SUFFIX)
 
 /**
- * What to tell the person when [sweepOrphans] left safety copies behind, or null when there are
- * none. An earlier replace of a photo did not finish (the app was closed or killed mid-write, or
- * the original could not be put back), so one photo may be damaged. The copy cannot be opened from
- * the app, so the notice sends the person to the photos they edited recently rather than promising
- * a way to retrieve it. It is shown once per set of files: see [OverwriteRecovery.noticeToShow].
+ * Writes the small record beside [copy] that says which photo it is a copy of: the original's
+ * content Uri, display name, MIME type and size, and the copy's own file name. Written (and flushed
+ * to storage) before the original is truncated, so the copy of a photo that was damaged can be
+ * told from any other. Best effort: false when it could not be written, and the copy is still kept.
  */
-fun orphanedBackupNotice(remaining: List<File>): String? {
-    val count = remaining.count(::isSafetyCopy)
-    return when (count) {
-        0 -> null
-        1 -> "An earlier save over a photo did not finish. Check the photos you edited last."
-        else -> "$count earlier saves over a photo did not finish. Check the photos you edited last."
+internal fun writeSidecar(copy: File, contentUri: String, displayName: String, mimeType: String, sizeBytes: Long): Boolean = try {
+    val record = Properties().apply {
+        setProperty("uri", contentUri)
+        setProperty("name", displayName)
+        setProperty("mime", mimeType)
+        setProperty("size", sizeBytes.toString())
+        setProperty("backup", copy.name)
+    }
+    FileOutputStream(sidecarOf(copy)).use { out ->
+        val writer = OutputStreamWriter(out, Charsets.UTF_8)
+        record.store(writer, null)
+        writer.flush()
+        out.fd.sync()
+    }
+    true
+} catch (e: IOException) {
+    false
+}
+
+/** [copy] with whatever its sidecar says; a missing or unreadable sidecar leaves the photo unnamed. */
+internal fun readSidecar(copy: File): SafetyCopy = try {
+    val record = Properties()
+    InputStreamReader(FileInputStream(sidecarOf(copy)), Charsets.UTF_8).use { record.load(it) }
+    SafetyCopy(
+        file = copy,
+        photoName = record.getProperty("name")?.takeIf { it.isNotBlank() },
+        mimeType = record.getProperty("mime")?.takeIf { it.isNotBlank() },
+        contentUri = record.getProperty("uri")?.takeIf { it.isNotBlank() },
+        originalSizeBytes = record.getProperty("size")?.toLongOrNull() ?: -1L,
+    )
+} catch (e: Exception) {
+    SafetyCopy(copy, null, null, null, -1L)
+}
+
+/** Deletes [copy] and its sidecar. */
+private fun discardSafetyCopy(copy: File): Boolean {
+    val deleted = copy.delete()
+    sidecarOf(copy).delete()
+    return deleted
+}
+
+/**
+ * The leftover safety copies in [dir] whose names are not in [acknowledged] and that no running
+ * replace owns ([isActive]), oldest first, each with what its sidecar says. At most
+ * [MAX_SWEPT_FILES] are looked at. Never throws.
+ */
+internal fun unresolvedSafetyCopies(dir: File, acknowledged: Set<String>, isActive: (File) -> Boolean = { false }): List<SafetyCopy> = try {
+    dir.listFiles().orEmpty().asSequence().take(MAX_SWEPT_FILES)
+        .filter { it.isFile && isSafetyCopy(it) && it.name !in acknowledged && !isActive(it) }
+        .sortedBy { it.lastModified() }
+        .map(::readSidecar).toList()
+} catch (e: Exception) {
+    emptyList()
+}
+
+/** A leftover as the notice dialog holds it: its file name and the photo it belongs to (blank when unknown). */
+class RecoveryEntry(val fileName: String, val photoName: String)
+
+fun List<SafetyCopy>.toRecoveryEntries(): List<RecoveryEntry> =
+    map { RecoveryEntry(it.file.name, it.photoName.orEmpty().replace(Regex("[\t\r\n]"), " ")) }
+
+/** [this] as one string (a line per entry, a tab between its two fields), for `rememberSaveable`. */
+fun List<RecoveryEntry>.encodeRecoveryEntries(): String = joinToString("\n") { it.fileName + "\t" + it.photoName }
+
+fun decodeRecoveryEntries(encoded: String): List<RecoveryEntry> = encoded.lines().filter { it.isNotBlank() }.map { line ->
+    RecoveryEntry(line.substringBefore('\t'), line.substringAfter('\t', ""))
+}
+
+/**
+ * What to tell the person when leftover safety copies exist, or null when there are none. An
+ * earlier replace did not finish (the app was closed or killed mid-write, or the original could
+ * not be put back), so a photo may be damaged. It names the photo when the copy's sidecar does.
+ */
+fun recoveryNoticeMessage(entries: List<RecoveryEntry>): String? {
+    val names = entries.map { it.photoName }.filter { it.isNotBlank() }
+    return when {
+        entries.isEmpty() -> null
+        entries.size == 1 && names.isEmpty() -> "An earlier save over a photo did not finish. Check the photos you edited last."
+        entries.size == 1 -> "An earlier save over \"${names[0]}\" did not finish, so that photo may be damaged."
+        names.isEmpty() -> "${entries.size} earlier saves over a photo did not finish. Check the photos you edited last."
+        else -> {
+            val unnamed = entries.size - names.size
+            "${entries.size} earlier saves over a photo did not finish, so these photos may be damaged: " +
+                names.joinToString(", ") { "\"$it\"" } + if (unnamed > 0) " and $unnamed more." else "."
+        }
     }
 }
 
-/** How long a `backup-*.bin` is assumed to belong to a replace that may still be running. */
-internal const val IN_FLIGHT_GRACE_MS: Long = 60L * 60 * 1000
-
 /**
- * Deletes the safety copies in [dir]: every `.bak`, and a `backup-*.bin` only once it is older than
- * [IN_FLIGHT_GRACE_MS] (a younger one may be the copy a running replace is about to need). Returns
- * how many were deleted; never throws.
+ * Deletes the safety copies in [dir] (and their sidecars) that are not owned by a running replace
+ * ([isActive]): every one, or only those named in [only]. Returns how many were deleted; never throws.
  */
-internal fun deleteSafetyCopies(dir: File, nowMillis: Long): Int = try {
+internal fun deleteSafetyCopies(dir: File, only: Set<String>? = null, isActive: (File) -> Boolean = { false }): Int = try {
     var deleted = 0
     dir.listFiles().orEmpty().forEachIndexed { index, file ->
         if (index >= MAX_SWEPT_FILES || !file.isFile || !isSafetyCopy(file)) return@forEachIndexed
-        val inFlight = file.name.endsWith(".bin") && nowMillis - file.lastModified() <= IN_FLIGHT_GRACE_MS
-        if (!inFlight && file.delete()) deleted++
+        if (only != null && file.name !in only) return@forEachIndexed
+        if (!isActive(file) && discardSafetyCopy(file)) deleted++
     }
     deleted
 } catch (e: Exception) {
     0
 }
 
+/**
+ * Deletes what has aged out of [dir] and returns the safety copies that remain there. A copy ages
+ * only from the moment the person answered its notice ([acknowledgedAt], by file name): an
+ * interrupted write's copy goes [maxAgeMillis] after that, a `.bak` [keptMaxAgeMillis] after, and
+ * one never announced stays however old it is. A copy that [isActive] belongs to a replace still
+ * running: it is neither deleted nor reported. A sidecar whose copy is gone is deleted.
+ */
 internal fun sweepOrphanBackups(
     dir: File,
     nowMillis: Long,
-    maxAgeMillis: Long,
+    acknowledgedAt: Map<String, Long> = emptyMap(),
+    maxAgeMillis: Long = OverwriteRecovery.ORPHAN_MAX_AGE_MS,
     keptMaxAgeMillis: Long = OverwriteRecovery.KEPT_MAX_AGE_MS,
+    isActive: (File) -> Boolean = { false },
 ): List<File> = try {
     val remaining = mutableListOf<File>()
     dir.listFiles().orEmpty().forEachIndexed { index, file ->
         // Past the bound a file is left alone (and reported as remaining) for a later start.
-        val inFlightCopy = file.name.startsWith("backup-") && file.name.endsWith(".bin")
-        val keptCopy = file.name.endsWith(".bak")
-        val limit = if (inFlightCopy) maxAgeMillis else keptMaxAgeMillis
-        val expired = index < MAX_SWEPT_FILES && file.isFile && (inFlightCopy || keptCopy) &&
-            nowMillis - file.lastModified() > limit
-        if (!(expired && file.delete())) remaining += file
+        if (file.name.endsWith(SIDECAR_SUFFIX)) {
+            if (index < MAX_SWEPT_FILES && !File(dir, file.name.removeSuffix(SIDECAR_SUFFIX)).exists()) file.delete()
+            return@forEachIndexed
+        }
+        // A copy a running replace owns is not a leftover: not reported, not deleted.
+        if (!isSafetyCopy(file) || isActive(file)) return@forEachIndexed
+        val limit = if (file.name.endsWith(".bak")) keptMaxAgeMillis else maxAgeMillis
+        val answeredAt = acknowledgedAt[file.name]
+        val expired = index < MAX_SWEPT_FILES && file.isFile && answeredAt != null && nowMillis - answeredAt > limit
+        if (!(expired && discardSafetyCopy(file))) remaining += file
     }
     remaining
 } catch (e: Exception) {
@@ -558,12 +735,15 @@ internal fun sweepOrphanBackups(
  *     the backup is surplus even when its flush could not be confirmed.
  *
  * This is best effort, not atomic: a crash between the truncate and the restore still leaves the
- * damaged file, with the backup left in [backupDir] for [OverwriteRecovery.sweepOrphans] to age out.
- * [backupDir] and [recoveryDir] should be on persistent storage ([OverwriteRecovery.dir]).
+ * damaged file, with the backup left in [backupDir] and a sidecar naming the photo beside it (see
+ * [OverwriteRecovery]: it stays until the person has been told). [backupDir] and [recoveryDir]
+ * should be on persistent storage ([OverwriteRecovery.dir]).
  *
  * @param originalSizeBytes the original's recorded size, used for the room check and the empty-copy
  *   check only when [OriginalFile.currentSizeBytes] cannot say; 0 skips them and leaves a full disk
  *   to fail the backup copy itself.
+ * @param originUri the original's content Uri and [mimeType] its type: written to the sidecar with
+ *   [label] (its display name) so a leftover copy can be matched to its photo.
  */
 internal fun replaceWithRestore(
     original: OriginalFile,
@@ -574,6 +754,8 @@ internal fun replaceWithRestore(
     originalSizeBytes: Long = 0L,
     usableSpace: () -> Long = { backupDir.usableSpace },
     verifyWritten: () -> Unit = {},
+    originUri: String = "",
+    mimeType: String = "",
 ) {
     backupDir.mkdirs()
     val liveSize = try { original.currentSizeBytes() } catch (e: Exception) { -1L }
@@ -585,7 +767,29 @@ internal fun replaceWithRestore(
                 "so it was left as it is. Free some space, or save a copy.",
         )
     }
-    val backup = File.createTempFile("backup-", ".bin", backupDir)
+    // Registered as live until this replace is over, so a listing in the meantime (a second
+    // activity, the start-up sweep) does not take it for a leftover of a crashed one.
+    val backup = OverwriteRecovery.startBackup(backupDir)
+    try {
+        replaceBackedUp(original, staged, backup, recoveryDir, label, originalSizeBytes, liveSize, verifyWritten, originUri, mimeType)
+    } finally {
+        OverwriteRecovery.endBackup(backup)
+    }
+}
+
+/** [replaceWithRestore] from the creation of the safety copy [backup] on. */
+private fun replaceBackedUp(
+    original: OriginalFile,
+    staged: File,
+    backup: File,
+    recoveryDir: File,
+    label: String,
+    originalSizeBytes: Long,
+    liveSize: Long,
+    verifyWritten: () -> Unit,
+    originUri: String,
+    mimeType: String,
+) {
     try {
         val input = original.openForRead() ?: throw IOException("The original could not be read")
         input.use { stream ->
@@ -602,7 +806,7 @@ internal fun replaceWithRestore(
         }
         if (liveSize < 0 && originalSizeBytes > 0 && backup.length() == 0L) throw IOException("The safety copy came out empty")
     } catch (e: Exception) {
-        backup.delete()
+        discardSafetyCopy(backup)
         throw OverwriteException.Refused(
             OverwriteException.Refused.Reason.BACKUP_FAILED,
             "A safety copy of the original could not be made first, so it was left as it is. Save a copy instead.",
@@ -610,10 +814,14 @@ internal fun replaceWithRestore(
         )
     }
 
+    // Before the original is truncated: from then on this record is how the copy is told from any
+    // other. Best effort, the copy itself is what matters.
+    writeSidecar(backup, originUri, label, mimeType, backup.length())
+
     val output = try {
         original.openForTruncatingWrite() ?: throw IOException("Could not open the original photo for writing")
     } catch (t: Throwable) {
-        backup.delete()
+        discardSafetyCopy(backup)
         throw t
     }
 
@@ -632,7 +840,7 @@ internal fun replaceWithRestore(
         // Put back and read back at the right size: the backup is surplus even if the flush could
         // not be confirmed. Keeping it would announce an unfinished save, for a week, of a photo
         // this very failure reports as restored.
-        if (restore.written) backup.delete()
+        if (restore.written) discardSafetyCopy(backup)
         throw OverwriteException.FailedAfterWrite(
             restored = restore.written,
             recoveryFile = kept,
@@ -640,8 +848,8 @@ internal fun replaceWithRestore(
                 "Replacing the photo failed partway, so the original was put back exactly as it was."
             } else {
                 "Replacing the photo failed and the original could not be put back, so it may be damaged. " +
-                    "Save a copy of your edit now. A safety copy of the original is held in Fotoz's private " +
-                    "storage, which the app cannot open for you, so do not rely on getting it back."
+                    "Save a copy of your edit now. A safety copy of the original is kept in Fotoz's private " +
+                    "storage; the next time Fotoz starts it offers to share that copy so you can put it back."
             },
             cause = t,
         )
@@ -649,7 +857,7 @@ internal fun replaceWithRestore(
     // Verified: the file reads back as written, so the safety copy is surplus even when the flush
     // to storage could not be confirmed (a full-size copy kept for a week is not a safeguard worth
     // that much space, and nothing here can say what a crash would find).
-    backup.delete()
+    discardSafetyCopy(backup)
 }
 
 /** Flushes this stream's file to storage when it is backed by a file descriptor; false when that
@@ -693,6 +901,12 @@ private fun keepForRecovery(backup: File, recoveryDir: File, label: String): Fil
             backup.copyTo(kept, overwrite = true)
             backup.delete()
         }
+        // The sidecar follows the copy to its new name (and says so), or the photo is forgotten.
+        val record = readSidecar(backup)
+        if (record.photoName != null || record.contentUri != null) {
+            writeSidecar(kept, record.contentUri.orEmpty(), record.photoName.orEmpty(), record.mimeType.orEmpty(), record.originalSizeBytes)
+        }
+        sidecarOf(backup).delete()
         kept
     } catch (t: Throwable) {
         backup
