@@ -244,6 +244,12 @@ dependencies {
     // ---- end WS-D block ----
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
+    // Encrypted backup (docs/adr/ADR-014): Tink's streaming AEAD (AES-256-GCM, HKDF per file,
+    // chunked with a final-segment flag) seals the pack and manifest files. Used through ONE
+    // small interface (backup/ChunkedAead.kt), so it can be swapped for plain JCA without
+    // touching the format. Pure JVM code, no network or Play Services dependency. 1.22.0 bundles a
+    // relocated protobuf, so it does not meet mediapipe's protobuf-javalite 4.26.1.
+    implementation("com.google.crypto.tink:tink-android:1.22.0")
     // HEIC export
     implementation("androidx.heifwriter:heifwriter:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
