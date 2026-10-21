@@ -80,13 +80,35 @@ fun GalleryViewOptionsRoom(
 
         // Stated rather than ticked: a checkmark column would be the only iconography in a room
         // that has none, and the selected row stays full-strength while the alternatives mute --
-        // the same way the destination rail marks the destination you are in.
+        // the same way the destination rail marks the destination you are in. The two date orders
+        // say where the latest photo sits (the grid opens at that end), since that is what the
+        // choice is for.
         GallerySort.entries.forEach { sort ->
             val current = preferences.sort == sort
             RoomRow(
-                label = sortLabel(sort),
+                label = timelineSortLabel(sort),
                 onClick = { actions.onSetSort(sort) },
             ) { if (current) RoomValue("now") }
+        }
+
+        RoomRule(Modifier.padding(vertical = 14.dp))
+        RoomEyebrow("TIMELINE")
+
+        RoomRow(
+            label = "Timeline",
+            caption = HelpCopy.Caption.TIMELINE,
+            onClick = { actions.onSetTimelineOn(!preferences.timelineOn) },
+        ) { RoomToggle(preferences.timelineOn, actions.onSetTimelineOn) }
+
+        // Where the strip sits, stated like the sort rows. Not offered while the timeline is off.
+        if (preferences.timelineOn) {
+            TimelinePlacement.entries.forEach { placement ->
+                val current = preferences.timelinePlacement == placement
+                RoomRow(
+                    label = placement.label,
+                    onClick = { actions.onSetTimelinePlacement(placement) },
+                ) { if (current) RoomValue("now") }
+            }
         }
 
         RoomRule(Modifier.padding(vertical = 14.dp))
@@ -115,12 +137,4 @@ fun GalleryViewOptionsRoom(
 @Composable
 private fun RoomValue(text: String) {
     Text(text = text, color = RoomStyle.InkFaint, style = RoomStyle.Caption)
-}
-
-/** Sort orders in the words a reader uses, not the enum's. */
-private fun sortLabel(sort: GallerySort): String = when (sort) {
-    GallerySort.NEWEST -> "Newest first"
-    GallerySort.OLDEST -> "Oldest first"
-    GallerySort.NAME -> "By name"
-    GallerySort.SIZE -> "Largest first"
 }

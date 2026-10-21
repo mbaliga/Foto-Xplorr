@@ -84,7 +84,20 @@ data class GalleryPreferencesState(
     val blurSensitive: Boolean = true,
     val hideSensitive: Boolean = false,
     val showVideos: Boolean = true,
-    val timelineGrouping: TimelineGrouping = TimelineGrouping.DAY,
+    /**
+     * How the grid's header rows split the photos (on the column rungs, while [timelineOn]; the
+     * stamp view is always months). MONTH for a fresh install, because the owner asked to "group and
+     * separate the photos by month" (#25); a value someone already stored is read back untouched.
+     */
+    val timelineGrouping: TimelineGrouping = TimelineGrouping.MONTH,
+    /**
+     * Whether the timeline is on: the edge strip that scrubs the whole library, the gutter the grid
+     * leaves for it, and the month headers on the column rungs. On by default (the strip has been
+     * there since the scrubber shipped); turning it off gives the plain mosaic.
+     */
+    val timelineOn: Boolean = true,
+    /** Which edge the timeline strip sits on; independent of which way the photos scroll. */
+    val timelinePlacement: TimelinePlacement = TimelinePlacement.RIGHT,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val accentPalette: AccentPalette = AccentPalette.VIOLET,
     val slideshowIntervalSeconds: Int = DEFAULT_SLIDESHOW_INTERVAL_SECONDS,
@@ -216,6 +229,14 @@ class GalleryPreferences(context: Context) {
         state.value.copy(timelineGrouping = grouping),
     ) { putString(KEY_TIMELINE_GROUPING, grouping.name) }
 
+    fun setTimelineOn(enabled: Boolean) = update(
+        state.value.copy(timelineOn = enabled),
+    ) { putBoolean(KEY_TIMELINE_ON, enabled) }
+
+    fun setTimelinePlacement(placement: TimelinePlacement) = update(
+        state.value.copy(timelinePlacement = placement),
+    ) { putString(KEY_TIMELINE_PLACEMENT, placement.name) }
+
     fun setThemeMode(mode: ThemeMode) = update(
         state.value.copy(themeMode = mode),
     ) { putString(KEY_THEME_MODE, mode.name) }
@@ -334,7 +355,11 @@ class GalleryPreferences(context: Context) {
         blurSensitive = preferences.getBoolean(KEY_BLUR_SENSITIVE, true),
         hideSensitive = preferences.getBoolean(KEY_HIDE_SENSITIVE, false),
         showVideos = preferences.getBoolean(KEY_SHOW_VIDEOS, true),
-        timelineGrouping = enumValue(KEY_TIMELINE_GROUPING, TimelineGrouping.DAY),
+        // MONTH only when nothing was ever stored: an existing install keeps the grouping it chose
+        // (or the DAY it was given), since a stored name always wins over this fallback.
+        timelineGrouping = enumValue(KEY_TIMELINE_GROUPING, TimelineGrouping.MONTH),
+        timelineOn = preferences.getBoolean(KEY_TIMELINE_ON, true),
+        timelinePlacement = enumValue(KEY_TIMELINE_PLACEMENT, TimelinePlacement.RIGHT),
         themeMode = enumValue(KEY_THEME_MODE, ThemeMode.SYSTEM),
         accentPalette = enumValue(KEY_ACCENT_PALETTE, AccentPalette.VIOLET),
         slideshowIntervalSeconds = preferences
@@ -399,6 +424,8 @@ class GalleryPreferences(context: Context) {
         const val KEY_HIDE_SENSITIVE = "hide_sensitive"
         const val KEY_SHOW_VIDEOS = "show_videos"
         const val KEY_TIMELINE_GROUPING = "timeline_grouping"
+        const val KEY_TIMELINE_ON = "timeline_on"
+        const val KEY_TIMELINE_PLACEMENT = "timeline_placement"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_ACCENT_PALETTE = "accent_palette"
         const val KEY_SLIDESHOW_INTERVAL = "slideshow_interval"

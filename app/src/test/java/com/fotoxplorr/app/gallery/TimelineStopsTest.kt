@@ -129,4 +129,76 @@ class TimelineStopsTest {
     fun `the month readout names the month in full`() {
         assertEquals("March 2024", monthLabel(asset(1, 2024, 3), utc, english))
     }
+
+    // ---- the strip and the grid's month headers must agree on where a month starts ----
+
+    // Dated photos across four months, plus two with no capture date whose files were modified in
+    // months the dated ones also cover: the sort puts the undated ones together at one end, so a
+    // month there heads a second stretch.
+    private val mixed = listOf(
+        asset(1, 2024, 3, 20),
+        asset(2, 2024, 3, 2),
+        asset(3, 2024, 2, 11),
+        asset(4, 2023, 12, 25),
+        asset(5, 1970, 1, takenMillis = 0L, modifiedSeconds = seconds(2024, 3, 15)),
+        asset(6, 1970, 1, takenMillis = 0L, modifiedSeconds = seconds(2022, 8, 4)),
+    )
+
+    private fun seconds(year: Int, month: Int, day: Int) =
+        LocalDateTime.of(year, month, day, 12, 0).toInstant(utc).toEpochMilli() / 1000L
+
+    private fun runStarts(runs: List<TimelineGroup>): List<Int> =
+        runs.runningFold(0) { start, run -> start + run.assets.size }.dropLast(1)
+
+    @Test
+    fun `every stop opens a month header and every month header has a stop`() {
+        for (sort in listOf(GallerySort.NEWEST, GallerySort.OLDEST)) {
+            val ordered = sortAssets(mixed, sort)
+            val runs = timelineRuns(ordered, TimelineGrouping.MONTH, utc, english)
+            assertEquals(sort.name, runStarts(runs), stops(ordered).map { it.itemIndex })
+        }
+    }
+
+    @Test
+    fun `a stop names the month of the header it opens, undated photos included`() {
+        for (sort in listOf(GallerySort.NEWEST, GallerySort.OLDEST)) {
+            val ordered = sortAssets(mixed, sort)
+            val runs = timelineRuns(ordered, TimelineGrouping.MONTH, utc, english)
+            runStarts(runs).forEachIndexed { index, start ->
+                assertEquals(
+                    "$sort run $index",
+                    monthLabel(ordered[start], utc, english),
+                    runs[index].title,
+                )
+            }
+        }
+        // The undated photo that sorts last is a 2024 or 2022 header, never a 1970 one.
+        val newest = timelineRuns(sortAssets(mixed, GallerySort.NEWEST), TimelineGrouping.MONTH, utc, english)
+        assertTrue(newest.none { it.title.contains("1970") })
+    }
+
+    @Test
+    fun `a stop opens a header with day grouping too, because a new month is a new day`() {
+        val ordered = sortAssets(mixed, GallerySort.NEWEST)
+        val days = timelineRuns(ordered, TimelineGrouping.DAY, utc, english)
+        val starts = runStarts(days).toSet()
+        assertTrue(stops(ordered).all { it.itemIndex in starts })
+    }
+
+    @Test
+    fun `the scrubber lands on the header row above the stop's first photo`() {
+        // GalleryScreen's own remapping: the stop's asset index through GridIndexMap, minus the
+        // header row that sits just above it.
+        val ordered = sortAssets(mixed, GallerySort.OLDEST)
+        val runs = timelineRuns(ordered, TimelineGrouping.MONTH, utc, english)
+        val map = com.fotoxplorr.core.organize.GridIndexMap(
+            groupSizes = runs.map { it.assets.size },
+            hasHeaders = true,
+            trailingFooter = true,
+        )
+        // Header k is preceded by the k earlier headers and all their photos.
+        val headerRows = runStarts(runs).mapIndexed { k, start -> start + k }
+        val landed = stops(ordered).map { map.gridIndexOf(it.itemIndex) - 1 }
+        assertEquals(headerRows, landed)
+    }
 }

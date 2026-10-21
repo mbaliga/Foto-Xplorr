@@ -90,11 +90,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
-import dev.aarso.cellshell.SpatialMotion
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalContext
@@ -276,6 +274,10 @@ data class GalleryActions(
     val onSetHideSensitive: (Boolean) -> Unit,
     val onSetShowVideos: (Boolean) -> Unit,
     val onSetTimelineGrouping: (TimelineGrouping) -> Unit,
+    /** Turns the timeline (the edge strip, its gutter and the column rungs' headers) on or off. */
+    val onSetTimelineOn: (Boolean) -> Unit = {},
+    /** Which edge the timeline strip sits on. */
+    val onSetTimelinePlacement: (TimelinePlacement) -> Unit = {},
     val onSetThemeMode: (ThemeMode) -> Unit,
     val onSetAccentPalette: (AccentPalette) -> Unit,
     /** Applies validated custom theme JSON -- see `ThemeJson.kt` and `SettingsTabs.kt`'s
@@ -527,6 +529,12 @@ private fun GalleryBrowser(
     // would wipe a restored range. Only the person clears it.
     var timeRange by rememberSaveable(stateSaver = TimeRangeSaver) { mutableStateOf<TimeRange?>(null) }
     var timeEditorOpen by remember { mutableStateOf(false) }
+    // Where the grid last opened at its latest end (see the anchor effect further down) and how
+    // many times choosing a rail word has asked for it again. Saveable for the same reason as the
+    // search: after the viewer round trip or a restore the grid's own scroll position comes back,
+    // and an anchor that did not remember it had run would throw that position away.
+    var anchoredToken by rememberSaveable { mutableStateOf("") }
+    var anchorRequest by rememberSaveable { mutableIntStateOf(0) }
     // Whether the PINNED rail's wheel is being turned or is still settling. The pull-out room has
     // its own signal (atHome is false while it is open), but a pinned rail is a sibling of the
     // grid and commits the hovered word, Map included, while the finger is still down.
@@ -856,23 +864,6 @@ private fun GalleryBrowser(
     val firstVisibleIndex by remember(gridState) {
         derivedStateOf { gridState.firstVisibleItemIndex }
     }
-    // The edge scrubber is visible only while the grid is actually moving, plus a short hold so
-    // it does not blink out from under a finger between two flings.
-    val gridScrolling by remember(gridState) { derivedStateOf { gridState.isScrollInProgress } }
-    var scrubberWanted by remember { mutableStateOf(false) }
-    LaunchedEffect(gridScrolling) {
-        if (gridScrolling) {
-            scrubberWanted = true
-        } else {
-            kotlinx.coroutines.delay(SCRUBBER_HOLD_MILLIS)
-            scrubberWanted = false
-        }
-    }
-    val scrubberAlpha = animateFloatAsState(
-        targetValue = if (scrubberWanted) 1f else 0f,
-        animationSpec = SpatialMotion.settleSpec,
-        label = "scrubber-reveal",
-    )
     val scrubberAssets = if (route == BrowserRoute.Root) destinationAssets else currentAssets
     // What the pill says on the map: how many of the photos in this view have a place. Only
     // counted while the map is up, and only when the geo index changes.
@@ -895,14 +886,21 @@ private fun GalleryBrowser(
     val masonryActive = !state.preferences.fitToTile
     val maxZoomRung = if (masonryActive) ZOOM_RUNG_LAST_GRID else ZOOM_RUNG_STAMPS
     val activeRung = zoomRung.coerceAtMost(maxZoomRung)
-    // Whether the grid below draws month headers (the stamp view in a date order). A plain Boolean
-    // so stepping between the column rungs does not rebuild the layout.
-    val headersActive = stampHeadersShown(activeRung, state.preferences.sort, masonryActive)
+    // Whether the grid below draws header rows: the stamp view in a date order, and the column rungs
+    // while the timeline is on (see headersShown). A plain Boolean so stepping between the column
+    // rungs does not rebuild the layout.
+    val timelineOn = state.preferences.timelineOn
+    val headersActive = headersShown(
+        activeRung, state.preferences.sort, masonryActive, timelineOn, state.preferences.timelineGrouping,
+    )
+    val layoutGrouping = headerGrouping(activeRung, state.preferences.timelineGrouping)
     // The one layout computation, shared by the grid (ZoomGrid, below) and everything that used to
     // assume grid index == asset index (the scrubber, the pill, arrow keys, and the list handed to
     // the viewer on open) -- see docs/TRAPS.md #5 and #9. Without headers this is the identity: one
     // group holding every asset, unreordered.
-    val layout = remember(scrubberAssets, headersActive) { zoomLayoutFor(scrubberAssets, headersActive) }
+    val layout = remember(scrubberAssets, headersActive, layoutGrouping) {
+        zoomLayoutFor(scrubberAssets, headersActive, layoutGrouping)
+    }
     // What the grid actually draws, asset-wise, in draw order -- NOT scrubberAssets once headers
     // regroup it. This, not scrubberAssets, is what the scrubber, pill, arrow keys and viewer-open
     // must all key off from here down.
@@ -939,6 +937,46 @@ private fun GalleryBrowser(
     // in its place without threading a second scroll state up through DestinationContent.
     // Nor does the map, which is drawn in the grid's place.
     val scrubberTrackable = !masonryActive && !mapOpen
+
+    // ---- the timeline strip: whether it is part of the screen, and the gutter that goes with it ----
+    //
+    // One decision (stripShouldShow) for both the strip and the room the grid leaves for it, so
+    // they cannot disagree: the grid makes room exactly when the strip is there (owner #25: no
+    // overlap). The gutter does not follow the scroll or the selection, so the grid never jumps.
+    val timelinePlacement = state.preferences.timelinePlacement
+    val stripShown = stripShouldShow(
+        timelineOn = timelineOn,
+        sort = state.preferences.sort,
+        masonry = masonryActive,
+        mapOpen = mapOpen,
+        paneTakenOver = paneTakenOver,
+        hasStops = scrubberStops.isNotEmpty(),
+    )
+    val timelineGutter = timelineReserve(stripShown, timelinePlacement)
+
+    // ---- open at the latest end ----
+    //
+    // The photos always run first item to last in the sort's order and the grid is never reversed
+    // (that would move every header and break GridIndexMap), so "latest at the bottom" is the
+    // Oldest first order with the grid opened at its end. Once per destination, route and sort
+    // (and per rail choice), when the photos are there and the scan is not still adding them --
+    // not on every batch, which would fight a scroll that has begun. Declared after the reset
+    // effects above (TRAPS #22), and a token that already ran leaves a restored scroll alone.
+    val anchorTokenNow = anchorToken(destination.name, route.toString(), state.preferences.sort, anchorRequest)
+    val anchorIsReady = anchorReady(
+        hasPhotos = renderedAssets.isNotEmpty(),
+        // Only the latest-at-the-end order has anything to wait for: the start of the list is
+        // the start however many batches follow.
+        scanning = latestAtEnd(state.preferences.sort) && state.scanState is ScanState.Scanning,
+    )
+    LaunchedEffect(anchorTokenNow, anchorIsReady) {
+        if (anchorIsReady && anchoredToken != anchorTokenNow) {
+            anchoredToken = anchorTokenNow
+            gridState.scrollToItem(
+                anchorIndex(gridIndexMap.itemCount, latestAtEnd(state.preferences.sort)),
+            )
+        }
+    }
 
     // ---- desktop input: fold pinch and Ctrl+scroll into the zoom rungs, and the right-click
     // context menu into real actions. Both gestures are already consumed in GalleryContent.kt
@@ -998,7 +1036,9 @@ private fun GalleryBrowser(
         legacyScreen = null
         settingsOpen = false
         selection = selection.clear()
-        if (choice.resetsRoute) gridScope.launch { gridState.scrollToItem(0) }
+        // The new word's photos are not in hand yet, so the grid cannot be moved to the right
+        // end of them from here; ask the anchor effect, which runs once they are.
+        if (choice.resetsRoute) anchorRequest++
     }
 
     // One dispatch point for every key this screen gives meaning to, translating the raw Compose
@@ -1348,170 +1388,214 @@ private fun GalleryBrowser(
                             )
                         }
 
-                        val legacy = legacyScreen
-                        when {
-                            // The two panes. Settings is checked first only for readability: they
-                            // are mutually exclusive, because opening either clears the other.
-                            settingsOpen -> ShadedPane(
-                                activities = activities,
-                                shadeState = shadeState,
-                                onShadeStateChange = { shadeState = it },
-                                reserve = notificationReserve,
-                            ) {
-                                PaneScaffold(
-                                    title = "Settings",
-                                    onBack = { settingsOpen = false },
-                                ) {
-                                    SettingsRoom(
-                                        state = state,
-                                        actions = actions,
-                                        onOpenLegacyScreen = {
-                                            settingsOpen = false
-                                            legacyScreen = it
+                        // The grid's own box: the strip lives in it, not in the screen-wide box
+                        // below, so a strip on the left starts where the pinned rail ends instead
+                        // of being drawn over it. The inner box is the gutter -- the room the grid
+                        // makes for the strip -- and holds whatever takes the grid's place.
+                        Box(Modifier.fillMaxWidth().weight(1f)) {
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .then(
+                                        if (timelinePlacement == TimelinePlacement.BOTTOM && !timelineGutter.isEmpty) {
+                                            // Above the gesture bar too, or the strip's lower edge would be
+                                            // the system's to take.
+                                            Modifier.navigationBarsPadding()
+                                        } else {
+                                            Modifier
                                         },
-                                        modifier = Modifier.weight(1f),
                                     )
-                                }
-                            }
-                            legacy != null -> ShadedPane(
-                                activities = activities,
-                                shadeState = shadeState,
-                                onShadeStateChange = { shadeState = it },
-                                reserve = notificationReserve,
+                                    .padding(
+                                        start = timelineGutter.start.dp,
+                                        top = timelineGutter.top.dp,
+                                        end = timelineGutter.end.dp,
+                                        bottom = timelineGutter.bottom.dp,
+                                    ),
                             ) {
-                                LegacyScreenHost(
-                                    screen = legacy,
-                                    state = state,
-                                    actions = actions,
-                                    query = query,
-                                    onBack = { legacyScreen = null },
-                                    onOpenRoute = { route = it; legacyScreen = null; mapOpen = false },
-                                    onRequestUnlock = { key, name ->
-                                        passwordRequest = PasswordRequest(PasswordAction.UNLOCK, key, name)
-                                    },
-                                    // How the Appearance > Accent picker is reached from these screens.
-                                    onOpenSettings = {
-                                        settingsOpen = true
-                                        legacyScreen = null
-                                    },
-                                    onOpenDestination = {
-                                        destination = it
-                                        route = BrowserRoute.Root
-                                        legacyScreen = null
-                                        mapOpen = false
-                                    },
-                                )
-                            }
-                            // ---- the map: the same photos, on a map, in the grid's place ----
-                            //
-                            // A mode of the browser rather than a rung or a destination (see
-                            // MapMode.kt), so it is checked ahead of everything that draws the
-                            // grid. It is fed [scrubberAssets] -- the destination, the route, the
-                            // search and the time range all applied, and the one visibility
-                            // filter -- not the whole library.
-                            mapOpen -> GalleryMapContent(
-                                assets = scrubberAssets,
-                                settled = mapPaneSettled(atHome = shell.atHome, railTurning = railTurning),
-                            )
-                            // Pull-to-backup is retired (owner direction, 2026-08-05): the
-                            // pull-down space at a room's top belongs to the fonebrew
-                            // top-room reveal, so no other gesture may claim it — and the
-                            // static "PULL TO CREATE BACKUP" copy went with it. Refresh is
-                            // now physical (ShakeToRefresh below); backup is an explicit,
-                            // named item in Settings' Data tab instead of a gesture.
-                            //
-                            // The shade is drawn OVER this content and never displaces it, so
-                            // the grid does not move as jobs start and finish -- see ActivityShade.
-                            route == BrowserRoute.Root -> ActivityShade(
-                                activities = activities,
-                                state = shadeState,
-                                onStateChange = { shadeState = it },
-                            ) {
-                                Column {
-                                    ShakeToRefresh(onShake = actions.onRefresh)
-                                    // Android 14's own partial grant used to be invisible outside
-                                    // Settings › Media -- someone who picked "Selected photos"
-                                    // once had no way, short of hunting through settings, to
-                                    // notice they could add more without this strip naming it
-                                    // right where the gap actually shows up.
-                                    if (state.partialMediaAccess && destination != HyleDestination.PROTECTED) {
-                                        PartialAccessStrip(onChooseMore = actions.onManageSelectedMedia)
+                                val legacy = legacyScreen
+                                when {
+                                    // The two panes. Settings is checked first only for readability: they
+                                    // are mutually exclusive, because opening either clears the other.
+                                    settingsOpen -> ShadedPane(
+                                        activities = activities,
+                                        shadeState = shadeState,
+                                        onShadeStateChange = { shadeState = it },
+                                        reserve = notificationReserve,
+                                    ) {
+                                        PaneScaffold(
+                                            title = "Settings",
+                                            onBack = { settingsOpen = false },
+                                        ) {
+                                            SettingsRoom(
+                                                state = state,
+                                                actions = actions,
+                                                onOpenLegacyScreen = {
+                                                    settingsOpen = false
+                                                    legacyScreen = it
+                                                },
+                                                modifier = Modifier.weight(1f),
+                                            )
+                                        }
                                     }
-                                    DestinationContent(
-                                        destination = destination,
-                                        assets = destinationAssets,
+                                    legacy != null -> ShadedPane(
+                                        activities = activities,
+                                        shadeState = shadeState,
+                                        onShadeStateChange = { shadeState = it },
+                                        reserve = notificationReserve,
+                                    ) {
+                                        LegacyScreenHost(
+                                            screen = legacy,
+                                            state = state,
+                                            actions = actions,
+                                            query = query,
+                                            onBack = { legacyScreen = null },
+                                            onOpenRoute = { route = it; legacyScreen = null; mapOpen = false },
+                                            onRequestUnlock = { key, name ->
+                                                passwordRequest = PasswordRequest(PasswordAction.UNLOCK, key, name)
+                                            },
+                                            // How the Appearance > Accent picker is reached from these screens.
+                                            onOpenSettings = {
+                                                settingsOpen = true
+                                                legacyScreen = null
+                                            },
+                                            onOpenDestination = {
+                                                destination = it
+                                                route = BrowserRoute.Root
+                                                legacyScreen = null
+                                                mapOpen = false
+                                            },
+                                        )
+                                    }
+                                    // ---- the map: the same photos, on a map, in the grid's place ----
+                                    //
+                                    // A mode of the browser rather than a rung or a destination (see
+                                    // MapMode.kt), so it is checked ahead of everything that draws the
+                                    // grid. It is fed [scrubberAssets] -- the destination, the route, the
+                                    // search and the time range all applied, and the one visibility
+                                    // filter -- not the whole library.
+                                    mapOpen -> GalleryMapContent(
+                                        assets = scrubberAssets,
+                                        settled = mapPaneSettled(atHome = shell.atHome, railTurning = railTurning),
+                                    )
+                                    // Pull-to-backup is retired (owner direction, 2026-08-05): the
+                                    // pull-down space at a room's top belongs to the fonebrew
+                                    // top-room reveal, so no other gesture may claim it — and the
+                                    // static "PULL TO CREATE BACKUP" copy went with it. Refresh is
+                                    // now physical (ShakeToRefresh below); backup is an explicit,
+                                    // named item in Settings' Data tab instead of a gesture.
+                                    //
+                                    // The shade is drawn OVER this content and never displaces it, so
+                                    // the grid does not move as jobs start and finish -- see ActivityShade.
+                                    route == BrowserRoute.Root -> ActivityShade(
+                                        activities = activities,
+                                        state = shadeState,
+                                        onStateChange = { shadeState = it },
+                                    ) {
+                                        Column {
+                                            ShakeToRefresh(onShake = actions.onRefresh)
+                                            // Android 14's own partial grant used to be invisible outside
+                                            // Settings › Media -- someone who picked "Selected photos"
+                                            // once had no way, short of hunting through settings, to
+                                            // notice they could add more without this strip naming it
+                                            // right where the gap actually shows up.
+                                            if (state.partialMediaAccess && destination != HyleDestination.PROTECTED) {
+                                                PartialAccessStrip(onChooseMore = actions.onManageSelectedMedia)
+                                            }
+                                            DestinationContent(
+                                                destination = destination,
+                                                assets = destinationAssets,
+                                                layout = layout,
+                                                rung = activeRung,
+                                                state = state,
+                                                actions = actions,
+                                                selection = selection,
+                                                onSelectionChange = { selection = it },
+                                                gridState = gridState,
+                                                onRequestUnlock = { key, name ->
+                                                    passwordRequest = PasswordRequest(
+                                                        PasswordAction.UNLOCK, key, name,
+                                                    )
+                                                },
+                                            )
+                                        }
+                                    }
+                                    else -> ZoomGrid(
                                         layout = layout,
                                         rung = activeRung,
-                                        state = state,
-                                        actions = actions,
-                                        selection = selection,
-                                        onSelectionChange = { selection = it },
+                                        favoriteIds = state.favoriteIds,
+                                        sensitiveIds = state.sensitiveIds,
+                                        blurSensitive = state.preferences.blurSensitive,
+                                        selectedIds = selection.selectedIds,
+                                        selectionActive = selection.isActive,
+                                        emptyMessage = if (query.isBlank()) "Nothing here yet" else "No matching media",
+                                        onOpen = { asset -> actions.onOpenAsset(asset, layout.renderedAssets) },
+                                        onToggleSelection = { id -> selection = selection.toggle(id) },
                                         gridState = gridState,
-                                        onRequestUnlock = { key, name ->
-                                            passwordRequest = PasswordRequest(
-                                                PasswordAction.UNLOCK, key, name,
-                                            )
-                                        },
+                                        fitToTile = state.preferences.fitToTile,
+                                        loopAnimations = state.preferences.loopAnimations,
+                                        animatedIds = state.animatedIds,
                                     )
                                 }
                             }
-                            else -> ZoomGrid(
-                                layout = layout,
-                                rung = activeRung,
-                                favoriteIds = state.favoriteIds,
-                                sensitiveIds = state.sensitiveIds,
-                                blurSensitive = state.preferences.blurSensitive,
-                                selectedIds = selection.selectedIds,
-                                selectionActive = selection.isActive,
-                                emptyMessage = if (query.isBlank()) "Nothing here yet" else "No matching media",
-                                onOpen = { asset -> actions.onOpenAsset(asset, layout.renderedAssets) },
-                                onToggleSelection = { id -> selection = selection.toggle(id) },
-                                gridState = gridState,
-                                fitToTile = state.preferences.fitToTile,
-                                loopAnimations = state.preferences.loopAnimations,
-                                animatedIds = state.animatedIds,
-                            )
+                            // The Niagara-style timeline scrubber: glide a finger along the strip and
+                            // the grid sweeps with it, a bubble naming the month under the finger.
+                            // This is what makes a 21,000-item continuous mosaic navigable, and it is
+                            // why the pill no longer carries a scrubber of its own -- two position
+                            // controls on one screen is one too many, and the edge is the one the owner
+                            // asked for.
+                            //
+                            // Its edge is the Timeline setting (owner #25), and the grid has made room
+                            // for it (the gutter above), so it sits beside the photos instead of on
+                            // them. That answers the earlier "overlapping with the pictures" the other
+                            // way from the fade it used to do: it is always drawn, at one quiet alpha.
+                            // restAlpha rather than an outer graphicsLayer alpha, so the pixels and the
+                            // touch target stay one thing; the library takes it to full opacity on touch.
+                            //
+                            // Where a room's edge zone and the strip share pixels, the shell goes first
+                            // (its drag runs on the Initial pass) and the strip yields: a horizontal
+                            // drag from the left or right 56dp opens the rail or the view options, a
+                            // vertical one from the top or bottom 56dp opens the details or the actions.
+                            // The strip's own drag runs along its axis, so on LEFT and RIGHT the two
+                            // never compete -- the rail stays reachable from under a LEFT strip -- and
+                            // on TOP and BOTTOM only the strip's two end 56dp can lose a horizontal
+                            // drag to a side room. No topReserve/bottomReserve is spent on it: moving
+                            // the shell's zones off the edge would put the details and actions rooms
+                            // out of reach of the very pixels they are pulled from.
+                            if (stripShown && (!selection.isActive || stripDrawnWhileSelecting(timelinePlacement))) {
+                                EdgeTimelineScrubber(
+                                    stops = scrubberStops,
+                                    itemCount = gridIndexMap.itemCount,
+                                    currentIndex = firstVisibleIndex,
+                                    onScrubTo = { index ->
+                                        // scrollToItem, not animateScrollToItem: the finger is already
+                                        // moving, so the grid must track it rather than chase it.
+                                        gridScope.launch { gridState.scrollToItem(index) }
+                                    },
+                                    inkColor = Color.White,
+                                    accentColor = MaterialTheme.colorScheme.primary,
+                                    bubbleTextColor = MaterialTheme.colorScheme.onPrimary,
+                                    restAlpha = EDGE_SCRUBBER_REST_ALPHA,
+                                    edge = timelinePlacement.edge(),
+                                    modifier = Modifier
+                                        .align(
+                                            when (timelinePlacement) {
+                                                TimelinePlacement.LEFT -> Alignment.CenterStart
+                                                TimelinePlacement.RIGHT -> Alignment.CenterEnd
+                                                TimelinePlacement.TOP -> Alignment.TopCenter
+                                                TimelinePlacement.BOTTOM -> Alignment.BottomCenter
+                                            },
+                                        )
+                                        .then(
+                                            if (timelinePlacement == TimelinePlacement.BOTTOM) {
+                                                Modifier.navigationBarsPadding()
+                                            } else {
+                                                Modifier
+                                            },
+                                        ),
+                                )
+                            }
                         }
                     }
-                    }
-
-                    // The Niagara-style timeline scrubber: glide a finger down the right edge
-                    // and the grid sweeps with it, a bubble naming the month under the finger.
-                    // This is what makes a 21,000-item continuous mosaic navigable, and it is
-                    // why the pill no longer carries a scrubber of its own — two position
-                    // controls on one screen is one too many, and the edge is the one the owner
-                    // asked for.
-                    if (!selection.isActive && !paneTakenOver && scrubberTrackable && scrubberStops.isNotEmpty()) {
-                        EdgeTimelineScrubber(
-                            stops = scrubberStops,
-                            itemCount = gridIndexMap.itemCount,
-                            currentIndex = firstVisibleIndex,
-                            onScrubTo = { index ->
-                                // scrollToItem, not animateScrollToItem: the finger is already
-                                // moving, so the grid must track it rather than chase it.
-                                gridScope.launch { gridState.scrollToItem(index) }
-                            },
-                            inkColor = Color.White,
-                            accentColor = MaterialTheme.colorScheme.primary,
-                            bubbleTextColor = MaterialTheme.colorScheme.onPrimary,
-                            // The strip stops sitting ON the photos (owner, 2026-08-14: "the
-                            // timeline thing is overlapping with the pictures"): it is invisible
-                            // while the mosaic is still, fades in with the scroll it describes,
-                            // and fades back out once the grid settles.
-                            //
-                            // Transient rather than a reserved 44dp gutter, deliberately -- a
-                            // permanent black stripe down the side of an edge-to-edge mosaic
-                            // would answer "overlapping" with "cluttered".
-                            //
-                            // Passed as restAlpha rather than applied as a graphicsLayer out
-                            // here, because an outer alpha would hide the pixels while leaving
-                            // the 44dp touch target live: a drag down the right edge would scrub
-                            // a strip that never appeared, since an outer fade cannot know the
-                            // strip has been pressed. The library takes it to full opacity on
-                            // touch, so the strip is still grabbable from a standstill.
-                            restAlpha = EDGE_SCRUBBER_REST_ALPHA * scrubberAlpha.value,
-                            modifier = Modifier.align(Alignment.CenterEnd),
-                        )
                     }
 
                     if (selection.isActive && !paneTakenOver) {
@@ -1541,7 +1625,10 @@ private fun GalleryBrowser(
                             onPasswordRequest = { passwordRequest = it },
                             onRenameCollection = { renameCollection = it },
                             onLeaveRoute = { route = BrowserRoute.Root },
-                            modifier = Modifier.align(Alignment.TopStart),
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                // Below a strip along the top edge, which it would otherwise cover.
+                                .padding(top = routeBarDrop(stripShown, timelinePlacement, searchVisible).dp),
                         )
                     }
 
@@ -1554,6 +1641,9 @@ private fun GalleryBrowser(
                         // overlays belong to the whole box, so everything pinned to the left is
                         // inset by the rail's width or it would be drawn over the rail.
                         val railInset = railInsetDp(railPresentation).dp
+                        // A strip along the bottom edge takes the row the pill and the discs sit
+                        // on, so they all rise by its thickness (zero for every other placement).
+                        val chromeLift = floatingChromeLift(stripShown, timelinePlacement)
                         val rangeApplies = timeRangeApplies(destination)
                         // The one way to zoom without a gesture: a stepper that wraps from the
                         // stamps back to one column, since a button has no way to go back with.
@@ -1580,7 +1670,7 @@ private fun GalleryBrowser(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .navigationBarsPadding()
-                                .padding(start = railInset),
+                                .padding(start = railInset, bottom = chromeLift.dp),
                         )
                         // The search entry: the round button in the bottom-right corner of the
                         // owner's root-grid reference (2026-10). It used to be the pill's
@@ -1590,7 +1680,7 @@ private fun GalleryBrowser(
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
                                 .navigationBarsPadding()
-                                .padding(end = SEARCH_FAB_MARGIN_END.dp, bottom = SEARCH_FAB_MARGIN_BOTTOM.dp),
+                                .padding(end = SEARCH_FAB_MARGIN_END.dp, bottom = (SEARCH_FAB_MARGIN_BOTTOM + chromeLift).dp),
                         )
                         // The quick toggle between the grid and the map (owner #27): the mirror
                         // of the search disc, at the bottom left. Offered only where there are
@@ -1607,7 +1697,7 @@ private fun GalleryBrowser(
                                     .navigationBarsPadding()
                                     .padding(
                                         start = SEARCH_FAB_MARGIN_END.dp + railInset,
-                                        bottom = SEARCH_FAB_MARGIN_BOTTOM.dp,
+                                        bottom = (SEARCH_FAB_MARGIN_BOTTOM + chromeLift).dp,
                                     ),
                             )
                         }
@@ -1623,7 +1713,7 @@ private fun GalleryBrowser(
                                     .padding(
                                         start = railInset + TIME_RANGE_SIDE_MARGIN.dp,
                                         end = TIME_RANGE_SIDE_MARGIN.dp,
-                                        bottom = SEARCH_FAB_MARGIN_BOTTOM.dp +
+                                        bottom = (SEARCH_FAB_MARGIN_BOTTOM + chromeLift).dp +
                                             SEARCH_FAB_DP.dp + TIME_RANGE_GAP.dp,
                                     ),
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -2546,17 +2636,10 @@ private fun RouteOverlayBar(
 private val SCRIM_PILL = Color.Black.copy(alpha = 0.55f)
 
 /**
- * How long the edge scrubber stays up after the grid stops. Long enough to survive the gap
- * between two flings, short enough that it is gone before the mosaic reads as settled.
+ * How visible the edge scrubber is, always: it has a gutter of its own now, so it no longer has to
+ * stay out of the photos' way by fading. Quiet, and full strength on touch (the library's doing).
  */
-private const val SCRUBBER_HOLD_MILLIS = 1_200L
-
-/**
- * How visible the edge scrubber is while the grid is moving. The constellation's shared
- * edge-affordance alpha; multiplied by the reveal so it lands on exactly that value mid-scroll
- * and on zero at rest.
- */
-private const val EDGE_SCRUBBER_REST_ALPHA = 0.35f
+private const val EDGE_SCRUBBER_REST_ALPHA = 0.6f
 
 /** The time range panel's and chip's inset from the sides, and the gap between them and the pill row. */
 private const val TIME_RANGE_SIDE_MARGIN = 12

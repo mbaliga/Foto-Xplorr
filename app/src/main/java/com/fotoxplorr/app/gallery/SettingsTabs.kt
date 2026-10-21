@@ -256,9 +256,21 @@ fun SettingsTabsRoom(
                 SettingsTab.LIBRARY -> {
                     ChoiceRow(
                         "Sort",
-                        GallerySort.entries.map { it to it.name.lowercase().replaceFirstChar(Char::uppercase) },
+                        GallerySort.entries.map { it to timelineSortLabel(it) },
                         preferences.sort,
                         actions.onSetSort,
+                    )
+                    SwitchRow(
+                        "Timeline",
+                        HelpCopy.Caption.TIMELINE,
+                        preferences.timelineOn,
+                        actions.onSetTimelineOn,
+                    )
+                    ChoiceRow(
+                        "Timeline edge",
+                        TimelinePlacement.entries.map { it to it.label },
+                        preferences.timelinePlacement,
+                        actions.onSetTimelinePlacement,
                     )
                     ChoiceRow(
                         "Group timeline by",

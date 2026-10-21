@@ -17,6 +17,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import com.fotoxplorr.app.gallery.GalleryActions
@@ -105,7 +106,9 @@ class PaneRenderTest {
     @Test
     fun `settings pane library tab`() {
         render("settings-4-pane-library") { SettingsPane(SettingsTab.LIBRARY) }
-        compose.onNodeWithText("Tidy up").assertIsDisplayed()
+        // The tab's timeline rows sit above the browse list, which now starts below the first screen.
+        compose.onNodeWithText("Timeline edge").assertIsDisplayed()
+        compose.onNodeWithText("Tidy up").performScrollTo().assertIsDisplayed()
     }
 
     @Test

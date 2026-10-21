@@ -64,11 +64,16 @@ class GalleryMapModeTest {
         )
     }
 
+    // The timeline off: these tests count the tiles on screen, and with it on a month header sits
+    // above every one of these six photos (one per month), so the sixth falls below the fold. The
+    // headers themselves are GalleryTimelineStripTest's business.
+    private val plainMosaic = GalleryPreferencesState(timelineOn = false)
+
     private fun mount() {
         compose.setContent {
-            FotoXplorrTheme(emptyState().preferences) {
+            FotoXplorrTheme(plainMosaic) {
                 GalleryScreen(
-                    state = emptyState().copy(assets = assets),
+                    state = emptyState().copy(assets = assets, preferences = plainMosaic),
                     actions = noOpActions(),
                 )
             }

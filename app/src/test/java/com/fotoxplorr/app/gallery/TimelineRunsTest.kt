@@ -164,4 +164,28 @@ class TimelineRunsTest {
         assertTrue(stops.isNotEmpty())
         stops.forEach { assertTrue("stop at ${it.itemIndex} is not a run start", it.itemIndex in runStarts) }
     }
+
+    @Test
+    fun `the column rungs' layout follows the grouping and the stamps' stays months`() {
+        val assets = listOf(asset(1, "2026-09-20"), asset(2, "2026-09-02"), asset(3, "2026-08-31"))
+        val days = zoomLayoutFor(
+            assets, headers = true, grouping = TimelineGrouping.DAY, zoneId = utc, locale = Locale.ENGLISH,
+        )
+        assertEquals(3, days.groups.size)
+        assertEquals(TimelineGrouping.DAY, days.grouping)
+
+        val months = zoomLayoutFor(assets, headers = true, zoneId = utc, locale = Locale.ENGLISH)
+        assertEquals(listOf("September 2026", "August 2026"), months.groups.map { it.title })
+        assertEquals(TimelineGrouping.MONTH, months.grouping)
+    }
+
+    @Test
+    fun `no grouping is a plain layout even when headers were asked for`() {
+        val assets = listOf(asset(1, "2026-09-20"), asset(2, "2026-08-31"))
+        val layout = zoomLayoutFor(
+            assets, headers = true, grouping = TimelineGrouping.NONE, zoneId = utc, locale = Locale.ENGLISH,
+        )
+        assertFalse(layout.hasHeaders)
+        assertEquals(assets, layout.renderedAssets)
+    }
 }

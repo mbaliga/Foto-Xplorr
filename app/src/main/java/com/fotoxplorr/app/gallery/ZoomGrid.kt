@@ -73,8 +73,8 @@ private val STAMP_HOLE_PITCH = 5.dp
  * the tile), and the grid keeps the first visible photo's place by its key.
  *
  * [layout] is built once by the screen (see [zoomLayoutFor]) and shared with the scrubber, the
- * pill, the arrow keys and the list the viewer pages through. Its headers are drawn here as full
- * width items; the grid's own item positions are then mapped by `GridIndexMap`, not assumed equal
+ * pill, the arrow keys and the list the viewer pages through. Its headers (the stamp view's
+ * months, and the column rungs' while the timeline is on) are drawn here as full width items; the grid's own item positions are then mapped by `GridIndexMap`, not assumed equal
  * to photo positions (TRAPS #5 and #9).
  *
  * A masonry grid (the "fit to tile" setting off) is the old staggered layout, still zoomable but
@@ -150,12 +150,14 @@ internal fun ZoomGrid(
                 oldHasHeaders = anchor.hasHeaders,
                 new = gridIndexMap,
                 newHasHeaders = layout.hasHeaders,
+                headersDiffer = anchor.grouping != layout.grouping,
                 // Still the old layout's top line: this runs before the next measure.
                 oldFirstVisible = gridState.firstVisibleItemIndex,
             )?.let { gridState.requestScrollToItem(it) }
         }
         anchor.map = gridIndexMap
         anchor.hasHeaders = layout.hasHeaders
+        anchor.grouping = layout.grouping
     }
 
     BoxWithConstraints(
@@ -241,9 +243,13 @@ internal fun ZoomGrid(
 private class LayoutAnchor {
     var map: GridIndexMap? = null
     var hasHeaders = false
+    var grouping = TimelineGrouping.MONTH
 }
 
-/** A month's header row in the stamp view: its name and how many photos follow. */
+/**
+ * A header row: the month (or, on the column rungs with day grouping, the day) and how many photos
+ * follow. The stamp view always has them; the column rungs have them while the timeline is on.
+ */
 @Composable
 private fun MonthHeader(group: TimelineGroup) {
     Row(

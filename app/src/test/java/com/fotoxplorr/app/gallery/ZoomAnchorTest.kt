@@ -61,4 +61,20 @@ class ZoomAnchorTest {
             assertEquals(asset, columns.assetIndexAt(columns.gridIndexOf(asset)))
         }
     }
+
+    @Test
+    fun `headers of another grouping lose the old header's key, so the photo under it is the anchor`() {
+        // The stamps are months and a column rung with day grouping is days: both have headers,
+        // but a month header's key is gone in the other layout.
+        val days = GridIndexMap(listOf(2, 2, 2, 2, 2, 2), hasHeaders = true, trailingFooter = true)
+        val onMonthHeader = 5 // h1: its first photo is asset 4
+        assertEquals(
+            days.gridIndexOf(4),
+            reanchoredGridIndex(stamps, true, days, true, onMonthHeader, headersDiffer = true),
+        )
+        // A photo at the top is still found by its key.
+        assertNull(reanchoredGridIndex(stamps, true, days, true, 6, headersDiffer = true))
+        // And two layouts that agree on the headers still need nothing.
+        assertNull(reanchoredGridIndex(stamps, true, days, true, onMonthHeader, headersDiffer = false))
+    }
 }

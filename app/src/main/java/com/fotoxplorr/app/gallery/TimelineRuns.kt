@@ -106,20 +106,29 @@ internal fun stampHeadersShown(rung: Int, sort: GallerySort, masonry: Boolean): 
  * positions -- the grid, the scrubber, the pill, the arrow keys and the list the viewer pages
  * through -- so none of them can draw or count a different order (TRAPS #5 and #9).
  */
-internal class ZoomLayout(val groups: List<TimelineGroup>, val hasHeaders: Boolean) {
+internal class ZoomLayout(
+    val groups: List<TimelineGroup>,
+    val hasHeaders: Boolean,
+    /** What each header row stands for; only meaningful when [hasHeaders]. */
+    val grouping: TimelineGrouping = TimelineGrouping.MONTH,
+) {
     /** Every photo in the order the grid draws it; the list a tap hands to the viewer. */
     val renderedAssets: List<MediaAsset> =
         if (groups.size == 1) groups[0].assets else groups.flatMap { it.assets }
 }
 
-/** The layout for [assets]: month runs under headers when [headers] is set, else one plain group. */
+/**
+ * The layout for [assets]: runs of [grouping] (months unless the column rungs' timeline setting
+ * says days) under headers when [headers] is set, else one plain group.
+ */
 internal fun zoomLayoutFor(
     assets: List<MediaAsset>,
     headers: Boolean,
+    grouping: TimelineGrouping = TimelineGrouping.MONTH,
     zoneId: ZoneId = ZoneId.systemDefault(),
     locale: Locale = Locale.getDefault(),
-): ZoomLayout = if (headers) {
-    ZoomLayout(timelineRuns(assets, TimelineGrouping.MONTH, zoneId, locale), hasHeaders = true)
+): ZoomLayout = if (headers && grouping != TimelineGrouping.NONE) {
+    ZoomLayout(timelineRuns(assets, grouping, zoneId, locale), hasHeaders = true, grouping = grouping)
 } else {
     ZoomLayout(listOf(TimelineGroup("all", "", assets)), hasHeaders = false)
 }

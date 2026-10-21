@@ -1719,6 +1719,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     onSetHideSensitive = galleryPreferences::setHideSensitive,
                     onSetShowVideos = galleryPreferences::setShowVideos,
                     onSetTimelineGrouping = galleryPreferences::setTimelineGrouping,
+                    onSetTimelineOn = galleryPreferences::setTimelineOn,
+                    onSetTimelinePlacement = galleryPreferences::setTimelinePlacement,
                     onSetThemeMode = galleryPreferences::setThemeMode,
                     onSetAccentPalette = galleryPreferences::setAccentPalette,
                     onSetCustomTheme = galleryPreferences::setCustomTheme,

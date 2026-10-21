@@ -766,3 +766,25 @@ and `selection`; it now skips that first run (`browserSettled`), so do not add a
 effect keyed on restored state, that is not guarded the same way. `GalleryViewerRoundTripTest` holds
 the pair: with the holder the search survives, without it it does not. Rotation is not a loss path
 (`configChanges` in the manifest), process death and this round trip are.
+
+## 69. The timeline strip, its gutter and the open-at-the-latest-end anchor each have one source of truth
+
+`stripShouldShow` (`gallery/TimelineLayout.kt`) decides both whether `EdgeTimelineScrubber` is
+composed and how much room `timelineReserve` takes from the grid; decide either separately and the
+grid and the strip disagree (a gutter with no strip, or a strip over photos). The strip lives in
+the grid's own `Box` inside the Column, not in the screen-wide overlay `Box`, because the pinned
+`PersistentNavRail` is a Row sibling of that Column: a LEFT strip in the overlay is drawn over the
+rail. The reserve is NOT passed to `SpatialShell` as `topReserve`/`bottomReserve` (that would move
+the details and actions rooms' pull zones off the edge); the strip's own drag runs along its axis,
+the shell's runs first on the Initial pass, so only a strip's two 56dp ends can lose a drag to a side room.
+
+"Latest at the bottom" is Oldest first plus a scroll to the last item, never `reverseLayout`
+(a header placed before its group would draw below it and `GridIndexMap` would have to learn a
+header-after mode). The scroll is an effect keyed on `anchorToken` (destination, route, sort and
+the rail-choice counter), held in `rememberSaveable`: a plain `remember` would re-run after the
+viewer round trip (TRAPS #68) and throw away the restored scroll position. It waits for the scan to
+finish only when the end matters (Oldest first), because the library arrives in batches and the end
+keeps moving. `sortAssets` orders by `dateTakenMillis` but the strip, the headers and the time
+range read `timelineMillis` (date taken else modified), so photos with no capture date sort
+together at one end and a month can head two runs; header keys carry the run index for that reason
+(duplicate lazy keys throw), and `TimelineStopsTest` pins that every stop opens a header.
