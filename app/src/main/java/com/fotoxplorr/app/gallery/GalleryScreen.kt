@@ -281,10 +281,14 @@ data class GalleryActions(
     val onSetAutoplayVideos: (Boolean) -> Unit,
     val onSetFitToTile: (Boolean) -> Unit,
     val onSetLoopAnimations: (Boolean) -> Unit,
-    val onSetLongPressPreview: (Boolean) -> Unit,
+    /** What a hold on a grid tile does -- see [GridLongPress]. */
+    val onSetGridLongPress: (GridLongPress) -> Unit = {},
     /** Neighbouring photos along the bottom of an open photo -- surfaced in both the viewer's
      *  own settings room and Settings › Viewer, so it needs to be reachable from here too. */
     val onSetShowFilmstrip: (Boolean) -> Unit = {},
+    /** Open one photo or video in the editor, as a grid hold set to Edit asks. Refused while an
+     *  earlier edit is still being saved; the host says so itself. */
+    val onEditAsset: (MediaAsset) -> Unit = {},
     /** What the editor's Save does by default -- see [com.fotoxplorr.app.editor.EditorSaveMode]. */
     val onSetEditorSaveMode: (com.fotoxplorr.app.editor.EditorSaveMode) -> Unit = {},
     /** Kick off (or resume) the on-device recognition pass. */
@@ -906,8 +910,12 @@ private fun GalleryBrowser(
             MediaContextAction.TOGGLE_FAVORITE ->
                 actions.onSetFavorite(setOf(asset.id), asset.id !in state.favoriteIds)
             MediaContextAction.MOVE_TO_TRASH -> actions.onMoveToTrash(listOf(asset))
+            MediaContextAction.SHARE -> actions.onShare(listOf(asset))
+            MediaContextAction.EDIT -> actions.onEditAsset(asset)
         }
     }
+    // The Trash has no use for a held favourite, share or edit (restore and delete live there).
+    chromeBridge.gridLongPress = LongPressResolver.effectiveFor(state.preferences.gridLongPress, inTrash)
 
     val railItems = remember {
         HyleDestination.entries.map { dev.aarso.cellshell.WheelItem(it.name, it.label) }
@@ -1381,7 +1389,6 @@ private fun GalleryBrowser(
                                 fitToTile = state.preferences.fitToTile,
                                 loopAnimations = state.preferences.loopAnimations,
                                 animatedIds = state.animatedIds,
-                                longPressPreview = state.preferences.longPressPreview,
                             )
                             // Pull-to-backup is retired (owner direction, 2026-08-05): the
                             // pull-down space at a room's top belongs to the fonebrew
@@ -1438,7 +1445,6 @@ private fun GalleryBrowser(
                                 fitToTile = state.preferences.fitToTile,
                                 loopAnimations = state.preferences.loopAnimations,
                                 animatedIds = state.animatedIds,
-                                longPressPreview = state.preferences.longPressPreview,
                             )
                         }
                     }

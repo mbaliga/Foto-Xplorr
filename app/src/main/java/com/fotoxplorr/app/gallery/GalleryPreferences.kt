@@ -103,8 +103,11 @@ data class GalleryPreferencesState(
      */
     val showFilmstrip: Boolean = true,
     // ---- media behaviour ----
-    /** Peek a photo large on long press, without leaving the grid. */
-    val longPressPreview: Boolean = true,
+    /**
+     * What holding a photo in the grid does -- see [GridLongPress]. Stored under its own key and
+     * seeded from the retired on/off `long_press_preview` switch the first time (see [load]).
+     */
+    val gridLongPress: GridLongPress = GridLongPress.PEEK,
     /** Play GIFs and animated images in the grid rather than showing a still frame. */
     val loopAnimations: Boolean = false,
     /**
@@ -241,9 +244,9 @@ class GalleryPreferences(context: Context) {
         state.value.copy(showFilmstrip = enabled),
     ) { putBoolean(KEY_SHOW_FILMSTRIP, enabled) }
 
-    fun setLongPressPreview(enabled: Boolean) = update(
-        state.value.copy(longPressPreview = enabled),
-    ) { putBoolean(KEY_LONG_PRESS_PREVIEW, enabled) }
+    fun setGridLongPress(action: GridLongPress) = update(
+        state.value.copy(gridLongPress = action),
+    ) { putString(KEY_GRID_LONG_PRESS, action.name) }
 
     fun setLoopAnimations(enabled: Boolean) = update(
         state.value.copy(loopAnimations = enabled),
@@ -336,7 +339,12 @@ class GalleryPreferences(context: Context) {
         slideshowShuffle = preferences.getBoolean(KEY_SLIDESHOW_SHUFFLE, false),
         autoplayVideos = preferences.getBoolean(KEY_AUTOPLAY_VIDEOS, true),
         showFilmstrip = preferences.getBoolean(KEY_SHOW_FILMSTRIP, true),
-        longPressPreview = preferences.getBoolean(KEY_LONG_PRESS_PREVIEW, true),
+        // A stored choice wins. Without one (never chosen, or a name this build no longer knows)
+        // the retired peek switch decides, so anyone who had turned peeking off lands on Select
+        // and everyone else on the preview. The old key is only ever read, never rewritten or
+        // removed: downgrading keeps whatever it last said.
+        gridLongPress = enumValueOrNull<GridLongPress>(KEY_GRID_LONG_PRESS)
+            ?: LongPressResolver.fromLegacyPeekFlag(preferences.getBoolean(KEY_LONG_PRESS_PREVIEW, true)),
         loopAnimations = preferences.getBoolean(KEY_LOOP_ANIMATIONS, false),
         fitToTile = preferences.getBoolean(KEY_FIT_TO_TILE, true),
         navRailCollapsed = preferences.getBoolean(KEY_NAV_RAIL_COLLAPSED, false),
@@ -353,9 +361,12 @@ class GalleryPreferences(context: Context) {
     )
 
     private inline fun <reified T : Enum<T>> enumValue(key: String, fallback: T): T =
+        enumValueOrNull<T>(key) ?: fallback
+
+    /** The stored constant, or null when the key is absent or names one this build lacks. */
+    private inline fun <reified T : Enum<T>> enumValueOrNull(key: String): T? =
         preferences.getString(key, null)
             ?.let { stored -> enumValues<T>().firstOrNull { it.name == stored } }
-            ?: fallback
 
     private companion object {
         const val PREFERENCES_NAME = "foto_xplorr_gallery"
@@ -373,7 +384,9 @@ class GalleryPreferences(context: Context) {
         const val KEY_SLIDESHOW_SHUFFLE = "slideshow_shuffle"
         const val KEY_AUTOPLAY_VIDEOS = "autoplay_videos"
         const val KEY_SHOW_FILMSTRIP = "show_filmstrip"
+        /** Retired on/off switch; read once as the default for [KEY_GRID_LONG_PRESS], never written. */
         const val KEY_LONG_PRESS_PREVIEW = "long_press_preview"
+        const val KEY_GRID_LONG_PRESS = "grid_long_press"
         const val KEY_LOOP_ANIMATIONS = "loop_animations"
         const val KEY_EDITOR_SAVE_MODE = "editor_save_mode"
         const val KEY_FIT_TO_TILE = "fit_to_tile"

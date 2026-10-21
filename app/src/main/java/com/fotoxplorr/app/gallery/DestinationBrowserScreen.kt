@@ -321,7 +321,6 @@ fun DestinationContent(
                     fitToTile = state.preferences.fitToTile,
                     loopAnimations = state.preferences.loopAnimations,
                     animatedIds = state.animatedIds,
-                    longPressPreview = state.preferences.longPressPreview,
                 )
             }
         }

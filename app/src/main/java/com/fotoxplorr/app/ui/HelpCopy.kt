@@ -32,7 +32,7 @@ internal object HelpCopy {
         const val BLUR_OR_HIDE = "Blur or hide in the grid."
         const val KEEP_SCREEN_ON = "While a photo is open. Uses more battery."
         const val FILL_TILE = "Fill each square. Off shows the whole photo."
-        const val PEEK_ON_HOLD = "Hold a photo to peek. Off: hold to select."
+        const val LONG_PRESS = "What holding a photo does. While selecting, a hold adds it."
         const val PINCH_ON = "Pinch in: details. Pinch out: actions. No pinch zoom."
         const val PINCH_OFF = "Pinch zooms the photo."
         const val PARTIAL_ACCESS = "Fotoz only sees the photos you picked."

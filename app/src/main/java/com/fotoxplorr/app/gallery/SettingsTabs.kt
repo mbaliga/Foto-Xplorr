@@ -227,12 +227,13 @@ fun SettingsTabsRoom(
                         preferences.loopAnimations,
                         actions.onSetLoopAnimations,
                     )
-                    SwitchRow(
-                        "Peek on long press",
-                        HelpCopy.Caption.PEEK_ON_HOLD,
-                        preferences.longPressPreview,
-                        actions.onSetLongPressPreview,
+                    ChoiceRow(
+                        "Long press does",
+                        GridLongPress.entries.map { it to it.label },
+                        preferences.gridLongPress,
+                        actions.onSetGridLongPress,
                     )
+                    Paragraph(HelpCopy.Caption.LONG_PRESS)
                     SectionLabel("SAVING EDITS")
                     ChoiceRow(
                         "Saving edits",

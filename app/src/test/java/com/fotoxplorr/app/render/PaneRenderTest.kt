@@ -21,6 +21,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import com.fotoxplorr.app.gallery.GalleryActions
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
+import com.fotoxplorr.app.gallery.GridLongPress
 import com.fotoxplorr.app.gallery.LegacyScreen
 import com.fotoxplorr.app.gallery.LegacyScreenHost
 import com.fotoxplorr.app.gallery.SettingsTab
@@ -180,12 +181,27 @@ class PaneRenderTest {
             }
         }
         val switches = compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch))
-        // Fill the tile, Play animations, Peek on long press.
-        switches.assertCountEquals(3)
+        // Fill the tile and Play animations. (Long press is a choice row now, not a switch.)
+        switches.assertCountEquals(2)
 
         compose.onNodeWithText("Fill the tile").performClick()
         // The default is fit-to-tile ON, so a tap on the row turns it off.
         assertEquals(!GalleryPreferencesState().fitToTile, fit)
+    }
+
+    /** Owner #3 / #14: what a hold does is a setting, one chip per [GridLongPress]. */
+    @Test
+    fun `the long press row offers every action and reports the one tapped`() {
+        var chosen: GridLongPress? = null
+        compose.setContent {
+            FotoXplorrTheme(GalleryPreferencesState()) {
+                SettingsPane(SettingsTab.MEDIA, noOpActions().copy(onSetGridLongPress = { chosen = it }))
+            }
+        }
+        compose.onNodeWithText("Long press does").assertExists()
+        GridLongPress.entries.forEach { compose.onNodeWithText(it.label).assertExists() }
+        compose.onNodeWithText("Nothing").performClick()
+        assertEquals(GridLongPress.NOTHING, chosen)
     }
 
     /** Leaving Settings for a destination screen and coming back must land on the same tab. */

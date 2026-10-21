@@ -1729,8 +1729,13 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
                     onSetFitToTile = galleryPreferences::setFitToTile,
                     onSetLoopAnimations = galleryPreferences::setLoopAnimations,
-                    onSetLongPressPreview = galleryPreferences::setLongPressPreview,
+                    onSetGridLongPress = galleryPreferences::setGridLongPress,
                     onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
+                    onEditAsset = { asset ->
+                        if (!viewModel.setEditingAsset(asset)) {
+                            transientNotice = TransientNotice(FINISH_EDIT_FIRST_MESSAGE)
+                        }
+                    },
                     onSetEditorSaveMode = galleryPreferences::setEditorSaveMode,
                     onIndexRecognition = { recognitionGeneration += 1 },
                     onProtectFolder = privateFolderStore::protect,

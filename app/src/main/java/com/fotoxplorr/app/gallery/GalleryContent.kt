@@ -62,6 +62,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,7 +75,12 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -116,12 +122,13 @@ private const val GRID_TILE_ASPECT = 144f / 160f
 val GRID_BACKGROUND: Color = Color.Black
 
 /**
- * What a right-click's context menu on a tile can ask for. Deliberately the small subset of
- * [GalleryActions] that makes sense on ONE photo with no selection involved -- everything a
- * multi-select action bar already covers (move, copy, tag, export) stays reachable only through
- * selecting, so this menu is not a second, incomplete copy of that surface.
+ * What a tile can ask its owner to do to ONE photo with no selection involved: the right-click
+ * context menu (open, favourite, trash) and what a long press can be set to (favourite, share,
+ * edit -- see [GridLongPress]). Deliberately the small subset of [GalleryActions] that makes sense
+ * there -- everything a multi-select action bar already covers (move, copy, tag, export) stays
+ * reachable only through selecting, so this is not a second, incomplete copy of that surface.
  */
-enum class MediaContextAction { OPEN, TOGGLE_FAVORITE, MOVE_TO_TRASH }
+enum class MediaContextAction { OPEN, TOGGLE_FAVORITE, MOVE_TO_TRASH, SHARE, EDIT }
 
 /**
  * Wires the grid's mouse- and pinch-driven chrome to whatever owns it, across a boundary a
@@ -149,6 +156,18 @@ class GridChromeBridge {
     /** Called with this gesture frame's multiplicative scale change; see [ZoomLadder.step]. */
     internal var onZoom: (Float) -> Unit = {}
     internal var onContextAction: (MediaAsset, MediaContextAction) -> Unit = { _, _ -> }
+
+    /**
+     * What a hold on a tile does, already adjusted for the route (see
+     * [LongPressResolver.effectiveFor]). Set by `GalleryScreen` on every recomposition and read by a
+     * tile when the hold completes -- so changing the setting needs no parameter through the grids
+     * and cannot leave a tile acting on a stale value. `mutableStateOf` only because a tile's
+     * accessibility long-click label reads it; the gesture itself reads the current value, not a
+     * subscription. The photo picker never sets it: its grid is always in selection, where a hold
+     * is a tap whatever this says.
+     */
+    var gridLongPress: GridLongPress by mutableStateOf(GridLongPress.PEEK)
+        internal set
 
     /**
      * Which tile the keyboard's arrow keys currently sit on, if any -- unlike the two callbacks
@@ -266,7 +285,6 @@ fun TimelineScreen(
      *  both this AND [loopAnimations] say so; the grid's whole reason to check membership here
      *  at all, rather than every image, is to never spend a decoder on a static tile. */
     animatedIds: Set<MediaId> = emptySet(),
-    longPressPreview: Boolean = true,
 ) {
     if (assets.isEmpty()) {
         GalleryMessage(HelpCopy.Hint.NO_MATCHES)
@@ -288,7 +306,6 @@ fun TimelineScreen(
             fitToTile = fitToTile,
             loopAnimations = loopAnimations,
             animatedIds = animatedIds,
-            longPressPreview = longPressPreview,
         )
         return
     }
@@ -344,7 +361,6 @@ fun TimelineScreen(
                     fitToTile = fitToTile,
                     loopAnimations = loopAnimations,
                     animated = asset.id in animatedIds,
-                    longPressPreview = longPressPreview,
                     onOpen = { onOpen(asset) },
                     onToggleSelection = { onToggleSelection(asset.id) },
                     onPeek = { onPeek(asset) },
@@ -403,7 +419,6 @@ fun MediaGridScreen(
     fitToTile: Boolean = true,
     loopAnimations: Boolean = false,
     animatedIds: Set<MediaId> = emptySet(),
-    longPressPreview: Boolean = true,
 ) {
     if (assets.isEmpty()) {
         GalleryMessage(emptyMessage)
@@ -434,7 +449,6 @@ fun MediaGridScreen(
                         fitToTile = true,
                         loopAnimations = loopAnimations,
                         animated = asset.id in animatedIds,
-                        longPressPreview = longPressPreview,
                         onOpen = { onOpen(asset) },
                         onToggleSelection = { onToggleSelection(asset.id) },
                         onPeek = { peeked = asset },
@@ -469,7 +483,6 @@ fun MediaGridScreen(
                         tileAspectRatio = asset.aspectRatio,
                         loopAnimations = loopAnimations,
                         animated = asset.id in animatedIds,
-                        longPressPreview = longPressPreview,
                         onOpen = { onOpen(asset) },
                         onToggleSelection = { onToggleSelection(asset.id) },
                         onPeek = { peeked = asset },
@@ -498,8 +511,9 @@ fun MediaGridScreen(
  * hold would end the instant the preview appeared, so the preview would flash and vanish.
  *
  * Long press used to be how a selection started. That entry point moves to the gallery's own
- * actions room ("Select photos"), and the `longPressPreview` preference still restores
- * long-press-to-select exactly as it was for anyone who prefers it.
+ * actions room ("Select photos"), and the "Long press does" setting ([GridLongPress]) restores
+ * long-press-to-select exactly as it was for anyone who prefers it -- or makes the hold favourite,
+ * share or edit instead.
  */
 @Composable
 private fun MediaPeek(asset: MediaAsset, loopAnimations: Boolean, animated: Boolean) {
@@ -548,7 +562,6 @@ private fun MediaTile(
     fitToTile: Boolean,
     loopAnimations: Boolean,
     animated: Boolean,
-    longPressPreview: Boolean,
     onOpen: () -> Unit,
     onToggleSelection: () -> Unit,
     onPeek: () -> Unit,
@@ -568,12 +581,48 @@ private fun MediaTile(
     var contextMenuVisible by remember { mutableStateOf(false) }
     val chromeBridge = LocalGridChromeBridge.current
 
+    // The handlers below outlive any one composition: pointerInput(chromeBridge) starts once per
+    // tile, so everything they call is read through these. Capturing the parameters directly froze
+    // whichever onOpen the gesture block last started with -- and that closes over the grid's
+    // asset list, so after a sort or filter change a tap could page the viewer through the old
+    // order (TRAPS #50). Keying on the selection state instead would restart the detector on every
+    // toggle, mid-gesture.
+    val currentOnOpen by rememberUpdatedState(onOpen)
+    val currentOnToggleSelection by rememberUpdatedState(onToggleSelection)
+    val currentOnPeek by rememberUpdatedState(onPeek)
+    val currentOnPeekEnd by rememberUpdatedState(onPeekEnd)
+    val currentSelectionActive by rememberUpdatedState(selectionActive)
+    val currentAsset by rememberUpdatedState(asset)
+    val currentHaptic by rememberUpdatedState(LocalHapticFeedback.current)
+    val longClick = LongPressResolver.longClickSemantics(chromeBridge.gridLongPress, selectionActive)
+
     Box(
         modifier = Modifier
             .aspectRatio(tileAspectRatio)
             // Black rather than surfaceVariant: an unloaded tile should read as a gap in the
             // mosaic, not as a light grey block punched through it.
             .background(GRID_BACKGROUND)
+            // Click and long-click for a screen reader, whose double-tap and double-tap-and-hold
+            // never reach the pointer handler below as a hold. A long press cannot be performed
+            // as a held preview there, so LongPressResolver.longClickSemantics turns the preview
+            // into Select; Nothing offers no long-click at all. Announced as one tile: the photo's
+            // name from MediaImage plus any favourite / sensitive / selected marks.
+            .semantics(mergeDescendants = true) {
+                onClick(label = LongPressResolver.tapLabel(selectionActive)) {
+                    if (selectionActive) currentOnToggleSelection() else currentOnOpen()
+                    true
+                }
+                if (longClick != null) {
+                    onLongClick(label = longClick.label) {
+                        when (val outcome = longClick.outcome) {
+                            LongPressOutcome.ToggleSelection -> currentOnToggleSelection()
+                            is LongPressOutcome.Run -> chromeBridge.onContextAction(currentAsset, outcome.action)
+                            LongPressOutcome.Peek, LongPressOutcome.None -> Unit
+                        }
+                        true
+                    }
+                }
+            }
             // Hand-rolled rather than combinedClickable, because the peek needs the one thing
             // that API does not report: the RELEASE. onLongClick tells you the hold began and
             // nothing tells you it ended, so a peek built on it can only be a modal that outlives
@@ -581,21 +630,30 @@ private fun MediaTile(
             //
             // detectTapGestures gives all three: onPress suspends until the finger lifts or the
             // gesture is cancelled, onLongPress fires at the timeout, onTap only when it did not.
-            .pointerInput(selected, selectionActive, longPressPreview) {
+            .pointerInput(chromeBridge) {
                 detectTapGestures(
                     onPress = {
                         // Returns on release AND on cancellation -- so a peek cannot be stranded
                         // on screen by the grid scrolling out from under the finger.
                         tryAwaitRelease()
-                        onPeekEnd()
+                        currentOnPeekEnd()
                     },
-                    // Long press peeks -- EXCEPT while a selection is already running, where
-                    // extending that selection is obviously what the gesture means, and except
-                    // when the user has turned peeking off, which restores the old behaviour.
+                    // What a hold does is the "Long press does" setting, read from the bridge at
+                    // the moment it completes; LongPressResolver owns the rules (including that a
+                    // running selection is extended, whatever the setting).
                     onLongPress = {
-                        if (selectionActive || !longPressPreview) onToggleSelection() else onPeek()
+                        val outcome = LongPressResolver.resolve(chromeBridge.gridLongPress, currentSelectionActive)
+                        if (outcome != LongPressOutcome.None) {
+                            currentHaptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                        when (outcome) {
+                            LongPressOutcome.Peek -> currentOnPeek()
+                            LongPressOutcome.ToggleSelection -> currentOnToggleSelection()
+                            is LongPressOutcome.Run -> chromeBridge.onContextAction(currentAsset, outcome.action)
+                            LongPressOutcome.None -> Unit
+                        }
                     },
-                    onTap = { if (selectionActive) onToggleSelection() else onOpen() },
+                    onTap = { if (currentSelectionActive) currentOnToggleSelection() else currentOnOpen() },
                 )
             }
             // A second, independent pointerInput block rather than folding this into the one
