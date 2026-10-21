@@ -38,6 +38,15 @@ class RestorePlannerTest {
     }
 
     @Test
+    fun `a photo whose pack is missing from the backup is reported and never written`() {
+        val missing = entry(1).copy(flags = setOf(EntryFlag.MISSING))
+        val plan = plan(listOf(missing, entry(2)))
+        assertEquals(listOf(RestoreAction.SKIP_MISSING, RestoreAction.RESTORE), plan.items.map { it.action })
+        assertEquals(1, plan.count(RestoreAction.SKIP_MISSING))
+        assertEquals(listOf(2L), plan.toWrite.map { it.entry.entryId })
+    }
+
+    @Test
     fun `videos go to the video collection and other types are not written`() {
         val items = plan(
             listOf(

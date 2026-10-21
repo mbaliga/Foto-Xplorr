@@ -47,7 +47,7 @@ class BackupManifestTest {
     @Test
     fun `a manifest round-trips header entries packs and sections`() {
         val entries = listOf(
-            entry(0, flags = setOf(EntryFlag.WAS_ARCHIVED, EntryFlag.ORIGINAL_LOCATION)),
+            entry(0, flags = setOf(EntryFlag.WAS_ARCHIVED, EntryFlag.ORIGINAL_LOCATION, EntryFlag.MISSING)),
             entry(1, qh = "cd".repeat(32)),
             entry(2, name = "Zoë \"quoted\" \\ back\nline\ttab 😀.jpg"),
         )
@@ -212,12 +212,12 @@ class BackupManifestTest {
             OutputStreamWriter(BackupStreams.encrypt(sink, BackupKind.MANIFEST, BackupTestSupport.keys, BackupTestSupport.SEGMENT), Charsets.UTF_8)
                 .use { it.write(text) }
         }.toByteArray()
-        val opened = BackupStreams.open(ByteArrayInputStream(file), BackupTestSupport.keys)
+        val opened = BackupStreams.open(ByteArrayInputStream(file), BackupTestSupport.keys, BackupKind.MANIFEST)
         assertEquals(40, ManifestReader.readAll(InputStreamReader(opened.plaintext, Charsets.UTF_8)).entries.size)
 
         val cut = file.copyOf(file.size - 200)
         try {
-            val stream = BackupStreams.open(ByteArrayInputStream(cut), BackupTestSupport.keys).plaintext
+            val stream = BackupStreams.open(ByteArrayInputStream(cut), BackupTestSupport.keys, BackupKind.MANIFEST).plaintext
             ManifestReader.readAll(InputStreamReader(stream, Charsets.UTF_8))
             fail("a truncated manifest was accepted")
         } catch (e: java.io.IOException) {

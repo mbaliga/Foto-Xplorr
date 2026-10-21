@@ -56,6 +56,8 @@ class BackupFormatTest {
 
     @Test
     fun `this provider reproduces the published key derivation`() {
+        // No production caller yet: the backup UI's self-test and Check backup call it (the
+        // crypto is otherwise unreferenced outside this package, so R8 would remove it).
         assertTrue(BackupKeys.providerMatchesGoldenVector())
     }
 
@@ -72,7 +74,7 @@ class BackupFormatTest {
         assertEquals(324, file.size)
         val header = BackupHeader.parse(file)
         val keys = BackupKeys.derive(goldenPassphrase.toCharArray(), header.setSalt, header.iterations)
-        val opened = BackupStreams.open(ByteArrayInputStream(file), keys)
+        val opened = BackupStreams.open(ByteArrayInputStream(file), keys, BackupKind.PACK)
         assertEquals(BackupKind.PACK, opened.header.kind)
         assertArrayEquals(goldenPlaintext, opened.plaintext.readBytes())
     }

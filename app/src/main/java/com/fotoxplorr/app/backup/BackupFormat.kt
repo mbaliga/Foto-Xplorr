@@ -46,7 +46,7 @@ object BackupFormat {
     }
 }
 
-/** What a file holds. The code is part of the authenticated header, so kinds cannot be swapped. */
+/** What a file holds. The code is part of the authenticated header, so it cannot be changed unnoticed; the reader must still check it ([BackupStreams.decrypt]). */
 enum class BackupKind(val code: Int) {
     PACK(1),
     MANIFEST(2),
@@ -78,6 +78,14 @@ sealed class BackupException(message: String, cause: Throwable? = null) : IOExce
     class KdfOutOfRange(val iterations: Long) : BackupException("Backup asks for $iterations key-derivation rounds")
 
     class BadSegmentSize(val segmentSize: Long) : BackupException("Backup segment size $segmentSize is outside the accepted range")
+
+    /**
+     * The file is a genuine backup file of this set but not the kind the caller is opening (a
+     * pack under a manifest's name). The kind is authenticated, so this is the reader's check,
+     * made before anything is decrypted.
+     */
+    class UnexpectedKind(val expected: BackupKind, val actual: BackupKind) :
+        BackupException("Expected a backup ${expected.name.lowercase()} file but this is a ${actual.name.lowercase()} file")
 
     /** The keys in hand were derived for another backup set (or another iteration count). */
     class DifferentSet : BackupException("This file belongs to a different backup")

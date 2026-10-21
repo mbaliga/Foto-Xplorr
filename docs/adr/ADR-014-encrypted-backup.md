@@ -131,7 +131,11 @@ All 36 header bytes are the HKDF `info`. Change any bit of the magic, version, k
 parameters, set salt or segment size and the derived key changes, so the first segment fails
 (or, for a field the reader range-checks, the file is refused earlier). Consequences:
 
-- A *kind* swap fails: a manifest cannot be presented as a pack index.
+- A *kind* is bound to the key, not enforced by it. Relabelling a file's kind byte fails
+  authentication, but a genuine file of another kind from the same set (a pack renamed to a
+  manifest's name) authenticates, so the reader must check. `BackupStreams.open` and `decrypt`
+  take a required `expectedKind` and throw `BackupException.UnexpectedKind` before decrypting
+  anything on a mismatch.
 - A *set* swap fails: files carry the set salt, the set salt feeds PBKDF2, so a manifest from
   set A does not open under set B's key even with the same passphrase. This is asserted in a
   test. Within one set a swap between two files of the same kind is not a cryptographic error;

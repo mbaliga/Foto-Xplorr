@@ -24,6 +24,9 @@ enum class RestoreAction {
 
     /** Not an image or a video; a restore writes only those. */
     SKIP_UNSUPPORTED,
+
+    /** The backup knows this photo but the pack holding it was not in the folder ([EntryFlag.MISSING]). */
+    SKIP_MISSING,
 }
 
 class RestoreItem(
@@ -92,6 +95,10 @@ object RestorePlanner {
 
         val items = ArrayList<RestoreItem>(entries.size)
         for (entry in entries.sortedBy { it.entryId }) {
+            if (EntryFlag.MISSING in entry.flags) {
+                items += RestoreItem(entry, RestoreAction.SKIP_MISSING, kindOf(entry.mimeType), "", "", null)
+                continue
+            }
             val kind = kindOf(entry.mimeType)
             if (kind == null) {
                 items += RestoreItem(entry, RestoreAction.SKIP_UNSUPPORTED, null, "", "", null)

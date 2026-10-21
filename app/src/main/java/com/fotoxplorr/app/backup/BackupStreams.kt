@@ -36,7 +36,11 @@ object BackupStreams {
     fun readHeader(source: InputStream): BackupHeader = BackupHeader.read(source)
 
     /**
-     * Decrypts the body that follows a header [readHeader] consumed. Returns after the FIRST
+     * Decrypts the body that follows a header [readHeader] consumed. The caller says which kind
+     * of file it is opening ([expectedKind], required on purpose): the kind is authenticated, but
+     * a genuine file of another kind from the same set (a pack renamed to a manifest's name)
+     * authenticates all the same, so a mismatch is [BackupException.UnexpectedKind], thrown before
+     * a byte is decrypted. Returns after the FIRST
      * segment has authenticated, so a wrong passphrase fails here as
      * [BackupException.WrongPassphraseOrDamaged], not on some later read. Later failures are
      * [BackupException.Damaged]; a failure of [source] itself is passed through unchanged.
@@ -45,8 +49,10 @@ object BackupStreams {
         header: BackupHeader,
         source: InputStream,
         keys: BackupKeys,
+        expectedKind: BackupKind,
         aead: ChunkedAead = TinkChunkedAead,
     ): InputStream {
+        if (header.kind != expectedKind) throw BackupException.UnexpectedKind(expectedKind, header.kind)
         if (!keys.matches(header)) throw BackupException.DifferentSet()
         val guard = SourceGuard(source)
         val inner = try {
@@ -62,9 +68,9 @@ object BackupStreams {
     }
 
     /** [readHeader] then [decrypt], for callers that already hold the right keys. */
-    fun open(source: InputStream, keys: BackupKeys, aead: ChunkedAead = TinkChunkedAead): OpenedBackupFile {
+    fun open(source: InputStream, keys: BackupKeys, expectedKind: BackupKind, aead: ChunkedAead = TinkChunkedAead): OpenedBackupFile {
         val header = readHeader(source)
-        return OpenedBackupFile(header, decrypt(header, source, keys, aead))
+        return OpenedBackupFile(header, decrypt(header, source, keys, expectedKind, aead))
     }
 
     /** Bytes a whole file occupies for [plaintextBytes] of body: the plaintext header plus the stream. */

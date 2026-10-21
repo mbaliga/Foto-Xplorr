@@ -13,6 +13,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -109,7 +110,7 @@ class BackupStreamsTest {
             }
             sink.write(body, at, body.size - at)
         }
-        val opened = BackupStreams.open(ByteArrayInputStream(out.toByteArray()), keys)
+        val opened = BackupStreams.open(ByteArrayInputStream(out.toByteArray()), keys, BackupKind.MANIFEST)
         assertEquals(BackupKind.MANIFEST, opened.header.kind)
         assertArrayEquals(body, opened.plaintext.readBytes())
     }
@@ -136,7 +137,7 @@ class BackupStreamsTest {
     @Test
     fun `every file kind round trips and keeps its kind`() {
         for (kind in BackupKind.entries) {
-            val opened = BackupStreams.open(ByteArrayInputStream(seal(body, kind = kind)), keys)
+            val opened = BackupStreams.open(ByteArrayInputStream(seal(body, kind = kind)), keys, kind)
             assertEquals(kind, opened.header.kind)
             assertArrayEquals(body, opened.plaintext.readBytes())
         }
@@ -184,7 +185,9 @@ class BackupStreamsTest {
     fun `specific header damage gives the specific error`() {
         assertTrue(drain(flip(sealed, 0)).failure is BackupException.NotABackup)
         assertTrue(drain(flip(sealed, 9)).failure is BackupException.UnsupportedVersion)
-        assertTrue(drain(flip(sealed, 10, mask = 3)).failure is BackupException.WrongPassphraseOrDamaged) // PACK to MANIFEST
+        // PACK to MANIFEST: a reader expecting a pack is told so; one expecting a manifest fails authentication
+        assertTrue(drain(flip(sealed, 10, mask = 3)).failure is BackupException.UnexpectedKind)
+        assertTrue(drain(flip(sealed, 10, mask = 3), kind = BackupKind.MANIFEST).failure is BackupException.WrongPassphraseOrDamaged)
         assertTrue(drain(flip(sealed, 10)).failure is BackupException.UnsupportedKind)
         assertTrue(drain(flip(sealed, 11)).failure is BackupException.UnsupportedKdf)
         assertTrue(drain(flip(sealed, 16)).failure is BackupException.DifferentSet) // set salt
@@ -192,10 +195,41 @@ class BackupStreamsTest {
     }
 
     @Test
-    fun `a kind swap fails authentication`() {
+    fun `a relabelled kind fails authentication`() {
         val manifest = seal(body, kind = BackupKind.MANIFEST)
         val asPack = manifest.copyOf().also { it[10] = BackupKind.PACK.code.toByte() }
         assertTrue(drain(asPack).failure is BackupException.WrongPassphraseOrDamaged)
+    }
+
+    @Test
+    fun `a genuine file of another kind from the same set is refused by the reader`() {
+        // Authentic, same keys, same set: only the caller's expectation can tell it apart.
+        for (actual in BackupKind.entries) {
+            val file = seal(body, kind = actual)
+            for (expected in BackupKind.entries) {
+                val drained = drain(file, kind = expected)
+                if (expected == actual) {
+                    assertNull("$actual as $expected", drained.failure)
+                    assertArrayEquals(body, drained.bytes)
+                } else {
+                    val failure = drained.failure
+                    assertTrue("$actual as $expected: $failure", failure is BackupException.UnexpectedKind)
+                    failure as BackupException.UnexpectedKind
+                    assertEquals(expected, failure.expected)
+                    assertEquals(actual, failure.actual)
+                    assertEquals("nothing is decrypted before the check", 0, drained.bytes.size)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `the kind is checked before the keys are looked at`() {
+        val file = seal(body, kind = BackupKind.PACK)
+        val thrown = assertThrows(BackupException::class.java) {
+            BackupStreams.open(ByteArrayInputStream(file), otherSetKeys, BackupKind.MANIFEST)
+        }
+        assertTrue(thrown is BackupException.UnexpectedKind)
     }
 
     // ---- passphrase and set ----
@@ -213,8 +247,8 @@ class BackupStreamsTest {
     @Test
     fun `a file from another set does not open even with the same passphrase`() {
         val fromOtherSet = seal(body, otherSetKeys, BackupKind.MANIFEST)
-        assertTrue(drain(fromOtherSet, keys).failure is BackupException.DifferentSet)
-        assertArrayEquals(body, drain(fromOtherSet, otherSetKeys).bytes)
+        assertTrue(drain(fromOtherSet, keys, kind = BackupKind.MANIFEST).failure is BackupException.DifferentSet)
+        assertArrayEquals(body, drain(fromOtherSet, otherSetKeys, kind = BackupKind.MANIFEST).bytes)
     }
 
     @Test
@@ -330,7 +364,7 @@ class BackupStreamsTest {
                 return sealed[served++].toInt() and 0xFF
             }
         }
-        val opened = BackupStreams.open(failing, keys)
+        val opened = BackupStreams.open(failing, keys, BackupKind.PACK)
         val thrown = assertThrows(IOException::class.java) { opened.plaintext.readBytes() }
         assertSame(boom, thrown)
     }
@@ -342,7 +376,7 @@ class BackupStreamsTest {
         val failing = object : InputStream() {
             override fun read(): Int = throw boom
         }
-        val thrown = assertThrows(IOException::class.java) { BackupStreams.decrypt(header, failing, keys) }
+        val thrown = assertThrows(IOException::class.java) { BackupStreams.decrypt(header, failing, keys, BackupKind.PACK) }
         assertSame(boom, thrown)
     }
 

@@ -65,6 +65,12 @@ enum class EntryFlag(val code: String) {
     WAS_PROTECTED("prot"),
     WAS_SENSITIVE("sens"),
     WAS_ARCHIVED("arch"),
+
+    /**
+     * The pack this record names was not in the destination when a run looked. The record is kept
+     * so verify and restore can report the photo; it heals itself if the pack comes back.
+     */
+    MISSING("missing"),
     ;
 
     companion object {

@@ -36,16 +36,16 @@ internal object BackupTestSupport {
         return out.toByteArray()
     }
 
-    fun open(file: ByteArray, keys: BackupKeys = this.keys): InputStream =
-        BackupStreams.open(ByteArrayInputStream(file), keys).plaintext
+    fun open(file: ByteArray, keys: BackupKeys = this.keys, kind: BackupKind = BackupKind.PACK): InputStream =
+        BackupStreams.open(ByteArrayInputStream(file), keys, kind).plaintext
 
     /** Reads to the end, handing back what was released before any failure. */
     class Drained(val bytes: ByteArray, val failure: Throwable?)
 
-    fun drain(file: ByteArray, keys: BackupKeys = this.keys, chunk: Int = 64): Drained {
+    fun drain(file: ByteArray, keys: BackupKeys = this.keys, chunk: Int = 64, kind: BackupKind = BackupKind.PACK): Drained {
         val out = ByteArrayOutputStream()
         return try {
-            val stream = open(file, keys)
+            val stream = open(file, keys, kind)
             val buffer = ByteArray(chunk)
             while (true) {
                 val n = stream.read(buffer)

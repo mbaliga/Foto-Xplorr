@@ -77,7 +77,34 @@ class BackupPlannerTest {
         val known = listOf(recordOf(a, 0), recordOf(b, 1))
         val plan = plan(known, listOf(a.copy(sizeBytes = a.sizeBytes + 1), b.copy(dateModifiedSeconds = b.dateModifiedSeconds + 1)))
         assertEquals(listOf(2L, 3L), plan.copies.map { it.entryId })
-        assertTrue("the superseded records leave the snapshot", plan.kept.isEmpty() && plan.retained.isEmpty())
+        assertTrue(plan.kept.isEmpty() && plan.retained.isEmpty())
+        assertEquals("the old records wait for their replacements", listOf(0L, 1L), plan.superseded.map { it.entryId })
+        // Both replacements were written: the old versions leave the snapshot.
+        val written = plan.copies.map { it.toEntry(sha, false) }
+        assertEquals(listOf(2L, 3L), plan.nextEntries(written).map { it.entryId })
+    }
+
+    @Test
+    fun `a superseded record stays until its replacement is actually written`() {
+        val a = photo(1)
+        val b = photo(2)
+        val plan = plan(listOf(recordOf(a, 0), recordOf(b, 1)), listOf(a.copy(sizeBytes = a.sizeBytes + 1), b.copy(sizeBytes = b.sizeBytes + 1)))
+        // The run was interrupted (or the copy failed) after only a's new version was written.
+        val onlyA = plan.copies.filter { it.candidate.mediaId == 1L }.map { it.toEntry(sha, false) }
+        assertEquals(setOf(1L, onlyA.single().entryId), plan.nextEntries(onlyA).map { it.entryId }.toSet())
+        assertEquals("nothing written, nothing forgotten", listOf(0L, 1L), plan.nextEntries(emptyList()).map { it.entryId })
+    }
+
+    @Test
+    fun `a changed file too large for any pack keeps its old record`() {
+        val a = photo(1)
+        val grown = a.copy(sizeBytes = 31 * mib)
+        val plan = plan(listOf(recordOf(a, 0)), listOf(grown))
+        assertEquals(listOf(SkipReason.TOO_LARGE_FOR_PACK), plan.skipped.map { it.reason })
+        assertTrue(plan.copies.isEmpty())
+        assertTrue(plan.superseded.isEmpty())
+        assertEquals(listOf(0L), plan.retained.map { it.entryId })
+        assertEquals(listOf(0L), plan.nextEntries(emptyList()).map { it.entryId })
     }
 
     @Test
@@ -95,11 +122,84 @@ class BackupPlannerTest {
     }
 
     @Test
-    fun `a lost record whose file is gone from the phone just disappears`() {
-        val known = listOf(recordOf(photo(1), 0, "pack-0001.fzbp"))
+    fun `a lost record whose file is gone from the phone is carried as missing not forgotten`() {
+        val known = listOf(recordOf(photo(1), 0, "pack-0001.fzbp", setOf(EntryFlag.WAS_PROTECTED)))
         val plan = plan(known, emptyList(), packs = emptySet())
-        assertTrue(plan.kept.isEmpty())
         assertEquals(1, plan.lost.size)
+        assertEquals(listOf(0L), plan.missing.map { it.entryId })
+        val carried = plan.kept.single()
+        assertEquals(setOf(EntryFlag.WAS_PROTECTED, EntryFlag.MISSING), carried.flags)
+        assertEquals("pack-0001.fzbp", carried.packName)
+        assertEquals(listOf(0L), plan.nextEntries(emptyList()).map { it.entryId })
+        assertTrue("the whole destination looks unlisted", plan.destinationLooksUnlisted)
+    }
+
+    @Test
+    fun `a failed destination listing forgets nothing`() {
+        val phone = List(5) { photo(it + 1L) }
+        val known = phone.mapIndexed { i, c -> recordOf(c, i.toLong(), "pack-000${i / 3 + 1}.fzbp") } +
+            List(4) { recordOf(photo(100L + it), 5L + it, "pack-0003.fzbp") } // deleted from the phone, still in packs
+        val plan = plan(known, phone, packs = emptySet())
+        assertTrue(plan.destinationLooksUnlisted)
+        val next = plan.nextEntries(plan.copies.map { it.toEntry(sha, false) })
+        val gone = next.filter { it.mediaId >= 100 }
+        assertEquals(4, gone.size)
+        assertTrue(gone.all { EntryFlag.MISSING in it.flags })
+        // files still on the phone are copied again and their lost records replaced
+        assertEquals(5, plan.copies.size)
+        assertEquals(5 + 4, next.size)
+    }
+
+    @Test
+    fun `a lost record whose file is on the phone stays flagged until the new copy is written`() {
+        val a = photo(1)
+        val plan = plan(listOf(recordOf(a, 0)), listOf(a), packs = setOf("pack-0009.fzbp"))
+        assertEquals(1, plan.copies.size)
+        assertTrue(plan.missing.isEmpty())
+        val failedRun = plan.nextEntries(emptyList()).single()
+        assertEquals(0L, failedRun.entryId)
+        assertTrue(EntryFlag.MISSING in failedRun.flags)
+        assertEquals(listOf(1L), plan.nextEntries(plan.copies.map { it.toEntry(sha, false) }).map { it.entryId })
+    }
+
+    @Test
+    fun `a lost record whose changed file is too large for a pack is carried as missing`() {
+        val a = photo(1)
+        val plan = plan(listOf(recordOf(a, 0)), listOf(a.copy(sizeBytes = 31 * mib)), packs = setOf("pack-0009.fzbp"))
+        assertTrue(plan.copies.isEmpty())
+        assertTrue(plan.superseded.isEmpty())
+        assertEquals(setOf(EntryFlag.MISSING), plan.missing.single().flags)
+    }
+
+    @Test
+    fun `a pack that comes back heals the missing flag`() {
+        val a = photo(1)
+        val gone = photo(2)
+        val known = listOf(
+            recordOf(a, 0, flags = setOf(EntryFlag.MISSING)),
+            recordOf(gone, 1, flags = setOf(EntryFlag.MISSING, EntryFlag.WAS_ARCHIVED)),
+        )
+        val plan = plan(known, listOf(a))
+        assertTrue(plan.isUpToDate)
+        assertTrue(EntryFlag.MISSING !in plan.unchanged.single().flags)
+        assertEquals(setOf(EntryFlag.WAS_ARCHIVED), plan.retained.single().flags)
+        assertTrue(plan.missing.isEmpty())
+    }
+
+    @Test
+    fun `a missing record that is still missing is carried once without a second flag`() {
+        val known = listOf(recordOf(photo(1), 0, "pack-0001.fzbp", setOf(EntryFlag.MISSING)))
+        val plan = plan(known, emptyList(), packs = emptySet())
+        assertEquals(setOf(EntryFlag.MISSING), plan.missing.single().flags)
+    }
+
+    @Test
+    fun `a few lost packs among many do not look like a failed listing`() {
+        val known = List(10) { recordOf(photo(it + 1L), it.toLong(), if (it == 0) "pack-0001.fzbp" else "pack-0002.fzbp") }
+        val plan = plan(known, known.map { photo(it.mediaId) }, packs = setOf("pack-0002.fzbp"))
+        assertEquals(1, plan.lost.size)
+        assertFalse(plan.destinationLooksUnlisted)
+        assertFalse("nothing known, nothing to doubt", plan(emptyList(), listOf(photo(1)), packs = emptySet()).destinationLooksUnlisted)
     }
 
     @Test

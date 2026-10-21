@@ -66,14 +66,28 @@ class PlannedCopy(val entryId: Long, val candidate: BackupCandidate, val packNam
 class PlannedPack(val name: String, val copies: List<PlannedCopy>, val plaintextBytes: Long, val fileBytes: Long)
 
 /**
- * What a run will do. The next manifest is [kept] followed by one entry per planned copy;
- * nothing in the destination is deleted, so a file that left the phone stays in [kept].
+ * What a run will do. The next manifest is [kept] followed by one entry per planned copy, plus
+ * whichever [superseded] records the run did not actually replace ([nextEntries]); nothing in the
+ * destination is deleted, and no record is ever dropped just because it could not be checked.
  *
  * - [unchanged]: on the phone and already backed up (record refreshed: id hint, flags).
  * - [moved]: on the phone under a new folder, recognised by name, size, date taken and quick hash.
  * - [retained]: no longer on the phone (or no longer eligible); kept as it was.
- * - [lost]: the previous manifest names a pack the destination no longer has; dropped from the
- *   snapshot, and copied again if the file is still on the phone.
+ * - [lost]: the previous manifest names a pack the destination no longer has, as the caller
+ *   listed it. Copied again if the file is still on the phone; otherwise carried in [missing].
+ * - [missing]: [lost] records that nothing will replace, kept in the manifest flagged
+ *   [EntryFlag.MISSING] so verify and restore can say the bytes are not there. A listing that
+ *   failed (a card hiccup, a provider error) makes every record look lost, so forgetting them
+ *   silently would lose the only trace of photos deleted from the phone that are still in packs.
+ * - [superseded]: a record whose path is on the phone but whose size or time changed, and whose
+ *   new copy is planned. It leaves the snapshot only once that copy is written ([nextEntries]);
+ *   a copy that fails or never runs leaves the old version in place. A lost one carries the
+ *   MISSING flag. Superseded records of a file too large for any pack are already in [retained]
+ *   (or [missing]), since no replacement will ever be written.
+ *
+ * [destinationLooksUnlisted] says the lost share is large enough that the destination listing is
+ * more likely wrong than the whole destination emptied: the writer lists it once more before it
+ * trusts the plan.
  */
 class BackupPlan(
     val packs: List<PlannedPack>,
@@ -81,14 +95,27 @@ class BackupPlan(
     val moved: List<ManifestEntry>,
     val retained: List<ManifestEntry>,
     val lost: List<ManifestEntry>,
+    val missing: List<ManifestEntry>,
+    val superseded: List<ManifestEntry>,
     val skipped: List<SkippedFile>,
     val bytesOnPhone: Long,
+    val knownCount: Int = 0,
 ) {
     val copies: List<PlannedCopy> get() = packs.flatMap { it.copies }
-    val kept: List<ManifestEntry> get() = unchanged + moved + retained
+    val kept: List<ManifestEntry> get() = unchanged + moved + retained + missing
     val bytesToCopy: Long get() = packs.sumOf { pack -> pack.copies.sumOf { it.candidate.sizeBytes } }
     val isUpToDate: Boolean get() = packs.isEmpty()
+    val destinationLooksUnlisted: Boolean get() = knownCount > 0 && lost.size * 2 > knownCount
     fun skippedFor(reason: SkipReason): List<SkippedFile> = skipped.filter { it.reason == reason }
+
+    /**
+     * The entries of the next manifest once [written] (one per copy the run really finished) are
+     * in their packs. A superseded record goes only when a written entry has its path.
+     */
+    fun nextEntries(written: Collection<ManifestEntry>): List<ManifestEntry> {
+        val replaced = written.mapTo(HashSet()) { it.fileKey }
+        return kept + superseded.filter { it.fileKey !in replaced } + written
+    }
 }
 
 /**
@@ -145,6 +172,10 @@ object BackupPlanner {
             .maxOrNull()?.plus(1) ?: 1
         val layout = PackPlanner.layout(matching.toCopy, { it.sizeBytes }, firstPack, limits, aead)
         layout.oversize.forEach { skipped += SkippedFile(it, SkipReason.TOO_LARGE_FOR_PACK) }
+        // The oversize call comes after the paths were matched, so a changed file that turned out
+        // too large would otherwise lose its old record to a copy that can never happen.
+        val oversizeKeys = layout.oversize.mapTo(HashSet()) { it.fileKey }
+        val (neverReplaced, superseded) = matching.superseded.partition { it.fileKey in oversizeKeys }
 
         val packs = layout.packs.map { bin ->
             val copies = bin.items.map { PlannedCopy(nextEntryId++, it, bin.name) }
@@ -155,10 +186,13 @@ object BackupPlanner {
             packs = packs,
             unchanged = matching.unchanged,
             moved = matching.moved,
-            retained = matching.retained,
+            retained = matching.retained + neverReplaced.filter { !it.isMissing },
             lost = matching.lost,
+            missing = matching.missing + neverReplaced.filter { it.isMissing },
+            superseded = superseded,
             skipped = skipped,
             bytesOnPhone = eligibleBytes,
+            knownCount = known.size,
         )
     }
 
@@ -185,6 +219,8 @@ object BackupPlanner {
         val moved: List<ManifestEntry>,
         val retained: List<ManifestEntry>,
         val lost: List<ManifestEntry>,
+        val missing: List<ManifestEntry>,
+        val superseded: List<ManifestEntry>,
         /** Records still usable whose file is gone from the phone: move sources, or retained. */
         val vanished: List<ManifestEntry>,
     )
@@ -208,7 +244,9 @@ object BackupPlanner {
             if (reason != null) skipped += SkippedFile(c, reason) else eligible += c
         }
 
-        val (usable, lost) = known.sortedBy { it.entryId }.partition { it.packName in existingPacks }
+        val (present, lost) = known.sortedBy { it.entryId }.partition { it.packName in existingPacks }
+        // A pack that is back (a card put in again) heals what an earlier run had to flag.
+        val usable = present.map { if (it.isMissing) it.copy(flags = it.flags - EntryFlag.MISSING) else it }
         val byKey = HashMap<String, MutableList<ManifestEntry>>()
         usable.forEach { byKey.getOrPut(it.fileKey) { ArrayList() } += it }
 
@@ -226,10 +264,13 @@ object BackupPlanner {
         }
 
         // A record whose path no phone file has any more is either a move source or retained. A
-        // record whose path IS on the phone but did not match is a changed file: the new copy
-        // supersedes it, so it leaves the snapshot instead of lingering as a second version.
+        // record whose path IS on the phone but did not match is a changed file: its new copy
+        // supersedes it, but only once that copy is written (BackupPlan.nextEntries).
         val phoneKeys = eligible.mapTo(HashSet()) { it.fileKey }
         val vanished = usable.filter { it.entryId !in claimed && it.fileKey !in phoneKeys }
+        val supersededUsable = usable.filter { it.entryId !in claimed && it.fileKey in phoneKeys }
+        val flaggedLost = lost.map { if (it.isMissing) it else it.copy(flags = it.flags + EntryFlag.MISSING) }
+        val (supersededLost, missing) = flaggedLost.partition { it.fileKey in phoneKeys }
         val movable = HashMap<Triple<String, Long, Long>, MutableList<ManifestEntry>>()
         vanished.filter { it.quickHash != null }.forEach {
             movable.getOrPut(Triple(it.displayName, it.sizeBytes, it.dateTakenMillis)) { ArrayList() } += it
@@ -249,8 +290,10 @@ object BackupPlanner {
             }
         }
         val retained = vanished.filter { it.entryId !in claimed }
-        return Matching(eligible, toCopy, unchanged, moved, retained, lost, vanished)
+        return Matching(eligible, toCopy, unchanged, moved, retained, lost, missing, supersededUsable + supersededLost, vanished)
     }
+
+    private val ManifestEntry.isMissing: Boolean get() = EntryFlag.MISSING in flags
 
     private fun sameBytesProbably(record: ManifestEntry, c: BackupCandidate): Boolean =
         record.sizeBytes == c.sizeBytes &&
