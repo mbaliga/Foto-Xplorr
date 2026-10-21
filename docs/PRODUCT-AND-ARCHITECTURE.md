@@ -154,8 +154,8 @@ system bar a room clears (`clearSystemBarsFor`), so moving a kind moves it every
 - **The top edge is the details room.** The top 56 dp strip is still handed back to the
   notification shade (`topReserve`) at the root grid, where a pull there expands the activity
   strip instead.
-- **Pinch shortcuts** (a viewer setting, on by default): pinch in opens the details, pinch out
-  opens all the actions. Pinch zoom is off while they are on.
+- **Pinch shortcuts** (a viewer setting, off by default): pinch in opens the details, pinch out
+  opens all the actions. By default pinch zooms the photo; turning the shortcuts on turns pinch zoom off.
 
 Drags are applied **1:1 with the finger** and are reversible mid-flight. Only release animates, on
 a 320ms eased curve with **no spring** — a room is a place you arrive at, not something that
