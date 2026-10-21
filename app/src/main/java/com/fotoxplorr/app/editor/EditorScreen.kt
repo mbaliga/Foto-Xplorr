@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -318,9 +319,16 @@ fun EditorScreen(
         }
 
         // A format this file's own bytes could actually be replaced in, or null when they can't
-        // be — see overwriteFormatFor's own doc. Read once here rather than per-save so both the
-        // sheet (which hides the row entirely) and performSave (which must not attempt one) agree.
-        val canOverwriteInPlace = overwriteFormatFor(asset.mimeType) != null
+        // be — see overwriteFormatFor's own doc — and not a file whose animation, HDR gain map or
+        // motion video a re-encode would destroy (see overwriteHazards). Read once here rather
+        // than per-save so both the sheet (which hides the row entirely) and performSave (which
+        // must not attempt one) agree. The hazard read is one pass over the file off the main
+        // thread; until it lands the row is offered and EditedCopyWriter.overwrite repeats the same
+        // check, so a quick tap is refused there rather than let through.
+        val hazards by produceState<Set<OverwriteHazard>>(emptySet(), asset.id) {
+            value = withContext(Dispatchers.IO) { context.readOverwriteHazards(asset) }
+        }
+        val canOverwriteInPlace = overwriteFormatFor(asset.mimeType) != null && hazards.isEmpty()
 
         // Saving in one place, whichever route asked for it. Two call sites for "write the file"
         // is how a save path ends up with two different sets of error handling.
@@ -375,7 +383,10 @@ fun EditorScreen(
                     saveToLauncher.launch(SaveToRequest(editedName(asset.displayName, resolvedFormat), resolvedFormat.mimeType))
                     return@launch
                 }
-                val result = writer.save(asset, full, resolvedFormat, options.resolvedQuality(resolvedFormat))
+                var metadataNote = ""
+                val result = writer.save(asset, full, resolvedFormat, options.resolvedQuality(resolvedFormat)) {
+                    metadataNote = it.savedNote()
+                }
                 saving = false
                 result.onSuccess { uri -> onSavedUri?.invoke(uri) }
                 onSaved(
@@ -389,15 +400,17 @@ fun EditorScreen(
                                     "Saved a copy${rendered.reducedSizeNote} — the original was left untouched " +
                                         "because it is too large to replace at full size here"
                                 // Honest about what actually happened: OVERWRITE was chosen but
-                                // this format has no in-place path at all (see canOverwriteInPlace
-                                // above), so the safe fallback ran instead and needs to say so.
+                                // this photo cannot take it (see canOverwriteInPlace above), so
+                                // the safe fallback ran instead and needs to say why.
+                                mode == EditorSaveMode.OVERWRITE && hazards.isNotEmpty() ->
+                                    "Saved a copy — replacing the original would destroy its ${hazards.describe()}"
                                 mode == EditorSaveMode.OVERWRITE ->
                                     "Saved a copy — ${asset.mimeType} can't be replaced in place"
                                 options.format != null ->
                                     "Saved a copy as ${resolvedFormat.label}${rendered.reducedSizeNote}"
                                 rendered.downscaled -> "Saved a copy${rendered.reducedSizeNote}"
                                 else -> "Saved a copy at full resolution"
-                            }
+                            } + metadataNote
                         },
                         onFailure = { it.message ?: "Could not save the edited photo" },
                     ),

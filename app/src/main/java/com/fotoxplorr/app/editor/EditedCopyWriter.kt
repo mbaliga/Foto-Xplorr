@@ -67,6 +67,9 @@ class EditedCopyWriter(context: Context) {
      * format via [outputFormatFor]) at [quality] (defaulting to [format]'s own default; only
      * meaningful for JPEG/WebP/HEIC, PNG's encoder is lossless).
      *
+     * [onMetadata] is told how much of [source]'s metadata made it onto the new file, so the caller
+     * can say so when it did not (a copy is still worth saving without it).
+     *
      * @return the new file's content Uri.
      */
     suspend fun save(
@@ -74,11 +77,12 @@ class EditedCopyWriter(context: Context) {
         bitmap: Bitmap,
         format: OutputFormat = outputFormatFor(source.mimeType),
         quality: Int = format.exportQuality(),
+        onMetadata: (MetadataCopy) -> Unit = {},
     ): Result<Uri> = withContext(Dispatchers.IO) {
         runCatching {
             val tempFile = encodeToStagingFile(bitmap, format, quality)
             try {
-                applySourceMetadata(source, tempFile, format)
+                onMetadata(applySourceMetadata(source, tempFile, format))
 
                 val name = editedName(source.displayName, format)
                 val values = ContentValues().apply {
@@ -192,14 +196,37 @@ class EditedCopyWriter(context: Context) {
      * existing bytes is touched unless every step up to that point already succeeded. Opened as
      * `"wt"` — write, **truncate**, no read access requested — so a smaller re-encode does not
      * leave a tail of the previous file's bytes behind it.
+     *
+     * Refuses, with a typed [OverwriteException.Refused] and the original untouched, when the
+     * file's format has no in-place path, when it is an animation, Ultra HDR image or Motion Photo
+     * ([overwriteHazards]), or when its metadata could not be carried over in full
+     * ([overwriteMetadataRefusal]).
      */
     suspend fun overwrite(source: MediaAsset, bitmap: Bitmap): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val format = overwriteFormatFor(source.mimeType)
-                ?: error("${source.mimeType} cannot be replaced in place")
+                ?: throw OverwriteException.Refused(
+                    OverwriteException.Refused.Reason.FORMAT_UNSUPPORTED,
+                    "${source.mimeType} cannot be replaced in place. Save a copy instead.",
+                )
+            // Before anything is encoded: re-encoding the first frame's pixels would destroy an
+            // animation, an HDR gain map or a motion video, none of which a copy of the pixels
+            // can carry.
+            val hazards = appContext.readOverwriteHazards(source)
+            if (hazards.isNotEmpty()) {
+                throw OverwriteException.Refused(
+                    OverwriteException.Refused.Reason.WOULD_DESTROY_CONTENT,
+                    hazards.refusalMessage(),
+                    hazards,
+                )
+            }
             val tempFile = encodeToStagingFile(bitmap, format, format.exportQuality())
             try {
-                applySourceMetadata(source, tempFile, format)
+                // The metadata gate. Unlike a copy, this is irreversible: if the staged file does
+                // not hold everything the original's EXIF and XMP held (location redacted by
+                // Android, source unreadable, the copy failed) then writing it over the original
+                // would silently strip it, so refuse and leave the original alone.
+                overwriteMetadataRefusal(applySourceMetadata(source, tempFile, format))?.let { throw it }
 
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeFile(tempFile.absolutePath, bounds)
@@ -423,7 +450,7 @@ internal fun compositeOntoWhiteIfNeeded(bitmap: Bitmap, format: OutputFormat): B
 
 /** What [EditedCopyWriter.applySourceMetadata] managed to carry from the source onto the staged
  *  file. Only [COPIED] means the staged file holds everything the source's metadata did. */
-internal enum class MetadataCopy {
+enum class MetadataCopy {
     /** Source read in full, target written. */
     COPIED,
 
@@ -439,6 +466,14 @@ internal enum class MetadataCopy {
 
     /** Reading or writing the EXIF threw. */
     FAILED,
+}
+
+/** The clause appended to a "saved" message when the copy is missing some of the source's metadata,
+ *  or empty when nothing the user would miss was lost. */
+internal fun MetadataCopy.savedNote(): String = when (this) {
+    MetadataCopy.REDACTED -> " (location not copied: allow photo-location access to keep it)"
+    MetadataCopy.SOURCE_UNREADABLE, MetadataCopy.FAILED -> " (photo details could not be copied)"
+    MetadataCopy.COPIED, MetadataCopy.SKIPPED_HEIC -> ""
 }
 
 /**
