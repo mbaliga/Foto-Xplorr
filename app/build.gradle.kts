@@ -338,11 +338,6 @@ dependencies {
     // their own version of it is precisely how that feel drifts apart.
     implementation("dev.aarso:cell-shell:0.1.0")
 
-    // Media3 session (audio playback service)
-    implementation("androidx.media3:media3-exoplayer:1.9.0")
-    implementation("androidx.media3:media3-session:1.9.0")
-    implementation("androidx.media3:media3-common:1.9.0")
-
     testImplementation("junit:junit:4.13.2")
     // WS-D: JobRunner's state transitions run real coroutines (progress callbacks, cancellation)
     // and need a deterministic test dispatcher rather than a real one.
