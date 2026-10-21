@@ -57,7 +57,7 @@ fun fileStem(displayName: String): String {
 /**
  * Thin MediaStore glue: everything in the same bucket as [asset], narrowed to real subtitle
  * sidecars by [findSidecarSubtitles]. Android's `Files` collection is the only one that can see a
- * `.srt`/`.vtt`/`.ass`/`.ssa` file at all (the video and audio collections only enumerate their
+ * `.srt`/`.vtt`/`.ass`/`.ssa` file at all (the image and video collections only enumerate their
  * own media types), which is why this queries it rather than `MediaStore.Video`.
  */
 fun querySidecarSubtitlesFor(context: Context, asset: MediaAsset): List<SidecarCandidate> {

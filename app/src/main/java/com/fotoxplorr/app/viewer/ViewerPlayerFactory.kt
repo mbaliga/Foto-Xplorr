@@ -10,9 +10,8 @@ import androidx.media3.exoplayer.ExoPlayer
 
 /**
  * The one place a foreground video player is configured, shared by [VideoPlayer] and the video
- * editor's preview. Mirrors `playback/PlaybackService`'s player (same audio attributes and
- * focus/noisy handling, `CONTENT_TYPE_MOVIE` instead of music) so the two behave as one app:
- * starting a video takes audio focus and pauses the background music, a phone call or navigation
+ * editor's preview. It uses movie audio attributes with focus and becoming-noisy handling:
+ * starting a video takes audio focus and pauses other apps' music, a phone call or navigation
  * prompt pauses the video, and unplugging headphones pauses it instead of blaring from the speaker.
  *
  *  - decoder fallback: when the preferred hardware decoder for a format fails to initialise, try the

@@ -1,10 +1,8 @@
 package com.fotoxplorr.app.media
 
-import android.os.Build
-
-/** Which MediaStore collection a written file belongs to — the three collections
+/** Which MediaStore collection a written file belongs to — the two collections
  *  [mediaStoreRelativePath] has a distinct allowed-folder list and fallback for. */
-enum class MediaKind { IMAGE, VIDEO, AUDIO }
+enum class MediaKind { IMAGE, VIDEO }
 
 /**
  * Where a copy or conversion of a file that came from [sourceRelativePath] should be saved within
@@ -21,8 +19,8 @@ enum class MediaKind { IMAGE, VIDEO, AUDIO }
  * than being flattened to the fallback — an edit of `DCIM/Camera/IMG_1.jpg` belongs beside the
  * original in `DCIM/Camera/`, not relocated to `Pictures/Fotoz/`.
  *
- * Builds before the product was renamed saved their fallback copies to `Pictures/Foto Xplorr/`,
- * `Movies/Foto Xplorr/` and `Music/Foto Xplorr/`. Those folders are never renamed or moved and
+ * Builds before the product was renamed saved their fallback copies to `Pictures/Foto Xplorr/`
+ * and `Movies/Foto Xplorr/`. Those folders are never renamed or moved and
  * the scanners index them by MediaStore id like any other folder, so nothing is lost; a source
  * already inside one keeps its exact path (the top folder is an allowed one), so an edit of an
  * older copy still lands beside it. Only a fresh fallback now goes to the `Fotoz` folders.
@@ -32,42 +30,25 @@ enum class MediaKind { IMAGE, VIDEO, AUDIO }
  * ("Media location and other metadata" / the collection-to-directory table on that page):
  *  - Images: `DCIM`, `Pictures`.
  *  - Video: `DCIM`, `Movies`, `Pictures`.
- *  - Audio: `Music`, `Podcasts`, `Audiobooks`, `Ringtones`, `Notifications`, `Alarms`, and
- *    `Recordings` — but only from API 31 (`Build.VERSION_CODES.S`); the same page states
- *    `Recordings` "isn't available on Android 11 (API level 30) and lower".
- *
- * [sdkInt] defaults to the real running platform version and only exists as a parameter so
- * [MediaStoreDestinationTest] can exercise the `Recordings` API-level gate directly — this
- * environment has no emulator and only one Robolectric framework jar available offline (see the
- * Phase 0 brief's environment notes), so a test cannot simulate API 30 by asking Robolectric to
- * run under a different `@Config(sdk = ...)`.
  */
-fun mediaStoreRelativePath(sourceRelativePath: String?, kind: MediaKind, sdkInt: Int = Build.VERSION.SDK_INT): String {
+fun mediaStoreRelativePath(sourceRelativePath: String?, kind: MediaKind): String {
     val topFolder = sourceRelativePath
         ?.trim('/')
         ?.substringBefore('/')
         ?.takeIf { it.isNotBlank() }
         ?: return FALLBACK_RELATIVE_PATH.getValue(kind)
-    return if (topFolder in allowedTopFolders(kind, sdkInt)) sourceRelativePath else FALLBACK_RELATIVE_PATH.getValue(kind)
+    return if (topFolder in allowedTopFolders(kind)) sourceRelativePath else FALLBACK_RELATIVE_PATH.getValue(kind)
 }
 
 private val FALLBACK_RELATIVE_PATH = mapOf(
     MediaKind.IMAGE to "Pictures/Fotoz/",
     MediaKind.VIDEO to "Movies/Fotoz/",
-    MediaKind.AUDIO to "Music/Fotoz/",
 )
 
 private val IMAGE_ALLOWED_TOP_FOLDERS = setOf("DCIM", "Pictures")
 private val VIDEO_ALLOWED_TOP_FOLDERS = setOf("DCIM", "Movies", "Pictures")
-private val AUDIO_ALLOWED_TOP_FOLDERS = setOf("Music", "Podcasts", "Audiobooks", "Ringtones", "Notifications", "Alarms")
-private const val AUDIO_RECORDINGS_TOP_FOLDER = "Recordings"
 
-private fun allowedTopFolders(kind: MediaKind, sdkInt: Int): Set<String> = when (kind) {
+private fun allowedTopFolders(kind: MediaKind): Set<String> = when (kind) {
     MediaKind.IMAGE -> IMAGE_ALLOWED_TOP_FOLDERS
     MediaKind.VIDEO -> VIDEO_ALLOWED_TOP_FOLDERS
-    MediaKind.AUDIO -> if (sdkInt >= Build.VERSION_CODES.S) {
-        AUDIO_ALLOWED_TOP_FOLDERS + AUDIO_RECORDINGS_TOP_FOLDER
-    } else {
-        AUDIO_ALLOWED_TOP_FOLDERS
-    }
 }

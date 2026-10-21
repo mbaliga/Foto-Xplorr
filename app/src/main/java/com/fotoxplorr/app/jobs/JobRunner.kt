@@ -45,7 +45,7 @@ class JobHandle internal constructor(val id: String, private val job: Job) {
 }
 
 /**
- * Runs a long operation (a video/audio conversion, an editor save, a copy or move, a ZIP export, a
+ * Runs a long operation (a video conversion, an editor save, a copy or move, a ZIP export, a
  * metadata batch write) as a cancellable, observable job instead of a bare `rememberCoroutineScope()`
  * launch, which a rotation used to kill outright and which had no way to report progress or accept a
  * second tap without silently ignoring it.
