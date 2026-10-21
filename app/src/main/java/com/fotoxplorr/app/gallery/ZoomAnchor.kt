@@ -33,3 +33,66 @@ internal fun reanchoredGridIndex(
     if (old.gridIndexOf(asset) <= oldFirstVisible) return null
     return new.gridIndexOf(asset)
 }
+
+/**
+ * What the grid keeps of the layout it LAST DREW, so the next layout can be anchored to it.
+ *
+ * It outlives the grid: Settings, a destination screen and the map replace the grid in the
+ * browsing `when`, which disposes [ZoomGrid], while the hoisted `LazyGridState` keeps its old
+ * numeric index. A copy remembered inside the grid would be gone by the time the layout changed
+ * under that index (Timeline off, Group by None, a rung picked in Settings), and the first
+ * composition back would find nothing to compare with. So the browser owns one and every grid it
+ * draws is handed it.
+ *
+ * Plain fields, not state: they are only read by the next [settle], and a snapshot read would
+ * recompose the grid on every scroll.
+ */
+internal class LayoutAnchor {
+    private var map: GridIndexMap? = null
+    private var hasHeaders = false
+    private var grouping = TimelineGrouping.MONTH
+    private var sideways = false
+
+    /**
+     * Records the layout now drawn and returns the item the grid must be moved to first, if any.
+     * [firstVisible] is still the PREVIOUS layout's top line: this runs after composition and
+     * before the next measure.
+     */
+    fun settle(
+        map: GridIndexMap,
+        hasHeaders: Boolean,
+        grouping: TimelineGrouping,
+        sideways: Boolean,
+        firstVisible: Int,
+    ): Int? {
+        val previous = this.map
+        var target: Int? = null
+        if (previous != null && previous !== map) {
+            target = reanchoredGridIndex(
+                old = previous,
+                oldHasHeaders = this.hasHeaders,
+                new = map,
+                newHasHeaders = hasHeaders,
+                headersDiffer = this.grouping != grouping,
+                oldFirstVisible = firstVisible,
+            )
+        }
+        // Turning the grid on its side keeps the same first item but not the old pixel offset into
+        // it, which was measured along the other axis and could now be longer than the tile.
+        if (target == null && previous != null && this.sideways != sideways) target = firstVisible
+        this.map = map
+        this.hasHeaders = hasHeaders
+        this.grouping = grouping
+        this.sideways = sideways
+        return target
+    }
+
+    /**
+     * Drops what was drawn, for a moment the grid's scroll position is no longer one of its
+     * layouts' (an empty view, or the plain grid that has no headers): comparing the next layout
+     * with the last one drawn would anchor on an index that layout never had.
+     */
+    fun forget() {
+        map = null
+    }
+}

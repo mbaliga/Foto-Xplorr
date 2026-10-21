@@ -641,9 +641,13 @@ private fun GalleryBrowser(
         mapOpen = mapOpen,
         routeIsRoot = route == BrowserRoute.Root,
     )
-    val notificationReserve = if (shadeDrawn) shadeHeight(shadeState, activities.size).dp else 0.dp
+    val shadeDp = if (shadeDrawn) shadeHeight(shadeState, activities.size) else 0
+    val notificationReserve = shadeDp.dp
 
     val gridState = rememberLazyGridState()
+    // Beside the scroll state it describes: the grid is disposed while Settings, a destination
+    // screen or the map is up, and the layout it drew last must still be there to anchor on.
+    val layoutAnchor = remember { LayoutAnchor() }
     val gridScope = rememberCoroutineScope()
 
     // Recognition starts when a scan SETTLES, not on every change to the asset count.
@@ -1235,7 +1239,8 @@ private fun GalleryBrowser(
         // 56dp on the Initial pass and every pull on the status line opens the top room (when
         // there is one) instead of expanding the line -- the two gestures live in the same
         // pixels. Still needed now the details room is there.
-        topReserve = notificationReserve,
+        // Plus the strip's gutter when it is along the top: the shade is drawn inside that gutter.
+        topReserve = shadeTopReserve(shadeDp, timelineGutter).dp,
         // One geography for the whole app (owner, 2026-08-18: *"the model needs to remain the
         // same"*). Wherever you are, the same edge holds the same KIND of thing, and RoomGeography
         // holds the table the viewer reads too:
@@ -1512,6 +1517,7 @@ private fun GalleryBrowser(
                                                 selection = selection,
                                                 onSelectionChange = { selection = it },
                                                 gridState = gridState,
+                                                anchor = layoutAnchor,
                                                 horizontal = sidewaysGrid,
                                                 onRequestUnlock = { key, name ->
                                                     passwordRequest = PasswordRequest(
@@ -1536,6 +1542,7 @@ private fun GalleryBrowser(
                                         fitToTile = state.preferences.fitToTile,
                                         loopAnimations = state.preferences.loopAnimations,
                                         animatedIds = state.animatedIds,
+                                        anchor = layoutAnchor,
                                         horizontal = sidewaysGrid,
                                     )
                                 }
@@ -1563,8 +1570,10 @@ private fun GalleryBrowser(
                             // on TOP and BOTTOM only the strip's two end 56dp can lose a horizontal
                             // drag to a side room. No topReserve/bottomReserve is spent on it: moving
                             // the shell's zones off the edge would put the details and actions rooms
-                            // out of reach of the very pixels they are pulled from.
-                            if (stripShown && (!selection.isActive || stripDrawnWhileSelecting(timelinePlacement))) {
+                            // out of reach of the very pixels they are pulled from. (The one thing the
+                            // top strip does move is the shade, drawn inside the gutter, and with it
+                            // the shade's reserve: see shadeTopReserve.)
+                            if (stripDrawn(stripShown, selection.isActive)) {
                                 EdgeTimelineScrubber(
                                     stops = scrubberStops,
                                     itemCount = gridIndexMap.itemCount,

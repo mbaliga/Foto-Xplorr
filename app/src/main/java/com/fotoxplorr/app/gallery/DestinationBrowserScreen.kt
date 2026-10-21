@@ -274,6 +274,7 @@ internal fun DestinationContent(
     selection: GallerySelection,
     onSelectionChange: (GallerySelection) -> Unit,
     gridState: LazyGridState,
+    anchor: LayoutAnchor,
     onRequestUnlock: (String, String) -> Unit,
     horizontal: Boolean = false,
 ) {
@@ -332,6 +333,7 @@ internal fun DestinationContent(
                     fitToTile = state.preferences.fitToTile,
                     loopAnimations = state.preferences.loopAnimations,
                     animatedIds = state.animatedIds,
+                    anchor = anchor,
                     horizontal = horizontal,
                 )
             }

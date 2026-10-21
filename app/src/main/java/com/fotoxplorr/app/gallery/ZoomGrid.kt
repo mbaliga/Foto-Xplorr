@@ -84,6 +84,9 @@ private val STAMP_HOLE_PITCH = 5.dp
  * months, and the column rungs' while the timeline is on) are drawn here as full width items; the grid's own item positions are then mapped by `GridIndexMap`, not assumed equal
  * to photo positions (TRAPS #5 and #9).
  *
+ * [anchor] is the browser's, not the grid's own: Settings, a destination screen and the map replace
+ * this grid in the browsing `when`, and what it drew last must outlive that (see [LayoutAnchor]).
+ *
  * A masonry grid (the "fit to tile" setting off) is the old staggered layout, still zoomable but
  * only through the column rungs: it never draws stamps or headers.
  *
@@ -116,14 +119,17 @@ internal fun ZoomGrid(
     fitToTile: Boolean,
     loopAnimations: Boolean,
     animatedIds: Set<MediaId>,
+    anchor: LayoutAnchor,
     horizontal: Boolean = false,
 ) {
     val assets = layout.renderedAssets
     if (assets.isEmpty()) {
+        SideEffect { anchor.forget() }
         GalleryMessage(emptyMessage)
         return
     }
     if (!fitToTile) {
+        SideEffect { anchor.forget() }
         MediaGridScreen(
             assets = assets,
             columns = columnsAcross(rung, ZOOM_RUNG_LAST_GRID),
@@ -164,29 +170,15 @@ internal fun ZoomGrid(
     val gridIndexMap = remember(layout) {
         GridIndexMap(layout.groups.map { it.assets.size }, layout.hasHeaders, trailingFooter = true)
     }
-    val anchor = remember { LayoutAnchor(sideways) }
     SideEffect {
-        val previous = anchor.map
-        var target: Int? = null
-        if (previous != null && previous !== gridIndexMap) {
-            target = reanchoredGridIndex(
-                old = previous,
-                oldHasHeaders = anchor.hasHeaders,
-                new = gridIndexMap,
-                newHasHeaders = layout.hasHeaders,
-                headersDiffer = anchor.grouping != layout.grouping,
-                // Still the old layout's top line: this runs before the next measure.
-                oldFirstVisible = gridState.firstVisibleItemIndex,
-            )
-        }
-        // Turning the grid on its side keeps the same first item but not the old pixel offset into
-        // it, which was measured along the other axis and could now be longer than the tile.
-        if (target == null && anchor.sideways != sideways) target = gridState.firstVisibleItemIndex
-        target?.let { gridState.requestScrollToItem(it) }
-        anchor.map = gridIndexMap
-        anchor.hasHeaders = layout.hasHeaders
-        anchor.grouping = layout.grouping
-        anchor.sideways = sideways
+        anchor.settle(
+            map = gridIndexMap,
+            hasHeaders = layout.hasHeaders,
+            grouping = layout.grouping,
+            sideways = sideways,
+            // Still the old layout's top line: this runs before the next measure.
+            firstVisible = gridState.firstVisibleItemIndex,
+        )?.let { gridState.requestScrollToItem(it) }
     }
 
     BoxWithConstraints(
@@ -254,16 +246,6 @@ internal fun ZoomGrid(
             MediaPeek(asset = asset, loopAnimations = loopAnimations, animated = asset.id in animatedIds)
         }
     }
-}
-
-/**
- * What [ZoomGrid] remembers of the layout before this one. Plain fields, not state: they are only
- * read by the next side effect, and a snapshot read would recompose the grid on every scroll.
- */
-private class LayoutAnchor(var sideways: Boolean) {
-    var map: GridIndexMap? = null
-    var hasHeaders = false
-    var grouping = TimelineGrouping.MONTH
 }
 
 /**

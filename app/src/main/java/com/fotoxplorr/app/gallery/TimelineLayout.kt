@@ -106,13 +106,29 @@ internal fun routeBarDrop(shown: Boolean, placement: TimelinePlacement, searchVi
     if (shown && placement == TimelinePlacement.TOP && !searchVisible) TIMELINE_STRIP_DP else 0
 
 /**
- * Whether the strip stays drawn while photos are being selected. The selection toolbars float over
- * the top corners and the trash over the bottom right, so a strip along the top or bottom would be
- * hidden behind them; a side strip clears all three and stays useful for a long selection. The
- * gutter stays either way, so the grid does not jump when a selection starts.
+ * Whether the strip is drawn right now: it is [shown], and no selection is under way.
+ *
+ * The selection controls float over the whole screen, drawn after the strip and not inset by its
+ * gutter: the toolbars over the top corners, the count bar down the right edge and the trash flush
+ * to the bottom right. On any edge one of them covers a stop or an end of the track, and a tap on
+ * the strip's end would land on Move to trash. So the strip steps aside for every placement. The
+ * gutter stays either way (it follows [shown] alone), so the grid does not jump when a selection
+ * starts.
  */
-internal fun stripDrawnWhileSelecting(placement: TimelinePlacement): Boolean =
-    placement == TimelinePlacement.LEFT || placement == TimelinePlacement.RIGHT
+internal fun stripDrawn(shown: Boolean, selecting: Boolean): Boolean = shown && !selecting
+
+/**
+ * How much of the top the shell leaves to the notification shade, in dp: the shade's own height,
+ * plus the strip's gutter when the strip is along the top.
+ *
+ * The shade is drawn inside the grid's gutter box, so a top strip pushes it down by the gutter and
+ * the shell's top-edge pull zone must start that much lower too; otherwise the zone overlaps the
+ * shade's body and a drag down on the collapsed shade pulls the details room instead of expanding
+ * it. Nothing to reserve while no shade is drawn ([shadeDp] is 0): the gutter alone is not the
+ * host's, and the details room must stay reachable from the edge.
+ */
+internal fun shadeTopReserve(shadeDp: Int, gutter: TimelineReserve): Int =
+    if (shadeDp > 0) shadeDp + gutter.top else shadeDp
 
 /** Whether the library's end of the list is the latest photo: the Oldest first order. */
 internal fun latestAtEnd(sort: GallerySort): Boolean = sort == GallerySort.OLDEST

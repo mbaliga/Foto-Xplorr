@@ -44,6 +44,11 @@ minus), `TimelineRunsTest`.
       the top line**, pinch to 6 columns with the timeline off (flat grid): the first photo of that
       month must stay at the top, not land several screens later (the audit fix; unit-tested in
       `ZoomAnchorTest` only). Repeat Stamps to day-grouped columns and back.
+- [ ] **Anchor across Settings.** Photos, 3 columns, Timeline on, Group by Day, scroll until a day
+      header is the top line, then open Settings > Library, turn Timeline off (or Group by None) and
+      close Settings: the same photo is at the top, not hundreds later. Also set the Stamps rung from
+      the Settings zoom stepper to a column rung with the timeline off. (`ZoomGridAnchorTest` covers
+      the grid being disposed and drawn again.)
 - [ ] Verify the re-anchor lands before the first frame of the new layout, with no one-frame flash at
       the wrong place.
 - [ ] **Stamps look.** The dotted perforated edge (one dashed stroke with round caps) reads as round
@@ -203,11 +208,12 @@ rail and view options swipes; scrub reaches the grid), `GalleryPreferencesTimeli
       side rooms (expected, accepted), and a vertical drag that starts on the strip opens the details
       or actions room. Confirm that feels acceptable.
 - [ ] With a **Top** strip: the notification shade (`ActivityShade`) is drawn inside the grid area, below
-      the strip, whereas the shell's top zone assumes it is at the screen top. Check the shade pull and
-      the details room pull still work. The album or collection bar drops 44 dp (but not while the
+      the strip, and the shell's top zone starts below it (shade height plus the 44 dp gutter). Check a
+      drag down on the collapsed shade expands it (it must not pull the details room) and the details
+      room still pulls from just below the shade. The album or collection bar drops 44 dp (but not while the
       search field is open).
-- [ ] **Selection:** a Left or Right strip stays and scrubs while selecting; a Top or Bottom strip hides
-      under the selection toolbars; the grid does not jump when a selection starts.
+- [ ] **Selection:** the strip hides on every edge (Left, Right, Top, Bottom) while selecting, so a tap
+      at its ends never reaches Move to trash; the grid does not jump when a selection starts.
 - [ ] Switch the sort to **Name** or **Size**: the strip and the gutter disappear and the column
       headers go; back to a date order, they return. Masonry has no strip, gutter or headers.
 - [ ] Labels follow where each month really starts (a busy month's end is where it is, not evenly

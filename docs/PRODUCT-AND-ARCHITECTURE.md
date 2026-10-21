@@ -211,8 +211,9 @@ separate choices (owner #25).
 - **The strip lives in the grid's own box**, so a Left strip clears the pinned navigation rail. A
   Bottom strip sits above the navigation inset and lifts the pill, the two discs and the time-range
   column by 44 dp; a Top strip drops the album bar (not while the search field is up). During a
-  selection a Left or Right strip stays and keeps scrubbing; a Top or Bottom strip hides under the
-  selection toolbars, but the gutter stays so the grid does not jump.
+  selection the strip is hidden on every edge (`stripDrawn`): the selection controls are drawn over the
+  whole screen, not inset by the gutter, and would cover a stop or the track's end; the gutter stays
+  so the grid does not jump.
 - **Labels are placed at the position their own item index maps to**, so the strip tells the truth
   about where a busy month ends; spacing them evenly would look tidier and lie. The strip claims a
   touch only after the finger passes touch slop along its own axis, so a tap does nothing and a drag

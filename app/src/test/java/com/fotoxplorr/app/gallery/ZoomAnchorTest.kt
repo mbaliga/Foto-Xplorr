@@ -77,4 +77,76 @@ class ZoomAnchorTest {
         // And two layouts that agree on the headers still need nothing.
         assertNull(reanchoredGridIndex(stamps, true, days, true, onMonthHeader, headersDiffer = false))
     }
+
+    // ---- the anchor outlives the grid ----
+
+    private val dayHeaders = GridIndexMap(listOf(2, 2, 2, 2, 2, 2), hasHeaders = true, trailingFooter = true)
+
+    private fun LayoutAnchor.draw(
+        map: GridIndexMap,
+        hasHeaders: Boolean,
+        grouping: TimelineGrouping = TimelineGrouping.DAY,
+        sideways: Boolean = false,
+        firstVisible: Int = 0,
+    ) = settle(map, hasHeaders, grouping, sideways, firstVisible)
+
+    @Test
+    fun `the first layout drawn has nothing to anchor to`() {
+        assertNull(LayoutAnchor().draw(dayHeaders, true, firstVisible = 5))
+    }
+
+    @Test
+    fun `a layout that is still the one drawn needs no anchor`() {
+        val anchor = LayoutAnchor()
+        anchor.draw(dayHeaders, true)
+        assertNull(anchor.draw(dayHeaders, true, firstVisible = 5))
+    }
+
+    @Test
+    fun `headers lost while the grid was away anchor on the photo under the old header`() {
+        // Day headers, a day header at the top line (item 6: the third day's header, over asset 4);
+        // then Settings is open and Timeline is switched off, so the next grid is headerless.
+        val anchor = LayoutAnchor()
+        anchor.draw(dayHeaders, true, firstVisible = 0)
+        val flat = GridIndexMap(listOf(12), hasHeaders = false, trailingFooter = true)
+        assertEquals(flat.gridIndexOf(4), anchor.draw(flat, false, firstVisible = 6))
+    }
+
+    @Test
+    fun `another grouping while the grid was away anchors the same way`() {
+        val anchor = LayoutAnchor()
+        anchor.draw(stamps, true, grouping = TimelineGrouping.MONTH)
+        // h1 (item 5) is the top line; day headers replace the month headers.
+        assertEquals(
+            dayHeaders.gridIndexOf(4),
+            anchor.draw(dayHeaders, true, grouping = TimelineGrouping.DAY, firstVisible = 5),
+        )
+    }
+
+    @Test
+    fun `a layout is only compared once and then becomes the one drawn`() {
+        val anchor = LayoutAnchor()
+        anchor.draw(dayHeaders, true)
+        val flat = GridIndexMap(listOf(12), hasHeaders = false, trailingFooter = true)
+        anchor.draw(flat, false, firstVisible = 7)
+        // Growing the headers back needs nothing, from the headerless layout just drawn.
+        assertNull(anchor.draw(dayHeaders, true, firstVisible = 4))
+    }
+
+    @Test
+    fun `turning the grid on its side while it was away keeps the first item`() {
+        val anchor = LayoutAnchor()
+        anchor.draw(columns, false, sideways = false)
+        assertEquals(6, anchor.draw(columns, false, sideways = true, firstVisible = 6))
+        assertNull(anchor.draw(columns, false, sideways = true, firstVisible = 6))
+    }
+
+    @Test
+    fun `a forgotten layout is not compared with`() {
+        val anchor = LayoutAnchor()
+        anchor.draw(dayHeaders, true)
+        anchor.forget()
+        val flat = GridIndexMap(listOf(12), hasHeaders = false, trailingFooter = true)
+        assertNull(anchor.draw(flat, false, firstVisible = 7))
+    }
 }

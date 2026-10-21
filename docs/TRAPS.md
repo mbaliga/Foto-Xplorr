@@ -778,6 +778,9 @@ the grid's own `Box` inside the Column, not in the screen-wide overlay `Box`, be
 rail. The reserve is NOT passed to `SpatialShell` as `topReserve`/`bottomReserve` (that would move
 the details and actions rooms' pull zones off the edge); the strip's own drag runs along its axis,
 the shell's runs first on the Initial pass, so only a strip's two 56dp ends can lose a drag to a side room.
+The one exception is the notification shade: it is drawn inside the gutter box, so a TOP strip pushes
+it down by the gutter and `shadeTopReserve` adds the same to the shell's `topReserve`, or the top-edge
+pull zone would sit over the shade's body and a drag down on the shade would open the details room.
 
 "Latest at the bottom" is Oldest first plus a scroll to the last item, never `reverseLayout`
 (a header placed before its group would draw below it and `GridIndexMap` would have to learn a
@@ -808,7 +811,11 @@ layout; a month header's does not once the headers go (Stamps to columns, or Sta
 columns with days), so the grid landed one item later per header above it, up to ~180 items on 22k
 photos. `ZoomGrid` re-anchors in a `SideEffect` (after composition, before the next measure, so
 there is no frame at the wrong place) with `reanchoredGridIndex`, only when the old top line was a
-header; any other top is left to key retention, which preserves the sub-item offset. Header keys
+header; any other top is left to key retention, which preserves the sub-item offset. The `LayoutAnchor`
+it compares with is the BROWSER's (hoisted beside `gridState`), not the grid's: Settings, a destination
+screen and the map replace the grid in the browsing `when`, which disposes it, and a copy remembered
+inside would be gone when Timeline or Group by changes meanwhile, leaving the old numeric index on a
+layout it no longer means. Header keys
 carry the run index (a repeated month is a second run, and duplicate lazy keys throw; #69).
 
 ## 71. The map is a mode with no Back of its own, and "settled" must include the rail's own motion

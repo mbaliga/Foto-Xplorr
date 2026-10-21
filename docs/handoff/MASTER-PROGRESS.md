@@ -814,9 +814,11 @@ edge parameter, PR #17).
   elasticity.
 - **Back from a photo opened on the map lands on the grid** (`mapOpen` is a plain `remember`, by
   decision); the time range survives.
-- **A Top or Bottom strip hides during a selection** (the selection toolbars sit in those corners)
-  while a Left or Right strip stays; the gutter stays either way. The strip is not given to the shell
-  as `topReserve` or `bottomReserve`.
+- **The strip hides during a selection on every edge** (the selection controls are drawn over the
+  screen, not inset by the gutter, and cover a Left or Right strip's first and last stops and its
+  bottom end); the gutter stays, so the grid does not jump. The strip is not given to the shell as
+  `topReserve` or `bottomReserve`; only the shade, which a Top strip pushes down, adds the gutter to the
+  shell's `topReserve` (`shadeTopReserve`).
 - **The sideways grid keeps its pill clearance as a permanent 88 dp bottom padding** rather than a
   footer, and the Stamps rung flips the grid vertical under the same `LazyGridState`.
 - **The unit that bumped the pin** (`d4e1f0a`) did so before any app code used the new parameter; the

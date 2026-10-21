@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -24,6 +25,7 @@ import com.fotoxplorr.app.gallery.GRID_TILE_ASPECT
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.GallerySort
 import com.fotoxplorr.app.gallery.GridChromeBridge
+import com.fotoxplorr.app.gallery.LayoutAnchor
 import com.fotoxplorr.app.gallery.LocalGridChromeBridge
 import com.fotoxplorr.app.gallery.SyntheticCatalogue
 import com.fotoxplorr.app.gallery.ZoomGrid
@@ -73,6 +75,7 @@ class ZoomGridRenderTest {
         horizontal: Boolean = false,
         headers: Boolean = stampHeadersShown(rung, GallerySort.NEWEST, masonry = false),
         state: LazyGridState = rememberLazyGridState(),
+        anchor: LayoutAnchor = remember { LayoutAnchor() },
     ) {
         val layout = zoomLayoutFor(assets, headers = headers)
         ZoomGrid(
@@ -90,6 +93,7 @@ class ZoomGridRenderTest {
             fitToTile = true,
             loopAnimations = false,
             animatedIds = emptySet(),
+            anchor = anchor,
             horizontal = horizontal,
         )
     }

@@ -84,11 +84,38 @@ class TimelineLayoutTest {
     }
 
     @Test
-    fun `a selection keeps a side strip and hides one along the top or bottom`() {
-        assertTrue(stripDrawnWhileSelecting(TimelinePlacement.LEFT))
-        assertTrue(stripDrawnWhileSelecting(TimelinePlacement.RIGHT))
-        assertFalse(stripDrawnWhileSelecting(TimelinePlacement.TOP))
-        assertFalse(stripDrawnWhileSelecting(TimelinePlacement.BOTTOM))
+    fun `a selection hides the strip on every edge but never moves the gutter`() {
+        assertTrue(stripDrawn(shown = true, selecting = false))
+        // The selection controls cover a stop or an end of the track on every edge.
+        assertFalse(stripDrawn(shown = true, selecting = true))
+        assertFalse(stripDrawn(shown = false, selecting = false))
+        assertFalse(stripDrawn(shown = false, selecting = true))
+        // The gutter follows `shown` alone, so the grid does not jump when a selection starts.
+        for (placement in TimelinePlacement.entries) {
+            assertEquals(44, timelineReserve(true, placement).run { start + top + end + bottom })
+        }
+    }
+
+    @Test
+    fun `a top strip pushes the shell's top zone down with the shade it pushes down`() {
+        val top = timelineReserve(true, TimelinePlacement.TOP)
+        // 56 is the collapsed shade: the zone starts below the shade AND the gutter above it.
+        assertEquals(56 + 44, shadeTopReserve(56, top))
+        assertEquals(20 + 44, shadeTopReserve(20, top))
+    }
+
+    @Test
+    fun `no shade means no reserve, strip or not`() {
+        // Nothing drawn at the top to hand back, so the details room keeps the whole edge.
+        assertEquals(0, shadeTopReserve(0, timelineReserve(true, TimelinePlacement.TOP)))
+    }
+
+    @Test
+    fun `a strip on any other edge, or none, leaves the shade's reserve as it was`() {
+        assertEquals(56, shadeTopReserve(56, timelineReserve(false, TimelinePlacement.TOP)))
+        for (placement in listOf(TimelinePlacement.LEFT, TimelinePlacement.RIGHT, TimelinePlacement.BOTTOM)) {
+            assertEquals(56, shadeTopReserve(56, timelineReserve(true, placement)))
+        }
     }
 
     @Test
