@@ -46,6 +46,13 @@ on Photos, and the old audio database and scan preferences are deleted on first 
 | **Places** | A map of geotagged media |
 | **Protected** | Password-protected folders |
 
+The map is not a tenth destination. It is a **mode of the browser**: a black disc at the bottom
+left (`MapToggleFab`, "Show map" / "Show grid") and an extra **Map** word on the rail, placed before
+Places, swap the grid for the same photos on a map, with the album, search and time range you were
+in (`gallery/MapMode.kt`). Places (the hub of the immersive views) is unchanged, and neither Places
+nor Protected offers the disc or the Map word's effect: choosing Map from either falls back to
+Photos. So the rail has nine destination words plus Map.
+
 ### Smart albums and organisation
 
 Beneath the destinations sit **smart albums** — Favorites, Recent, Videos, Screenshots, Animated,
@@ -116,10 +123,10 @@ feedback #26):
 
 | Edge | Room | Gallery | Viewer |
 |---|---|---|---|
-| **Left** | Navigation: where you can go | The destination rail (nine words) and a Settings row | none: the viewer has no left room (Close or Back returns to the grid) |
+| **Left** | Navigation: where you can go | The destination rail (nine destinations plus a Map word) and a Settings row | none: the viewer has no left room (Close or Back returns to the grid) |
 | **Top** | Details: what this is | `GalleryInfoRoom`: counts for the current view, and the library | `PhotoDetailRoom`: the photo's facts, camera card, place plate, caption, tags |
 | **Bottom** | Actions: what you can do | Select photos, New collection, Rescan the library, and the selection's actions | Favourite, Slideshow, Share, Edit, Lift subject, Open with, Rename, Convert, Mark sensitive, Move to trash |
-| **Right** | View options: how it is shown | Columns, sort, Videos, Blur or Hide sensitive | Filmstrip, blur, keep awake, transparent-photo background, slideshow seconds and shuffle, loop animations, autoplay, pinch opens panels |
+| **Right** | View options: how it is shown | Zoom (1 to 6 columns, then Stamps), scroll direction, the sort worded as where the latest photo sits, the timeline on or off and its edge, Videos, Blur or Hide sensitive | Filmstrip, blur, keep awake, transparent-photo background, slideshow seconds and shuffle, loop animations, autoplay, pinch opens panels |
 
 Why it is arranged so: view options sit at the side because you want to watch their effect,
 whereas an action does not need the content in view; actions tilt up from the bottom because that
@@ -150,7 +157,8 @@ system bar a room clears (`clearSystemBarsFor`), so moving a kind moves it every
   Appearance, Media, Library, Privacy, Viewer, Data, Background, Pro and About. Albums, Calendar,
   Discover, Library and Tidy up use the same scaffold. While a page is up, the top, bottom and
   right drags are disabled (navigation only) and Back, Escape and the rail lead out of it in one
-  order (`paneBackTarget`).
+  order (`paneBackTarget`: room, Settings, a destination screen, the time-range panel, selection,
+  search, the map, the route).
 - **The top edge is the details room.** The top 56 dp strip is still handed back to the
   notification shade (`topReserve`) at the root grid, where a pull there expands the activity
   strip instead.
@@ -161,16 +169,79 @@ Drags are applied **1:1 with the finger** and are reversible mid-flight. Only re
 a 320ms eased curve with **no spring** — a room is a place you arrive at, not something that
 bounces into position.
 
-### The edge timeline scrubber
+### One zoomable grid
 
-A narrow strip down the right side of the grid. Gliding a finger down it sweeps the entire
-library, with a bubble naming the month under the thumb and a haptic tick at each month boundary.
-This is what makes a 21,000-item continuous mosaic navigable.
+The gallery is a single grid with seven zoom **rungs** (`adaptive/GridZoom.kt`, `gallery/ZoomGrid.kt`).
+Rungs 1 to 6 are that many columns of photo tiles; rung 7 is **Stamps**, a sheet of tiny perforated
+stamps (about 36 dp, 8 to 24 across by window width) under a heading per month. It is one continuous
+scroll at every rung, and a pinch works at every rung in both directions: spread to step towards 1,
+pinch to step towards Stamps, one rung per 25% change in finger spread, with the ends closed (there
+is no Year or Decade view past Stamps). Ctrl plus the mouse wheel, Ctrl and plus or minus, and the
+density pill (a stepper that wraps round the rungs) reach the same rungs. The live rung is held in
+screen state and **stored only when a pinch settles** (or a button or key is used), under the
+preference `grid_zoom_rung`; a stored column count from before the rungs is read once as the default
+(2 to 6 keep their meaning, 7 becomes 6, so nobody's grid changes structure on update). The photo
+picker clamps to 1 to 6 and a masonry grid ("Fill the tile" off) steps through 1 to 6 vertically,
+with no headers and no stamps.
 
-Its labels are placed at the y their own item index maps to, so the strip tells the truth about
-where a busy month ends — spacing them evenly would look tidier and lie. It claims a touch only
-after the finger passes touch slop vertically, so a tap near the edge does nothing and a sideways
-drag still reaches the shell.
+The earlier Grid / Calendar / Year / Decade / Time view switcher and its zoom ladder are gone.
+`CalendarScreen` survives only as a pane reached from Settings.
+
+The grid keeps its place across a rung change by the key of the first visible photo. A change
+that drops the month headers while a header is the top line (Stamps to columns without day headers)
+would otherwise land many photos later, so `ZoomGrid` re-anchors to the run's first photo
+(`reanchoredGridIndex`, TRAPS #70).
+
+### The timeline strip
+
+The edge scrubber is now an option with a place. **Timeline** is a switch (Settings > Library, and a
+TIMELINE group in the view options room), default on, and its **edge** is Left, Right (the default),
+Top or Bottom. Gliding a finger along it sweeps the whole library, with a bubble naming the month
+under the thumb and a haptic tick at each month boundary: this is what makes a 21,000-item mosaic
+navigable. Where the strip sits, which way the photos scroll, and the order they are in are three
+separate choices (owner #25).
+
+- **A permanent 44 dp gutter.** While the strip is part of the screen the grid is padded by its
+  thickness on that side, so photos never sit under it. This reverses an earlier decision, recorded
+  in a since-replaced comment in `GalleryScreen`, that the strip would be a transient overlay because a permanent
+  stripe was cluttered; the owner asked for the grid to make room. The strip rests at a constant
+  60% alpha. `stripShouldShow` is the one decision for strip and gutter alike: timeline on, a date
+  order (Newest or Oldest), not masonry, not the map or a pane, and a view with stops. Name and Size
+  orders hide it, because a month is not a place in those lists.
+- **The strip lives in the grid's own box**, so a Left strip clears the pinned navigation rail. A
+  Bottom strip sits above the navigation inset and lifts the pill, the two discs and the time-range
+  column by 44 dp; a Top strip drops the album bar (not while the search field is up). During a
+  selection a Left or Right strip stays and keeps scrubbing; a Top or Bottom strip hides under the
+  selection toolbars, but the gutter stays so the grid does not jump.
+- **Labels are placed at the position their own item index maps to**, so the strip tells the truth
+  about where a busy month ends; spacing them evenly would look tidier and lie. The strip claims a
+  touch only after the finger passes touch slop along its own axis, so a tap does nothing and a drag
+  across it still reaches the shell.
+- **Month headers on the columns.** On rungs 1 to 6 a header row appears above each stretch of
+  photos only while the timeline is on, the order is Newest or Oldest, the grid is not masonry and
+  the Settings choice **Group timeline by** is not None (Day or Month). A fresh install groups by
+  month; an install that stored Day keeps Day. The Stamps rung always groups by month and is flat for
+  Name and Size.
+- **Order is wording over the existing sort.** Newest reads "Latest at top" and Oldest "Latest at
+  bottom" ("left" and "right" on a sideways grid); By name and Largest first are unchanged. Oldest
+  is not a reversed layout: the list is ascending and the grid **opens at its last item**, on a
+  (destination, route, sort) change and when a rail word is chosen (even the current one). It waits
+  for the first scan to finish for Oldest only. A short library under Oldest sits at the top of the
+  screen, not the bottom.
+
+### Scroll direction
+
+**Scroll direction** (Settings > Library and a row in the view options room; default Vertical,
+preference `scroll_axis`) turns the column rungs on their side: a `LazyHorizontalGrid` whose rung is
+the number of **rows**, each month a narrow 36 dp full-height header column with its title reading
+upward, and tiles as wide as their row's height allows. The Stamps rung and masonry stay vertical
+whatever the setting says (the setting is kept and the next column rung is sideways again), and a
+sideways grid keeps an 88 dp band along its bottom for the pill and discs. Arrow keys swap their
+strides on a sideways grid. Nothing pairs the strip with the axis automatically (a Top or Bottom
+strip suits a sideways grid, and the caption says so), and any strip scrubs any grid. The shell's
+56 dp left and right edge zones claim a horizontal drag that *starts* in them for the rail and view
+options rooms, so a sideways grid cannot begin a scroll in its first or last 56 dp; this is accepted
+and is a device check. Right-to-left layouts are not handled.
 
 ### Refresh is a shake
 
@@ -182,18 +253,51 @@ cannot fire twice.
 
 ### The floating pill
 
-A dark rounded pill at the bottom: search on the left, a position readout in the middle
-("March 2024 · 412 of 21526"), grid density on the right. The middle is a *readout*, not a
-control — the edge scrubber sets position, and two position controls that can disagree about
-where you are is worse than either alone.
+A dark rounded pill at the bottom, between two black discs: the map toggle at the left and search
+at the right. The pill holds a position readout in the middle ("March 2024 · 412 of 21526"), a time
+button that opens the time-range panel, and the density stepper (which wraps round the zoom rungs
+and announces "3 columns" or "Stamps"). The middle is a *readout*, not a control — the edge scrubber
+sets position, and two position controls that can disagree about where you are is worse than either
+alone. On the map the readout reads "N located" and the density stepper is left out.
+
+### The map, and the time range
+
+With the map up the browser shows the **current view** on a map: the destination, route, search and
+time range, privacy-filtered. The offline build draws the stamp map embedded in the browser; the
+Connect build draws the street map, but only once the browser has been at rest with every room
+closed and the rail not turning, and it keeps it from then on (TRAPS #71). `mapOpen` is session-only:
+a cold start lands on the grid, and Back from a photo opened on the map lands on the grid.
+
+The **time range** narrows the grid and the map together ("time acts as a filter", owner #27). It is
+month-granular and judged on the same date the headers and the scrubber use (date taken, else
+modified). An always-visible chip shows the range and the count with a 48 dp clear button; the panel
+offers year chips and a month slider applied on release. It is held across the viewer round trip and
+process death but not across launches, is not reset by a destination or route change, and is hidden
+on Places and Protected, where it does not apply. A selection's count text does not mention it.
 
 ### Selection
 
-Long-press enters selection mode, which replaces the header with a selection bar carrying the
-bulk actions: share, favourite, archive, mark sensitive, clean-share, copy, move, rename, tag,
-add to collection, trash.
+What a long press on a tile does is a setting (Settings > Media, **Long press does**): Quick
+preview (the default, held while the finger is down), Select, Favourite, Share, Edit or Nothing
+(`GridLongPress`, `LongPressResolver`). While a selection is active a hold always toggles the tile,
+except under Nothing, which stays inert; in the Trash, Favourite, Share and Edit fall back to the
+preview, and no setting offers Trash. An install that had turned "Peek on long press" off starts on
+Select. The setting is read when the gesture completes, not captured when the tile appears. Tiles
+announce Open (or "Add or remove from selection") and a long-click in the configured action's words
+to TalkBack.
+
+A selection starts from the actions room's Select photos, from a hold under the Select setting, or
+from Ctrl+A. While it runs the header gives way to a selection bar carrying the bulk actions: share, favourite, archive, mark sensitive,
+clean-share, copy, move, rename, tag, add to collection, trash.
 
 ### The viewer
+
+**Back from a photo lands where you left.** The gallery is held across the viewer
+(`SaveableStateProvider` in `FotoXplorrActivity`), so Back returns to the same destination, route,
+search, selection, time range and grid position; before this it landed on the default destination at
+the top of the grid (the scroll position comes from `rememberLazyGridState`'s saver and is checked
+by reading, not on a device). The zoom rung, the open map and sheet visibility are not held (the rung is a
+preference, the map is session-only). Rotation was never a loss path.
 
 The photo (or video) is *home* and the same room mechanics apply, with the same geography as the
 gallery (see the table in §2): **pull the photo down** for the details room (title, camera card,
@@ -255,7 +359,7 @@ gallery's layout; that deviation is retired, and `handoff/DESIGN-FIDELITY-VIEWER
 ```text
 Library (the catalogue)
 │
-├── Destination            ← the primary axis; nine lenses, no back-stack
+├── Destination            ← the primary axis; nine lenses, no back-stack (the Map is a mode, not a tenth)
 │   └── Route              ← drill-down beneath a destination
 │       ├── Device album
 │       ├── Collection
@@ -266,7 +370,7 @@ Library (the catalogue)
 │   ├── LEFT   Navigation: the destinations rail
 │   ├── TOP    Details: the view's counts, or the open photo's facts
 │   ├── BOTTOM Actions: a quick strip, then every action
-│   └── RIGHT  View options: columns and sort, or the viewer's switches
+│   └── RIGHT  View options: zoom, order, timeline and scroll direction, or the viewer's switches
 │
 ├── Panes                  ← take over the place the photos are
 │   └── Settings (nine tabs), Albums, Calendar, Discover, Library, Tidy up
@@ -294,7 +398,7 @@ Two rules hold this together:
 | Package | Responsibility |
 |---|---|
 | `media/` | The catalogue: `MediaAsset`, `MediaRepository`, `SqliteMediaRepository`, `AndroidMediaStoreScanner`, `MediaIndexer`, `ScanPlan`, `PrefsScanWatermark`, `MediaStoreChangeObserver` |
-| `gallery/` | The browsing surface: `GalleryScreen`, `GalleryProjection` (pure filtering/sorting), `DestinationBrowserScreen`, `TimelineStops`, preferences, dialogs |
+| `gallery/` | The browsing surface: `GalleryScreen`, `GalleryProjection` (pure filtering/sorting), `DestinationBrowserScreen`, `ZoomGrid` (the one grid), `TimelineStops`/`TimelineRuns`/`TimelineLayout` (strip, gutter, headers), `TimeRange`, `MapMode`, `LongPressResolver`, preferences, dialogs |
 | `viewer/` | Single-asset viewing: the photo and its three rooms, the roll-level filmstrip, `ViewerChromePolicy` (what is drawn when), the slideshow bar (`SlideshowBar`), the transparent-photo backdrop (`TransparencyBackdrop`), the shrink-to-map flight (`PhotoToPinFlight`, `PlaceMorph`), detail formatting, the Media3 video player (`VideoPlayer`, `PlaybackLogic`, `ViewerPlayerFactory`, `ResumePositionStore`), and `ExternalViewerActivity` (the single VIEW target) |
 | `ui/` | Shared UI vocabulary: `RoomGeography` (which edge holds which room), `RoomStyle`/`PaneScaffold` (the black room and page style), `QuickActionStrip`, and `HelpCopy`, the one home of the app's trimmed help and privacy text (length ceilings pinned by `HelpCopyTest`) |
 | `core/*` | Pure Kotlin modules shared with other targets (`model`, `formats`, `metadata`, `search`, `organize`, `db`, `index`). `core:formats` holds the byte sniffers `AnimationSniffer` and `AlphaSniffer`; commonMain stays free of Android and `java.*` imports (`scripts/verify-core-purity.sh`) |
@@ -508,11 +612,12 @@ submodules + Gradle `includeBuild` dependency substitution** — the constellati
 sharing mechanism, with no Maven registry involved.
 
 `shared-libraries/` (crash-recovery and cell-shell) is another repository's submodule
-(`mbaliga/Shared-Libraries-asoc`) and is pinned at `1f33d10`, on that repo's
-`claude/friendly-lovelace-06dito` branch (its PR #17). That commit adds what the actions room needs:
+(`mbaliga/Shared-Libraries-asoc`) and is pinned at `18fc20e`, on that repo's
+`claude/friendly-lovelace-06dito` branch (its PR #17). That branch adds what the actions room needs:
 a navigation-bar-aware bottom edge zone, the optional two-stage bottom peek, `bottomReserve` (so a
 vertical-first drag on the filmstrip or video transport scrubs instead of opening the room) and a
-stale-flick guard. **PR #17 must be merged first, with a merge commit (TRAPS #2), and only then this
+stale-flick guard (pin `1f33d10`), and the timeline strip's edge (`ScrubberEdge`: Left, Right, Top or
+Bottom, default Right; pin `18fc20e`). **PR #17 must be merged first, with a merge commit (TRAPS #2), and only then this
 app's PR**, or a fresh `clone --recurse-submodules` cannot find the pinned commit.
 
 The explicit `dependencySubstitution` on the Hyle include in `settings.gradle.kts` is
@@ -529,9 +634,12 @@ hard-fail.
 
 ## 5. Known limits
 
-- **The edge scrubber assumes a headerless grid.** Grid item *n* is asset *n*. Both surfaces that
-  show the scrubber render headerless grids; a grid that drew date headers would insert items and
-  shift everything below each one.
+- **The scrubber, pill and arrow keys never assume grid item *n* is asset *n*.** The grid now draws
+  month headers (always at Stamps, and on the columns while the timeline is on), so every grid index
+  goes through `GridIndexMap` (`core/organize`, TRAPS #5). Masonry keeps a staggered state the screen
+  cannot reach, so it has no strip, headers or pill position. Undated photos sort together at one end
+  (`sortAssets` orders by date taken, the strip and headers by date taken else modified), so a month
+  can head two runs.
 - **Trash operations require Android 11+.** On older versions the app declines rather than
   deleting media without the platform confirmation dialog.
 - **Remote AI is unverified against every provider.** The four provider shapes are implemented;
@@ -579,6 +687,13 @@ hard-fail.
   insets of the moved rooms under a camera cutout or three-button navigation, the cove against a
   real status bar, TalkBack, a real fling on the rail, and every mid-write failure of Replace are in
   `docs/device-test/batch-2-checklist.md`.
+- **Batch 3 (October 2026: the one zoomable grid and Stamps, the timeline strip on any edge with a
+  gutter and month headers, the sideways grid, the map toggle and time range, the long-press choice,
+  Back from a photo landing where you left) has not run on a device either.** The pure rules are
+  unit-tested and the screens are exercised under Robolectric, but the pinch feel, the Stamps
+  perforation and its scroll at 22,000 photos, the strip on all four edges under gesture and
+  three-button navigation, the sideways grid's edge zones, the Connect build's street map and the
+  rail-scrub no-fetch guarantee, and TalkBack are in `docs/device-test/batch-3-checklist.md`.
 - **`decodeUpright` returns null on API 26 and 27, found and not fixed.** The `BitmapFactory`
   fallback (used below API 28; `ImageDecoder` is used from 28) does its bounds-only pass with
   `BitmapFactory.decodeStream`, which always returns null for a bounds-only decode, and the line

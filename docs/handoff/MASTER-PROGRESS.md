@@ -174,6 +174,12 @@ shape the WP entries above use.
   non-grid (Year/Decade fold into the switcher's "Cal" button, since neither has a quick-select
   button of its own -- they are reached by pinch or by drilling in, not by a named jump).
 
+  **Superseded 21 Oct 2026 (batch 3, owner #21).** The ladder, the Calendar, Year and Decade rungs and
+  the Grid / Cal / Time view switcher are gone: the gallery is one grid with rungs 1 to 6 columns and
+  then Stamps (a month-block sheet), pinchable at every rung. `GalleryZoomLadder` and its test were
+  deleted; `CalendarScreen` survives only as a pane reached from Settings (its `initialMonth`
+  parameter went with `YearScreen` and `DecadeScreen`). See "Batch 3" below.
+
 - **Configurable pinch gesture, part (b): `ViewerPinchMode` in the single-photo viewer.** A new
   `GalleryPreferencesState.viewerPinchMode` (`OPTICAL_ZOOM` default / `PANEL_SHORTCUTS`), persisted
   the same way `accentPalette`/`themeMode` are. `OPTICAL_ZOOM` is `ViewerScreen`'s original pinch
@@ -708,3 +714,151 @@ publish pinned). **Core** `ceb2243` (`AlphaSniffer`). **Rooms and navigation** `
   to set `android:largeHeap`.
 - Rooms: the live-preview partial-width detents for the right room's view options still need a
   shared-shell change.
+
+## Batch 3: one zoomable grid, a timeline you place, the map as a mode, a long-press choice (21 Oct 2026)
+
+The owner's third round, answered here in two parts (the grid and the map first, the timeline and the
+sideways grid second). Quoted in the code that answers them: **#21** one continuous grid you pinch
+through, then postage-stamp months, "still a long and continuous scroll, not the left right movement
+it is now"; **#25** *"Timeline should be allowed to be toggled on/off and the placement decided - can
+be left or right with a vertical scroll, or top and bottom with a horizontal scroll. User should also
+be allowed to select whether they want to see the photos top to bottom or bottom to top or left to
+right or right to left ... When the timeline is toggled on, the photo grid needs to move to make
+space for it. Or at least while scrubbing through the timeline, shrink the grid so they don't overlap,
+and group and separate the photos by month."*; **#27** a round grid/map toggle and time as a filter
+(the grid and the map both narrowed by a range); **#3 and #14** what a long press does.
+
+Method as batch 2: a read-only design pass with a critic (its corrections and defaults are below),
+then serial code units on this one branch, each compiling for both flavours with its own tests, an
+audit pass whose three findings were fixed, then this docs unit. **No device or emulator was
+available; nothing here has run on a phone.** The last full-suite figures recorded before the timeline
+and sideways units were 2205 offline tests and 2205 on Connect (10 skipped by design: the offline map
+seam tests call `assumeFalse(NETWORK_FEATURES)`), `:app:lint*` and both `assemble*` green, and the
+offline manifest, classpath and source-reference gates green; the last two units added tests and
+were each run on their own areas. The full `./scripts/verify.sh` gate is the orchestrator's last
+step and is not recorded here. Device-only items are in `docs/device-test/batch-3-checklist.md`;
+lessons that bind later work are `docs/TRAPS.md` #68 to #73.
+
+Commits (app repo, oldest first): `16392a7` (the gallery held across the viewer), `73333cc` (long press
+does), `d01266e` (map as a mode, time range), `c22c345` (one zoomable grid, Stamps), `1341bdd` (three
+audit fixes), `d4e1f0a` (library pin bump), `465c873` (timeline on/off, edge, gutter, headers, Oldest
+opens at the latest end), `66f691c` (sideways scroll). Library repo: `18fc20e` (`EdgeTimelineScrubber`
+edge parameter, PR #17).
+
+### Owner decisions applied (not re-asked)
+
+- **Reading of #25.** The strip's placement (Left, Right, Top, Bottom) and its on/off are independent
+  of the scroll axis (Vertical default, Horizontal) and of the photo order. Order is the existing
+  Newest / Oldest sort, worded "Latest at top" / "Latest at bottom" ("left" / "right" on a sideways
+  grid); the grid opens at the latest end; there is no `reverseLayout` (`GridIndexMap` and the
+  scrubber's index mapping are untouched).
+- **Defaults.** Timeline ON, placement Right, a permanent 44 dp gutter while it is on (the grid makes
+  room), the strip hidden for Name and Size, in masonry and in panes. A fresh install groups by month
+  (a stored value, including Day, is untouched). On rungs 1 to 6 month headers appear only while the
+  timeline is on and grouping is not None; Stamps always has month headers (flat for Name and Size).
+- **Sideways grid.** A `LazyHorizontalGrid` with a narrow full-height month header; Stamps stays
+  vertical-only in v1; the shell's 56 dp left and right edge zones still claim horizontal drags that
+  start in them (accepted and documented). The strip lives on the grid's own box so a Left strip
+  clears the pinned rail; a Bottom strip lifts the pill and the discs; a Top strip drops the album bar.
+- **Zoom.** Rungs 1 to 6 are columns and 7 is Stamps; a stored 7 columns becomes 6; the rung is
+  stored when a gesture settles. No Year or Decade view.
+- **Map.** A mode of the browser (not a destination, not a rung), reached from a bottom-left disc and
+  a Map rail word before Places; session-only (a cold start lands on the grid); Places and Protected
+  do not offer it.
+- **Long press.** A Settings choice (Quick preview default, Select, Favourite, Share, Edit, Nothing);
+  the old on/off key is read once.
+
+### What was built, per item
+
+- **Back from a photo lands where you left (`16392a7`, TRAPS #68).** `FotoXplorrApp` composes the
+  gallery, viewer and editor as sibling branches, so the gallery's `rememberSaveable` state died with
+  every round trip. It is held by a `SaveableStateProvider` (`GALLERY_STATE_KEY`), and the first-composition
+  reset of search, selection and route in `GalleryBrowser` is skipped. `GalleryViewerRoundTripTest`
+  holds a search across the round trip and has a control showing it is lost without the holder.
+- **Long press does (`73333cc`, TRAPS #73).** `GridLongPress`, `LongPressResolver`, the legacy
+  `long_press_preview` mapping (false becomes Select), Settings > Media "Long press does", merged
+  TalkBack semantics on tiles, and the stale-closure fix (a tap after a sort change now pages the
+  viewer through the new order). The right-click menu was not extended with Share and Edit.
+- **Map and time range (`d01266e`, TRAPS #71).** `MapToggleFab`, the Map rail word, `TimeRange`
+  (month-granular, judged on `timelineMillis`), the always-visible chip and panel, `PhotoMapPane` with an
+  offline and a Connect implementation, embedded map screens with no `BackHandler`, and
+  `PaneBackTarget.CLOSE_MAP`.
+- **One zoomable grid (`c22c345`, TRAPS #70).** `ZoomGrid`, `GridZoom.kt` (pinch accumulator at ln 1.25
+  per rung, closed ends), `TimelineRuns` (runs with a distinct key per run), the slim `StampTile` with a
+  dashed perforated edge, Ctrl plus or minus and Ctrl-wheel, a density pill that wraps, "Zoom" in the
+  view options and "Grid zoom" in Settings, and the picker clamped to 1 to 6. `TimelineScreen`, the
+  view switcher and the Year and Decade screens were deleted.
+- **Audit fixes (`1341bdd`).** Stamps to columns keeps the photo at the top (a header top line is
+  re-anchored to its run's first photo); a scrub resting on Map never builds the Connect street map on a
+  pinned rail (`onTurning`, `mapPaneSettled`); a time panel hidden by a selection or a pane no longer
+  swallows Back (`timeEditorShown`, `CLOSE_TIME_EDITOR`).
+- **Timeline (`465c873`, TRAPS #69).** The library's `ScrubberEdge` (pinned at `18fc20e`), Settings
+  "Timeline" and "Timeline edge", a TIMELINE group in the view options room, `stripShouldShow` and
+  `timelineReserve` as one decision, the 44 dp gutter, a constant 0.6 rest alpha (the fade machinery
+  was deleted), headers that follow "Group timeline by" on the columns (that row is live again), and an
+  anchor that opens Oldest first at its last item once the scan is done.
+- **Sideways grid (`66f691c`, TRAPS #72).** `ScrollAxis`, Settings "Scroll direction" and a flip row in
+  the view options, the `LazyHorizontalGrid` branch of `ZoomGrid`, 36 dp header columns reading upward,
+  an 88 dp bottom band, arrow-key strides swapped, and Stamps and masonry falling back to vertical.
+
+### What deviated and why
+
+- **The permanent gutter reverses an earlier call.** A comment in `GalleryScreen` had recorded that the
+  strip would be a transient right-edge overlay because a permanent stripe was cluttered; the owner
+  asked for the grid to make room, so it is permanent while the timeline is on, at 0.6 alpha.
+- **Oldest first is not a reversed layout.** A short library under Oldest sits at the top of the screen,
+  not the bottom, and returning from an album to the root grid re-anchors (it loses the previous scroll
+  position).
+- **Continuous zoom is slice 1 only.** The rungs are discrete; the optional layer-scale feel with
+  focal-point anchoring (a `GridGeometry`) was not built, and pinching past Stamps clamps with no
+  elasticity.
+- **Back from a photo opened on the map lands on the grid** (`mapOpen` is a plain `remember`, by
+  decision); the time range survives.
+- **A Top or Bottom strip hides during a selection** (the selection toolbars sit in those corners)
+  while a Left or Right strip stays; the gutter stays either way. The strip is not given to the shell
+  as `topReserve` or `bottomReserve`.
+- **The sideways grid keeps its pill clearance as a permanent 88 dp bottom padding** rather than a
+  footer, and the Stamps rung flips the grid vertical under the same `LazyGridState`.
+- **The unit that bumped the pin** (`d4e1f0a`) did so before any app code used the new parameter; the
+  library PR #17 must still be merged with `--no-ff` before this app's PR (TRAPS #2).
+- **Tests that pinned removed or moved behaviour were updated, not skipped:** the switcher assertions in
+  `GalleryMapModeTest`, the switch count in `PaneRenderTest` (the Peek switch became a chip row), and
+  that test's Library-tab layout (it now scrolls to "Tidy up" and asserts "Timeline edge").
+
+### Found, not fixed (outside the units that found them)
+
+- `GridChromeBridge.columnsAcross` now means "tiles across the short side" (rows when the grid is
+  sideways); its KDoc still says "one row".
+- The selection count text does not mention an active time range, and Select all and Trash act on the
+  range-filtered list while the chip is hidden by the selection chrome.
+- `LazyHorizontalGrid` flows right to left under RTL, so "Latest at left" would be wrong there; not
+  handled.
+- Undated photos: `sortAssets` orders by date taken while the strip, headers and range read date taken
+  else modified, so undated photos cluster at one end and a month can head two runs. Keys carry the
+  run index; the behaviour is recorded in TRAPS #69 and is a device check.
+- The right-click menu has no Share or Edit rows; the tile has no custom TalkBack action list (a
+  merged long-click only).
+- Deferred as decided: slide-up from the preview to open, video playback in the preview, blurring a
+  sensitive photo in the preview (it is shown unblurred), a Gestures tab, a view-options mirror of the
+  long-press row, Open details, drag-to-extend selection, and a viewer long-press setting.
+- Connect-flavour unit tests were compiled but not run for the timeline and sideways units; the
+  Connect MapLibre view's `textureMode(true)` was not applied pending a device check (it may draw
+  untransformed inside the shell's swivelling card).
+
+### Residual, for the owner
+
+- **A human read of the new wording.** Settings and room strings: "Latest at top / bottom / left /
+  right", "Timeline" ("Date orders only. The photos make room for the strip."), "Timeline edge",
+  "Scroll direction" ("Across suits a top or bottom timeline. Stamps stay vertical."), "Long press
+  does" ("What holding a photo does. While selecting, a hold adds it."). The store description and the
+  changelog now mention the timeline and the map. The Connect build's network statement (street map
+  tiles, one-time model download, AI services you add) was written before the map was reachable from
+  the grid's disc and the Map rail word; it is still true but wants the same human read as the batch 2
+  privacy lines.
+- **Decisions to confirm.** The permanent 44 dp stripe at 0.6 alpha (the owner once called a permanent
+  stripe cluttered); Timeline ON and Right as the defaults; a fresh install grouping by month while
+  existing installs keep Day; Back from the map's photo landing on the grid; the shell edge zones
+  taking the first and last 56 dp of a Top or Bottom strip and of a sideways grid; whether the sideways
+  grid should be inset instead.
+- **Release housekeeping.** `shared-libraries` PR #17 merges first with a merge commit, then this PR;
+  `versionCode` must go to 5 to match `changelogs/5.txt`, which now also covers batch 3.

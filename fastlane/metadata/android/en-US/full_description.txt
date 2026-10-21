@@ -3,12 +3,16 @@ not want an account, and it never uploads anything.
 
 BROWSE
 • Nine destinations: Pets, People, Identity, Screenshots, Photos, Videos,
-  Favourites, Places and Protected.
+  Favourites, Places and Protected, plus a Map button that shows the current
+  view on a map.
 • Drag from an edge: left for where to go, top for details, bottom for actions
   (a little for quick ones, further for all), right for view options.
-• A timeline grouped by day or month, or ungrouped, with a scrubber.
+• A timeline scrubber you can switch off or put on any edge, with the photos
+  grouped by month or day and room made so nothing sits under it.
 • Search by filename, folder, media type, tag, date range or camera.
-• Sort by newest, oldest, name or size, with an adjustable grid.
+• Sort by newest, oldest, name or size. Pinch through 1 to 6 columns to a
+  sheet of tiny month stamps; scroll down or sideways; narrow it all to a
+  range of months. Choose what a long press does.
 • A full-screen viewer with EXIF/XMP details, swipe, zoom, pan, a favourite
   heart, and a slideshow with its own play, pause and skip bar.
 • Choose what shows behind transparent photos: a grid, white or black.

@@ -1,7 +1,7 @@
-Nine destinations: Audio, background playback and audio tag editing are gone, with the audio permission.
+Audio, background playback and audio tags are gone, with the audio permission.
 
-New: a favourite heart in the viewer, a play/pause/skip bar for slideshows, a grid, white or black background for transparent photos, and much shorter help text.
+New: one grid you pinch from 1 to 6 columns to month stamps; a timeline you can turn off or put on any edge; a map toggle and month range; choose what a long press does; a viewer favourite heart, a slideshow bar, backgrounds for transparent photos, shorter help.
 
-Rooms: details from the top, actions from the bottom (a short pull shows quick actions), view options from the right. Settings is a full page.
+Rooms: details top, actions bottom, view options right. Settings is a page.
 
-Replace original is safer. Hidden or locked photos are never opened from other apps.
+Replace original is safer. Hidden photos never open from other apps.

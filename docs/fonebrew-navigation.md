@@ -86,10 +86,10 @@ viewer. The code's single table is `ui/RoomGeography.kt`.
 
 | Edge | Holds | Gallery | Viewer |
 |---|---|---|---|
-| Left | where you can go | the destination rail (nine words) with a Settings row | none |
+| Left | where you can go | the destination rail (nine destinations plus a synthetic Map word before Places) with a Settings row | none |
 | Top | details | the view's counts and the library (`GalleryInfoRoom`) | the photo's facts and place plate (`PhotoDetailRoom`) |
 | Bottom | actions | a short pull shows a strip of quick actions, a longer one every action | the same two stages, for the open photo |
-| Right | view options | columns, sort, what to show | filmstrip, slideshow, autoplay, transparent-photo background, pinch panels |
+| Right | view options | zoom, scroll direction, order, the timeline on or off and its edge, what to show | filmstrip, slideshow, autoplay, transparent-photo background, pinch panels |
 
 The reasoning: view options sit at the side because you want to watch their effect, and an
 action does not need the content in view, so tilting the content up from under is the better
@@ -98,12 +98,28 @@ gallery had settings on top and the viewer had them at the bottom. Nothing may c
 pull-down for anything else, and the top 56 dp of the root grid is still handed to the
 notification shade (`topReserve`). Settings is **not** a room (above).
 
+The Map word is additive, not a tenth destination: the map is a mode of the browser (`mapOpen`),
+and choosing the word keeps the destination, route, search and time range. Like every rail word it is
+committed after a rest while the finger is on the wheel, which is why the Connect build's street map
+(a network fetch) is only created once the browser is at rest with every room closed and, on a
+pinned rail, the wheel has stopped turning (TRAPS #71).
+
+**The timeline strip and the shell's edge zones.** The shell claims a drag that starts within 56 dp
+of an edge, before any content sees it (Initial pass). A strip along the left or right edge scrubs
+vertically, so it never competes with the rooms' horizontal drags, and the rail and view options
+stay reachable from on the strip. A strip along the top or bottom edge scrubs horizontally, so its
+first and last 56 dp lose a horizontal drag to the side rooms, and a vertical drag that starts on
+it belongs to the details or actions room. A grid that scrolls sideways has the same loss in its
+first and last 56 dp. All three are accepted and are on the batch 3 device checklist. The strip is
+not given to the shell as `topReserve`/`bottomReserve`, which would move the rooms' pull zones off
+the edge (TRAPS #69, #72).
+
 ## Where each app stands (2026-08-05)
 
 | App | Has | Needs |
 |---|---|---|
 | fonebrew (IDE-core) | rooms implementation (`ui/rooms/`) | is the reference |
-| Fotoz | **adopted.** Rail = left room. Hamburger, app bar, `SlideInPanel` and the settings dialog all retired. Date-keyed edge scrubber over the grid. **Top room built, in the viewer**: `PhotoDetailRoom` — the file's facts and a place plate the photo flies into. The `ImageDetailScreen` Material screen and the bottom `MetadataPanel` it duplicated are both retired. *As of 2026-10-21*: the top room is also on the grid (`GalleryInfoRoom`), actions are the bottom room (two-stage), view options the right room, and Settings a page. See "Fotoz's rooms" above | nothing outstanding; the two-stage reveal and its tuning live in `shared-libraries/cell-shell` |
+| Fotoz | **adopted.** Rail = left room. Hamburger, app bar, `SlideInPanel` and the settings dialog all retired. Date-keyed edge scrubber over the grid (since 2026-10-21 optional, on any of the four edges, with a 44 dp gutter so the photos make room for it). **Top room built, in the viewer**: `PhotoDetailRoom` — the file's facts and a place plate the photo flies into. The `ImageDetailScreen` Material screen and the bottom `MetadataPanel` it duplicated are both retired. *As of 2026-10-21*: the top room is also on the grid (`GalleryInfoRoom`), actions are the bottom room (two-stage), view options the right room, and Settings a page. See "Fotoz's rooms" above | nothing outstanding; the two-stage reveal and its tuning live in `shared-libraries/cell-shell` |
 | Fylz | **adopted.** Locations = left room, Tools + settings = right room, Recovery = bottom room. Bottom tabs, workspace chips and the light Tools screen retired. Sort-keyed edge scrubber | as above |
 | csapp / assay | standard Material consoles | pattern adoption once the two testable apps validate it |
 

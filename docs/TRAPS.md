@@ -15,9 +15,9 @@ change that needs saying out loud. Source: the 6 Aug 2026 handoff plus plan FX-I
    it.** A squash mints a new SHA and orphans the submodule pin; a fresh
    `clone --recurse-submodules` fails weeks later with `fatal: reference is not a tree`,
    pointing nowhere near the cause. Merge with `--no-ff`, then bump the pin here. Order matters
-   too: the pin must exist on the library's remote before this app's PR merges. Batch 2 pins
-   `1f33d10` on `claude/friendly-lovelace-06dito` (PR #17 in `Shared-Libraries-asoc`), so that PR
-   merges first.
+   too: the pin must exist on the library's remote before this app's PR merges. Batch 3 pins
+   `18fc20e` (batch 2 pinned `1f33d10`) on `claude/friendly-lovelace-06dito` (PR #17 in
+   `Shared-Libraries-asoc`), so that PR merges first.
 3. **AGP must match `hyle-design-system` exactly** (currently 8.9.1), Gradle wrapper
    pinned at 8.14.3 in all three builds. Composite builds hard-fail with *"Using multiple
    versions of the Android Gradle plugin"* otherwise.
@@ -27,7 +27,8 @@ change that needs saying out loud. Source: the 6 Aug 2026 handoff plus plan FX-I
    substituted. The inline reasoning stays with the block.
 5. **The scrubber, pill and arrow keys must agree with the grid through `GridIndexMap`,
    never grid-item-*n*-is-asset-*n*.** Fixed for date headers by P0-15
-   (`gallery/GridIndexMap.kt`): `GalleryScreen` now converts every grid index through it
+   (`core/organize/src/commonMain/kotlin/com/fotoxplorr/core/organize/GridIndexMap.kt`):
+   `GalleryScreen` now converts every grid index through it
    before it reaches `pillCaption`/`gridState.scrollToItem`, and `renderedAssets` (not
    `scrubberAssets`) is the one asset list all four agree on. Still true in masonry mode,
    where the staggered grid keeps a `LazyStaggeredGridState` this screen cannot reach at
@@ -685,8 +686,8 @@ room rail, the pinned rail, the seeded search and the folder unlock. Settings an
 share one scaffold (`PaneScaffold`), and `paneTakenOver(settingsOpen, legacyScreenOpen)` is the one
 predicate for "the photos are not what is showing", so anything drawn over the grid gates on
 that, not on `legacyScreen == null`. Back and Escape use one
-order (`paneBackTarget`: room, pane, selection, search, route); new back-able state is added there
-and nowhere else. A pane is literal black, so text with no explicit colour inherits `onSurface`,
+order (`paneBackTarget`: room, Settings, a destination screen, the time-range panel, selection,
+search, the map, the route); new back-able state is added there and nowhere else (see #71). A pane is literal black, so text with no explicit colour inherits `onSurface`,
 which is dark in the light theme: the scaffold provides `LocalContentColor` (and Places provides it
 once for its whole hub), and a new page must not paint its own ink.
 
@@ -788,3 +789,81 @@ keeps moving. `sortAssets` orders by `dateTakenMillis` but the strip, the header
 range read `timelineMillis` (date taken else modified), so photos with no capture date sort
 together at one end and a month can head two runs; header keys carry the run index for that reason
 (duplicate lazy keys throw), and `TimelineStopsTest` pins that every stop opens a header.
+
+## 70. The zoom is one grid; the rung is stored when a gesture settles; a lazy grid keeps its place by KEY
+
+The rungs are one ordered list (`adaptive/GridZoom.kt`: 1 to 6 columns, then Stamps) over ONE
+`ZoomGrid`, and the pinch detector (`gridZoomGestures`) sits on that grid's root. A rung that drew
+something else would have no detector and so no pinch back out of it. Do not add a rung with its
+own composable. The live rung is screen state
+(`zoomRung`); the stored preference follows only when a pinch settles (`onZoomEnd`), the Ctrl-wheel
+pauses for 250 ms, or a button or key steps it, so a pinch does not write the preferences on every
+step. The pinch detector reads the pointer count itself and consumes only with two fingers or a
+Ctrl wheel tick, so one-finger scroll and tile gestures pass through (the stock transform detector
+eats them).
+
+A `LazyGrid` keeps its scroll position across a layout change by the KEY of the first visible item,
+and if that key is gone it falls back to the SAME NUMERIC INDEX. A photo key (its id) exists in every
+layout; a month header's does not once the headers go (Stamps to columns, or Stamps with months to
+columns with days), so the grid landed one item later per header above it, up to ~180 items on 22k
+photos. `ZoomGrid` re-anchors in a `SideEffect` (after composition, before the next measure, so
+there is no frame at the wrong place) with `reanchoredGridIndex`, only when the old top line was a
+header; any other top is left to key retention, which preserves the sub-item offset. Header keys
+carry the run index (a repeated month is a second run, and duplicate lazy keys throw; #69).
+
+## 71. The map is a mode with no Back of its own, and "settled" must include the rail's own motion
+
+`mapOpen` is a flag beside `destination` and `route` (plain `remember`, not saveable: a cold start
+lands on the grid and no tile is fetched without a tap; Back from a photo opened on the map lands on
+the grid). The embedded map screens (`StampMapScreen`, `RichPhotoMapScreen` with `embedded = true`)
+register NO `BackHandler`: a second handler would outrank `paneBackTarget` and the map would eat Back
+before a selection or a search could. The Back order is in one place; Escape and the keyboard gates
+treat the map as a pane. Likewise the time-range panel: it is on `paneBackTarget` as
+`CLOSE_TIME_EDITOR`, keyed on `timeEditorShown(...)` (whether it is DRAWN) and not on the flag that
+opens it, because that flag was left set under a selection or a pane and swallowed the next Back.
+
+The Connect build's street map starts a style and tile fetch the moment its view exists, and the rail
+commits the word under the finger after a short rest while the finger is still down (#61), so a scrub
+resting on Map must not build it. `PhotoMapPaneImpl` is a plain field until `settled`, then swaps once
+and keeps the map (a rebuild is a second fetch). `settled` is `mapPaneSettled(atHome, railTurning)`:
+`atHome` covers the pull-out room, but the pinned rail on a wide window is a Row sibling of the grid,
+so no room opens and `atHome` stays true throughout a scrub. The rail therefore reports `onTurning`
+(dragging or its own scroll, settle included) and the browser holds it as `railTurning`. A TAP on the
+Map word settles at once, because no turn is in progress at that instant. Anything new that starts
+network work from a rail commit has to read the same signal. A `LaunchedEffect` keyed on destination
+or route runs on first composition too, so restorable state such as the time range must never be
+reset there (#68).
+
+## 72. A strip on the top or bottom, and a sideways grid, share the shell's 56 dp edge zones
+
+The shell takes a horizontal drag that STARTS within 56 dp of the left or right screen edge, on the
+Initial pass, before any content sees it. That is accepted, not fixed, in two places: a Top or
+Bottom timeline strip (full width, so its two ends sit in those zones), a sideways grid (it cannot
+begin a scroll in its first or last 56 dp; a fling there opens a room). A Left or Right strip scrubs
+vertically and does not compete with the rooms' horizontal drags at all. The strip is NOT handed to the shell
+as `topReserve` / `bottomReserve` (that moves the details and actions rooms' pull zones off the edge;
+#69). A vertical drag that starts on a Top or Bottom strip belongs to the details or actions room.
+The scroll axis is a third, independent setting (`ScrollAxis`): the sideways grid is a
+`LazyHorizontalGrid` fed from the same item DSL as the vertical one and driven by the same
+`LazyGridState`, so the scrubber, the pill and `GridIndexMap` need no change; `gridScrollsHorizontally`
+is the one decision (Stamps and masonry stay vertical). Two things that look like they work and do
+not: `layoutInfo.beforeContentPadding` and `afterContentPadding` cover only the MAIN axis, so a cross
+axis `contentPadding` is invisible to them, and lazy item keys here are `Long` for photos, so test
+code must not cast a key to `String`. A sideways grid's tile width comes from the fixed row height
+(`GRID_TILE_ASPECT` is width over height), and the pill and discs permanently overlay its bottom, so
+it keeps an 88 dp band there. `LazyHorizontalGrid` flows right to left under RTL; not handled.
+
+## 73. A hold's meaning is read at gesture time, through the bridge
+
+What a long press does is a setting (`GridLongPress`), and `MediaTile` / `tileGestures` read it from
+`GridChromeBridge.gridLongPress` when the hold completes (`LongPressResolver.resolve`), never from a
+value captured when the tile composed. The same `pointerInput` is keyed on the bridge instance and
+reads `onOpen`, `onToggleSelection`, `onPeek`, `onPeekEnd`, `selectionActive` and the asset through
+`rememberUpdatedState`; keyed on `Unit` or the asset alone it captures its first closure for good
+(#50), which made a tap after a sort or filter change page the viewer through the OLD list. The
+detector is still `detectTapGestures`, so a stamp tile reuses it rather than writing a second one.
+The bridge field is `mutableStateOf` only so the TalkBack long-click label recomposes when the
+setting changes; the gesture does not depend on that. While a selection runs a hold toggles the tile
+under every setting except Nothing; in the Trash, Favourite, Share and Edit resolve to the preview
+(`effectiveFor`); no setting offers Trash. The retired `long_press_preview` key is read once as the
+default and never written, so a downgrade keeps the old choice.

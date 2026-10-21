@@ -8,11 +8,12 @@ Fotoz was previously called Foto Xplorr; the repository name, the `com.fotoxplor
 
 ### Browse and view
 
-- Nine destinations on a word-only navigation rail: Pets, People, Identity, Screenshots, Photos, Videos, Favourites, Places, Protected. (Fotoz no longer has an Audio destination: it is a photo and video app.)
-- Four rooms, one geography, in the gallery and the viewer alike: **left** is where you can go (the rail), **top** is details (the view's counts, or the open photo's facts), **bottom** is actions (pull up a little for a strip of quick actions, further for all of them) and **right** is view options (columns and sort in the gallery; filmstrip, slideshow, autoplay and the like in the viewer). Settings is not a room: it takes over the page, with a back chevron, from the rail's Settings row.
-- Day, month or ungrouped chronological timeline with a scrubber.
+- Nine destinations on a word-only navigation rail: Pets, People, Identity, Screenshots, Photos, Videos, Favourites, Places, Protected, plus a Map word that shows the current view on a map (also a round button at the bottom left). (Fotoz no longer has an Audio destination: it is a photo and video app.)
+- Four rooms, one geography, in the gallery and the viewer alike: **left** is where you can go (the rail), **top** is details (the view's counts, or the open photo's facts), **bottom** is actions (pull up a little for a strip of quick actions, further for all of them) and **right** is view options (zoom, order, timeline and scroll direction in the gallery; filmstrip, slideshow, autoplay and the like in the viewer). Settings is not a room: it takes over the page, with a back chevron, from the rail's Settings row.
+- A timeline you can switch off and put on any edge (left, right, top or bottom), with a month scrubber and a gutter so the photos never sit under it; month or day headers on the grid, or none. The photos can scroll down or sideways, and the order reads as where the latest photo sits (top, bottom, left or right).
+- A time range (month to month) that narrows the grid and the map together.
 - A query language over filename, folder, media type, tag, date range, camera and boolean/field operators, plus tuning chips.
-- Sort by newest, oldest, name or size; adjustable grid density with aspect-ratio tiles and a zoom ladder.
+- Sort by newest, oldest, name or size. One continuous grid you pinch through: 1 to 6 columns of aspect-ratio tiles, then Stamps, a sheet of tiny perforated stamps grouped by month. What a long press on a photo does is a setting (quick preview, select, favourite, share, edit or nothing), and Back from a photo returns to the same place in the grid.
 - Full-screen image viewer (EXIF/XMP details, Live Text selection, subject lift with tap-or-draw selection, a refine brush, undo/redo and sticker export, and a photo that shrinks into its map pin as the details pull down) and a full-screen video player built on ExoPlayer/Media3: videos start by themselves (a setting), the filmstrip stays available over a video, variable speed with pitch preservation, embedded and sidecar subtitle tracks, audio-track selection, gestures (double-tap seek, edge-swipe brightness/volume, A-B loop), resume position, a clear error panel with Retry and Open with when a video cannot be played, and Picture-in-Picture.
 - A favourite heart in the viewer's top row (filled or outlined, for photos and videos in the library, shown while the controls are), a slideshow bar on the same black coved shape as the gallery's selection toolbar (previous, play or pause, next; a real pause, and the controls fold away after three seconds of a running slideshow), and a choice of what shows behind a transparent photo: the grey-and-white grid (the default), white or black, from a button that appears only on photos that have transparency and from the viewer's view options. Transparency is read from the file's own header, not guessed from its type.
 - SVG support, and real animated playback for GIF, animated WebP and animated AVIF/HEIF — detected
@@ -113,8 +114,8 @@ git submodule update --init
 It also consumes the constellation's shared libraries (`dev.aarso:cell-shell`, the spatial rooms
 shell, and `dev.aarso:crash-recovery`) as a second submodule, `shared-libraries/`, from
 [Shared-Libraries-asoc](https://github.com/mbaliga/Shared-Libraries-asoc), again through a Gradle
-`includeBuild`. The pin on this branch (`1f33d10`, which adds the two-stage bottom room the actions
-rooms use) lives on that repo's `claude/friendly-lovelace-06dito` branch, in its PR #17, which must
+`includeBuild`. The pin on this branch (`18fc20e`, which adds the two-stage bottom room the actions
+rooms use and the timeline strip's edge) lives on that repo's `claude/friendly-lovelace-06dito` branch, in its PR #17, which must
 be merged **first**, with a merge commit and not a squash (`docs/TRAPS.md` #2), or this app's pin
 points at a commit that no longer exists.
 
