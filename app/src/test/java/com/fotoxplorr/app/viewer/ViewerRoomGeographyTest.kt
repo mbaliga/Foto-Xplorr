@@ -206,9 +206,8 @@ class ViewerRoomGeographyTest {
         compose.waitForIdle()
         pullInFromRight()
         // The caption is the only place the app tells a user which edge is which.
-        compose.onNodeWithText("up from the bottom a little for quick actions and further for all of them", substring = true)
+        compose.onNodeWithText("Drag down for details, up for actions, from the right for view options", substring = true)
             .assertExists()
-        compose.onNodeWithText("in from the right for these view options", substring = true).assertExists()
     }
 
     @Test

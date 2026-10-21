@@ -55,6 +55,7 @@ import com.fotoxplorr.app.viewer.PlaceMorph
 import com.fotoxplorr.app.viewer.PlacePin
 import com.fotoxplorr.core.model.MediaId
 import kotlin.math.roundToInt
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * Photos on a map, as postage stamps on a stylized field.
@@ -445,11 +446,9 @@ private fun EmptyMap(
                     geoState.isIndexing ->
                         "Checked ${geoState.scannedCount} of ${geoState.totalCount} so far."
                     geoState.scannedCount == 0 ->
-                        "Fotoz reads each photo's own GPS tag on this device. Nothing is uploaded."
+                        HelpCopy.Hint.READS_GPS_LOCALLY
                     else ->
-                        "Photos saved from messaging apps and websites usually have their location " +
-                            "removed before they reach your phone. Open a photo and drag it down for its " +
-                            "details to place one by hand."
+                        HelpCopy.Hint.ADD_BY_HAND
                 },
                 color = Color.White.copy(alpha = 0.6f),
                 style = MaterialTheme.typography.bodyMedium,

@@ -105,7 +105,7 @@ class PaneReviewFixesTest {
         val title = compose.onNodeWithText("Immersive and AI")
         title.assertIsDisplayed()
         assertEquals("the title sets its own colour", RoomStyle.Ink.toArgb(), textColorOf(title).toArgb())
-        val body = compose.onNodeWithText("Optional ways to explore", substring = true)
+        val body = compose.onNodeWithText("Optional extras", substring = true)
         assertEquals(RoomStyle.InkFaint.toArgb(), textColorOf(body).toArgb())
         // And the ground behind them is the pane's own dark surface, not the theme's near-white.
         assertTrue(
@@ -138,7 +138,7 @@ class PaneReviewFixesTest {
                 }
             }
         }
-        val caption = compose.onNodeWithText("Not available in this build", substring = true)
+        val caption = compose.onNodeWithText("Not available: the offline build", substring = true)
         caption.assertIsDisplayed()
         // The caption's own ink is 55% white, and 13sp strokes are thin enough that the brightest
         // pixel is about three quarters of that (measured 0.41). Under a second 50% alpha it could

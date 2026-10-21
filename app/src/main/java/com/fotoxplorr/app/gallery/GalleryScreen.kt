@@ -164,6 +164,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * The app's real background jobs, as the shade's list.
@@ -391,16 +392,16 @@ fun GalleryScreen(
             !state.permissionGranted -> GalleryEmptyState(
                 title = "Your gallery stays on this device",
                 message = if (state.mediaPermissionPermanentlyDenied) {
-                    "Fotoz was not allowed to see your photos and videos. Turn it on from Android's own app settings."
+                    HelpCopy.Hint.PERMISSION_DENIED
                 } else {
-                    "Choose the photos and videos Fotoz may index. Nothing is uploaded."
+                    HelpCopy.Hint.PERMISSION_ASK
                 },
                 actionLabel = if (state.mediaPermissionPermanentlyDenied) "Open app settings" else "Choose media",
                 onAction = actions.onRequestPermission,
             )
             state.assets.isEmpty() && state.scanState is ScanState.Scanning -> GalleryEmptyState(
                 title = "Building your library",
-                message = "Scanning local photos and videos…",
+                message = HelpCopy.Hint.SCANNING,
                 progress = true,
             )
             state.assets.isEmpty() && state.scanState is ScanState.Error -> GalleryEmptyState(
@@ -411,7 +412,7 @@ fun GalleryScreen(
             )
             state.assets.isEmpty() -> GalleryEmptyState(
                 title = "No media found",
-                message = "Fotoz could not find any permitted photos or videos.",
+                message = HelpCopy.Hint.NOTHING_FOUND,
                 actionLabel = "Scan again",
                 onAction = actions.onRefresh,
             )
@@ -2280,7 +2281,7 @@ private fun PartialAccessStrip(onChooseMore: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            "Only your selected photos and videos are visible.",
+            HelpCopy.Hint.PICKED_ONLY,
             color = Color.White.copy(alpha = 0.8f),
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.weight(1f),

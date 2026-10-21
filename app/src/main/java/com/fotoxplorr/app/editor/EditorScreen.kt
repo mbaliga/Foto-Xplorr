@@ -65,6 +65,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * Which set of controls the bottom bar is showing.
@@ -449,8 +450,7 @@ fun EditorScreen(
                                 // photo is too large to re-encode at full size on this device: the
                                 // original is left exactly as it was and a copy is saved instead.
                                 overwriting ->
-                                    "Saved a copy$sizeNote — the original was left untouched " +
-                                        "because it is too large to replace at full size here"
+                                    HelpCopy.savedCopyTooLarge(sizeNote)
                                 // Honest about what actually happened: OVERWRITE was chosen but
                                 // this photo cannot take it (see canOverwriteInPlace above), so
                                 // the safe fallback ran instead and needs to say why.
@@ -459,7 +459,7 @@ fun EditorScreen(
                                 mode == EditorSaveMode.OVERWRITE && hazardScan.unreadable ->
                                     "Saved a copy — the original could not be checked, so it was left untouched"
                                 mode == EditorSaveMode.OVERWRITE ->
-                                    "Saved a copy — ${asset.mimeType} can't be replaced in place"
+                                    HelpCopy.savedCopyFormat()
                                 options.format != null ->
                                     "Saved a copy as ${resolvedFormat.label}$sizeNote"
                                 sizeNote.isNotEmpty() -> "Saved a copy$sizeNote"
@@ -795,8 +795,7 @@ fun EditorScreen(
                             }
                         }
                         Text(
-                            "Drag a handle to resize, drag inside the box to move it. Straighten " +
-                                "(in Rotate) still applies before the crop.",
+                            HelpCopy.Hint.CROP,
                             color = Color.White.copy(alpha = 0.5f),
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -843,8 +842,7 @@ fun EditorScreen(
                         // in the preview Box's own pointerInput above) to place a spot, a spot-size
                         // slider, remove-last / clear-all, and a spot count.
                         Text(
-                            "Tap a blemish to heal it — a matching patch from nearby covers the " +
-                                "spot. Heal after framing: changing crop or rotation moves the spots.",
+                            HelpCopy.Hint.HEAL,
                             color = Color.White.copy(alpha = 0.7f),
                             style = MaterialTheme.typography.labelSmall,
                         )
@@ -893,7 +891,7 @@ private fun ContinueEditingDialog(onContinue: () -> Unit, onStartOver: () -> Uni
         ) {
             Text("Unsaved edit found", color = Color.White, style = MaterialTheme.typography.titleMedium)
             Text(
-                "This photo has changes from last time that were never saved.",
+                HelpCopy.Hint.UNSAVED_FROM_LAST_TIME,
                 color = Color.White.copy(alpha = 0.6f),
                 style = MaterialTheme.typography.bodySmall,
             )
@@ -1031,7 +1029,7 @@ private fun SaveChoiceSheet(
                 )
             }
             Text(
-                "You can change this any time in Settings › Media.",
+                HelpCopy.Hint.CHANGE_IN_SETTINGS,
                 color = Color.White.copy(alpha = 0.4f),
                 style = MaterialTheme.typography.labelSmall,
             )

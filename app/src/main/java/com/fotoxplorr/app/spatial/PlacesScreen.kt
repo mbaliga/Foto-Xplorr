@@ -55,6 +55,7 @@ import com.fotoxplorr.app.experience.PhotoWallScreen
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.ui.RoomStyle
+import com.fotoxplorr.app.ui.HelpCopy
 
 private enum class ExploreExperience(
     val title: String,
@@ -63,37 +64,37 @@ private enum class ExploreExperience(
 ) {
     SIMILARITY(
         "Organise by similarity",
-        "Local image embeddings arranged into visual neighbourhoods",
+        HelpCopy.Hint.EXPLORE_SIMILARITY,
         Icons.Outlined.Psychology,
     ),
     PHOTO_WALL(
         "3D photo wall",
-        "GPU-rendered mixed-size corridor with touch and gyro navigation",
+        HelpCopy.Hint.EXPLORE_WALL,
         Icons.Outlined.AutoAwesomeMosaic,
     ),
     GALLERY_PREVIEW(
         "Gallery preview",
-        "Focused central preview with adjacent images in depth",
+        HelpCopy.Hint.EXPLORE_PREVIEW,
         Icons.Outlined.PermMedia,
     ),
     STAMP_MAP(
         "Photo map",
-        "Your located photos pinned as stamps on a stylized field. No tiles, no network.",
+        HelpCopy.Hint.EXPLORE_STAMP_MAP,
         Icons.Outlined.Map,
     ),
     PHOTO_MAP(
         "Street map",
-        "Clustered geotagged media, pitch, hillshade and 3D buildings. Connect build only.",
+        HelpCopy.Hint.EXPLORE_STREET_MAP,
         Icons.Outlined.Public,
     ),
     SPATIAL_COMPASS(
         "Spatial compass",
-        "Stand at your current location and turn toward photos around you",
+        HelpCopy.Hint.EXPLORE_COMPASS,
         Icons.Outlined.ViewInAr,
     ),
     AI_SETTINGS(
         "AI and provider keys",
-        "Local model management and encrypted optional provider credentials",
+        HelpCopy.Hint.EXPLORE_AI,
         Icons.Outlined.Key,
     ),
 }
@@ -207,7 +208,7 @@ private fun ExploreHub(
                     style = MaterialTheme.typography.headlineSmall,
                 )
                 Text(
-                    "Optional ways to explore the same local library. The ordinary gallery continues to work with AI, network and location disabled.",
+                    HelpCopy.Hint.EXPLORE_HEADER,
                     style = MaterialTheme.typography.bodySmall,
                     color = RoomStyle.InkFaint,
                 )
@@ -249,7 +250,7 @@ private fun ExploreHub(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Privacy boundaries", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Similarity indexing is local. Photo map draws only the coordinates already inside your photos, so it needs no network at all. Street-map tiles are requested only while that map is open, and only in the Connect build. Current location is requested only inside Spatial compass. Remote AI stays disabled until a user adds and enables a provider key.",
+                        HelpCopy.Note.PLACES_PRIVACY,
                         style = MaterialTheme.typography.bodySmall,
                         color = RoomStyle.InkFaint,
                     )

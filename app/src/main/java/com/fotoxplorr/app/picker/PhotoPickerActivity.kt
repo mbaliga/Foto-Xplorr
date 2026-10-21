@@ -59,6 +59,7 @@ import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.ui.FotoXplorrTheme
 import com.fotoxplorr.core.model.MediaId
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * P0-20 (stretch): lets another app pick photos/videos from this library via
@@ -198,7 +199,7 @@ private fun PickerBody(
         PickerTopBar(allowMultiple = false, selectedCount = 0, onCancel = onCancel, onConfirm = null)
         PickerMessage(
             title = "Choose the photos and videos to allow",
-            message = "Fotoz needs access to your media library before you can pick from it.",
+            message = HelpCopy.Hint.PICKER_PERMISSION,
             actionLabel = "Grant access",
             onAction = onGrantPermission,
         )

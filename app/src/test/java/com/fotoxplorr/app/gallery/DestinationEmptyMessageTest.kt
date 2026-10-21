@@ -16,15 +16,15 @@ class DestinationEmptyMessageTest {
     @Test
     fun `a finished pass that found nothing says so per destination`() {
         assertEquals(
-            "No cats, dogs or other pets found in your photos",
+            "No pets found",
             destinationEmptyMessage(HyleDestination.PETS, idle),
         )
         assertEquals(
-            "No faces found in your photos",
+            "No faces found",
             destinationEmptyMessage(HyleDestination.PEOPLE, idle),
         )
         assertEquals(
-            "No identity documents found in your photos",
+            "No ID documents found",
             destinationEmptyMessage(HyleDestination.IDENTITY, idle),
         )
     }
@@ -41,7 +41,7 @@ class DestinationEmptyMessageTest {
     fun `a running pass without a total still says it is working`() {
         val running = RecognitionProgress(running = true)
         assertEquals(
-            "Looking through your photos on this device…",
+            "Scanning on this device…",
             destinationEmptyMessage(HyleDestination.PETS, running),
         )
     }
@@ -51,7 +51,7 @@ class DestinationEmptyMessageTest {
         val failed = RecognitionProgress(message = "out of memory")
         val message = destinationEmptyMessage(HyleDestination.IDENTITY, failed)
         assertTrue(message, message.contains("out of memory"))
-        assertTrue(message, !message.contains("No identity documents"))
+        assertTrue(message, !message.contains("No ID documents"))
     }
 
     @Test
@@ -80,7 +80,7 @@ class DestinationEmptyMessageDistinctnessTest {
 
     /**
      * DestinationContent renders either the grid or this message, never both. TimelineScreen
-     * has its own generic "No media matches the current filters" for an empty list, and for a
+     * has its own generic "Nothing matches your filters" for an empty list, and for a
      * while both were rendered -- stacking two contradictory empty states and pushing the
      * useful one off-screen. If any of these ever collapses into a generic string, the two
      * have been confused again.
@@ -98,7 +98,7 @@ class DestinationEmptyMessageDistinctnessTest {
                 states.forEach { progress ->
                     val message = destinationEmptyMessage(destination, progress)
                     assertTrue(message, message.isNotBlank())
-                    assertTrue(message, message != "No media matches the current filters")
+                    assertTrue(message, message != "Nothing matches your filters")
                     assertTrue(message, message != "Nothing here yet")
                 }
             }

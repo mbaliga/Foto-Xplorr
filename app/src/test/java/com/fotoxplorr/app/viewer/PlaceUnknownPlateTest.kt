@@ -85,7 +85,7 @@ class PlaceUnknownPlateTest {
         room(exif = ImageExifDetails(readOk = true), onSetLocation = null)
         compose.onNodeWithText("No location yet").assertExists()
         compose.onNodeWithText("Add a place").assertDoesNotExist()
-        compose.onNodeWithText("Photos saved from messaging apps", substring = true).assertExists()
+        compose.onNodeWithText("Chat apps and websites usually remove location.").assertExists()
     }
 
     @Test

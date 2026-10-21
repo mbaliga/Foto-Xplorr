@@ -55,6 +55,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
+import com.fotoxplorr.app.ui.HelpCopy
 
 private val PANEL_BACKGROUND = Color.Black
 // Fixed on purpose (semantic): a neutral card and the Hyle danger red, the accent roles on this
@@ -154,11 +155,7 @@ fun AiSettingsScreen(onClose: () -> Unit) {
                         fontWeight = FontWeight.Bold,
                     )
                     Text(
-                        "Optional. Adds things like AI-written descriptions using a service " +
-                            "you already have an account with -- ChatGPT, Claude and others all " +
-                            "work. Nothing is sent until you turn a service on and ask for " +
-                            "something; your key is encrypted and never leaves this device on " +
-                            "its own.",
+                        HelpCopy.Note.AI_SERVICE,
                         color = SECONDARY_TEXT,
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -259,8 +256,7 @@ private fun SimilaritySection(
     DarkCard {
         Text("Find similar photos", color = PRIMARY_TEXT, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text(
-            "Fotoz can look for photos that look alike -- entirely on this device, " +
-                "nothing uploaded. It needs a small on-device model to do that comparison.",
+            HelpCopy.Hint.AI_FIND_LOOKALIKES,
             color = SECONDARY_TEXT,
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -269,10 +265,9 @@ private fun SimilaritySection(
             LocalModelState.NotInstalled -> {
                 Text(
                     if (downloadAvailable) {
-                        "Not set up yet."
+                        HelpCopy.Hint.AI_NOT_SET_UP
                     } else {
-                        "Not set up yet. This offline build cannot download it for you -- " +
-                            "import one instead."
+                        HelpCopy.Hint.AI_NOT_SET_UP_OFFLINE
                     },
                     color = MUTED_TEXT,
                     style = MaterialTheme.typography.bodySmall,
@@ -322,13 +317,12 @@ private fun SimilaritySection(
         if (detailsExpanded) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    "Device: Android ${capability.androidVersion} · ${capability.memoryClassMb} MB app memory · " +
-                        "OpenGL ES ${capability.openGlEsVersion} · ${capability.recommendedConcurrentWorkers} worker(s)",
+                    "Android ${capability.androidVersion} · ${capability.memoryClassMb} MB app memory",
                     color = MUTED_TEXT,
                     style = MaterialTheme.typography.labelSmall,
                 )
                 Text(
-                    if (capability.canRunImageEmbedding) "This device can run on-device similarity search." else "This device is not recommended for on-device similarity search.",
+                    if (capability.canRunImageEmbedding) HelpCopy.Hint.AI_DEVICE_OK else HelpCopy.Hint.AI_DEVICE_LIMITED,
                     color = if (capability.canRunImageEmbedding) SECONDARY_TEXT else DANGER,
                     style = MaterialTheme.typography.labelSmall,
                 )
@@ -395,7 +389,7 @@ private fun AddProviderPicker(onDismiss: () -> Unit, onChoose: (AiProviderConfig
     DarkDialog(onDismiss = onDismiss) {
         Text("Add a service", color = PRIMARY_TEXT, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text(
-            "Pick which one -- you can fill in the details on the next step.",
+            HelpCopy.Hint.AI_PICK_ONE,
             color = SECONDARY_TEXT,
             style = MaterialTheme.typography.bodySmall,
         )
@@ -440,8 +434,7 @@ private fun ProviderEditorDialog(
             fontWeight = FontWeight.Bold,
         )
         Text(
-            "Your key is encrypted on this device and sent only to the address below, " +
-                if (initial.hasSecret) "and only when you use this service. Leave the key field blank to keep the one you already saved." else "and only when you use this service.",
+            if (initial.hasSecret) HelpCopy.Note.KEY_PRIVACY_KEEP else HelpCopy.Note.KEY_PRIVACY,
             color = SECONDARY_TEXT,
             style = MaterialTheme.typography.bodySmall,
         )
@@ -453,14 +446,14 @@ private fun ProviderEditorDialog(
             secret,
             { secret = it },
             if (initial.hasSecret) "Replace key (optional)" else "API key",
-            "Found on the service's own website, under API keys",
+            HelpCopy.Hint.AI_KEY_SOURCE,
             password = true,
         )
         DarkField(
             timeout,
             { timeout = it.filter(Char::isDigit).take(3) },
             "Timeout (seconds)",
-            "How long to wait for a reply before giving up",
+            HelpCopy.Hint.AI_TIMEOUT,
         )
 
         DetailsToggle(

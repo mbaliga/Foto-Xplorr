@@ -20,6 +20,7 @@ import com.fotoxplorr.app.ui.RoomStepper
 import com.fotoxplorr.app.ui.RoomStyle
 import com.fotoxplorr.app.ui.RoomToggle
 import com.fotoxplorr.app.ui.clearSystemBarsFor
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * The gallery's RIGHT room, the view options: how the view you are looking at is shown.
@@ -85,19 +86,18 @@ fun GalleryViewOptionsRoom(
 
         RoomRow(
             label = "Videos",
-            caption = "Include videos alongside photos.",
             onClick = { actions.onSetShowVideos(!preferences.showVideos) },
         ) { RoomToggle(preferences.showVideos, actions.onSetShowVideos) }
 
         RoomRow(
             label = "Blur sensitive",
-            caption = "Photos you have marked sensitive are blurred in the grid.",
+            caption = HelpCopy.Caption.BLUR_GRID_ONLY,
             onClick = { actions.onSetBlurSensitive(!preferences.blurSensitive) },
         ) { RoomToggle(preferences.blurSensitive, actions.onSetBlurSensitive) }
 
         RoomRow(
             label = "Hide sensitive entirely",
-            caption = "They are left out of the grid rather than blurred in it.",
+            caption = HelpCopy.Caption.HIDE_FROM_GRID,
             onClick = { actions.onSetHideSensitive(!preferences.hideSensitive) },
         ) { RoomToggle(preferences.hideSensitive, actions.onSetHideSensitive) }
     }

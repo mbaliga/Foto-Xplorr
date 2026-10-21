@@ -91,6 +91,7 @@ import com.fotoxplorr.app.spatial.PlacesScreen
 import com.fotoxplorr.core.model.MediaId
 import kotlin.math.exp
 import kotlin.math.hypot
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * Gutter between grid tiles. The owner's October 2026 root-grid screenshot (measured, see
@@ -268,7 +269,7 @@ fun TimelineScreen(
     longPressPreview: Boolean = true,
 ) {
     if (assets.isEmpty()) {
-        GalleryMessage("No media matches the current filters")
+        GalleryMessage(HelpCopy.Hint.NO_MATCHES)
         return
     }
     if (!showDateHeaders || grouping == TimelineGrouping.NONE) {
@@ -279,7 +280,7 @@ fun TimelineScreen(
             sensitiveIds = sensitiveIds,
             blurSensitive = blurSensitive,
             selectedIds = selectedIds,
-            emptyMessage = "No media matches the current filters",
+            emptyMessage = HelpCopy.Hint.NO_MATCHES,
             selectionActive = selectionActive,
             onOpen = onOpen,
             onToggleSelection = onToggleSelection,
@@ -903,7 +904,7 @@ fun DiscoverScreen(
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("Places", style = MaterialTheme.typography.titleSmall)
                         Text(
-                            "Offline map, compass and elevation from embedded metadata",
+                            HelpCopy.Hint.PLACES_CARD,
                             style = MaterialTheme.typography.bodySmall,
                             color = RoomStyle.InkFaint,
                             maxLines = 2,
@@ -1004,7 +1005,7 @@ fun LibraryScreen(
             LibraryActionCard(
                 modifier = Modifier.fillMaxWidth(),
                 title = "Private folders",
-                subtitle = "$privateAlbumCount protected · in-app access control",
+                subtitle = "$privateAlbumCount protected",
                 icon = Icons.Outlined.Lock,
                 onClick = onOpenPrivateFolders,
             )
@@ -1052,7 +1053,7 @@ fun LibraryScreen(
         item {
             if (library.allTags.isEmpty()) {
                 Text(
-                    "Select media and choose Add tag to create your first tag.",
+                    HelpCopy.Hint.TAG_FIRST,
                     color = RoomStyle.InkFaint,
                     style = MaterialTheme.typography.bodyMedium,
                 )

@@ -25,6 +25,7 @@ import com.fotoxplorr.app.ui.RoomStepper
 import com.fotoxplorr.app.ui.RoomStyle
 import com.fotoxplorr.app.ui.RoomToggle
 import com.fotoxplorr.app.ui.clearSystemBarsFor
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * The viewer's RIGHT room, the view options: everything about *looking at a photo*, put where you
@@ -98,19 +99,19 @@ fun ViewerSettingsRoom(
 
         RoomRow(
             label = "Filmstrip",
-            caption = "The strip of neighbouring photos along the bottom.",
+            caption = HelpCopy.Caption.FILMSTRIP,
             onClick = { onSetShowFilmstrip(!showFilmstrip) },
         ) { RoomToggle(showFilmstrip, onSetShowFilmstrip) }
 
         RoomRow(
             label = "Blur sensitive photos",
-            caption = "Applies in the grid. A photo you have opened deliberately is never blurred.",
+            caption = HelpCopy.Caption.BLUR_GRID_ONLY,
             onClick = { onSetBlurSensitive(!blurSensitive) },
         ) { RoomToggle(blurSensitive, onSetBlurSensitive) }
 
         RoomRow(
             label = "Keep the screen awake",
-            caption = "While a photo is open. Costs battery.",
+            caption = HelpCopy.Caption.KEEP_SCREEN_ON,
             onClick = { onSetKeepScreenOn(!keepScreenOn) },
         ) { RoomToggle(keepScreenOn, onSetKeepScreenOn) }
 
@@ -144,7 +145,7 @@ fun ViewerSettingsRoom(
 
         RoomRow(
             label = "Shuffle",
-            caption = "Play in a random order instead of the order you are browsing in.",
+            caption = HelpCopy.Caption.SHUFFLE,
             onClick = { onSetSlideshowShuffle(!slideshowShuffle) },
         ) { RoomToggle(slideshowShuffle, onSetSlideshowShuffle) }
 
@@ -153,13 +154,13 @@ fun ViewerSettingsRoom(
 
         RoomRow(
             label = "Loop animations",
-            caption = "GIFs and animated images play rather than showing one frame.",
+            caption = HelpCopy.Caption.LOOP_ANIMATIONS,
             onClick = { onSetLoopAnimations(!loopAnimations) },
         ) { RoomToggle(loopAnimations, onSetLoopAnimations) }
 
         RoomRow(
             label = "Autoplay videos",
-            caption = "Start a video as soon as it opens, without waiting for play.",
+            caption = HelpCopy.Caption.AUTOPLAY,
             onClick = { onSetAutoplayVideos(!autoplayVideos) },
         ) { RoomToggle(autoplayVideos, onSetAutoplayVideos) }
 
@@ -169,10 +170,9 @@ fun ViewerSettingsRoom(
         RoomRow(
             label = "Pinch opens panels",
             caption = if (pinchMode == ViewerPinchMode.PANEL_SHORTCUTS) {
-                "Pinch in for this photo's details, pinch out for what you can do with it. " +
-                    "Pinch no longer zooms the photo."
+                HelpCopy.Caption.PINCH_ON
             } else {
-                "Off: pinch zooms the photo, same as it always has."
+                HelpCopy.Caption.PINCH_OFF
             },
             onClick = {
                 onSetPinchMode(
@@ -197,14 +197,9 @@ fun ViewerSettingsRoom(
         // options (this room) come in from the right.
         Text(
             text = if (pinchMode == ViewerPinchMode.PANEL_SHORTCUTS) {
-                "Two fingers to turn. Swipe to move between photos. Drag the photo down for " +
-                    "its details, up from the bottom a little for quick actions and further for all of " +
-                    "them, in from the right for these view options -- and pinch in or out does " +
-                    "the first two as well."
+                HelpCopy.Note.GESTURES_PINCH_ON
             } else {
-                "Pinch to zoom. Two fingers to turn. Swipe to move between photos. " +
-                    "Drag the photo down for its details, up from the bottom a little for quick " +
-                    "actions and further for all of them, in from the right for these view options."
+                HelpCopy.Note.GESTURES_PINCH_OFF
             },
             color = RoomStyle.InkFaint,
             style = RoomStyle.Caption,

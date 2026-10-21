@@ -132,6 +132,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import com.fotoxplorr.app.ui.HelpCopy
 
 class FotoXplorrActivity : ComponentActivity() {
     // Bumped by onNewIntent so the composition below reprocesses `intent`: singleTop launch mode
@@ -645,7 +646,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     fun requestMediaOperation(items: List<MediaAsset>, operation: PendingMediaOperation) {
         if (items.isEmpty()) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            userMessage = "System trash operations require Android 11 or newer. Fotoz will not delete media directly."
+            userMessage = HelpCopy.Hint.TRASH_NEEDS_ANDROID_11
             return
         }
         runCatching {

@@ -55,6 +55,7 @@ import com.fotoxplorr.app.viewer.PLATE_ASPECT
 import com.fotoxplorr.app.viewer.PLATE_CORNER_DP
 import com.fotoxplorr.app.viewer.PLATE_GROUND
 import kotlin.math.roundToInt
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * The way to give a photo that has no location one: tap the grid to drop a pin, drag it to move
@@ -268,11 +269,9 @@ fun LocationPicker(
 
         Text(
             text = if (placed) {
-                "Saved in Fotoz's own index. The photo file itself is unchanged unless you " +
-                    "choose to write into it below."
+                HelpCopy.Hint.LOCATION_SAVED_IN_FOTOZ
             } else {
-                "This photo carries no GPS tag. Photos saved from messaging apps and websites " +
-                    "usually have theirs removed before they arrive."
+                HelpCopy.Hint.NO_LOCATION_IN_PHOTO
             },
             color = RoomStyle.InkFaint,
             style = RoomStyle.Caption,

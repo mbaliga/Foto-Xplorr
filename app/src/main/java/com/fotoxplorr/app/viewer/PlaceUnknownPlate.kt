@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.ui.RoomStyle
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * What the place plate shows for a photo that has no location: the same square, rounded surface
@@ -141,8 +142,7 @@ fun PlaceUnknownPlate(
                     AddPlaceButton(onClick = onAddPlace)
                 } else {
                     Text(
-                        text = "Photos saved from messaging apps and websites usually have their " +
-                            "location removed before they arrive.",
+                        text = HelpCopy.Caption.NO_GPS_REASON,
                         color = RoomStyle.InkFaint,
                         style = RoomStyle.Caption,
                         textAlign = TextAlign.Center,

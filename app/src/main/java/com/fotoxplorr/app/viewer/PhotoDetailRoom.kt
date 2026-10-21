@@ -92,6 +92,7 @@ import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
+import com.fotoxplorr.app.ui.HelpCopy
 
 // ── The room's palette, every value sampled off the owner's reference (6.png) ─────────────────
 // Fixed on purpose: these are dark neutrals measured off the reference, not accent roles (the one
@@ -760,8 +761,7 @@ private fun TagsBlock(
         }
         if (autoTags.isNotEmpty()) {
             Text(
-                text = "Outlined tags were suggested by on-device recognition. Removing one " +
-                    "removes it for good — it will not be suggested again.",
+                text = HelpCopy.Caption.TAGS_SUGGESTED,
                 color = MUTED_TEXT,
                 style = RoomStyle.Caption,
             )
@@ -887,7 +887,7 @@ private fun CaptionBlock(
         }
         if (caption.isNotBlank() && isMachineWritten) {
             Text(
-                text = "Written by on-device recognition. Type over it and it becomes yours.",
+                text = HelpCopy.Caption.CAPTION_MACHINE,
                 color = MUTED_TEXT,
                 style = RoomStyle.Caption,
                 textAlign = TextAlign.Center,

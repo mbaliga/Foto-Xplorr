@@ -25,6 +25,7 @@ import com.fotoxplorr.app.ui.clearSystemBarsFor
 import com.fotoxplorr.app.viewer.DetailFormatting
 import com.fotoxplorr.core.model.MediaId
 import java.util.Calendar
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * The gallery's TOP room, the details: what the view you are looking at actually *is*, pulled down
@@ -104,8 +105,7 @@ fun GalleryInfoRoom(
         }
 
         Text(
-            text = "Counted from what is on screen, so it follows whichever destination, album " +
-                "or search you are in.",
+            text = HelpCopy.Caption.COUNTS_VIEWING,
             color = RoomStyle.InkFaint,
             style = RoomStyle.Caption,
             modifier = Modifier.padding(top = 16.dp),

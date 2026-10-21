@@ -46,6 +46,7 @@ import com.fotoxplorr.app.spatial.PlacesScreen
 import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.PaneScaffold
 import com.fotoxplorr.core.model.MediaId
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * The primary destinations from the owner's mockups. Fotoz is visuals only, so there is no Audio
@@ -132,15 +133,15 @@ fun destinationEmptyMessage(
     progress.message?.let { return "On-device recognition stopped: $it" }
     if (progress.running) {
         return if (progress.total > 0) {
-            "Looking through your photos on this device… ${progress.completed} of ${progress.total}"
+            "${HelpCopy.Hint.SCANNING_DESTINATION} ${progress.completed} of ${progress.total}"
         } else {
-            "Looking through your photos on this device…"
+            HelpCopy.Hint.SCANNING_DESTINATION
         }
     }
     return when (destination) {
-        HyleDestination.PETS -> "No cats, dogs or other pets found in your photos"
-        HyleDestination.PEOPLE -> "No faces found in your photos"
-        HyleDestination.IDENTITY -> "No identity documents found in your photos"
+        HyleDestination.PETS -> HelpCopy.Hint.NO_PETS
+        HyleDestination.PEOPLE -> HelpCopy.Hint.NO_FACES
+        HyleDestination.IDENTITY -> HelpCopy.Hint.NO_ID_DOCUMENTS
         else -> "Nothing here yet"
     }
 }

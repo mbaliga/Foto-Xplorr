@@ -76,7 +76,7 @@ class PlacesRootPathInkTest {
         )
         assertEquals(
             RoomStyle.InkFaint.toArgb(),
-            textColorOf(compose.onNodeWithText("Similarity indexing is local", substring = true)).toArgb(),
+            textColorOf(compose.onNodeWithText("Everything here runs on this device", substring = true)).toArgb(),
         )
     }
 
@@ -101,7 +101,7 @@ class PlacesRootPathInkTest {
         )
         assertEquals(
             RoomStyle.Ink.toArgb(),
-            textColorOf(compose.onNodeWithText("Local model neighbourhoods", substring = true)).toArgb(),
+            textColorOf(compose.onNodeWithText("Groups of look-alike photos")).toArgb(),
         )
     }
 

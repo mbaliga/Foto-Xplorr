@@ -64,6 +64,7 @@ import com.fotoxplorr.app.ui.ThemeJsonResult
 import com.fotoxplorr.app.ui.accentFor
 import com.fotoxplorr.app.ui.builtInThemeJson
 import com.fotoxplorr.app.ui.parseThemeJson
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * The Settings pane's tabs (owner, 2026-08-14: *"The settings are pathetically few. And 'more
@@ -199,7 +200,7 @@ fun SettingsTabsRoom(
                     if (state.partialMediaAccess) {
                         SectionLabel("MEDIA ACCESS", first = true)
                         Paragraph(
-                            "Fotoz can only see the photos and videos you selected.",
+                            HelpCopy.Caption.PARTIAL_ACCESS,
                             strong = true,
                         )
                         ActionText("Manage selected photos and videos", actions.onManageSelectedMedia)
@@ -216,19 +217,19 @@ fun SettingsTabsRoom(
                     )
                     SwitchRow(
                         "Fill the tile",
-                        "Crops each photo to fill its square. Off shows the whole frame, letterboxed.",
+                        HelpCopy.Caption.FILL_TILE,
                         preferences.fitToTile,
                         actions.onSetFitToTile,
                     )
                     SwitchRow(
                         "Play animations",
-                        "GIFs and animated images move in the grid instead of showing a still frame.",
+                        HelpCopy.Caption.LOOP_ANIMATIONS,
                         preferences.loopAnimations,
                         actions.onSetLoopAnimations,
                     )
                     SwitchRow(
                         "Peek on long press",
-                        "Hold a photo to see it large without opening it. Off makes a long press start a selection instead.",
+                        HelpCopy.Caption.PEEK_ON_HOLD,
                         preferences.longPressPreview,
                         actions.onSetLongPressPreview,
                     )
@@ -265,7 +266,7 @@ fun SettingsTabsRoom(
                     )
                     SwitchRow(
                         "Show videos",
-                        "Include video files alongside photos.",
+                        null,
                         preferences.showVideos,
                         actions.onSetShowVideos,
                     )
@@ -280,20 +281,17 @@ fun SettingsTabsRoom(
                 SettingsTab.PRIVACY -> {
                     SwitchRow(
                         "Blur sensitive photos",
-                        "In the grid only. A photo you have opened deliberately is never blurred.",
+                        HelpCopy.Caption.BLUR_GRID_ONLY,
                         preferences.blurSensitive,
                         actions.onSetBlurSensitive,
                     )
                     SwitchRow(
                         "Hide sensitive photos",
-                        "Leaves them out of the grid entirely. They stay in their own album.",
+                        HelpCopy.Caption.HIDE_FROM_GRID,
                         preferences.hideSensitive,
                         actions.onSetHideSensitive,
                     )
-                    Paragraph(
-                        "Protected folders are set up from an album's own menu, and their " +
-                            "passwords are never stored in these settings.",
-                    )
+                    Paragraph(HelpCopy.Hint.PROTECTED_FOLDERS)
                 }
 
                 SettingsTab.VIEWER -> {
@@ -307,25 +305,25 @@ fun SettingsTabsRoom(
                     )
                     SwitchRow(
                         "Shuffle slideshows",
-                        "Play in a random order instead of the current sort order.",
+                        HelpCopy.Caption.SHUFFLE,
                         preferences.slideshowShuffle,
                         actions.onSetSlideshowShuffle,
                     )
                     SwitchRow(
                         "Keep the screen on",
-                        "While a photo or video is open. Costs battery, so it is off by default.",
+                        HelpCopy.Caption.KEEP_SCREEN_ON,
                         preferences.keepScreenOn,
                         actions.onSetKeepScreenOn,
                     )
                     SwitchRow(
                         "Play videos automatically",
-                        "Start a video as soon as it opens rather than waiting for play.",
+                        HelpCopy.Caption.AUTOPLAY,
                         preferences.autoplayVideos,
                         actions.onSetAutoplayVideos,
                     )
                     SwitchRow(
                         "Filmstrip",
-                        "Neighbouring photos along the bottom of an open photo, for jumping between them without leaving the viewer.",
+                        HelpCopy.Caption.FILMSTRIP,
                         preferences.showFilmstrip,
                         actions.onSetShowFilmstrip,
                     )
@@ -333,23 +331,13 @@ fun SettingsTabsRoom(
 
                 SettingsTab.DATA -> {
                     SectionLabel("BACKUP", first = true)
-                    Paragraph(
-                        "A backup holds your collections, tags, favourites and sensitive marks -- " +
-                            "everything Fotoz knows that the files themselves do not. It " +
-                            "never contains your photos: those are already on your device, and " +
-                            "copying them into a backup would only make a second place to lose " +
-                            "them from.",
-                        strong = true,
-                    )
+                    Paragraph(HelpCopy.Hint.BACKUP, strong = true)
                     ActionText("Back up now", actions.onExportMetadata)
                     ActionText("Restore from a backup", actions.onImportMetadata)
 
                     SectionLabel("LIBRARY")
                     ActionText("Rescan for new photos", actions.onRefresh)
-                    Paragraph(
-                        "Fotoz watches for new photos on its own; this is for when you " +
-                            "want to be certain.",
-                    )
+                    Paragraph(HelpCopy.Hint.RESCAN_AUTO)
                 }
 
                 SettingsTab.BACKGROUND -> {
@@ -378,24 +366,20 @@ fun SettingsTabsRoom(
                     SectionLabel("WHEN", first = true)
                     SwitchRow(
                         "Use background rules",
-                        "On, the options below decide when indexing and other heavy passes run. " +
-                            "Off, they run whenever the system schedules them, with nothing held back.",
+                        HelpCopy.Caption.RULES_SWITCH,
                         rules.enabled,
                         rulesStore::setEnabled,
                     )
                     SwitchRow(
                         "Only when the phone is idle",
-                        "Android decides exactly when \"idle\" starts, and can hold this off for " +
-                            "a long time -- sometimes hours -- if it is being conservative about " +
-                            "battery. That is the platform's own guarantee, not a number this app " +
-                            "controls.",
+                        HelpCopy.Caption.IDLE_RULE,
                         rules.requireIdle,
                         rulesStore::setRequireIdle,
                         enabled = rules.enabled,
                     )
                     SwitchRow(
                         "Only while charging",
-                        "Waits for the charger before spending battery on a long pass.",
+                        HelpCopy.Caption.CHARGING_RULE,
                         rules.requireCharging,
                         rulesStore::setRequireCharging,
                         enabled = rules.enabled,
@@ -412,12 +396,7 @@ fun SettingsTabsRoom(
                         canDecrease = rules.enabled && rules.minBatteryPercent > MIN_BATTERY_PERCENT_ALLOWED,
                         canIncrease = rules.enabled && rules.minBatteryPercent < MAX_BATTERY_PERCENT_ALLOWED,
                     )
-                    Paragraph(
-                        "Charging counts as \"enough battery\" on its own, whatever this is set to. " +
-                            "Android also will not wake a background pass below roughly 15-20% " +
-                            "battery, however low you set this -- that floor is the platform's, " +
-                            "not this app's, and it cannot be turned off from here.",
-                    )
+                    Paragraph(HelpCopy.Note.BATTERY_FLOOR)
 
                     SectionLabel("ACTIVE HOURS")
                     StepperRow(
@@ -446,13 +425,14 @@ fun SettingsTabsRoom(
                     )
                     Paragraph(
                         if (rules.activeHoursStart == rules.activeHoursEnd) {
-                            "Start and end are the same hour, which means always -- there is no " +
-                                "window to wait for."
+                            HelpCopy.Caption.HOURS_ALWAYS
                         } else if (rules.activeHoursStart > rules.activeHoursEnd) {
-                            "Wraps past midnight: covers ${formatHourOfDay(rules.activeHoursStart)} " +
-                                "through to ${formatHourOfDay(rules.activeHoursEnd)} the next morning."
+                            HelpCopy.overnight(
+                                formatHourOfDay(rules.activeHoursStart),
+                                formatHourOfDay(rules.activeHoursEnd),
+                            )
                         } else {
-                            "A single window within one day."
+                            HelpCopy.Caption.HOURS_SAME_DAY
                         },
                     )
 
@@ -462,9 +442,7 @@ fun SettingsTabsRoom(
                         if (com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES) {
                             "Skips a pass entirely while on mobile data."
                         } else {
-                            "Not available in this build -- Fotoz's offline build has no " +
-                                "network connection of any kind, so there is no metered connection " +
-                                "to avoid."
+                            HelpCopy.Caption.WIFI_OFFLINE
                         },
                         rules.onlyOnUnmetered,
                         rulesStore::setOnlyOnUnmetered,
@@ -482,11 +460,7 @@ fun SettingsTabsRoom(
                         style = RoomStyle.Row,
                         modifier = Modifier.padding(vertical = 6.dp),
                     )
-                    Paragraph(
-                        "Checked roughly every half hour while background rules are on, not " +
-                            "watched continuously -- this can run a little behind what the phone " +
-                            "is actually doing this second.",
-                    )
+                    Paragraph(HelpCopy.Caption.STATUS_CHECKED)
                 }
 
                 SettingsTab.PRO -> {
@@ -501,22 +475,15 @@ fun SettingsTabsRoom(
                     SectionLabel(if (isPro) "YOU HAVE PRO" else "FREE PLAN", first = true)
                     Paragraph(
                         if (isPro) {
-                            "Every share leaves the Fotoz mark off. Thank you for " +
-                                "supporting the app."
+                            HelpCopy.Caption.PRO_ON
                         } else {
-                            "Every share carries a small Fotoz mark in the corner, " +
-                                "unless you unlock Pro."
+                            HelpCopy.Caption.PRO_OFF
                         },
                         strong = true,
                     )
 
                     SectionLabel("WHAT PRO REMOVES")
-                    Paragraph(
-                        "The Fotoz mark that shared and exported photos carry by default " +
-                            "-- the small signature bottom-right. Nothing else changes: Pro is " +
-                            "not a paywall on any feature, only on that one mark.",
-                        strong = true,
-                    )
+                    Paragraph(HelpCopy.Caption.PRO_ONLY_MARK, strong = true)
 
                     if (!isPro) {
                         SectionLabel("UNLOCK")
@@ -525,9 +492,7 @@ fun SettingsTabsRoom(
                             // Same honest disclosure as the share sheet's unlock action -- see
                             // ProEntitlement's KDoc for why there is no store, no charge and no
                             // receipt behind this button yet.
-                            "This build doesn't charge anything yet -- unlocking here just " +
-                                "remembers Pro on this device, the same way it will once real " +
-                                "billing is wired in.",
+                            HelpCopy.Hint.BILLING,
                         )
                     }
                 }
@@ -541,22 +506,25 @@ fun SettingsTabsRoom(
 
                     SectionLabel("SUPPORT")
                     Paragraph(
-                        "Something wrong, or an idea? Write to us -- a real person reads it.",
+                        HelpCopy.Caption.SUPPORT,
                         strong = true,
                     )
                     ActionText(SUPPORT_EMAIL, onOpenSupport)
 
                     SectionLabel("MORE FROM A SYSTEM OF CELLS")
                     Paragraph(
-                        "Fotoz is one of a family of apps that share the same navigation " +
-                            "and the same refusal to phone home.",
+                        HelpCopy.Caption.FAMILY,
                         strong = true,
                     )
                     ActionText("asystemofcells.com", onOpenMoreApps)
 
                     SectionLabel("WHAT THIS BUILD CAN REACH")
                     Paragraph(
-                        text = OFFLINE_STATEMENT,
+                        text = if (com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES) {
+                            HelpCopy.Note.CONNECT_STATEMENT
+                        } else {
+                            HelpCopy.Note.OFFLINE_STATEMENT
+                        },
                         strong = true,
                     )
                     SectionLabel("OPEN SOURCE")
@@ -572,20 +540,8 @@ fun SettingsTabsRoom(
     }
 }
 
-/**
- * What this build can actually do, stated where a user can check it.
- *
- * Written per flavour rather than as one hedged sentence, because "offline" is this app's central
- * claim and a claim the user cannot verify is only marketing. The offline build's manifest
- * genuinely carries no INTERNET permission -- the OS refuses it a socket -- and that is a
- * stronger statement than any promise about intent.
- */
 /** Where support mail goes (owner, 2026-08-15). */
 const val SUPPORT_EMAIL = "fotoz@asystemofcells.com"
-
-private val OFFLINE_STATEMENT: String
-    get() = "This build holds no INTERNET permission at all: Android itself will refuse it a " +
-        "network connection, so nothing here can leave the device even by accident."
 
 /**
  * A group's eyebrow, set off from the group above by a hairline.

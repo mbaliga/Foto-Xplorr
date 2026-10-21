@@ -42,6 +42,7 @@ import com.fotoxplorr.app.ui.RoomRule
 import com.fotoxplorr.app.ui.RoomStyle
 import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.launch
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * The gallery's BOTTOM room: what you can do with the view you are looking at.
@@ -272,9 +273,9 @@ fun GalleryActionsRoom(
         RoomRow(
             label = if (selectionActive) "Selecting" else "Select photos",
             caption = if (selectionActive) {
-                "Tap photos to add them. The count is at the top right."
+                HelpCopy.Caption.SELECT_WHILE_SELECTING
             } else {
-                "Then tap the ones you want."
+                HelpCopy.Caption.SELECT_TO_START
             },
             enabled = !selectionActive,
             onClick = onStartSelection,
@@ -282,13 +283,13 @@ fun GalleryActionsRoom(
 
         RoomRow(
             label = "New collection",
-            caption = "An album you make, rather than one a folder made for you.",
+            caption = HelpCopy.Caption.NEW_COLLECTION,
             onClick = onNewCollection,
         )
 
         RoomRow(
             label = "Rescan the library",
-            caption = "Look for photos added or removed outside Fotoz.",
+            caption = HelpCopy.Caption.RESCAN,
             onClick = refreshLibrary,
         )
     }
@@ -396,12 +397,12 @@ private fun SelectionActions(
 
     RoomRow(
         label = "Share",
-        caption = "With frames, a seal, and metadata stripped unless you say otherwise.",
+        caption = HelpCopy.Caption.SHARE_DEFAULT,
         onClick = { finish { actions.onShare(selectedAssets) } },
     )
     RoomRow(
         label = "Share with options…",
-        caption = "Choose the frame, watermark and metadata handling for this share.",
+        caption = HelpCopy.Caption.SHARE_OPTIONS,
         onClick = { finish { actions.onShareClean(selectedAssets) } },
     )
     RoomRow(
@@ -421,7 +422,7 @@ private fun SelectionActions(
         } else {
             "Unmark sensitive"
         },
-        caption = "Sensitive photos are blurred in the grid, or hidden entirely.",
+        caption = HelpCopy.Caption.BLUR_OR_HIDE,
         onClick = {
             val mark = bulkMarkAction(selection.selectedIds, state.sensitiveIds) == BulkMarkAction.MARK
             finish { actions.onSetSensitive(selection.selectedIds, mark) }
@@ -471,7 +472,7 @@ private fun SelectionActions(
 
     RoomRow(
         label = "Move to trash",
-        caption = "Also the block in the bottom-right corner of the grid.",
+        caption = HelpCopy.Caption.TRASH_ALSO,
         enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
         onClick = { finish { actions.onMoveToTrash(selectedAssets) } },
     )
