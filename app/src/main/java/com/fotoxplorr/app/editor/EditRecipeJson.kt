@@ -102,6 +102,7 @@ fun Adjustments.toJson(): JsonValue = jsonObjectOf(
     "redCurve" to redCurve.toJson(),
     "greenCurve" to greenCurve.toJson(),
     "blueCurve" to blueCurve.toJson(),
+    "lumaCurve" to lumaCurve.toJson(),
     "hsl" to hsl.toJson(),
     "sharpen" to sharpen.toJson(),
     "denoise" to denoise.toJson(),
@@ -124,6 +125,8 @@ fun Adjustments.Companion.fromJson(json: JsonValue): Adjustments = Adjustments(
     redCurve = json["redCurve"].let { if (it is JsonValue.JsonArray) ToneCurve.fromJson(it) else ToneCurve.IDENTITY },
     greenCurve = json["greenCurve"].let { if (it is JsonValue.JsonArray) ToneCurve.fromJson(it) else ToneCurve.IDENTITY },
     blueCurve = json["blueCurve"].let { if (it is JsonValue.JsonArray) ToneCurve.fromJson(it) else ToneCurve.IDENTITY },
+    // Optional: recipes saved before the luma curve existed have no key and load as identity.
+    lumaCurve = json["lumaCurve"].let { if (it is JsonValue.JsonArray) ToneCurve.fromJson(it) else ToneCurve.IDENTITY },
     hsl = json["hsl"].let { if (it is JsonObject) HslAdjustments.fromJson(it) else HslAdjustments.NONE },
     sharpen = json["sharpen"].asFloat(0f),
     denoise = json["denoise"].asFloat(0f),
