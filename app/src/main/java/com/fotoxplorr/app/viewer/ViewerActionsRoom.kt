@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -14,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -22,6 +24,7 @@ import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SwapHoriz
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
@@ -66,21 +69,34 @@ fun ViewerActionsRoom(
     onEdit: () -> Unit,
     onOpenWith: () -> Unit,
     onMoveToTrash: () -> Unit,
+    /** "Share with options…" -- the advanced sheet (frame, watermark, strip metadata) that used
+     *  to be reachable from nowhere at all once the room replaced the old overlay's menu. */
+    onShareClean: (() -> Unit)? = null,
+    /** Rename, previously reachable only via Select -> one item -> the gallery's own actions
+     *  room. Null hides the row -- see [isExternal]. */
+    onRename: (() -> Unit)? = null,
     /** Shows the row below at all — a still photo has no codec to convert. */
     isVideo: Boolean = false,
     isConvertingToMp4: Boolean = false,
     /** Re-encodes this video into H.264/AAC/MP4 as a new file beside it — video's own Save As,
-     *  see [com.fotoxplorr.app.video.VideoTranscoder]. Null leaves the row hidden entirely, the
+     *  see [com.fotoxplorr.app.video.VideoExporter]. Null leaves the row hidden entirely, the
      *  same shape [com.fotoxplorr.app.viewer.PhotoDetailRoom]'s optional actions already use. */
     onConvertToMp4: (() -> Unit)? = null,
     /**
      * False for an ad-hoc asset opened from outside this app's own library (P0-18's
-     * `ExternalViewerActivity`): hides every row that would read or write this app's own
-     * catalogue -- Edit, Convert to MP4, Favourite, Mark sensitive and Move to trash. Slideshow,
-     * Share and Open with all stay, since none of the three depends on the photo being
-     * catalogued.
+     * `ExternalViewerActivity`, which has no editor, no catalogue and no write access): hides
+     * every row that would read or write this app's own catalogue -- Edit, Convert to MP4,
+     * Favourite, Mark sensitive and Move to trash. Slideshow, Share and Open with all stay, since
+     * none of the three depends on the photo being catalogued.
      */
     catalogueActions: Boolean = true,
+    /** True for an asset opened from another app (open-with/share-to) into [FotoXplorrActivity]'s
+     *  own viewer rather than this app's own library -- see
+     *  [com.fotoxplorr.app.media.MediaAsset.isExternal]. Unlike [catalogueActions] = false, Edit
+     *  and Convert stay (the editor and exporter work on any readable Uri); it hides favourite,
+     *  mark sensitive, rename and trash, none of which have anything to act on for a file this app
+     *  holds no library record for. */
+    isExternal: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -99,19 +115,25 @@ fun ViewerActionsRoom(
             onClick = onToggleSlideshow,
         )
         ActionRow(Icons.Outlined.Share, "Share", onShare)
+        if (onShareClean != null) {
+            ActionRow(Icons.Outlined.Tune, "Share with options…", onShareClean)
+        }
         if (catalogueActions) {
             ActionRow(Icons.Outlined.Edit, "Edit", onEdit)
         }
         ActionRow(Icons.Outlined.OpenInNew, "Open with", onOpenWith)
+        if (catalogueActions && !isExternal && onRename != null) {
+            ActionRow(Icons.Outlined.DriveFileRenameOutline, "Rename", onRename)
+        }
         if (catalogueActions && isVideo && onConvertToMp4 != null) {
             ActionRow(
                 icon = Icons.Outlined.SwapHoriz,
-                label = if (isConvertingToMp4) "Converting…" else "Convert to MP4",
+                label = if (isConvertingToMp4) "Converting…" else "Convert to MP4 (H.264)",
                 onClick = onConvertToMp4,
                 enabled = !isConvertingToMp4,
             )
         }
-        if (catalogueActions) {
+        if (catalogueActions && !isExternal) {
             ActionRow(
                 icon = if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
                 label = if (isFavorite) "Favourited" else "Favourite",
@@ -145,7 +167,10 @@ private fun ActionRow(
     tint: Color = Color.White,
 ) {
     val alpha = if (enabled) 1f else 0.38f
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.minimumInteractiveComponentSize(),
+    ) {
         IconButton(onClick = onClick, enabled = enabled) {
             Icon(
                 imageVector = icon,

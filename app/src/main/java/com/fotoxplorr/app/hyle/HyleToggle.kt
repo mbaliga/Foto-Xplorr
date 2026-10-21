@@ -5,6 +5,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -79,6 +80,11 @@ fun HyleToggle(
 
     Box(
         modifier = modifier
+            // Below the platform's 48dp minimum touch target on its own (32dp tall) -- this pads
+            // the tappable area out to that floor without changing the track's drawn size, the
+            // same ordering (before the fixed `.size`) Material3's own controls use for the same
+            // problem.
+            .minimumInteractiveComponentSize()
             .then(interaction)
             .size(TRACK_W.dp, TRACK_H.dp)
             .clip(RoundedCornerShape(TRACK_RADIUS.dp))

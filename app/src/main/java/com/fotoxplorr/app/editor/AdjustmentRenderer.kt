@@ -43,9 +43,19 @@ object AdjustmentRenderer {
                 saturation = adjustments.saturation,
                 vibrance = adjustments.vibrance,
             )
+            // HSL last within this block: it targets the colour the LUTs and saturation/vibrance
+            // just produced, the same "grade first, then fine-tune specific hues" order a real
+            // HSL panel implies by living in its own tab, separate from the basic colour sliders.
+            if (!adjustments.hsl.isIdentity) applyHsl(pixels, adjustments.hsl)
         }
         if (adjustments.vignette != 0f) {
             applyVignette(pixels, width, height, adjustments.vignette)
+        }
+        // Denoise BEFORE sharpen/clarity: an unsharp mask amplifies whatever high-frequency
+        // detail is in the buffer when it runs, noise included, so smoothing first is what
+        // keeps a strong Sharpen from re-amplifying the grain Denoise just calmed down.
+        if (adjustments.denoise != 0f) {
+            applyDenoise(pixels, width, height, adjustments.denoise)
         }
         if (adjustments.sharpen != 0f || adjustments.clarity != 0f) {
             applyUnsharpMask(pixels, width, height, adjustments.sharpen, adjustments.clarity)
@@ -78,14 +88,31 @@ internal fun applyUnsharpMask(
     clarity: Float,
 ) {
     if (width <= 0 || height <= 0) return
-    if (sharpen != 0f) unsharp(pixels, width, height, SHARPEN_RADIUS, sharpen * SHARPEN_STRENGTH)
-    if (clarity != 0f) unsharp(pixels, width, height, CLARITY_RADIUS, clarity * CLARITY_STRENGTH)
+    if (sharpen == 0f && clarity == 0f) return
+    // ONE pair of full-image scratch buffers, shared by both passes rather than each of
+    // `unsharp`'s two possible calls allocating its own -- sharpen and clarity together used to
+    // hold four extra full-resolution IntArrays (a `blurred` copy and boxBlur's own internal
+    // scratch, twice over) on top of the five-odd copies already alive in EditorScreen's export
+    // path at MAX_EXPORT_EDGE; at 8192px that pair alone is ~500 MB. Reused sequentially here
+    // means at most two.
+    val blurred = IntArray(pixels.size)
+    val scratch = IntArray(pixels.size)
+    if (sharpen != 0f) unsharp(pixels, blurred, scratch, width, height, SHARPEN_RADIUS, sharpen * SHARPEN_STRENGTH)
+    if (clarity != 0f) unsharp(pixels, blurred, scratch, width, height, CLARITY_RADIUS, clarity * CLARITY_STRENGTH)
 }
 
-private fun unsharp(pixels: IntArray, width: Int, height: Int, radius: Int, amount: Float) {
+private fun unsharp(
+    pixels: IntArray,
+    blurred: IntArray,
+    scratch: IntArray,
+    width: Int,
+    height: Int,
+    radius: Int,
+    amount: Float,
+) {
     if (amount == 0f || radius < 1) return
-    val blurred = pixels.copyOf()
-    boxBlur(blurred, width, height, radius)
+    System.arraycopy(pixels, 0, blurred, 0, pixels.size)
+    boxBlur(blurred, scratch, width, height, radius)
 
     for (i in pixels.indices) {
         val original = pixels[i]
@@ -101,9 +128,10 @@ private fun unsharp(pixels: IntArray, width: Int, height: Int, radius: Int, amou
 private fun unsharpChannel(original: Int, blurred: Int, amount: Float): Int =
     (original + (original - blurred) * amount).toInt().coerceIn(0, 255)
 
-/** A separable box blur, in place. Horizontal pass then vertical, using one scratch buffer. */
-private fun boxBlur(pixels: IntArray, width: Int, height: Int, radius: Int) {
-    val scratch = IntArray(pixels.size)
+/** A separable box blur, in place. Horizontal pass then vertical, into a caller-owned [scratch]
+ *  buffer rather than allocating its own -- see [applyUnsharpMask]'s own doc for why that matters
+ *  at export resolution. */
+private fun boxBlur(pixels: IntArray, scratch: IntArray, width: Int, height: Int, radius: Int) {
     blurAxis(pixels, scratch, width, height, radius, horizontal = true)
     blurAxis(scratch, pixels, width, height, radius, horizontal = false)
 }
@@ -176,3 +204,39 @@ private const val CLARITY_RADIUS = 12
 /** Full-slider unsharp amounts, tuned so the end of the slider is strong but not artefacted. */
 private const val SHARPEN_STRENGTH = 1.5f
 private const val CLARITY_STRENGTH = 0.8f
+
+/**
+ * Simple noise reduction: blend the original with a small-radius box blur of itself, in place.
+ *
+ * A plain box blur, not a true bilateral or median filter — a deliberate, stated simplification
+ * (see [Adjustments.denoise]'s own doc) rather than a dead field left unimplemented. A real
+ * edge-preserving filter needs a per-pixel neighbourhood comparison that costs meaningfully more
+ * at export resolution; a camera sensor's own noise is high-frequency enough that even a small,
+ * edge-blind blur calms it visibly at the slider's normal range, and [amount] is a BLEND fraction
+ * rather than the blur's own radius — at `amount = 1` this is a full box blur, but the slider's
+ * useful range sits well below that, trading a little edge softness for a lot less speckle.
+ */
+internal fun applyDenoise(pixels: IntArray, width: Int, height: Int, amount: Float) {
+    if (width <= 0 || height <= 0 || amount <= 0f) return
+    val blurred = pixels.copyOf()
+    val scratch = IntArray(pixels.size)
+    boxBlur(blurred, scratch, width, height, DENOISE_RADIUS)
+
+    val blend = amount.coerceIn(0f, 1f)
+    for (i in pixels.indices) {
+        val original = pixels[i]
+        val blur = blurred[i]
+        val alpha = original ushr 24 and 0xFF
+        val r = denoiseChannel(original ushr 16 and 0xFF, blur ushr 16 and 0xFF, blend)
+        val g = denoiseChannel(original ushr 8 and 0xFF, blur ushr 8 and 0xFF, blend)
+        val b = denoiseChannel(original and 0xFF, blur and 0xFF, blend)
+        pixels[i] = (alpha shl 24) or (r shl 16) or (g shl 8) or b
+    }
+}
+
+private fun denoiseChannel(original: Int, blurred: Int, blend: Float): Int =
+    (original * (1f - blend) + blurred * blend).toInt().coerceIn(0, 255)
+
+/** Small enough to calm sensor-grain noise without visibly softening real detail even at the top
+ *  of the slider's blend range. */
+private const val DENOISE_RADIUS = 2

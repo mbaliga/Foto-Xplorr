@@ -22,8 +22,9 @@ import kotlin.math.pow
  *
  * Every field is a signed amount where **0 means untouched**, so the identity is the zero value and
  * a new adjustment cannot change what existing photos look like. That is not tidiness: the edit
- * stack is persisted, and a field whose neutral value was anything else would silently re-render
- * every previously saved edit the day it was added.
+ * stack is persisted per-asset as JSON, autosaved by [RecipeStore] under `filesDir/edits/` and
+ * reloadable as "Continue editing", and a field whose neutral value was anything else would
+ * silently re-render every previously saved edit the day it was added.
  *
  * Pure Kotlin, no Android imports, so all of it is testable on the JVM.
  */
@@ -58,10 +59,15 @@ data class Adjustments(
     val greenCurve: ToneCurve = ToneCurve.IDENTITY,
     val blueCurve: ToneCurve = ToneCurve.IDENTITY,
 
+    // ---- HSL: eight hue bands, each with its own hue/saturation/luminance ----
+    val hsl: HslAdjustments = HslAdjustments.NONE,
+
     // ---- spatial, applied as their own passes rather than through the LUT ----
     /** 0..1. Unsharp mask amount. */
     val sharpen: Float = 0f,
-    /** 0..1. Edge-preserving smoothing. */
+    /** 0..1. Edge-smoothing amount — a box-blur/original blend (see [applyDenoise]'s own doc for
+     *  why that simple a technique, rather than a true bilateral or median filter, was the
+     *  deliberate choice here). */
     val denoise: Float = 0f,
     /** -1..1. Negative darkens the corners, positive lightens them. */
     val vignette: Float = 0f,
@@ -79,7 +85,7 @@ data class Adjustments(
             whites == 0f && blacks == 0f && temperature == 0f && tint == 0f &&
             saturation == 0f && vibrance == 0f &&
             rgbCurve.isIdentity && redCurve.isIdentity &&
-            greenCurve.isIdentity && blueCurve.isIdentity
+            greenCurve.isIdentity && blueCurve.isIdentity && hsl.isIdentity
 
     /** True when nothing here needs a neighbourhood pass, which are the expensive ones. */
     val spatialIsIdentity: Boolean

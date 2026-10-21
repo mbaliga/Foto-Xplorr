@@ -1,8 +1,10 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.fotoxplorr.app.audio
 
-import android.media.MediaPlayer
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,29 +15,39 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.QueueMusic
+import androidx.compose.material.icons.outlined.Repeat
+import androidx.compose.material.icons.outlined.RepeatOne
+import androidx.compose.material.icons.outlined.Shuffle
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.SwapHoriz
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -43,22 +55,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
+import androidx.media3.common.Player
+import com.fotoxplorr.app.audiotags.AudioTagEditorSheet
+import com.fotoxplorr.app.audiotags.AudioTagWriter
+import com.fotoxplorr.app.playback.rememberAudioController
+import kotlinx.coroutines.launch
 
 /**
- * The standalone audio player — play/pause/seek and a queue (its position within [queue], not a
- * separately editable playlist; see [AudioLibraryComposition]'s own doc). Built on a plain
- * [MediaPlayer], mirroring [com.fotoxplorr.app.viewer.VideoPlayer]'s exact lifecycle pattern
- * (state remembered per-track, position POLLED not pushed, every getter call wrapped in
- * `runCatching`) with one real simplification: there is no picture, so this needs no
- * `android.widget.VideoView`/`AndroidView` at all — a bare `MediaPlayer` plus
- * `setDataSource(Context, Uri)` is the whole surface this screen drives.
+ * The audio player — now backed by [com.fotoxplorr.app.playback.PlaybackService] through
+ * [rememberAudioController] rather than a screen-owned [android.media.MediaPlayer]: playback
+ * continues in the background with system transport controls after this screen closes, which a
+ * bare `MediaPlayer` (this screen's previous implementation) could never do. This screen itself
+ * holds none of the actual playback state any more — every field below mirrors the controller,
+ * and closing this screen (or the whole app) never stops a track that is actually playing.
  *
- * No [android.media.session.MediaSession] / lock-screen or notification controls yet — playback
- * stops the moment this screen is left, matching this app's existing video/photo viewers, which
- * are equally screen-bound. Background playback is a real, separately-scoped follow-up, not
- * something this first pass claims to do.
+ * [queue]/[asset] are still how the CALLER hands this screen a track and its play order — matching
+ * [com.fotoxplorr.app.audio.AudioLibraryComposition]'s existing contract exactly, so nothing about
+ * how a caller starts playback needed to change. [onSelect] is now driven by the SERVICE's own
+ * track transitions (auto-advance, shuffle, a notification's skip action), not by this screen
+ * guessing "next" from [queue] itself — see the `mediaId`-watching effect below.
  */
 @Composable
 fun AudioPlayerScreen(
@@ -73,88 +88,44 @@ fun AudioPlayerScreen(
     isConverting: Boolean = false,
 ) {
     val context = LocalContext.current
+    val controller = rememberAudioController()
+    val tagWriter = remember { AudioTagWriter(context) }
+    val scope = rememberCoroutineScope()
 
-    var isPlaying by remember(asset.id) { mutableStateOf(true) }
-    var positionMs by remember(asset.id) { mutableStateOf(0L) }
-    var durationMs by remember(asset.id) { mutableStateOf(asset.durationMillis.coerceAtLeast(0L)) }
-    var statusMessage by remember(asset.id) { mutableStateOf<String?>(null) }
+    var isDragging by remember { mutableStateOf(false) }
+    var dragPositionMs by remember { mutableStateOf(0L) }
+    var showQueueSheet by remember { mutableStateOf(false) }
+    var showTagEditor by remember { mutableStateOf(false) }
 
-    val index = queue.indexOfFirst { it.id == asset.id }
-    val previousTrack = queue.getOrNull(index - 1)
-    val nextTrack = queue.getOrNull(index + 1)
-    // rememberUpdatedState: the completion listener below is captured once, inside `remember`,
-    // but which track comes next can change if the queue itself changes while this one is
-    // playing -- reading a stale `nextTrack` closed over at construction time would auto-advance
-    // to the wrong track (or fail to advance at all) after such a change.
-    val latestNextTrack by rememberUpdatedState(nextTrack)
     val latestOnSelect by rememberUpdatedState(onSelect)
+    val latestQueue by rememberUpdatedState(queue)
 
-    val mediaPlayer = remember(asset.id) {
-        MediaPlayer().apply {
-            setOnPreparedListener { player ->
-                val preparedDuration = player.duration.toLong()
-                if (preparedDuration > 0L) durationMs = preparedDuration
-                player.start()
-            }
-            setOnCompletionListener {
-                isPlaying = false
-                // Auto-advance, the one piece of "queue" behaviour a plain tap-to-play list needs:
-                // without it, reaching the end of a track would just stop, which is not how any
-                // music app behaves when there is an obvious next track sitting right there.
-                latestNextTrack?.let(latestOnSelect)
-            }
-            setOnErrorListener { _, _, _ ->
-                statusMessage = "Could not play \"${asset.title}\""
-                isPlaying = false
-                true // handled: suppresses the framework's own onCompletion-as-fallback behaviour
-            }
-            runCatching {
-                setDataSource(context, asset.contentUri)
-                prepareAsync()
-            }.onFailure {
-                statusMessage = "Could not open \"${asset.title}\""
-            }
+    // Starts (or restarts) the service's playlist only when this screen is handed a track the
+    // controller is not ALREADY on -- reopening the player for a session that is already running
+    // (the common case: the mini-bar, or navigating back into a still-playing track) must not
+    // restart it from position zero.
+    LaunchedEffect(controller.controller, asset.id, queue) {
+        val mc = controller.controller ?: return@LaunchedEffect
+        if (controller.mediaId != asset.id.value.toString()) {
+            val startIndex = queue.indexOfFirst { it.id == asset.id }.coerceAtLeast(0)
+            controller.playQueue(queue, startIndex)
         }
     }
 
-    DisposableEffect(mediaPlayer) {
-        onDispose { runCatching { mediaPlayer.release() } }
-    }
-
-    LaunchedEffect(asset.id, isPlaying) {
-        if (!isPlaying) return@LaunchedEffect
-        while (isActive) {
-            // See VideoPlayer's identical guard: getCurrentPosition() can throw between the
-            // player being released and this coroutine's cancellation actually landing.
-            positionMs = runCatching { mediaPlayer.currentPosition.toLong() }.getOrDefault(positionMs)
-            delay(POSITION_POLL_INTERVAL_MS)
-        }
-    }
-
-    LaunchedEffect(statusMessage) {
-        if (statusMessage != null) {
-            delay(STATUS_MESSAGE_MS)
-            statusMessage = null
-        }
-    }
-
-    fun togglePlay() {
-        val playing = runCatching { mediaPlayer.isPlaying }.getOrDefault(false)
-        if (playing) {
-            runCatching { mediaPlayer.pause() }
-            isPlaying = false
-        } else {
-            runCatching { mediaPlayer.start() }
-            isPlaying = true
-        }
-    }
-
-    fun seekTo(ms: Long) {
-        positionMs = ms
-        runCatching { mediaPlayer.seekTo(ms.toInt()) }
+    // The service, not this screen, decides what plays next (auto-advance, shuffle, a
+    // notification's skip action) -- this mirrors that decision back into the host's own
+    // selection state so the rest of the app (the title bar, the library's now-playing row)
+    // agrees with what is actually playing.
+    LaunchedEffect(controller.mediaId) {
+        val id = controller.mediaId ?: return@LaunchedEffect
+        if (id == asset.id.value.toString()) return@LaunchedEffect
+        latestQueue.firstOrNull { it.id.value.toString() == id }?.let(latestOnSelect)
     }
 
     BackHandler(onBack = onClose)
+
+    val displayPositionMs = if (isDragging) dragPositionMs else controller.positionMs
+    val durationMs = controller.durationMs.takeIf { it > 0L } ?: asset.durationMillis.coerceAtLeast(0L)
 
     Column(
         Modifier
@@ -163,18 +134,39 @@ fun AudioPlayerScreen(
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
-        Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.End) {
-            if (onConvertToAac != null) {
-                IconButton(onClick = onConvertToAac, enabled = !isConverting) {
-                    Icon(
-                        Icons.Outlined.SwapHoriz,
-                        contentDescription = if (isConverting) "Converting…" else "Convert to AAC",
-                        tint = Color.White.copy(alpha = if (isConverting) 0.4f else 1f),
-                    )
+        Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row {
+                IconButton(onClick = { showTagEditor = true }) {
+                    Icon(Icons.Outlined.Edit, contentDescription = "Edit tags", tint = Color.White)
+                }
+                if (onConvertToAac != null) {
+                    Row(
+                        Modifier
+                            .clickable(enabled = !isConverting, onClick = onConvertToAac)
+                            .padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Outlined.SwapHoriz,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = if (isConverting) 0.4f else 1f),
+                        )
+                        Text(
+                            if (isConverting) "Converting…" else "Convert to AAC",
+                            color = Color.White.copy(alpha = if (isConverting) 0.4f else 1f),
+                            style = TextStyle(fontSize = 13.sp),
+                            modifier = Modifier.padding(start = 4.dp),
+                        )
+                    }
                 }
             }
-            IconButton(onClick = onClose) {
-                Icon(Icons.Outlined.Close, contentDescription = "Close", tint = Color.White)
+            Row {
+                IconButton(onClick = { showQueueSheet = true }) {
+                    Icon(Icons.Outlined.QueueMusic, contentDescription = "Queue", tint = Color.White)
+                }
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Close", tint = Color.White)
+                }
             }
         }
 
@@ -183,19 +175,7 @@ fun AudioPlayerScreen(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Box(
-                Modifier
-                    .size(220.dp)
-                    .background(Color.White.copy(alpha = 0.08f), androidx.compose.foundation.shape.RoundedCornerShape(16.dp)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Outlined.MusicNote,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.5f),
-                    modifier = Modifier.size(72.dp),
-                )
-            }
+            AlbumArt(asset = asset, size = 220.dp)
             Text(
                 asset.title,
                 color = Color.White,
@@ -219,56 +199,138 @@ fun AudioPlayerScreen(
 
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)) {
             Slider(
-                value = positionMs.toFloat().coerceIn(0f, durationMs.toFloat().coerceAtLeast(0f)),
-                onValueChange = { seekTo(it.toLong()) },
+                value = displayPositionMs.toFloat().coerceIn(0f, durationMs.toFloat().coerceAtLeast(0f)),
+                onValueChange = {
+                    isDragging = true
+                    dragPositionMs = it.toLong()
+                    controller.beginScrub()
+                },
+                onValueChangeFinished = {
+                    controller.endScrub(dragPositionMs)
+                    isDragging = false
+                },
                 valueRange = 0f..durationMs.toFloat().coerceAtLeast(1f),
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(formatDurationMs(positionMs), color = Color.White.copy(alpha = 0.6f), style = TextStyle(fontSize = 12.sp))
+                Text(formatDurationMs(displayPositionMs), color = Color.White.copy(alpha = 0.6f), style = TextStyle(fontSize = 12.sp))
                 Text(formatDurationMs(durationMs), color = Color.White.copy(alpha = 0.6f), style = TextStyle(fontSize = 12.sp))
             }
 
             Row(
                 Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                IconButton(onClick = { previousTrack?.let(onSelect) }, enabled = previousTrack != null) {
+                IconButton(onClick = { controller.setShuffleEnabled(!controller.shuffleModeEnabled) }) {
                     Icon(
-                        Icons.Outlined.SkipPrevious,
-                        contentDescription = "Previous",
-                        tint = Color.White.copy(alpha = if (previousTrack != null) 1f else 0.3f),
-                        modifier = Modifier.size(36.dp),
+                        Icons.Outlined.Shuffle,
+                        contentDescription = if (controller.shuffleModeEnabled) "Shuffle on" else "Shuffle off",
+                        tint = Color.White.copy(alpha = if (controller.shuffleModeEnabled) 1f else 0.4f),
                     )
                 }
-                IconButton(onClick = ::togglePlay, modifier = Modifier.padding(horizontal = 24.dp)) {
-                    Icon(
-                        if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                        contentDescription = if (isPlaying) "Pause" else "Play",
-                        tint = Color.White,
-                        modifier = Modifier.size(48.dp),
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = controller::skipToPrevious) {
+                        Icon(Icons.Outlined.SkipPrevious, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(36.dp))
+                    }
+                    IconButton(onClick = controller::togglePlayPause, modifier = Modifier.padding(horizontal = 16.dp)) {
+                        Icon(
+                            if (controller.isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                            contentDescription = if (controller.isPlaying) "Pause" else "Play",
+                            tint = Color.White,
+                            modifier = Modifier.size(48.dp),
+                        )
+                    }
+                    IconButton(onClick = controller::skipToNext) {
+                        Icon(Icons.Outlined.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(36.dp))
+                    }
                 }
-                IconButton(onClick = { nextTrack?.let(onSelect) }, enabled = nextTrack != null) {
+                IconButton(onClick = controller::cycleRepeatMode) {
                     Icon(
-                        Icons.Outlined.SkipNext,
-                        contentDescription = "Next",
-                        tint = Color.White.copy(alpha = if (nextTrack != null) 1f else 0.3f),
-                        modifier = Modifier.size(36.dp),
+                        if (controller.repeatMode == Player.REPEAT_MODE_ONE) Icons.Outlined.RepeatOne else Icons.Outlined.Repeat,
+                        contentDescription = "Repeat",
+                        tint = Color.White.copy(alpha = if (controller.repeatMode == Player.REPEAT_MODE_OFF) 0.4f else 1f),
                     )
                 }
             }
 
-            statusMessage?.let {
-                Text(
-                    it,
-                    color = MaterialTheme.colorScheme.error,
-                    style = TextStyle(fontSize = 13.sp),
-                    modifier = Modifier.padding(top = 8.dp),
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.Center) {
+                AssistChip(
+                    onClick = { controller.setPlaybackSpeed(nextSpeed(controller.speed)) },
+                    label = { Text(formatSpeed(controller.speed)) },
                 )
+            }
+        }
+    }
+
+    if (showQueueSheet) {
+        QueueSheet(
+            queue = controller.queue.ifEmpty { queue },
+            currentIndex = controller.currentIndex,
+            onDismiss = { showQueueSheet = false },
+            onPick = { index ->
+                controller.jumpToQueueIndex(index)
+                showQueueSheet = false
+            },
+        )
+    }
+
+    if (showTagEditor) {
+        AudioTagEditorSheet(
+            asset = asset,
+            onDismiss = { showTagEditor = false },
+            onSave = { tags ->
+                showTagEditor = false
+                scope.launch { tagWriter.write(asset, tags) }
+            },
+        )
+    }
+}
+
+@Composable
+private fun QueueSheet(
+    queue: List<AudioAsset>,
+    currentIndex: Int,
+    onDismiss: () -> Unit,
+    onPick: (Int) -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 8.dp).navigationBarsPadding()) {
+            items(queue.size, key = { index -> queue[index].id.value }) { index ->
+                val trackAsset = queue[index]
+                val isCurrent = index == currentIndex
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onPick(index) }
+                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    AlbumArt(asset = trackAsset, size = 40.dp)
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            trackAsset.title,
+                            color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        trackAsset.artist?.let {
+                            Text(it, style = TextStyle(fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
             }
         }
     }
 }
 
-private const val POSITION_POLL_INTERVAL_MS = 150L
-private const val STATUS_MESSAGE_MS = 3_000L
+private val SPEED_STEPS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+
+private fun nextSpeed(current: Float): Float {
+    val index = SPEED_STEPS.indexOfFirst { kotlin.math.abs(it - current) < 0.01f }
+    return SPEED_STEPS[(index + 1) % SPEED_STEPS.size]
+}
+
+private fun formatSpeed(speed: Float): String =
+    if (speed == speed.toLong().toFloat()) "${speed.toLong()}x" else "${"%.2f".format(speed).trimEnd('0').trimEnd('.')}x"

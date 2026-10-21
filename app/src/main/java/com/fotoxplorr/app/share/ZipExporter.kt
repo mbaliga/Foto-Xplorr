@@ -96,6 +96,10 @@ class ZipExporter(
                 }
             }
 
+            // The authority comes from fileProviderAuthority() (== "<package>.files", the one the
+            // manifest's FileProvider declares). #12 fixed the ZIP share crash caused by the
+            // never-declared ".fileprovider" authority; main already routes through the shared
+            // helper, which keeps that fix and keeps every exporter on one authority string.
             ZipExport(FileProvider.getUriForFile(appContext, fileProviderAuthority(appContext), archive), failed)
         }
     }
