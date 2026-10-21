@@ -9,6 +9,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
 import androidx.heifwriter.HeifWriter
@@ -23,6 +24,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 
 /**
  * Writes an edited photo out — as a new file beside the original by default, to a location the
@@ -47,15 +50,21 @@ import java.io.FileOutputStream
  * the source's metadata to THAT file, and only then copies the finished bytes onward
  * (docs/TRAPS.md #35). Nothing about an existing file's bytes is touched unless every earlier step
  * already succeeded, and [overwrite] additionally re-reads the staged file's dimensions before it
- * opens the original at all.
+ * opens the original at all. The one step that cannot be made safe by ordering is the truncating
+ * write into the original itself: [replaceWithRestore] copies the original aside first, checks the
+ * result reads back as written, and puts the old bytes back if either the write or that check
+ * fails. That is best effort, not atomic — MediaStore has no replace-in-place.
  *
- * ## Metadata copying is best-effort
+ * ## Metadata copying is best-effort for a copy, a gate for a replace
  * [save], [saveTo] and [overwrite] each wrap [applySourceMetadata] on its own, separately from the
  * encode and destination steps: a source whose EXIF this app cannot open or parse still gets a
- * saved (or overwritten) copy of the edited pixels, just without the copied metadata — the same
+ * saved copy of the edited pixels, just without the copied metadata (and [save] says so) — the same
  * "never let a secondary concern sink the primary save" reasoning
  * [com.fotoxplorr.app.share.SharePreparer.restoreOrientationOnly] already uses for its own
- * best-effort EXIF touch-up. HEIC output is the one format that gets no copied metadata at all:
+ * best-effort EXIF touch-up. [overwrite] is the exception: replacing the original cannot be
+ * undone, so it refuses unless the whole of the source's metadata made it across
+ * ([overwriteMetadataRefusal]). [saveTo] strips location on purpose, see its own doc.
+ * HEIC output is the one format that gets no copied metadata at all:
  * [ExifInterface] cannot write attributes into a HEIC container, so [applySourceMetadata] skips it
  * rather than letting that failure be swallowed after the fact.
  */
@@ -234,16 +243,55 @@ class EditedCopyWriter(context: Context) {
                     "Re-encoded file does not match the edited photo's dimensions"
                 }
 
-                appContext.contentResolver.openFileDescriptor(source.contentUri, "wt")?.use { descriptor ->
-                    FileOutputStream(descriptor.fileDescriptor).use { output ->
-                        tempFile.inputStream().use { it.copyTo(output) }
-                        Unit
+                val original = ResolverOriginal(source)
+                replaceWithRestore(
+                    original = original,
+                    staged = tempFile,
+                    backupDir = File(appContext.cacheDir, "edit-backup"),
+                    recoveryDir = File(appContext.filesDir, "overwrite-recovery"),
+                    label = source.displayName,
+                    originalSizeBytes = source.sizeBytes,
+                ) {
+                    // What reads back must be exactly the staged bytes, and still a photo of the
+                    // edited size, or the original is put back.
+                    val identical = original.openForRead()?.use { written ->
+                        tempFile.inputStream().use { staged -> sameBytes(written, staged) }
+                    } ?: false
+                    check(identical) { "The replaced file does not read back as written" }
+                    val dimensions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    original.openForRead()?.use { BitmapFactory.decodeStream(it, null, dimensions) }
+                    check(dimensions.outWidth == bitmap.width && dimensions.outHeight == bitmap.height) {
+                        "The replaced file does not decode to the edited photo's dimensions"
                     }
-                } ?: error("Could not open the original photo for writing")
+                }
             } finally {
                 tempFile.delete()
             }
         }
+    }
+
+    /**
+     * [source]'s file as [replaceWithRestore] reads and rewrites it. Reads go through
+     * [uriForLocationRead] so a backup or a read-back is the real bytes, and a view Android had
+     * redacted is refused (null) rather than returned: restoring a redacted backup would itself
+     * strip the location.
+     */
+    private inner class ResolverOriginal(private val source: MediaAsset) : OriginalFile {
+        override fun openForRead(): InputStream? {
+            val requested = appContext.uriForLocationRead(source.contentUri)
+            val (stream, unredacted) = openForLocationRead(requested, source.contentUri) { uri ->
+                appContext.contentResolver.openInputStream(uri)
+            } ?: return null
+            if (isRedactedView(Build.VERSION.SDK_INT, source.contentUri, readUnredacted = unredacted)) {
+                stream.close()
+                return null
+            }
+            return stream
+        }
+
+        override fun openForTruncatingWrite(): OutputStream? =
+            appContext.contentResolver.openFileDescriptor(source.contentUri, "wt")
+                ?.let { ParcelFileDescriptor.AutoCloseOutputStream(it) }
     }
 
     /**

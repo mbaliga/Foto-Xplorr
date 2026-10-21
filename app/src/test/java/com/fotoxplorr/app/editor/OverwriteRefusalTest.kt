@@ -102,6 +102,8 @@ class OverwriteRefusalTest {
         val exif = ExifInterface(file.absolutePath)
         assertEquals("2024:06:01 10:30:00", exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL))
         assertNotNull("the original's location must survive a replace", exif.latLong)
+        assertTrue("the safety copy is deleted after a good replace", File(context.cacheDir, "edit-backup").listFiles().orEmpty().isEmpty())
+        assertTrue(File(context.filesDir, "overwrite-recovery").listFiles().orEmpty().isEmpty())
     }
 
     @Test

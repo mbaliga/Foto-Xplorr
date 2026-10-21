@@ -4,7 +4,9 @@ import android.content.Context
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.core.formats.AnimationSniffer
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 
 /**
  * What [EditedCopyWriter.overwrite] reports when it does not replace the original, as the
@@ -214,4 +216,184 @@ private fun ByteArray.containsAscii(needle: String): Boolean {
         i++
     }
     return false
+}
+
+// ---------------------------------------------------------------------------
+// Backup and restore around the truncating write
+// ---------------------------------------------------------------------------
+
+/**
+ * The original file as [replaceWithRestore] needs to see it. A seam rather than a content resolver
+ * so the failure paths can be driven from a plain unit test.
+ */
+internal interface OriginalFile {
+    /**
+     * The original's CURRENT bytes exactly as they are on disk, never a redacted view: what a
+     * restore has to be able to put back, and what the written result is checked against. Null
+     * (or a throw) when they cannot be read that way.
+     */
+    fun openForRead(): InputStream?
+
+    /** Opens the original for writing, truncating it. Once this returns a stream the original's
+     *  old bytes are gone; null or a throw means it was NOT opened and nothing changed. */
+    fun openForTruncatingWrite(): OutputStream?
+}
+
+/** Room that must remain free beyond the backup itself, so a nearly full cache does not make the
+ *  safety copy the thing that fills the disk. */
+internal const val BACKUP_SLACK_BYTES = 1L * 1024 * 1024
+
+/**
+ * Writes [staged] over [original] with a way back.
+ *
+ * MediaStore has no atomic replace for an existing row, so the write has to truncate the file in
+ * place, and any failure after that point (disk full, the process interrupted, the provider
+ * erroring, a result that does not read back as written) would otherwise leave a damaged original
+ * that the old code then reported as "Android did not allow replacing". So, in order:
+ *
+ *  1. Copy the original's current bytes into [backupDir] (refusing with
+ *     [OverwriteException.Refused] and the original untouched if there is no room for that, or it
+ *     cannot be read as it is).
+ *  2. Open it for writing and copy [staged] in. A failure to OPEN is rethrown as it is: nothing
+ *     changed, and the caller treats a refused open as the system declining write access.
+ *  3. Run [verifyWritten] (which throws if what is now on disk is not [staged]).
+ *  4. On any failure in 2 or 3, write the backup back, and throw [OverwriteException.FailedAfterWrite]
+ *     saying whether that worked. If it did not, the backup is moved to [recoveryDir] and kept.
+ *  5. On success, delete the backup.
+ *
+ * This is best effort, not atomic: a crash between the truncate and the restore still leaves the
+ * damaged file, with the backup left in [backupDir] (a cache the system may clear).
+ *
+ * @param originalSizeBytes the original's recorded size, for the room check; 0 skips the check
+ *   and leaves a full disk to fail the backup copy itself.
+ */
+internal fun replaceWithRestore(
+    original: OriginalFile,
+    staged: File,
+    backupDir: File,
+    recoveryDir: File,
+    label: String,
+    originalSizeBytes: Long = 0L,
+    usableSpace: () -> Long = { backupDir.usableSpace },
+    verifyWritten: () -> Unit = {},
+) {
+    backupDir.mkdirs()
+    if (originalSizeBytes > 0 && usableSpace() < originalSizeBytes + BACKUP_SLACK_BYTES) {
+        throw OverwriteException.Refused(
+            OverwriteException.Refused.Reason.BACKUP_FAILED,
+            "There is not enough free space to keep a safety copy of the original while replacing it, " +
+                "so it was left as it is. Free some space, or save a copy.",
+        )
+    }
+    val backup = File.createTempFile("backup-", ".bin", backupDir)
+    try {
+        val input = original.openForRead() ?: throw IOException("The original could not be read")
+        input.use { stream -> backup.outputStream().use { stream.copyTo(it) } }
+        if (originalSizeBytes > 0 && backup.length() == 0L) throw IOException("The safety copy came out empty")
+    } catch (e: Exception) {
+        backup.delete()
+        throw OverwriteException.Refused(
+            OverwriteException.Refused.Reason.BACKUP_FAILED,
+            "A safety copy of the original could not be made first, so it was left as it is. Save a copy instead.",
+            cause = e,
+        )
+    }
+
+    val output = try {
+        original.openForTruncatingWrite() ?: throw IOException("Could not open the original photo for writing")
+    } catch (t: Throwable) {
+        backup.delete()
+        throw t
+    }
+
+    // From here the original's old bytes are gone.
+    try {
+        output.use { out -> staged.inputStream().use { it.copyTo(out) } }
+        verifyWritten()
+    } catch (t: Throwable) {
+        val restored = restoreFrom(backup, original)
+        val kept = if (restored) null else keepForRecovery(backup, recoveryDir, label)
+        if (restored) backup.delete()
+        throw OverwriteException.FailedAfterWrite(
+            restored = restored,
+            recoveryFile = kept,
+            message = if (restored) {
+                "Replacing the photo failed partway, so the original was put back exactly as it was."
+            } else {
+                "Replacing the photo failed and the original could not be put back. A safety copy of it is " +
+                    "kept inside Fotoz: save a copy of your edit now, and do not clear the app's storage."
+            },
+            cause = t,
+        )
+    }
+    backup.delete()
+}
+
+/** Writes [backup] back over [original]; true only when it was written and reads back the same size. */
+private fun restoreFrom(backup: File, original: OriginalFile): Boolean = try {
+    val out = original.openForTruncatingWrite()
+    if (out == null) {
+        false
+    } else {
+        out.use { stream -> backup.inputStream().use { it.copyTo(stream) } }
+        original.openForRead()?.use { it.countBytes() } == backup.length()
+    }
+} catch (t: Throwable) {
+    false
+}
+
+/** Moves [backup] under [recoveryDir] (copying if a rename across filesystems fails) and returns
+ *  where it is now, or [backup] itself if even that failed. */
+private fun keepForRecovery(backup: File, recoveryDir: File, label: String): File {
+    val safeLabel = label.filter { it.isLetterOrDigit() || it == '.' || it == '-' || it == '_' }.take(60).ifEmpty { "photo" }
+    return try {
+        recoveryDir.mkdirs()
+        val kept = File(recoveryDir, "$safeLabel.${System.currentTimeMillis()}.bak")
+        if (!backup.renameTo(kept)) {
+            backup.copyTo(kept, overwrite = true)
+            backup.delete()
+        }
+        kept
+    } catch (t: Throwable) {
+        backup
+    }
+}
+
+private fun InputStream.countBytes(): Long {
+    val buffer = ByteArray(8 * 1024)
+    var total = 0L
+    while (true) {
+        val n = read(buffer)
+        if (n < 0) return total
+        total += n
+    }
+}
+
+/** True when [a] and [b] hold exactly the same bytes. */
+internal fun sameBytes(a: InputStream, b: InputStream): Boolean {
+    val bufferA = ByteArray(8 * 1024)
+    val bufferB = ByteArray(8 * 1024)
+    while (true) {
+        val readA = a.readFully(bufferA)
+        val readB = b.readFully(bufferB)
+        if (readA != readB) return false
+        if (readA == 0) return true
+        if (!bufferA.contentEquals(bufferB, readA)) return false
+    }
+}
+
+/** Fills [buffer] as far as the stream allows and returns how many bytes it holds (0 at the end). */
+private fun InputStream.readFully(buffer: ByteArray): Int {
+    var total = 0
+    while (total < buffer.size) {
+        val n = read(buffer, total, buffer.size - total)
+        if (n < 0) break
+        total += n
+    }
+    return total
+}
+
+private fun ByteArray.contentEquals(other: ByteArray, length: Int): Boolean {
+    for (i in 0 until length) if (this[i] != other[i]) return false
+    return true
 }
