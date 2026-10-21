@@ -173,16 +173,18 @@ fun ViewerSettingsRoom(
         }
 
         // The one geography ([RoomGeography]): details are the PULL-DOWN room, actions the
-        // pull-UP one, and view options (this room) come in from the right.
+        // pull-UP one (a little for the quick-action strip, further for all of them), and view
+        // options (this room) come in from the right.
         Text(
             text = if (pinchMode == ViewerPinchMode.PANEL_SHORTCUTS) {
                 "Two fingers to turn. Swipe to move between photos. Drag the photo down for " +
-                    "its details, up from the bottom for what you can do with it, in from the " +
-                    "right for these view options -- and pinch in or out does the first two as well."
+                    "its details, up from the bottom a little for quick actions and further for all of " +
+                    "them, in from the right for these view options -- and pinch in or out does " +
+                    "the first two as well."
             } else {
                 "Pinch to zoom. Two fingers to turn. Swipe to move between photos. " +
-                    "Drag the photo down for its details, up from the bottom for what you can " +
-                    "do with it, in from the right for these view options."
+                    "Drag the photo down for its details, up from the bottom a little for quick " +
+                    "actions and further for all of them, in from the right for these view options."
             },
             color = RoomStyle.InkFaint,
             style = RoomStyle.Caption,

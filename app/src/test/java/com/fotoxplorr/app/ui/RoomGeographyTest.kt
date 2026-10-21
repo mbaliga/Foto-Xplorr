@@ -5,6 +5,7 @@ import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -70,5 +71,28 @@ class RoomGeographyTest {
                 assertTrue("$relative names $literal instead of RoomGeography", literal !in code)
             }
         }
+    }
+
+    @Test
+    fun `the actions room is the staged one and its peek is the strip plus the shell band`() {
+        assertEquals(QuickActionStripHeight + RoomGeography.CardBand, RoomGeography.ActionsPeek)
+        assertEquals(RoomGeography.ActionsPeek, RoomGeography.peekFor(RoomKind.ACTIONS))
+        // A strip whose targets are at least 48dp, and not so tall the peek is a third of a phone.
+        assertTrue(QuickActionStripHeight >= QuickActionMinTarget)
+        assertTrue(RoomGeography.ActionsPeek <= 200.dp)
+    }
+
+    @Test
+    fun `no other room is staged`() {
+        listOf(RoomKind.NAVIGATION, RoomKind.DETAILS, RoomKind.VIEW_OPTIONS).forEach {
+            assertNull("$it has a peek", RoomGeography.peekFor(it))
+        }
+    }
+
+    @Test
+    fun `the staged room lives on the one edge the shell can stage`() {
+        // SpatialShell stages only its bottom axis; if actions ever leave it the peek must go
+        // with it (peekFor answers null) rather than be handed to an edge that cannot honour it.
+        assertEquals(RoomEdge.BOTTOM, RoomGeography.Actions)
     }
 }

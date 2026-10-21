@@ -80,6 +80,8 @@ import com.fotoxplorr.app.R
 import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.PaneScaffold
 import com.fotoxplorr.app.ui.navigationOnlyWhen
+import com.fotoxplorr.app.ui.RoomGeography
+import com.fotoxplorr.app.ui.RoomKind
 import com.fotoxplorr.app.ui.roomSlots
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -445,8 +447,8 @@ private data class PasswordRequest(
  * The primary IA is the nine-category rail (Pets / People / Identity / Screenshots / Photos /
  * Videos / Favourites / Places / Protected), and it is a **room**: a surface parked off the
  * left edge that the grid lifts and parts to reveal. The other three edges are rooms too, by
- * [com.fotoxplorr.app.ui.RoomGeography]: the view's details at the top, its actions at the bottom, its view options at
- * the right. None of them is a screen — opening one pushes no back-stack entry, the grid stays
+ * [com.fotoxplorr.app.ui.RoomGeography]: the view's details at the top, its actions at the bottom (a short pull stops on a strip of
+ * quick actions, a longer one opens them all), its view options at the right. None of them is a screen — opening one pushes no back-stack entry, the grid stays
  * alive and visible behind it, and dragging it back is the way out. The motion comes from
  * `dev.aarso:cell-shell`, which every app in the constellation now shares, because the owner
  * asked for one navigation feel everywhere and the only way to guarantee that is one
@@ -1096,6 +1098,11 @@ private fun GalleryBrowser(
         top = rooms.top,
         right = rooms.right,
         bottom = rooms.bottom,
+        // A short pull from the bottom stops on the actions room's quick-action strip and a longer
+        // one opens the lot (RoomGeography holds how tall the strip is). None when no action is
+        // allowed right now, so the pull stays single-stage rather than stopping on nothing.
+        bottomPeek = RoomGeography.peekFor(RoomKind.ACTIONS)
+            ?.takeIf { galleryQuickActions(selection.isActive).isNotEmpty() },
     ) {
             Scaffold(
                 modifier = Modifier.fillMaxSize(),

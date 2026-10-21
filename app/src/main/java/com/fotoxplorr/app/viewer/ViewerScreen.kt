@@ -82,6 +82,7 @@ import com.fotoxplorr.app.spatial.ExpandedPhotoMap
 import com.fotoxplorr.app.spatial.GeoIndexState
 import com.fotoxplorr.app.spatial.MapFocus
 import com.fotoxplorr.app.ui.RoomGeography
+import com.fotoxplorr.app.ui.RoomKind
 import com.fotoxplorr.app.ui.roomSlots
 import com.fotoxplorr.core.model.MediaId
 import dev.aarso.cellshell.ParkStyle
@@ -116,6 +117,8 @@ import kotlinx.coroutines.launch
  * That works because the shell claims a gesture by whichever axis crosses touch slop first and
  * lets a horizontal one through untouched, so a pull UP from the bottom opens the actions and a
  * sideways drag on the strip still scrubs. A diagonal that starts mostly upward is the shell's.
+ * The pull is two-stage: let go early and the actions room stops on its quick-action strip
+ * (Favourite, Share, Edit, Move to trash); carry on and every action opens.
  *
  * The left edge has no room, so the shell refuses drags from it and draws no peek there.
  */
@@ -529,6 +532,7 @@ fun ViewerScreen(
                 // behind the panel that triggered it.
                 onToggleSlideshow = { shell.closeAll(); onToggleSlideshow() },
                 onToggleFavorite = onToggleFavorite,
+                onCloseRoom = { shell.closeAll() },
                 onToggleSensitive = onToggleSensitive,
                 onShare = { shell.closeAll(); onShare() },
                 onShareClean = onShareClean?.let { clean -> { shell.closeAll(); clean() } },
@@ -590,6 +594,9 @@ fun ViewerScreen(
         top = rooms.top,
         right = rooms.right,
         bottom = rooms.bottom,
+        // A short pull from the bottom stops on the actions room's quick-action strip, a longer
+        // one opens every action (RoomGeography holds how tall the strip is).
+        bottomPeek = RoomGeography.peekFor(RoomKind.ACTIONS),
     ) {
         Box(
             modifier = Modifier

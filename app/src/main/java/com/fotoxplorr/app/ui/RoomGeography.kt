@@ -3,6 +3,8 @@ package com.fotoxplorr.app.ui
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import dev.aarso.cellshell.RoomEdge
 
 /** What a room is FOR. The edge a kind lives on is [RoomGeography]'s to say, nobody else's. */
@@ -42,6 +44,11 @@ enum class RoomKind {
  * and open rooms through these constants, so moving a kind here moves it everywhere, and a screen
  * cannot disagree with the other without a test noticing.
  *
+ * The BOTTOM room is also the one two-stage room: a short pull stops on its quick-action strip
+ * ([ActionsPeek]) and a longer one carries on to every action. That is a property of the actions
+ * kind, so it lives in this table too; the screens read it through [peekFor] and never pick a
+ * height themselves.
+ *
  * App-wide Settings is not a room: it is a pane that takes over the place the photos are.
  */
 object RoomGeography {
@@ -49,6 +56,35 @@ object RoomGeography {
     val Details: RoomEdge = RoomEdge.TOP
     val Actions: RoomEdge = RoomEdge.BOTTOM
     val ViewOptions: RoomEdge = RoomEdge.RIGHT
+
+    /**
+     * The band the shell holds back at the head of a bottom room, for the parked card's edge to
+     * show in. This is cell-shell's own `BAND_DP`, which is private to it, so it is mirrored here;
+     * `ActionsPeekTest` measures the real shell and fails if the two ever disagree.
+     */
+    val CardBand: Dp = 72.dp
+
+    /**
+     * How much room the shell is told to show on a short pull of the actions room: the quick-action
+     * strip, plus [CardBand].
+     *
+     * The band is added because the shell counts the peek from the parked card's lower edge, but
+     * insets the room's content by the band beneath that edge (so the card, once fully parked,
+     * does not sit on the first row). At the peek the first [CardBand] of what is revealed is
+     * therefore the room's empty inset, and the strip begins after it. The shell adds the
+     * navigation bar's height itself. The few dp the card's scaling leaves over show as the
+     * strip's own bottom margin.
+     */
+    val ActionsPeek: Dp = QuickActionStripHeight + CardBand
+
+    /**
+     * The peek for the room of [kind], or null when that room is single-stage. Only the actions
+     * room is staged, and the shell can stage only its bottom axis, so asking for any other kind
+     * (or for actions after it has moved off the bottom) is null rather than a wrong answer.
+     * Screens pass this straight to the shell's `bottomPeek`.
+     */
+    fun peekFor(kind: RoomKind): Dp? =
+        if (kind == RoomKind.ACTIONS && Actions == RoomEdge.BOTTOM) ActionsPeek else null
 
     /** The edge that holds [kind]. */
     fun edgeFor(kind: RoomKind): RoomEdge = when (kind) {

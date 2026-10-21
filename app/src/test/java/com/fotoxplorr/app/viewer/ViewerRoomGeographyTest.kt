@@ -15,6 +15,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTouchInput
@@ -28,6 +29,8 @@ import com.fotoxplorr.app.gallery.ViewerPinchMode
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.render.ViewerFixtures
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.app.ui.QUICK_ACTION_STRIP_TAG
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -203,7 +206,8 @@ class ViewerRoomGeographyTest {
         compose.waitForIdle()
         pullInFromRight()
         // The caption is the only place the app tells a user which edge is which.
-        compose.onNodeWithText("up from the bottom for what you can do with it", substring = true).assertExists()
+        compose.onNodeWithText("up from the bottom a little for quick actions and further for all of them", substring = true)
+            .assertExists()
         compose.onNodeWithText("in from the right for these view options", substring = true).assertExists()
     }
 
@@ -327,5 +331,73 @@ class ViewerRoomGeographyTest {
         landscape = false
         compose.waitForIdle()
         compose.onNodeWithText("Open with").assertExists()
+    }
+
+    @Test
+    fun `a slow short pull on the real viewer shows the quick strip and not the rest of the actions`() {
+        val photos = roll()
+        compose.setContent { themed { Viewer(photos[4], photos) } }
+        compose.waitForIdle()
+        // Slow enough that no frame is a flick (under 2px), short enough to end on the peek.
+        compose.onRoot().performTouchInput {
+            swipe(
+                start = Offset(centerX, bottom - 20f),
+                end = Offset(centerX, bottom - 320f),
+                durationMillis = 4_000,
+            )
+        }
+        compose.waitForIdle()
+        val screen = compose.onRoot().fetchSemanticsNode().size.height
+        val strip = compose.onNodeWithTag(QUICK_ACTION_STRIP_TAG).fetchSemanticsNode().boundsInRoot
+        assertTrue("the strip is cut off", strip.bottom <= screen + 1f)
+        val firstRow = compose.onNodeWithText("Slideshow").fetchSemanticsNode().boundsInRoot
+        assertTrue("the full list showed at the peek", firstRow.top >= screen)
+    }
+
+    @Test
+    fun `a library photo is offered favourite share edit and trash in that order`() {
+        assertEquals(
+            listOf(ViewerQuickAction.FAVOURITE, ViewerQuickAction.SHARE, ViewerQuickAction.EDIT, ViewerQuickAction.TRASH),
+            viewerQuickActions(catalogueActions = true, isExternal = false, canMoveToTrash = true),
+        )
+    }
+
+    @Test
+    fun `a photo opened from outside the library is offered no catalogue action`() {
+        // Same rule as the full list: no favourite or trash without a library record, and no edit
+        // for an ad-hoc asset with no editor.
+        assertEquals(
+            listOf(ViewerQuickAction.SHARE),
+            viewerQuickActions(catalogueActions = false, isExternal = false, canMoveToTrash = true),
+        )
+    }
+
+    @Test
+    fun `a photo opened from another app keeps edit and share but not favourite or trash`() {
+        assertEquals(
+            listOf(ViewerQuickAction.SHARE, ViewerQuickAction.EDIT),
+            viewerQuickActions(catalogueActions = true, isExternal = true, canMoveToTrash = true),
+        )
+    }
+
+    @Test
+    fun `trash is left out rather than shown dead when the platform cannot do it`() {
+        assertEquals(
+            listOf(ViewerQuickAction.FAVOURITE, ViewerQuickAction.SHARE, ViewerQuickAction.EDIT),
+            viewerQuickActions(catalogueActions = true, isExternal = false, canMoveToTrash = false),
+        )
+    }
+
+    @Test
+    fun `share is always offered so the strip is never empty`() {
+        listOf(true, false).forEach { catalogue ->
+            listOf(true, false).forEach { external ->
+                listOf(true, false).forEach { trash ->
+                    assertTrue(
+                        ViewerQuickAction.SHARE in viewerQuickActions(catalogue, external, trash),
+                    )
+                }
+            }
+        }
     }
 }

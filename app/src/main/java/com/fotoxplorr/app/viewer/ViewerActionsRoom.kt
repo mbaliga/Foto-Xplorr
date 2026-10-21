@@ -2,16 +2,13 @@ package com.fotoxplorr.app.viewer
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.Delete
@@ -37,8 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.ui.ActionsRoomFrame
+import com.fotoxplorr.app.ui.QuickActionItem
 import com.fotoxplorr.app.ui.RoomGeography
-import com.fotoxplorr.app.ui.clearSystemBarsFor
 
 /**
  * The viewer's BOTTOM room: what you can do to this photo, as icons, tilted up from under it.
@@ -59,6 +57,11 @@ import com.fotoxplorr.app.ui.clearSystemBarsFor
  * label is what an overlay needs to stay legible at a glance over arbitrary image content, while
  * a room has a quiet ground of its own, room to breathe, and — because it is a deliberate
  * destination rather than something you land on — the space to caption every glyph.
+ *
+ * The room is two-stage: a short pull stops on a strip of the four actions you reach for most
+ * (Favourite, Share, Edit, Move to trash -- [viewerQuickActions]), pinned at the head of the room
+ * because that is the part of a bottom room that arrives first, and a longer pull carries on to the
+ * full list beneath it.
  *
  * Each row is therefore icon **and** word. Icon-only would be the overlay's mistake inverted:
  * unlabelled glyphs are a guessing game, and "Move to trash" is not a guess worth getting wrong.
@@ -114,18 +117,34 @@ fun ViewerActionsRoom(
      * photo opened from another app as on one from the library.
      */
     onLiftSubject: (() -> Unit)? = null,
+    /** Closes the room. Only the quick strip's Favourite needs it: every other handler passed in
+     *  closes the room itself. */
+    onCloseRoom: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(Color.Black)
-            // The shell insets a bottom room by its band at the TOP (where the parked card's
-            // bottom edge sits), so the system bar to clear here is the navigation bar. Scrolls
-            // for a short phone: twelve rows can outgrow what the band leaves.
-            .clearSystemBarsFor(RoomGeography.Actions)
-            .verticalScroll(rememberScrollState())
-            .padding(vertical = 20.dp, horizontal = 8.dp),
+    // The strip is the room's first inch: a short pull stops on it (RoomGeography.ActionsPeek).
+    // Share, Edit and Move to trash arrive here already closing the room; Favourite is the one
+    // handler that does not (the full row keeps the room open so the heart can be seen to fill),
+    // so the strip closes it before toggling.
+    val quickActions = viewerQuickActions(catalogueActions, isExternal, canMoveToTrash).map { action ->
+        when (action) {
+            ViewerQuickAction.FAVOURITE -> QuickActionItem(
+                label = if (isFavorite) "Favourited" else "Favourite",
+                icon = if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                onClick = { onCloseRoom(); onToggleFavorite() },
+                highlighted = isFavorite,
+            )
+            ViewerQuickAction.SHARE -> QuickActionItem("Share", Icons.Outlined.Share, onShare)
+            ViewerQuickAction.EDIT -> QuickActionItem("Edit", Icons.Outlined.Edit, onEdit)
+            ViewerQuickAction.TRASH -> QuickActionItem("Trash", Icons.Outlined.Delete, onMoveToTrash)
+        }
+    }
+
+    ActionsRoomFrame(
+        quickActions = quickActions,
+        modifier = modifier,
+        // Scrolls for a short phone: twelve rows can outgrow what the band leaves.
+        contentPadding = PaddingValues(vertical = 20.dp, horizontal = 8.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
         horizontalAlignment = Alignment.Start,
     ) {
@@ -222,4 +241,29 @@ internal fun ActionDivider() {
             .width(120.dp)
             .background(Color.White.copy(alpha = 0.12f), CircleShape),
     )
+}
+
+/** The viewer's quick actions, in the order they sit in the strip. */
+enum class ViewerQuickAction { FAVOURITE, SHARE, EDIT, TRASH }
+
+/**
+ * The quick actions allowed for this photo -- the same rules as the full list below them, so the
+ * strip never offers what the room would hide:
+ *
+ * - Share is always there (it needs nothing from the catalogue).
+ * - Edit needs [catalogueActions]; an externally opened photo ([isExternal]) keeps it.
+ * - Favourite and Move to trash need [catalogueActions] and a photo this app holds a record for
+ *   (not [isExternal]); trash also needs [canMoveToTrash], and is left out rather than shown dead
+ *   when the platform cannot do it.
+ */
+fun viewerQuickActions(
+    catalogueActions: Boolean,
+    isExternal: Boolean,
+    canMoveToTrash: Boolean,
+): List<ViewerQuickAction> = buildList {
+    val ownRecord = catalogueActions && !isExternal
+    if (ownRecord) add(ViewerQuickAction.FAVOURITE)
+    add(ViewerQuickAction.SHARE)
+    if (catalogueActions) add(ViewerQuickAction.EDIT)
+    if (ownRecord && canMoveToTrash) add(ViewerQuickAction.TRASH)
 }

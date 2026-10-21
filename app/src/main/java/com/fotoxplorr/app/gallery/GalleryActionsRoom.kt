@@ -6,13 +6,9 @@ import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -20,19 +16,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircleOutline
+import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Text
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.fileops.BulkRenameOutcome
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.ui.ActionsRoomFrame
+import com.fotoxplorr.app.ui.QuickActionItem
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomGeography
 import com.fotoxplorr.app.ui.RoomRow
 import com.fotoxplorr.app.ui.RoomRule
 import com.fotoxplorr.app.ui.RoomStyle
-import com.fotoxplorr.app.ui.clearSystemBarsFor
 import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.launch
 
@@ -59,6 +60,10 @@ import kotlinx.coroutines.launch
  * The view options that used to share this room (ARRANGE and SHOW) moved to
  * [GalleryViewOptionsRoom] at the right: you want to see the effect of those, whereas an action
  * does not need the grid in view, so tilting the grid up out of the way suits this room.
+ *
+ * It is the two-stage room: a short pull stops on a strip of the three actions people reach for most
+ * ([galleryQuickActions]) and a longer one carries on to everything below it. The strip is the
+ * room's head, which is the part of a bottom room that arrives first.
  *
  * This room also carries the way into selection mode. Long press used to start a selection and now
  * holds a preview instead (owner: *"the quick preview must disappear when the long press is
@@ -160,20 +165,30 @@ fun GalleryActionsRoom(
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            // The shell insets a bottom room by its band at the TOP (where the parked card's
-            // bottom edge sits), so the system bar to clear here is the navigation bar.
-            .clearSystemBarsFor(RoomGeography.Actions)
-            .verticalScroll(rememberScrollState())
-            .padding(
-                start = RoomStyle.GutterStart,
-                end = RoomStyle.GutterEnd,
-                top = 28.dp,
-                bottom = 28.dp,
-            ),
+    // The strip is the room's first inch (it is what a short pull stops on, see RoomGeography), so
+    // it is built from the same handlers the rows below use. Each of them already closes the
+    // room except Refresh, which closes it here.
+    val quickActions = galleryQuickActions(selectionActive).map { action ->
+        QuickActionItem(
+            label = action.label,
+            icon = action.icon,
+            onClick = when (action) {
+                GalleryQuickAction.SELECT -> onStartSelection
+                GalleryQuickAction.NEW_COLLECTION -> onNewCollection
+                GalleryQuickAction.REFRESH -> ({ onCloseRoom(); actions.onRefresh() })
+            },
+        )
+    }
+
+    ActionsRoomFrame(
+        quickActions = quickActions,
+        modifier = modifier,
+        contentPadding = PaddingValues(
+            start = RoomStyle.GutterStart,
+            end = RoomStyle.GutterEnd,
+            top = 16.dp,
+            bottom = 28.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         // Everything a SELECTION can do, when there is one. This is where the top bar's overflow
@@ -416,3 +431,22 @@ private fun SelectionActions(
         onClick = { finish { actions.onMoveToTrash(selectedAssets) } },
     )
 }
+
+/**
+ * The gallery's quick actions: the three most used, in the order they sit in the strip.
+ * [label] is the short word under the glyph; the full row for the same action, further up the
+ * room, keeps its explanatory caption.
+ */
+enum class GalleryQuickAction(val label: String, val icon: ImageVector) {
+    SELECT("Select", Icons.Outlined.CheckCircleOutline),
+    NEW_COLLECTION("New collection", Icons.Outlined.CreateNewFolder),
+    REFRESH("Refresh", Icons.Outlined.Refresh),
+}
+
+/**
+ * The quick actions allowed right now. Once a selection is under way, starting one is not an
+ * action any more (the full room's row reads "Selecting" and does nothing), so it is left out
+ * rather than shown dead. An empty answer means no strip and no peek stop.
+ */
+fun galleryQuickActions(selectionActive: Boolean): List<GalleryQuickAction> =
+    GalleryQuickAction.entries.filter { it != GalleryQuickAction.SELECT || !selectionActive }
