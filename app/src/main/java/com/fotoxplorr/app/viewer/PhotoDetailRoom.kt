@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -172,6 +173,9 @@ internal val MUTED_TEXT = Color(0xFF6A6A6A)
  *   pin genuinely moves (a scroll, or a header that reflowed). It is what
  *   [PhotoToPinFlight]'s `pinRect` reads. Reported for a photo with no place too: the ghost pin
  *   on [PlaceUnknownPlate] is a landing target like any other.
+ * @param onPinGone the pin tile has left the room (the location picker replaced the plate, or
+ *   there is no plate), so the rectangle last given to [onPinPositioned] is stale and must not
+ *   be flown to. Called once when it happens; the next [onPinPositioned] says it is back.
  * @param recognizedText this photo's OCR text, flattened -- read by the viewer the same way
  *   [exif] is. Blank hides the "Search inside this photo" card entirely.
  * @param onSearchLibrary hands recognised text to the library search. Null leaves that one action
@@ -235,22 +239,31 @@ fun PhotoDetailRoom(
     informationInitiallyExpanded: Boolean = false,
     flightActive: Boolean = false,
     onPinPositioned: ((Rect) -> Unit)? = null,
+    onPinGone: (() -> Unit)? = null,
 ) {
     // The room's own layout coordinates, held in a plain object (not snapshot state): they are
     // only ever READ, at the moment a pin report needs converting to room coordinates, and the
     // room's position changes on every frame of the pull.
     val roomCoordinates = remember { RoomCoordinates() }
     val latestOnPinPositioned by rememberUpdatedState(onPinPositioned)
+    val latestOnPinGone by rememberUpdatedState(onPinGone)
     // Whether the pin is reachable by a flier. Written only when it flips, so it recomposes the
     // room at most when a scroll carries the pin away or back, never per frame.
     var pinFlies by remember { mutableStateOf(true) }
-    val reportPin = remember {
-        val reporter = PinReporter(roomCoordinates) { local, roomWidth, roomHeight ->
+    val pinReporter = remember {
+        PinReporter(roomCoordinates) { local, roomWidth, roomHeight ->
             pinFlies = PlaceMorph.canFly(local, roomWidth, roomHeight)
             latestOnPinPositioned?.invoke(local)
         }
-        val report: (Rect) -> Unit = reporter::report
-        report
+    }
+    val reportPin: (Rect) -> Unit = remember(pinReporter) { pinReporter::report }
+    val pinGone: () -> Unit = remember(pinReporter) {
+        {
+            // Forget the last rectangle too: the pin can come back at exactly the same place (the
+            // picker closes), and a de-duplicating reporter would swallow that report.
+            pinReporter.forget()
+            latestOnPinGone?.invoke()
+        }
     }
     // The shell deliberately consumes no insets — it says so in its own KDoc, because doing so
     // would lift its drag-sensitive edges off the physical screen edge. So a room pads for the
@@ -309,6 +322,7 @@ fun PhotoDetailRoom(
             flightActive = flightActive,
             flightFlies = pinFlies,
             onPinPositioned = reportPin,
+            onPinGone = pinGone,
         )
         CaptionBlock(
             photoId = asset.id,
@@ -1104,7 +1118,9 @@ private fun StatusBlock(
  *
  * "Add a place" is offered only when the caller allows a place to be set AND the metadata read
  * succeeded (P0-02): a failed read is not evidence the file has no GPS tag, so it never leads to
- * the picker, which could overwrite one the file already carries.
+ * the picker, which could overwrite one the file already carries. The same goes for a read that
+ * has not finished ([ImageExifDetails.pending]): until it does the block holds the plate's
+ * footprint and says nothing at all.
  */
 @Composable
 private fun PlaceBlock(
@@ -1122,6 +1138,7 @@ private fun PlaceBlock(
     flightActive: Boolean = false,
     flightFlies: Boolean = true,
     onPinPositioned: ((Rect) -> Unit)? = null,
+    onPinGone: (() -> Unit)? = null,
 ) {
     // A hand-placed location stands in for an absent embedded one. It never overrides a real GPS
     // tag: what the camera recorded is a fact about the photograph, and the picker is for photos
@@ -1131,15 +1148,41 @@ private fun PlaceBlock(
     val longitude = if (embedded) exif.longitude else manualLongitude
     // Whether a place may be set by hand at all: the caller allows it, the file has no embedded
     // fix to protect, and the read that says so actually succeeded.
-    val setLocation = onSetLocation.takeIf { exif.readOk && !embedded }
+    val setLocation = onSetLocation.takeIf { exif.readOk && !exif.pending && !embedded }
     val canPlaceByHand = setLocation != null
     var editing by remember(asset.id) { mutableStateOf(false) }
+    val mode = PlaceMorph.placeBlockMode(
+        pending = exif.pending,
+        editingWithSetter = editing && setLocation != null,
+        drawable = PlaceMorph.isDrawable(latitude, longitude),
+        readOk = exif.readOk,
+    )
+    // Tell the host when the pin tile leaves the room (the picker replaces the plate, or a failed
+    // reload takes it away), so it stops flying the photo onto a rectangle that is no longer
+    // there. Keyed on whether a pin is shown at all, not on which plate shows it: swapping the
+    // located plate for the unknown one replaces the pin and the new one reports itself.
+    val pinShown = PlaceMorph.hasPin(mode)
+    val latestOnPinGone by rememberUpdatedState(onPinGone)
+    DisposableEffect(pinShown) {
+        onDispose { if (pinShown) latestOnPinGone?.invoke() }
+    }
     Box(Modifier.padding(horizontal = GUTTER)) {
         when {
-            // First, so the picker stays up while a place is being set: the first tap hands the
+            // Before anything is known: hold the plate's footprint so the room does not jump when
+            // the read lands, and say nothing. No pin, so no rectangle is reported to the flier.
+            mode == PlaceMorph.PlaceBlockMode.LOADING -> {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(PLATE_ASPECT)
+                        .clip(RoundedCornerShape(PLATE_CORNER_DP.dp))
+                        .background(PLATE_GROUND),
+                )
+            }
+            // Next, so the picker stays up while a place is being set: the first tap hands the
             // host a location, which makes the plate drawable, and without this the picker would
             // be swapped for the plate under the user's finger.
-            editing && setLocation != null -> {
+            mode == PlaceMorph.PlaceBlockMode.PICKER && setLocation != null -> {
                 Box(Modifier.textArrival(reveal)) {
                     com.fotoxplorr.app.spatial.LocationPicker(
                         latitude = latitude,
@@ -1154,7 +1197,7 @@ private fun PlaceBlock(
                     )
                 }
             }
-            PlaceMorph.isDrawable(latitude, longitude) -> {
+            mode == PlaceMorph.PlaceBlockMode.PLATE -> {
                 Column {
                     if (plateMapBackdrop != null) {
                         PlacePlate(
@@ -1200,7 +1243,7 @@ private fun PlaceBlock(
                     }
                 }
             }
-            !exif.readOk -> {
+            mode == PlaceMorph.PlaceBlockMode.READ_FAILED -> {
                 // A failed read is not evidence the file has no GPS tag (P0-02) -- only that this
                 // attempt couldn't see it. Never the picker here: offering to hand-place a
                 // location would invite overwriting one that may already be in the file.
@@ -1246,6 +1289,11 @@ private class PinReporter(
     private val onChanged: (local: Rect, roomWidth: Float, roomHeight: Float) -> Unit,
 ) {
     private var last: Rect? = null
+
+    /** Drops the remembered rectangle, so the next report is delivered even if it is the same. */
+    fun forget() {
+        last = null
+    }
 
     fun report(rootBounds: Rect) {
         val coordinates = room.coordinates?.takeIf { it.isAttached } ?: return
@@ -1605,7 +1653,30 @@ data class ImageExifDetails(
      * about.
      */
     val readOk: Boolean = true,
-)
+    /**
+     * True only for [PENDING]: the read has not finished, so NOTHING in this value is evidence of
+     * anything -- not "no GPS", not "no camera". [PlaceBlock] draws neither "Add a place" nor
+     * "No location yet" while this is set (the P0-02 failure through the loading state, where a
+     * geotagged file could be hand-placed over its real fix in the window before the read lands).
+     * False for every value a reader produces, which is also the default so a caller that builds
+     * one by hand (a preview, a test) is unaffected.
+     */
+    val pending: Boolean = false,
+    /** The EXIF orientation tag, 1..8; 0 when the file has none. */
+    val orientation: Int = 0,
+    /**
+     * The photo's size as it is DISPLAYED (upright, after [orientation]), in pixels, from the
+     * file's own bounds rather than MediaStore's stored WIDTH/HEIGHT; 0 when it could not be
+     * read. The flier's start rectangle is fitted from this -- see [PlaceMorph.uprightSize].
+     */
+    val displayWidth: Int = 0,
+    val displayHeight: Int = 0,
+) {
+    companion object {
+        /** The state before the first read finishes. See [pending]. */
+        val PENDING = ImageExifDetails(pending = true)
+    }
+}
 
 suspend fun readImageExifDetails(context: Context, asset: MediaAsset): ImageExifDetails {
     if (asset.isVideo) return ImageExifDetails(readOk = true)
@@ -1622,31 +1693,53 @@ suspend fun readImageExifDetails(context: Context, asset: MediaAsset): ImageExif
                 .map { it.copy(readOk = true) }
                 .getOrDefault(ImageExifDetails(readOk = false))
         }
-        // A second, bounds-only pass for the colour profile's name. Separate from the EXIF read
-        // because ExifInterface does not see ICC data, and tolerant of failure because a file
-        // whose profile cannot be named is still a file whose EXIF was read fine.
-        details.copy(colorProfile = readColorProfileName(context, asset))
+        // A second, bounds-only pass for the colour profile's name and the stored size.
+        // Separate from the EXIF read because ExifInterface does not see ICC data, and tolerant
+        // of failure because a file whose profile cannot be named is still a file whose EXIF
+        // was read fine.
+        val bounds = readImageBounds(context, asset)
+        val upright = if (PlaceMorph.decoderAppliesOrientation(asset.mimeType)) {
+            PlaceMorph.uprightSize(bounds.width, bounds.height, details.orientation)
+        } else {
+            PlaceMorph.uprightSize(bounds.width, bounds.height, 0)
+        }
+        details.copy(
+            colorProfile = bounds.colorProfile,
+            displayWidth = upright?.width?.roundToInt() ?: 0,
+            displayHeight = upright?.height?.roundToInt() ?: 0,
+        )
     }
 }
 
+/** What a bounds-only decode says: the stored pixel size (0 when unreadable) and the profile name. */
+private class ImageBounds(val width: Int, val height: Int, val colorProfile: String?)
+
 /**
- * The name of the file's colour profile, from a bounds-only decode ([BitmapFactory] with
+ * The file's stored size and the name of its colour profile, from a bounds-only decode ([BitmapFactory] with
  * `inJustDecodeBounds`, which reads headers and allocates no pixels -- TRAPS 34 is about pixels).
  * "sRGB IEC61966-2.1" is what the platform calls sRGB, which is exactly the reference's row.
  */
-private fun readColorProfileName(context: Context, asset: MediaAsset): String? {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
+private fun readImageBounds(context: Context, asset: MediaAsset): ImageBounds {
+    val none = ImageBounds(0, 0, null)
     return runCatching {
         context.contentResolver.openInputStream(asset.contentUri)?.use { stream ->
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeStream(stream, null, options)
-            options.outColorSpace?.name?.takeIf(String::isNotBlank)
+            ImageBounds(
+                width = options.outWidth.coerceAtLeast(0),
+                height = options.outHeight.coerceAtLeast(0),
+                colorProfile = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    options.outColorSpace?.name?.takeIf(String::isNotBlank)
+                } else {
+                    null
+                },
+            )
         }
-    }.getOrNull()
+    }.getOrNull() ?: none
 }
 
 @Suppress("DEPRECATION") // TAG_ISO_SPEED_RATINGS is the pre-EXIF-2.3 fallback for older files.
-private fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
+internal fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
     val iso = exif.getAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)
         ?: exif.getAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS)
     val shutter = exif.getAttributeDouble(ExifInterface.TAG_EXPOSURE_TIME, Double.NaN)
@@ -1654,7 +1747,9 @@ private fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
     // getLatLong() returns null unless BOTH the coordinate and its hemisphere ref are present
     // and well-formed, which is exactly the guarantee ImageExifDetails.latitude documents —
     // so the pair is destructured from one call rather than read as two independent tags.
-    val latLong = exif.latLong
+    // An exact 0.0, 0.0 is "no fix" written as a number (see PlaceMorph.isNullIsland), so it is
+    // dropped here and every consumer of latitude/longitude agrees the photo has no place.
+    val latLong = exif.latLong?.takeUnless { PlaceMorph.isNullIsland(it[0], it[1]) }
     // xmpAttributeUtf8(), not getAttribute(TAG_XMP): see that function's own doc for why
     // getAttribute decodes a real (non-entity-escaped) UTF-8 packet with the wrong charset.
     // Parsed once and reused below for both the professional-metadata card and the P0-16 HDR
@@ -1676,6 +1771,7 @@ private fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
         flash = exif.getAttributeInt(ExifInterface.TAG_FLASH, -1).takeIf { it >= 0 },
         latitude = latLong?.get(0),
         longitude = latLong?.get(1),
+        orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, 0).takeIf { it in 1..8 } ?: 0,
         colorSpace = colorSpaceName(exif.getAttributeInt(ExifInterface.TAG_COLOR_SPACE, -1)),
         professionalMetadata = currentMetadataFrom(
             xmp = xmp,

@@ -53,14 +53,18 @@ import kotlin.math.max
  * - [progress]: the shell's `vProgress`, 0 = the photo, 1 = the details room fully open. Pass
  *   exactly what the room is given as `reveal`, so the two cannot disagree. POSITIVE for the top
  *   room; do not negate it.
- * - [photoRect]: where the photo is actually DRAWN at rest, in shell coordinates. Prefer the
- *   rectangle measured off the displayed image (`onGloballyPositioned` on it, translated to the
- *   shell's origin) over `PlaceMorph.fitRect(width, height, asset.width, asset.height)`: the
- *   stored dimensions can disagree with the decoded bitmap for an EXIF-rotated photo, and then
- *   the fit rect is the wrong shape. Must be the UNZOOMED rectangle, so reset zoom/pan before
- *   the pull or pass the rectangle the zoomed photo currently occupies. For a video pass the
+ * - [photoRect]: where the photo is actually DRAWN at rest, in shell coordinates. Fit the
+ *   DISPLAYED (upright) size into the shell, not `asset.width x asset.height`: those are the
+ *   stored pixels, and an EXIF-rotated photo (most phone portraits) is stored landscape, so
+ *   the fit rect would be the wrong shape and the photo would visibly change shape on the first
+ *   frame of the pull. `ViewerScreen` takes the displayed size from the file's own bounds and
+ *   orientation ([PlaceMorph.uprightSize]). Must be the UNZOOMED rectangle, so reset zoom/pan
+ *   before the pull or pass the rectangle the zoomed photo currently occupies. For a video pass the
  *   poster's rectangle: the flier draws the asset's thumbnail ([MediaImage] already produces
- *   one for a video), never the live player surface, which a layer cannot move reliably.
+ *   one for a video), never the live player surface, which a layer cannot move reliably. That
+ *   poster is a different frame from the one the player is showing, and any residual shape
+ *   mismatch is the same kind of difference, so the flier fades IN over the first few percent
+ *   of the pull ([PlaceMorph.liftOffAlpha]) instead of appearing opaque.
  * - [pinRect]: the pin tile's bounds in the ROOM's coordinates, exactly as
  *   `PhotoDetailRoom(onPinPositioned = ...)` reports them. Room coordinates are the room's own
  *   top-left, which is the shell's, so they need no conversion; the room sits at
@@ -68,7 +72,9 @@ import kotlin.math.max
  *   enough and the flier derives the live position analytically ([PlaceMorph.pinRectAt]).
  *   A lambda so it can be a plain holder (not snapshot state) read at draw time. Return null
  *   until the first report; the flier draws nothing while it is null. **Clear the holder when
- *   the photo changes**, or a previous photo's position is used for one frame.
+ *   the photo changes**, or a previous photo's position is used for one frame, **and when the
+ *   pin leaves the room** (the location picker replaces the plate), or the opaque flier lands on
+ *   a stale rectangle over the picker: see `PhotoDetailRoom(onPinGone = ...)`.
  * - [viewportSize]: the shell's size in px. [bandPx]: the grab band the shell leaves visible
  *   under the parked card, in px: `PlaceMorph.SHELL_BAND_DP * density` (cell-shell's `BAND_DP`).
  * - [landedDim]: `PlaceMorph.landedDim(placeKnown)` -- 0 for a photo with a place, the ghost
@@ -139,7 +145,10 @@ fun PhotoToPinFlight(
                 .graphicsLayer {
                     val frame = frameAt(this.density)
                     val placement = frame?.let { PlaceMorph.cropPlacement(baseWidth, baseHeight, it.photo) }
-                    if (frame == null || placement == null || frame.alpha <= 0.001f) {
+                    // Faded in over the first few percent of the pull as well as out over the
+                    // last: see PlaceMorph.liftOffAlpha.
+                    val visible = frame?.let { it.alpha * PlaceMorph.liftOffAlpha(progress()) } ?: 0f
+                    if (frame == null || placement == null || visible <= 0.001f) {
                         alpha = 0f
                         return@graphicsLayer
                     }
@@ -148,7 +157,7 @@ fun PhotoToPinFlight(
                     scaleY = placement.scale
                     translationX = placement.translationX
                     translationY = placement.translationY
-                    alpha = frame.alpha
+                    alpha = visible
                 }
                 .drawWithContent {
                     val frame = frameAt(this.density) ?: return@drawWithContent

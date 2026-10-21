@@ -85,6 +85,12 @@ internal object ViewerChromePolicy {
      * or about to (an advance after the interval would cut it off mid-scene). When the video ends,
      * or is paused, the countdown starts afresh, so a clip plays out and then gets its normal
      * interval before the slideshow moves on.
+     *
+     * Also stopped while the host is not running ([hostRunning], see [slideshowHostRunning]). The
+     * countdown is a coroutine in the composition, which outlives the activity being stopped: after
+     * Home or the lock key it would still fire, step onto a video, and let that video's player
+     * arm behind a dark screen. [hostRunning] defaults to true so a caller with no lifecycle (a
+     * preview) behaves as before.
      */
     fun slideshowMayAdvance(
         slideshowActive: Boolean,
@@ -92,7 +98,18 @@ internal object ViewerChromePolicy {
         anyRoomVisible: Boolean,
         videoPlaybackActive: Boolean,
         lifting: Boolean,
-    ): Boolean = slideshowActive && total > 1 && !anyRoomVisible && !videoPlaybackActive && !lifting
+        hostRunning: Boolean = true,
+    ): Boolean = slideshowActive && total > 1 && !anyRoomVisible && !videoPlaybackActive && !lifting && hostRunning
+
+    /**
+     * Whether the hosting activity is running for the slideshow's purposes: at least STARTED (on
+     * screen, even if not focused), or in picture-in-picture. The PiP clause is belt and braces --
+     * a PiP activity is paused, not stopped, so it is STARTED anyway -- but the window is still
+     * visibly playing and a slideshow there is meant to keep going, so it is stated rather than
+     * left to that platform detail.
+     */
+    fun slideshowHostRunning(lifecycleStarted: Boolean, inPictureInPicture: Boolean): Boolean =
+        lifecycleStarted || inPictureInPicture
 
     // ── lifting a subject ─────────────────────────────────────────────────────────────────────
 

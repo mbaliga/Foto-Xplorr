@@ -43,6 +43,9 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.util.lerp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -335,6 +338,18 @@ fun ViewerScreen(
         lifting = liftActive,
     )
 
+    // Read here rather than inside the room: the shell only composes a room once it is slightly
+    // open, so reading it there would start the EXIF load on the first pixel of the pull and
+    // leave the card empty for the rest of the gesture. Starts PENDING, not as an empty read: an
+    // empty one says "no GPS" and offers to hand-place a location in the window before the file
+    // has been looked at (P0-02 through the loading state). The photo's displayed size comes off
+    // the same read, which is why it is above the flight's rectangle.
+    val context = LocalContext.current
+    var exif by remember(asset.id) { mutableStateOf(ImageExifDetails.PENDING) }
+    LaunchedEffect(asset.id, metadataRevision) {
+        exif = readImageExifDetails(context, asset)
+    }
+
     // ── The shrink-to-map flight (owner, #19) ─────────────────────────────────────────────────
     //
     // Pulling the details room down shrinks the photo and lands it as the pin on the map in the
@@ -362,26 +377,23 @@ fun ViewerScreen(
     // fresh one per photo so one photo's position is never used for the next.
     val pinHolder = remember(asset.id) { PinRectHolder() }
     // Where the photo is drawn at rest, in the shell's coordinates. The home box fills the shell,
-    // so this is the photo's Fit rectangle in that box. From the stored dimensions, like the
-    // minimap and the text layer: an EXIF-rotated file whose stored size is the unrotated one
-    // starts the flight from a rectangle of the wrong shape (a device check).
-    val photoRect = remember(asset.width, asset.height, containerSize) {
+    // so this is the photo's Fit rectangle in that box -- of the DISPLAYED size the EXIF read
+    // found (bounds and orientation), not MediaStore's stored WIDTH/HEIGHT: the scanner reads no
+    // orientation, so an EXIF-rotated portrait is stored landscape and would start the flight
+    // from a landscape rectangle, changing shape on the first frame of every pull. The stored
+    // size is the fallback until the read lands, and for a video (no EXIF; the poster is upright).
+    val photoRect = remember(asset.width, asset.height, exif.displayWidth, exif.displayHeight, containerSize) {
+        val size = PlaceMorph.restingImageSize(asset.width, asset.height, exif.displayWidth, exif.displayHeight)
         PlaceMorph.fitRect(
             containerSize.width.toFloat(), containerSize.height.toFloat(),
-            asset.width.toFloat(), asset.height.toFloat(),
+            size.width, size.height,
         )
     }
     val onPinPositioned = remember(pinHolder) { { rect: Rect -> pinHolder.rect = rect } }
+    // The pin left the room (the location picker replaced the plate): the held rectangle is stale,
+    // and the flier would land, opaque, on it over the picker. No rectangle, no flier.
+    val onPinGone = remember(pinHolder) { { pinHolder.rect = null } }
     val density = LocalDensity.current
-
-    // Read here rather than inside the room: the shell only composes a room once it is slightly
-    // open, so reading it there would start the EXIF load on the first pixel of the pull and
-    // leave the card empty for the rest of the gesture.
-    val context = LocalContext.current
-    var exif by remember(asset.id) { mutableStateOf(ImageExifDetails()) }
-    LaunchedEffect(asset.id, metadataRevision) {
-        exif = readImageExifDetails(context, asset)
-    }
 
     // A room is not a back-stack entry, but Back is the gesture people reach for to leave one.
     // Disabled at home so the activity's own handler still closes the viewer.
@@ -398,9 +410,19 @@ fun ViewerScreen(
     // The countdown restarts whenever any of its inputs changes, which is what lets a video play to
     // its end and THEN get a normal interval, rather than being cut off by a timer that started
     // when the clip did. See ViewerChromePolicy.slideshowMayAdvance.
+    //
+    // Also keyed on whether the host is running. The countdown is a coroutine in the composition,
+    // which keeps ticking after Home or the lock key stops the activity; left alone it would step
+    // onto a video and let the player arm behind a dark screen. Back in the foreground the
+    // countdown starts afresh.
     val roomOpen = shell.anyRoomVisible
-    LaunchedEffect(asset.id, slideshowActive, slideshowIntervalSeconds, roomOpen, videoPlaying, liftActive) {
-        if (ViewerChromePolicy.slideshowMayAdvance(slideshowActive, total, roomOpen, videoPlaying, liftActive)) {
+    val lifecycleStarted by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
+    val hostRunning = ViewerChromePolicy.slideshowHostRunning(
+        lifecycleStarted = lifecycleStarted.isAtLeast(Lifecycle.State.STARTED),
+        inPictureInPicture = isInPip,
+    )
+    LaunchedEffect(asset.id, slideshowActive, slideshowIntervalSeconds, roomOpen, videoPlaying, liftActive, hostRunning) {
+        if (ViewerChromePolicy.slideshowMayAdvance(slideshowActive, total, roomOpen, videoPlaying, liftActive, hostRunning)) {
             delay(slideshowIntervalSeconds.coerceAtLeast(2) * 1_000L)
             onNext()
         }
@@ -492,6 +514,7 @@ fun ViewerScreen(
                 settled = detailsSettled,
                 flightActive = flightActive,
                 onPinPositioned = onPinPositioned,
+                onPinGone = onPinGone,
                 onExpandMap = { from -> mapOrigin = from },
                 plateMapBackdrop = plateMapBackdrop,
                 // POSITIVE, and this is not cosmetic. A TOP room opens with vProgress running

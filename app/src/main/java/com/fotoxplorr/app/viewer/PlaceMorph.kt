@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.viewer
 
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import dev.aarso.cellshell.SpatialMotion
 import dev.aarso.cellshell.parkDistance
 import java.util.Locale
@@ -204,6 +205,43 @@ object PlaceMorph {
         return latitude in -90.0..90.0 && longitude in -180.0..180.0
     }
 
+    /**
+     * Whether a fix read from a file is exactly 0.0, 0.0 -- "Null Island", in the Gulf of Guinea.
+     * In range, so [isDrawable] accepts it, but no photograph in a library was taken there: it is
+     * what a camera or an editor writes when it has a GPS tag to fill and no fix to put in it. An
+     * embedded fix at exactly this point is treated as absent by the EXIF reader, so the room
+     * does not draw a confident located plate on the ocean. A hand-placed location is not run
+     * through this: someone who chose the point meant it.
+     */
+    fun isNullIsland(latitude: Double, longitude: Double): Boolean = latitude == 0.0 && longitude == 0.0
+
+    /** Which of the place block's five faces is drawn. See [placeBlockMode]. */
+    enum class PlaceBlockMode { LOADING, PICKER, PLATE, READ_FAILED, UNKNOWN }
+
+    /**
+     * Which face the room's place block shows, in the order the block tests them.
+     *
+     * - [PlaceBlockMode.LOADING]: the metadata has not been read yet. Nothing is known, so nothing
+     *   is claimed: neither "Add a place" nor "No location yet", which would be the P0-02 failure
+     *   (a geotagged file offered a hand-placed location) through the loading state instead of
+     *   the failed-read one. The block reserves the plate's footprint and has no pin.
+     * - [PlaceBlockMode.PICKER]: the location picker is up ([editing] and a way to set a place).
+     * - [PlaceBlockMode.PLATE]: a drawable place, embedded or hand-placed.
+     * - [PlaceBlockMode.READ_FAILED]: the read failed; never the picker.
+     * - [PlaceBlockMode.UNKNOWN]: read fine, no place.
+     */
+    fun placeBlockMode(pending: Boolean, editingWithSetter: Boolean, drawable: Boolean, readOk: Boolean): PlaceBlockMode =
+        when {
+            pending -> PlaceBlockMode.LOADING
+            editingWithSetter -> PlaceBlockMode.PICKER
+            drawable -> PlaceBlockMode.PLATE
+            !readOk -> PlaceBlockMode.READ_FAILED
+            else -> PlaceBlockMode.UNKNOWN
+        }
+
+    /** Whether the block in [mode] draws a pin tile (the flier's landing target). */
+    fun hasPin(mode: PlaceBlockMode): Boolean = mode == PlaceBlockMode.PLATE || mode == PlaceBlockMode.UNKNOWN
+
     // ── The shared-element flight: the photo you were looking at becomes the pin ──────────────
     //
     // Everything below is geometry for [PhotoToPinFlight]: where the photo is, where the card
@@ -241,6 +279,48 @@ object PlaceMorph {
         val top = (containerHeight - height) / 2f
         return Rect(left, top, left + width, top + height)
     }
+
+    /**
+     * The size of a decoded image as it is DISPLAYED, from its stored pixel size and its EXIF
+     * [orientation] (1..8, anything else meaning "none"). Orientations 5 to 8 turn the picture a
+     * quarter, so the displayed width is the stored height. Null when either stored side is not
+     * positive.
+     *
+     * MediaStore's WIDTH and HEIGHT are the stored pixels, and the scanner reads no orientation,
+     * so a phone portrait (stored landscape, orientation 6) would otherwise start the flight from
+     * a landscape-shaped rectangle and change shape on the first frame of every pull.
+     */
+    fun uprightSize(storedWidth: Int, storedHeight: Int, orientation: Int): Size? {
+        if (storedWidth <= 0 || storedHeight <= 0) return null
+        return if (orientation in 5..8) {
+            Size(storedHeight.toFloat(), storedWidth.toFloat())
+        } else {
+            Size(storedWidth.toFloat(), storedHeight.toFloat())
+        }
+    }
+
+    /**
+     * Whether the image decoder turns a file of [mimeType] upright by its EXIF orientation when
+     * it decodes it, which is what the displayed size has to follow. Mirrors Coil's default
+     * policy: honoured for JPEG, WebP and HEIF/HEIC, not applied to anything else (a PNG can
+     * carry an orientation tag that the decode ignores).
+     */
+    fun decoderAppliesOrientation(mimeType: String): Boolean = when (mimeType.lowercase(Locale.ROOT)) {
+        "image/jpeg", "image/jpg", "image/webp", "image/heic", "image/heif" -> true
+        else -> false
+    }
+
+    /**
+     * The size the home photo is laid out at: the displayed ([displayWidth] x [displayHeight])
+     * size read off the file when there is one, else the stored size MediaStore reported. Both
+     * zero means "unknown", for which [fitRect] already falls back to the whole container.
+     */
+    fun restingImageSize(storedWidth: Int, storedHeight: Int, displayWidth: Int, displayHeight: Int): Size =
+        if (displayWidth > 0 && displayHeight > 0) {
+            Size(displayWidth.toFloat(), displayHeight.toFloat())
+        } else {
+            Size(storedWidth.toFloat(), storedHeight.toFloat())
+        }
 
     /**
      * Where [rect] (a rectangle in the home card's own coordinates -- the photo's fit rect) is
@@ -303,6 +383,16 @@ object PlaceMorph {
      * copies that sum to 1 would dim the plate for a few frames.
      */
     fun handoff(v: Float): Float = 1f - stagger(v, HANDOFF_START, 1f)
+
+    /**
+     * How far the flier has faded IN, 0..1, over the first [LIFT_ALPHA_END] of the pull. The flier
+     * starts exactly on top of the card's own photo, so any difference between the two (a
+     * rectangle of a slightly wrong shape, or for a video a poster frame that is not the frame
+     * the player is showing) is a pop if the flier is opaque from the first pixel. Ramping it in
+     * turns that into a cross-fade under the finger. Applied by [PhotoToPinFlight] on top of
+     * [FlightFrame.alpha] so [handoff]'s own contract (opaque until the hand-off) is untouched.
+     */
+    fun liftOffAlpha(v: Float): Float = flight(stagger(v, 0f, LIFT_ALPHA_END))
 
     /** Whether the room's own pin tile is drawn at [v] -- hidden while the flier carries the photo. */
     fun realPinVisible(v: Float): Boolean = v >= HANDOFF_START
@@ -508,6 +598,9 @@ object PlaceMorph {
 
     /** Below this the shell is closed for practical purposes and the flier draws nothing. */
     private const val FLY_MIN_PROGRESS = 0.001f
+
+    /** The flier is fully faded in by this much of the pull. */
+    private const val LIFT_ALPHA_END = 0.08f
 
     /** The flier starts fading, and the real pin takes over beneath it, in the last 4% of the pull. */
     private const val HANDOFF_START = 0.96f
