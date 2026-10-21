@@ -32,7 +32,8 @@ class OverwriteGuardTest {
 
     @Test
     fun `a still WebP is not`() {
-        assertTrue(overwriteHazards(webp(0x10), ByteArray(0), "image/webp").isEmpty())
+        // No flags set: 0x10 is the alpha flag, whose own hazard is pinned in OverwriteHazardsExtendedTest.
+        assertTrue(overwriteHazards(webp(0x00), ByteArray(0), "image/webp").isEmpty())
         // The simple (non-VP8X) layout cannot animate at all.
         val simple = ascii("RIFF") + byteArrayOf(0x20, 0, 0, 0) + ascii("WEBPVP8 ") + ByteArray(16)
         assertTrue(overwriteHazards(simple, ByteArray(0), "image/webp").isEmpty())

@@ -19,13 +19,21 @@ import com.fotoxplorr.app.media.mediaStoreRelativePath
 import com.fotoxplorr.app.media.openForLocationRead
 import com.fotoxplorr.app.media.uriForLocationRead
 import com.fotoxplorr.app.metadata.ExifCopier
+import com.fotoxplorr.app.metadata.ExifCopyReport
+import com.fotoxplorr.app.metadata.UNCARRIED_SCAN_BYTES
+import com.fotoxplorr.app.metadata.UncarriedMetadata
+import com.fotoxplorr.app.metadata.uncarriedMetadataIn
 import com.fotoxplorr.app.metadata.xmpAttributeUtf8
+import com.fotoxplorr.app.metadata.xmpCarriesLocation
+import com.fotoxplorr.core.metadata.XmpPacket
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.SequenceInputStream
 
 /**
  * Writes an edited photo out — as a new file beside the original by default, to a location the
@@ -62,8 +70,13 @@ import java.io.OutputStream
  * "never let a secondary concern sink the primary save" reasoning
  * [com.fotoxplorr.app.share.SharePreparer.restoreOrientationOnly] already uses for its own
  * best-effort EXIF touch-up. [overwrite] is the exception: replacing the original cannot be
- * undone, so it refuses unless the whole of the source's metadata made it across
- * ([overwriteMetadataRefusal]). [saveTo] strips location on purpose, see its own doc.
+ * undone, so it refuses unless the metadata this app knows how to carry made it across
+ * ([overwriteMetadataRefusal]): the EXIF tags, and an XMP packet that was copied and reads back from
+ * the staged file. It also refuses a source holding IPTC-IIM or extended XMP, which [ExifInterface]
+ * cannot carry ([uncarriedMetadataIn]). Two losses are accepted and NOT gated, because nearly every
+ * camera file has them: `MakerNote` (its offsets are invalid in a new file) and the embedded
+ * thumbnail ([com.fotoxplorr.app.metadata.EXCLUDED_TAGS]). [saveTo] strips location on purpose, see
+ * its own doc.
  * HEIC output is the one format that gets no copied metadata at all:
  * [ExifInterface] cannot write attributes into a HEIC container, so [applySourceMetadata] skips it
  * rather than letting that failure be swallowed after the fact.
@@ -77,7 +90,9 @@ class EditedCopyWriter(context: Context) {
      * meaningful for JPEG/WebP/HEIC, PNG's encoder is lossless).
      *
      * [onMetadata] is told how much of [source]'s metadata made it onto the new file, so the caller
-     * can say so when it did not (a copy is still worth saving without it).
+     * can say so when it did not (a copy is still worth saving without it). [onSteppedDown] is told
+     * the size actually written when encoding [bitmap] ran out of memory and a smaller rung of
+     * [exportEdgeLadder] had to be used instead (a copy is still worth saving smaller).
      *
      * @return the new file's content Uri.
      */
@@ -87,10 +102,13 @@ class EditedCopyWriter(context: Context) {
         format: OutputFormat = outputFormatFor(source.mimeType),
         quality: Int = format.exportQuality(),
         onMetadata: (MetadataCopy) -> Unit = {},
+        onSteppedDown: (width: Int, height: Int) -> Unit = { _, _ -> },
     ): Result<Uri> = withContext(Dispatchers.IO) {
         runCatching {
-            val tempFile = encodeToStagingFile(bitmap, format, quality)
+            val staged = encodeSteppingDown(bitmap, format, quality)
+            val tempFile = staged.file
             try {
+                if (staged.steppedDown) onSteppedDown(staged.width, staged.height)
                 onMetadata(applySourceMetadata(source, tempFile, format))
 
                 val name = editedName(source.displayName, format)
@@ -171,10 +189,13 @@ class EditedCopyWriter(context: Context) {
         bitmap: Bitmap,
         format: OutputFormat,
         quality: Int = format.exportQuality(),
+        onSteppedDown: (width: Int, height: Int) -> Unit = { _, _ -> },
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            val tempFile = encodeToStagingFile(bitmap, format, quality)
+            val staged = encodeSteppingDown(bitmap, format, quality)
+            val tempFile = staged.file
             try {
+                if (staged.steppedDown) onSteppedDown(staged.width, staged.height)
                 applySourceMetadata(source, tempFile, format, keepLocation = false)
                 check(format == OutputFormat.HEIC || !carriesLocation(tempFile)) {
                     "Could not remove the photo's location from the copy, so nothing was saved"
@@ -221,14 +242,23 @@ class EditedCopyWriter(context: Context) {
             // Before anything is encoded: re-encoding the first frame's pixels would destroy an
             // animation, an HDR gain map or a motion video, none of which a copy of the pixels
             // can carry.
-            val hazards = appContext.readOverwriteHazards(source)
-            if (hazards.isNotEmpty()) {
+            val scan = appContext.readOverwriteHazards(source)
+            if (scan.unreadable) {
                 throw OverwriteException.Refused(
-                    OverwriteException.Refused.Reason.WOULD_DESTROY_CONTENT,
-                    hazards.refusalMessage(),
-                    hazards,
+                    OverwriteException.Refused.Reason.BACKUP_FAILED,
+                    "This photo could not be read to check that replacing it is safe, so it was left as it is. " +
+                        "Save a copy instead.",
                 )
             }
+            if (scan.hazards.isNotEmpty()) {
+                throw OverwriteException.Refused(
+                    OverwriteException.Refused.Reason.WOULD_DESTROY_CONTENT,
+                    scan.hazards.refusalMessage(),
+                    scan.hazards,
+                )
+            }
+            // One rung, never stepped down: a smaller re-encode of the ORIGINAL would destroy
+            // pixels (docs/TRAPS.md #17), so an out-of-memory here fails the overwrite instead.
             val tempFile = encodeToStagingFile(bitmap, format, format.exportQuality())
             try {
                 // The metadata gate. Unlike a copy, this is irreversible: if the staged file does
@@ -244,11 +274,14 @@ class EditedCopyWriter(context: Context) {
                 }
 
                 val original = ResolverOriginal(source)
+                // The safety copy lives in the app's persistent files, not the cache the system
+                // clears when storage is tight; it is deleted once the replace verifies.
+                val recoveryDir = OverwriteRecovery.dir(appContext)
                 replaceWithRestore(
                     original = original,
                     staged = tempFile,
-                    backupDir = File(appContext.cacheDir, "edit-backup"),
-                    recoveryDir = File(appContext.filesDir, "overwrite-recovery"),
+                    backupDir = recoveryDir,
+                    recoveryDir = recoveryDir,
                     label = source.displayName,
                     originalSizeBytes = source.sizeBytes,
                 ) {
@@ -292,7 +325,21 @@ class EditedCopyWriter(context: Context) {
         override fun openForTruncatingWrite(): OutputStream? =
             appContext.contentResolver.openFileDescriptor(source.contentUri, "wt")
                 ?.let { ParcelFileDescriptor.AutoCloseOutputStream(it) }
+
+        // Asked of the file itself: MediaStore's recorded size can lag behind another app's edit.
+        override fun currentSizeBytes(): Long =
+            appContext.contentResolver.openFileDescriptor(source.contentUri, "r")?.use { it.statSize } ?: -1L
     }
+
+    /**
+     * [encodeToStagingFile] for a COPY: if the encode itself runs out of memory (the JPEG/WebP/HEIC
+     * encoders and the flatten allocate on top of the bitmap), tries again one rung down
+     * [exportEdgeLadder] on a scaled copy of [bitmap] instead of failing a save that a smaller file
+     * would have satisfied. Throws an [OutOfMemoryError] with a readable message when every rung
+     * fails. [overwrite] never comes through here: it does not step down (docs/TRAPS.md #17).
+     */
+    private suspend fun encodeSteppingDown(bitmap: Bitmap, format: OutputFormat, quality: Int): StagedEncode =
+        encodeDownTheLadder(bitmap) { encodeToStagingFile(it, format, quality) }
 
     /**
      * Encodes [bitmap] into a fresh file under this app's own cache, never MediaStore or the
@@ -358,17 +405,31 @@ class EditedCopyWriter(context: Context) {
             val opened = openForLocationRead(requested, source.contentUri) { uri ->
                 appContext.contentResolver.openInputStream(uri)
             } ?: return MetadataCopy.SOURCE_UNREADABLE
+            var report = ExifCopyReport(xmpSkipped = false)
+            var sourceHadXmp = false
+            var uncarried = emptySet<UncarriedMetadata>()
             opened.first.use { stream ->
-                val sourceExif = ExifInterface(stream)
+                // The head is read first and handed back to ExifInterface in front of the rest, so
+                // the same single pass both parses the EXIF and lets uncarriedMetadataIn see the
+                // segments ExifInterface cannot (IPTC-IIM, extended XMP).
+                val head = stream.readUpTo(UNCARRIED_SCAN_BYTES)
+                uncarried = uncarriedMetadataIn(head)
+                val sourceExif = ExifInterface(SequenceInputStream(ByteArrayInputStream(head), stream))
                 val targetExif = ExifInterface(tempFile.absolutePath)
-                ExifCopier.copy(sourceExif, targetExif, keepLocation)
+                report = ExifCopier.copy(sourceExif, targetExif, keepLocation)
+                sourceHadXmp = sourceExif.xmpAttributeUtf8() != null
                 targetExif.saveAttributes()
             }
-            if (isRedactedView(Build.VERSION.SDK_INT, source.contentUri, readUnredacted = opened.second)) {
-                MetadataCopy.REDACTED
-            } else {
-                MetadataCopy.COPIED
-            }
+            // A fresh read of what reached disk, not the instance that wrote it: the packet is the
+            // one thing a silent skip would leave out, and the report above is only the copier's
+            // own account of it.
+            val stagedHasXmp = !sourceHadXmp || ExifInterface(tempFile.absolutePath).xmpAttributeUtf8() != null
+            metadataCopyOutcome(
+                redacted = isRedactedView(Build.VERSION.SDK_INT, source.contentUri, readUnredacted = opened.second),
+                xmpSkipped = report.xmpSkipped,
+                stagedLostXmp = !stagedHasXmp,
+                uncarriedFound = uncarried.isNotEmpty(),
+            )
         } catch (e: Exception) {
             MetadataCopy.FAILED
         }
@@ -468,10 +529,47 @@ internal fun OutputFormat.exportQuality(): Int = when (this) {
  * lossy WebP (the variant this app's own [toCompressFormat] picks on API 30+) drops it the same
  * way JPEG does, per that constant's own platform documentation.
  */
-internal fun OutputFormat.encodesAlpha(): Boolean = when (this) {
+internal fun OutputFormat.encodesAlpha(): Boolean = encodesAlphaOn(Build.VERSION.SDK_INT)
+
+/** [encodesAlpha] for a given platform version, so the answer can be asked about another device. */
+internal fun OutputFormat.encodesAlphaOn(sdkInt: Int): Boolean = when (this) {
     OutputFormat.PNG -> true
-    OutputFormat.WEBP -> Build.VERSION.SDK_INT < Build.VERSION_CODES.R
+    OutputFormat.WEBP -> sdkInt < Build.VERSION_CODES.R
     OutputFormat.JPEG, OutputFormat.HEIC -> false
+}
+
+/**
+ * Runs [encode] on [bitmap] and, each time it throws [OutOfMemoryError], again on a scaled copy one
+ * rung down [exportEdgeLadder]. The scaled copy is recycled as soon as its encode is done. Throws an
+ * [OutOfMemoryError] with a readable message when every rung fails. Separate from the writer so the
+ * stepping can be driven with a fake [encode].
+ */
+internal suspend fun encodeDownTheLadder(bitmap: Bitmap, encode: (Bitmap) -> File): StagedEncode {
+    val longEdge = maxOf(bitmap.width, bitmap.height)
+    val outcome = renderDownTheLadder(exportEdgeLadder(longEdge)) { edge ->
+        if (edge >= longEdge) {
+            StagedEncode(encode(bitmap), bitmap.width, bitmap.height, steppedDown = false)
+        } else {
+            val (width, height) = scaledSizeFor(bitmap.width, bitmap.height, edge)
+            val scaled = Bitmap.createScaledBitmap(bitmap, width, height, true)
+            try {
+                StagedEncode(encode(scaled), width, height, steppedDown = true)
+            } finally {
+                if (scaled !== bitmap) scaled.recycle()
+            }
+        }
+    }
+    return outcome?.value ?: throw OutOfMemoryError("There is not enough memory to save this photo")
+}
+
+/** An encoded staging file and the size of the bitmap it holds; [steppedDown] when that is smaller
+ *  than the one asked for. */
+internal class StagedEncode(val file: File, val width: Int, val height: Int, val steppedDown: Boolean)
+
+/** [width] x [height] scaled so the longer edge is [longEdge], never below 1 px on either side. */
+internal fun scaledSizeFor(width: Int, height: Int, longEdge: Int): Pair<Int, Int> {
+    val scale = longEdge.toDouble() / maxOf(width, height)
+    return maxOf(1, Math.round(width * scale).toInt()) to maxOf(1, Math.round(height * scale).toInt())
 }
 
 /**
@@ -493,6 +591,9 @@ internal fun compositeOntoWhiteIfNeeded(bitmap: Bitmap, format: OutputFormat): B
         drawColor(Color.WHITE)
         drawBitmap(bitmap, 0f, 0f, null)
     }
+    // Opaque by construction now: lets a second pass (the render's flatten, then the writer's) see
+    // there is nothing left to do instead of allocating another full-size copy.
+    flattened.setHasAlpha(false)
     return flattened
 }
 
@@ -514,6 +615,40 @@ enum class MetadataCopy {
 
     /** Reading or writing the EXIF threw. */
     FAILED,
+
+    /** Copied, but not all of it: an XMP packet this app could not safely rewrite was left out, or
+     *  the source holds IPTC-IIM or extended XMP, which [ExifInterface] cannot carry. */
+    PARTIAL,
+}
+
+/**
+ * Folds what [EditedCopyWriter.applySourceMetadata] observed into one [MetadataCopy]. A redacted
+ * read outranks the rest (the user's fix is permission, whatever else is missing); otherwise any
+ * of [xmpSkipped] (the copier said it skipped a packet), [stagedLostXmp] (the source had XMP and
+ * the staged file read back none) or [uncarriedFound] is [MetadataCopy.PARTIAL]. Pure, so the
+ * mapping is testable without a file.
+ */
+internal fun metadataCopyOutcome(
+    redacted: Boolean,
+    xmpSkipped: Boolean,
+    stagedLostXmp: Boolean,
+    uncarriedFound: Boolean,
+): MetadataCopy = when {
+    redacted -> MetadataCopy.REDACTED
+    xmpSkipped || stagedLostXmp || uncarriedFound -> MetadataCopy.PARTIAL
+    else -> MetadataCopy.COPIED
+}
+
+/** Up to [limit] bytes from the start of this stream (fewer at its end). */
+private fun InputStream.readUpTo(limit: Int): ByteArray {
+    val buffer = ByteArray(limit)
+    var total = 0
+    while (total < limit) {
+        val n = read(buffer, total, limit - total)
+        if (n < 0) break
+        total += n
+    }
+    return if (total == limit) buffer else buffer.copyOf(total)
 }
 
 /** The clause appended to a "saved" message when the copy is missing some of the source's metadata,
@@ -521,6 +656,7 @@ enum class MetadataCopy {
 internal fun MetadataCopy.savedNote(): String = when (this) {
     MetadataCopy.REDACTED -> " (location not copied: allow photo-location access to keep it)"
     MetadataCopy.SOURCE_UNREADABLE, MetadataCopy.FAILED -> " (photo details could not be copied)"
+    MetadataCopy.PARTIAL -> " (some photo details could not be copied)"
     MetadataCopy.COPIED, MetadataCopy.SKIPPED_HEIC -> ""
 }
 
@@ -537,19 +673,25 @@ internal fun isRedactedView(sdkInt: Int, uri: Uri, readUnredacted: Boolean): Boo
 
 /**
  * Whether [file] still carries a location a reader could use: a decodable GPS coordinate, any
- * `GPS*` EXIF tag, or an XMP location property (`exif:GPS*`, or the structured IPTC
- * `LocationCreated` / `LocationShown`). The proof [EditedCopyWriter.saveTo] demands of its staged
- * file; a fresh [ExifInterface], not the one that did the writing, so it checks what reached disk.
+ * `GPS*` EXIF tag, or in its XMP a GPS property, an IPTC location structure or a place name
+ * ([xmpCarriesLocation]: matched by namespace in every Description and nested structure, so
+ * neither a second Description, a duplicated element nor an unusual prefix hides one). The proof
+ * [EditedCopyWriter.saveTo] demands of its staged file; a fresh [ExifInterface], not the one that
+ * did the writing, so it checks what reached disk. An XMP packet that does not parse is judged by a
+ * prefix-agnostic text match instead: it was skipped on the way in, so finding a marker means a
+ * packet got through that should not have.
  */
 internal fun carriesLocation(file: File): Boolean {
     val exif = ExifInterface(file.absolutePath)
     if (exif.latLong != null) return true
     if (ExifCopier.GPS_TAGS.any { exif.getAttribute(it) != null }) return true
     val xmp = exif.xmpAttributeUtf8() ?: return false
-    return XMP_LOCATION_MARKER.containsMatchIn(xmp)
+    val packet = XmpPacket.parse(xmp) ?: return XMP_LOCATION_MARKER.containsMatchIn(xmp)
+    return xmpCarriesLocation(packet)
 }
 
-private val XMP_LOCATION_MARKER = Regex("[A-Za-z]+:GPS[A-Z]|LocationCreated|LocationShown")
+private val XMP_LOCATION_MARKER =
+    Regex("[\\w.-]+:(GPS[A-Z]|City\\b|State\\b|Country\\b|CountryCode\\b|Location\\b)|LocationCreated|LocationShown")
 
 /**
  * The name an edited copy is saved under: the original's stem, then a marker, then [format]'s own

@@ -35,8 +35,12 @@ object ExifCopier {
      * [com.fotoxplorr.app.editor.EditedCopyWriter.saveTo]) no `GPS*` EXIF tag is copied and the
      * XMP side has its location properties cleared, or is skipped when it cannot be parsed and so
      * cannot be cleaned.
+     *
+     * Returns what it had to leave behind ([ExifCopyReport]). A caller for whom a silent loss is
+     * not acceptable (replacing the original) must look at it: this never throws for a packet it
+     * skipped.
      */
-    fun copy(source: ExifInterface, target: ExifInterface, keepLocation: Boolean = true) {
+    fun copy(source: ExifInterface, target: ExifInterface, keepLocation: Boolean = true): ExifCopyReport {
         COPIED_TAGS.forEach { tag ->
             if (!keepLocation && tag in GPS_TAGS) return@forEach
             source.getAttribute(tag)?.let { target.setAttribute(tag, it) }
@@ -44,15 +48,107 @@ object ExifCopier {
         target.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
         // xmpAttributeUtf8(), not getAttribute(TAG_XMP) -- see that function's own doc (P0-08):
         // getAttribute decodes an XMP packet's bytes with the wrong charset.
-        copiedXmpValue(source.xmpAttributeUtf8(), keepLocation)?.let {
-            target.setAttribute(ExifInterface.TAG_XMP, it)
-        }
+        val sourceXmp = source.xmpAttributeUtf8()
+        val copiedXmp = copiedXmpValue(sourceXmp, keepLocation)
+        copiedXmp?.let { target.setAttribute(ExifInterface.TAG_XMP, it) }
+        return ExifCopyReport(xmpSkipped = !sourceXmp.isNullOrBlank() && copiedXmp == null)
     }
 
     /** Every EXIF GPS tag ([ExifInterface.TAG_GPS_LATITUDE] and the rest of the `GPS*` group,
      *  including capture direction and the processing-method strings). */
     val GPS_TAGS: Set<String> = COPIED_TAGS.filterTo(mutableSetOf()) { it.startsWith("GPS") }
 }
+
+/**
+ * What [ExifCopier.copy] did not carry onto the target.
+ *
+ * @property xmpSkipped the source held a non-blank XMP packet and none was written: it could not
+ *   be parsed and was not plain ASCII (see [copiedXmpValue]), or it was unparseable and location
+ *   had to be stripped.
+ */
+class ExifCopyReport(val xmpSkipped: Boolean)
+
+/** Embedded metadata [ExifCopier] has no path for at all, found by [uncarriedMetadataIn]. */
+enum class UncarriedMetadata(val label: String) {
+    /** IPTC-IIM (Photoshop APP13): captions, keywords, credits written by older desktop tools. */
+    IPTC_IIM("IPTC captions and keywords"),
+
+    /** Extended XMP: the overflow packet for XMP larger than one JPEG segment. */
+    EXTENDED_XMP("extended XMP"),
+}
+
+/** How much of a file's start [uncarriedMetadataIn] needs: JPEG keeps all of this before the scan. */
+internal const val UNCARRIED_SCAN_BYTES = 256 * 1024
+
+/**
+ * The metadata in [head] (a JPEG's first bytes) that [ExifCopier.copy] cannot carry to another
+ * file, because [ExifInterface] neither reads nor writes it: an IPTC-IIM block and extended XMP.
+ * Both are looked for by walking the JPEG's marker segments up to the start of the image data, so
+ * a coincidental string inside pixel data or a thumbnail is not a match. Anything that is not a
+ * JPEG answers empty; a segment cut off by the end of [head] is not seen.
+ *
+ * Not covered, on purpose: `MakerNote` and the embedded thumbnail, which [EXCLUDED_TAGS] drops for
+ * a stated reason and which nearly every camera file has, so refusing on them would refuse nearly
+ * every replace.
+ */
+internal fun uncarriedMetadataIn(head: ByteArray): Set<UncarriedMetadata> {
+    val found = mutableSetOf<UncarriedMetadata>()
+    if (head.size < 4 || head[0] != 0xFF.toByte() || head[1] != 0xD8.toByte()) return found
+    var pos = 2
+    while (pos + 4 <= head.size) {
+        if (head[pos] != 0xFF.toByte()) break
+        val marker = head[pos + 1].toInt() and 0xFF
+        when {
+            marker == 0xFF -> { pos++; continue }
+            // Markers without a length: TEM, RSTn, SOI.
+            marker == 0x01 || marker in 0xD0..0xD8 -> { pos += 2; continue }
+            // Start of scan or end of image: no metadata segment follows.
+            marker == 0xDA || marker == 0xD9 -> break
+        }
+        val length = ((head[pos + 2].toInt() and 0xFF) shl 8) or (head[pos + 3].toInt() and 0xFF)
+        if (length < 2) break
+        val start = pos + 4
+        val end = minOf(pos + 2 + length, head.size)
+        if (marker == 0xED && startsWith(head, start, end, PHOTOSHOP_HEADER) && photoshopCarriesIptc(head, start + PHOTOSHOP_HEADER.size, end)) {
+            found += UncarriedMetadata.IPTC_IIM
+        }
+        if (marker == 0xE1 && startsWith(head, start, end, EXTENDED_XMP_HEADER)) found += UncarriedMetadata.EXTENDED_XMP
+        pos += 2 + length
+    }
+    return found
+}
+
+private val PHOTOSHOP_HEADER = "Photoshop 3.0\u0000".toByteArray(Charsets.ISO_8859_1)
+private val EXTENDED_XMP_HEADER = "http://ns.adobe.com/xmp/extension/\u0000".toByteArray(Charsets.ISO_8859_1)
+private val EIGHT_BIM = "8BIM".toByteArray(Charsets.ISO_8859_1)
+
+private fun startsWith(bytes: ByteArray, from: Int, end: Int, prefix: ByteArray): Boolean {
+    if (from + prefix.size > end) return false
+    for (i in prefix.indices) if (bytes[from + i] != prefix[i]) return false
+    return true
+}
+
+/** Whether the Photoshop image-resource blocks in `[from, end)` include a non-empty IPTC-IIM (resource
+ *  0x0404). A block list that does not parse counts as carrying one: fail closed. */
+private fun photoshopCarriesIptc(b: ByteArray, from: Int, end: Int): Boolean {
+    var p = from
+    while (p < end) {
+        if (p + 12 > end || !startsWith(b, p, end, EIGHT_BIM)) return true
+        val id = ((b[p + 4].toInt() and 0xFF) shl 8) or (b[p + 5].toInt() and 0xFF)
+        // Pascal-string name, padded so name length byte + text is even.
+        var q = p + 6 + 1 + (b[p + 6].toInt() and 0xFF)
+        if ((q - (p + 6)) % 2 != 0) q++
+        if (q + 4 > end) return true
+        val size = ((b[q].toInt() and 0xFF) shl 24) or ((b[q + 1].toInt() and 0xFF) shl 16) or
+            ((b[q + 2].toInt() and 0xFF) shl 8) or (b[q + 3].toInt() and 0xFF)
+        if (size < 0) return true
+        if (id == IPTC_RESOURCE_ID && size > 0) return true
+        p = q + 4 + size + (size and 1)
+    }
+    return false
+}
+
+private const val IPTC_RESOURCE_ID = 0x0404
 
 /** Every `public static final String` field on [ExifInterface] whose name starts with `TAG_` --
  * read by reflection against the real linked artifact, not hand-copied from documentation, so
@@ -150,7 +246,7 @@ fun resetXmpOrientationForCopy(packet: XmpPacket): XmpPacket {
  *  - No source XMP ([rawXmp] null or blank): null -- an edited copy with nothing to copy gets no
  *    XMP packet invented for it.
  *  - Parses: [resetXmpOrientationForCopy]'s adjusted packet, re-serialized, with its location
- *    properties cleared first when [keepLocation] is false.
+ *    properties and place names cleared first ([clearXmpLocationForExport]) when [keepLocation] is false.
  *  - Does not parse at all: [rawXmp] itself, untouched, but ONLY when every character is 7-bit
  *    ASCII, otherwise null (the packet is skipped). This app cannot safely edit a packet it
  *    cannot parse -- see [XmpPacket.parse]'s own doc on why a failed parse must not become a fresh
@@ -168,7 +264,7 @@ internal fun copiedXmpValue(rawXmp: String?, keepLocation: Boolean = true): Stri
     if (rawXmp.isNullOrBlank()) return null
     val packet = XmpPacket.parse(rawXmp)
         ?: return rawXmp.takeIf { raw -> keepLocation && raw.all { it.code <= MAX_ASCII } }
-    if (!keepLocation) applyToXmp(packet, MetadataEdit(clearLocation = true))
+    if (!keepLocation) clearXmpLocationForExport(packet)
     return resetXmpOrientationForCopy(packet).serialize()
 }
 

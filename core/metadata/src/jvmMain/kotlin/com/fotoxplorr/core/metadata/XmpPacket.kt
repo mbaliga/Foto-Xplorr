@@ -78,7 +78,9 @@ class XmpPacket private constructor(private val document: Document) {
             return
         }
         val property = propertyElement(namespaceUri, prefix, localName)
-        removeAttributeEverywhere(property.parentNode as? Element, namespaceUri, localName)
+        // Every Description, not only this property's: a stale attribute-form copy in another one
+        // would otherwise keep answering a read with the old value.
+        removeAttributeEverywhere(null, namespaceUri, localName)
         clearChildren(property)
         val alt = appendChild(property, RDF_NS, "rdf", "Alt")
         val li = appendChild(alt, RDF_NS, "rdf", "li")
@@ -159,10 +161,9 @@ class XmpPacket private constructor(private val document: Document) {
     /** Writes the attribute-shorthand form and removes any stray element-form copy. Null clears both. */
     fun setIntValue(namespaceUri: String, prefix: String, localName: String, value: Int?) {
         removeProperty(namespaceUri, localName)
-        val description = firstDescriptionOrNull()
-        removeAttributeEverywhere(description, namespaceUri, localName)
+        removeAttributeEverywhere(null, namespaceUri, localName)
         if (value == null) return
-        val target = description ?: createDescription()
+        val target = firstDescriptionOrNull() ?: createDescription()
         declareNamespace(target, prefix, namespaceUri)
         target.setAttributeNS(namespaceUri, "$prefix:$localName", value.toString())
     }
@@ -175,11 +176,27 @@ class XmpPacket private constructor(private val document: Document) {
      * for (P0-08: a handful of plain-Text `exif:GPS*`/`Iptc4xmpExt:Location*` properties this app
      * only ever needs to CLEAR, never read or set to a new value) this is the whole contract a
      * caller needs -- "gone", not a value back.
+     *
+     * Every occurrence goes: in every `rdf:Description`, repeated, and nested inside a structure
+     * (a location struct holding its own `exif:GPSLatitude`). A clear that left the second copy
+     * behind would be a clear in name only, which matters most where this is the proof that a
+     * coordinate does not leave the device.
      */
     fun clearProperty(namespaceUri: String, localName: String) {
         removeProperty(namespaceUri, localName)
-        removeAttributeEverywhere(firstDescriptionOrNull(), namespaceUri, localName)
+        removeAttributeEverywhere(null, namespaceUri, localName)
+        elementsNamed(namespaceUri, localName).forEach { it.parentNode?.removeChild(it) }
+        allElements().forEach { it.removeAttributeNS(namespaceUri, localName) }
     }
+
+    /**
+     * Whether (namespaceUri, localName) appears ANYWHERE in the document, as an element or as an
+     * attribute, on any `rdf:Description` or nested inside a structure -- the read-side mirror of
+     * [clearProperty]'s reach. Matches by namespace, not prefix.
+     */
+    fun hasProperty(namespaceUri: String, localName: String): Boolean =
+        elementsNamed(namespaceUri, localName).isNotEmpty() ||
+            allElements().any { it.hasAttributeNS(namespaceUri, localName) }
 
     /**
      * Whether [namespaceUri] is used ANYWHERE in the document, in either shape a property can
@@ -289,8 +306,24 @@ class XmpPacket private constructor(private val document: Document) {
         return property
     }
 
+    /** Removes every direct child of every Description named (namespace, localName), not only the first. */
     private fun removeProperty(namespaceUri: String, localName: String) {
-        findProperty(namespaceUri, localName)?.let { it.parentNode.removeChild(it) }
+        while (true) {
+            val property = findProperty(namespaceUri, localName) ?: return
+            property.parentNode.removeChild(property)
+        }
+    }
+
+    /** A snapshot (the live node list would shrink as nodes are removed) of every element in the
+     *  document named (namespace, localName). */
+    private fun elementsNamed(namespaceUri: String, localName: String): List<Element> {
+        val nodes = document.getElementsByTagNameNS(namespaceUri, localName)
+        return (0 until nodes.length).map { nodes.item(it) as Element }
+    }
+
+    private fun allElements(): List<Element> {
+        val nodes = document.getElementsByTagNameNS("*", "*")
+        return (0 until nodes.length).map { nodes.item(it) as Element }
     }
 
     private fun attributeEverywhere(namespaceUri: String, localName: String): String? =
@@ -350,6 +383,8 @@ class XmpPacket private constructor(private val document: Document) {
         const val TIFF_NS = "http://ns.adobe.com/tiff/1.0/"
         const val EXIF_NS = "http://ns.adobe.com/exif/1.0/"
         const val IPTC4XMPEXT_NS = "http://iptc.org/std/Iptc4xmpExt/2008-02-29/"
+        const val PHOTOSHOP_NS = "http://ns.adobe.com/photoshop/1.0/"
+        const val IPTC4XMPCORE_NS = "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/"
         /** Ultra HDR's gain-map metadata namespace (P0-16). See the Ultra HDR guide. */
         const val HDR_GAIN_MAP_NS = "http://ns.adobe.com/hdr-gain-map/1.0/"
         private const val XML_NS = "http://www.w3.org/XML/1998/namespace"

@@ -261,12 +261,16 @@ fun EditorScreen(
             return@rememberLauncherForActivityResult
         }
         scope.launch {
-            val result = writer.saveTo(uri, asset, bitmap, pendingSaveToFormat, pendingSaveToQuality)
+            var steppedNote = ""
+            val result = writer.saveTo(
+                uri, asset, bitmap, pendingSaveToFormat, pendingSaveToQuality,
+                onSteppedDown = { w, h -> steppedNote = " at reduced size ($w × $h)" },
+            )
             saving = false
             result.onSuccess { onSavedUri?.invoke(uri) }
             onSaved(
                 result.fold(
-                    onSuccess = { "Saved to the chosen location$pendingSaveToNote" },
+                    onSuccess = { "Saved to the chosen location${steppedNote.ifEmpty { pendingSaveToNote }}" },
                     onFailure = { it.message ?: "Could not save the edited photo" },
                 ),
             )
@@ -324,11 +328,13 @@ fun EditorScreen(
         // than per-save so both the sheet (which hides the row entirely) and performSave (which
         // must not attempt one) agree. The hazard read is one pass over the file off the main
         // thread; until it lands the row is offered and EditedCopyWriter.overwrite repeats the same
-        // check, so a quick tap is refused there rather than let through.
-        val hazards by produceState<Set<OverwriteHazard>>(emptySet(), asset.id) {
+        // check, so a quick tap is refused there rather than let through. A file that could not be
+        // read at all is not offered either: it cannot be vouched for.
+        val hazardScan by produceState(HazardScan.CLEAR, asset.id) {
             value = withContext(Dispatchers.IO) { context.readOverwriteHazards(asset) }
         }
-        val canOverwriteInPlace = overwriteFormatFor(asset.mimeType) != null && hazards.isEmpty()
+        val hazards = hazardScan.hazards
+        val canOverwriteInPlace = overwriteFormatFor(asset.mimeType) != null && !hazardScan.blocksOverwrite
 
         // Saving in one place, whichever route asked for it. Two call sites for "write the file"
         // is how a save path ends up with two different sets of error handling.
@@ -351,7 +357,17 @@ fun EditorScreen(
                 // -- and a render that still had to downscale is refused below. A COPY starts at
                 // the user's cap (or the ceiling) and steps down only after a real OOM.
                 val ladder = if (overwriting) listOf(MAX_EXPORT_EDGE) else exportEdgeLadder(options.renderEdge())
-                val rendered = renderFullSize(context, asset, recipe, ladder)
+                // The format the pixels will be encoded in, so a render for an alpha-less one is
+                // flattened inside the ladder attempt (an out-of-memory there steps down too).
+                val targetFormat = if (overwriting) {
+                    overwriteFormatFor(asset.mimeType)
+                } else {
+                    options.format ?: outputFormatFor(asset.mimeType)
+                }
+                val rendered = renderFullSize(
+                    context, asset, recipe, ladder,
+                    targetFormat.takeIf { it != OutputFormat.HEIC },
+                )
                 if (rendered == null) {
                     saving = false
                     onSaved("Could not read the photo at full size")
@@ -384,31 +400,42 @@ fun EditorScreen(
                     return@launch
                 }
                 var metadataNote = ""
-                val result = writer.save(asset, full, resolvedFormat, options.resolvedQuality(resolvedFormat)) {
-                    metadataNote = it.savedNote()
-                }
+                // Set when the ENCODE (not the render) ran out of memory and the writer saved a
+                // smaller copy, so the message never claims a size it did not write.
+                var steppedNote = ""
+                val result = writer.save(
+                    asset,
+                    full,
+                    resolvedFormat,
+                    options.resolvedQuality(resolvedFormat),
+                    onMetadata = { metadataNote = it.savedNote() },
+                    onSteppedDown = { w, h -> steppedNote = " at reduced size ($w × $h)" },
+                )
                 saving = false
                 result.onSuccess { uri -> onSavedUri?.invoke(uri) }
                 onSaved(
                     result.fold(
                         onSuccess = {
+                            val sizeNote = steppedNote.ifEmpty { rendered.reducedSizeNote }
                             when {
                                 // OVERWRITE was chosen and this format could take it, but the
                                 // photo is too large to re-encode at full size on this device: the
                                 // original is left exactly as it was and a copy is saved instead.
                                 overwriting ->
-                                    "Saved a copy${rendered.reducedSizeNote} — the original was left untouched " +
+                                    "Saved a copy$sizeNote — the original was left untouched " +
                                         "because it is too large to replace at full size here"
                                 // Honest about what actually happened: OVERWRITE was chosen but
                                 // this photo cannot take it (see canOverwriteInPlace above), so
                                 // the safe fallback ran instead and needs to say why.
                                 mode == EditorSaveMode.OVERWRITE && hazards.isNotEmpty() ->
                                     "Saved a copy — replacing the original would destroy its ${hazards.describe()}"
+                                mode == EditorSaveMode.OVERWRITE && hazardScan.unreadable ->
+                                    "Saved a copy — the original could not be checked, so it was left untouched"
                                 mode == EditorSaveMode.OVERWRITE ->
                                     "Saved a copy — ${asset.mimeType} can't be replaced in place"
                                 options.format != null ->
-                                    "Saved a copy as ${resolvedFormat.label}${rendered.reducedSizeNote}"
-                                rendered.downscaled -> "Saved a copy${rendered.reducedSizeNote}"
+                                    "Saved a copy as ${resolvedFormat.label}$sizeNote"
+                                sizeNote.isNotEmpty() -> "Saved a copy$sizeNote"
                                 else -> "Saved a copy at full resolution"
                             } + metadataNote
                         },
@@ -423,7 +450,10 @@ fun EditorScreen(
             saving = true
             scope.launch {
                 val resolvedFormat = options.format ?: outputFormatFor(asset.mimeType)
-                val rendered = renderFullSize(context, asset, recipe, exportEdgeLadder(options.renderEdge()))
+                val rendered = renderFullSize(
+                    context, asset, recipe, exportEdgeLadder(options.renderEdge()),
+                    resolvedFormat.takeIf { it != OutputFormat.HEIC },
+                )
                 if (rendered == null) {
                     saving = false
                     onSaved("Could not read the photo at full size")
@@ -1027,29 +1057,72 @@ private data class FullSizeRender(val bitmap: Bitmap, val downscaled: Boolean) {
  * [renderDownTheLadder]) and the result reports `downscaled = true` even when the source was
  * smaller than the first rung's edge. A caller that must not accept a smaller render (OVERWRITE)
  * passes a one-rung ladder and gets null on an OOM.
+ *
+ * [flattenFor] is the format the pixels will be encoded in (null for none, and for HEIC, which
+ * takes its own path): an alpha-less one gets its transparency flattened onto white here, inside
+ * the attempt, rather than later in [EditedCopyWriter] where an out-of-memory would bypass the ladder.
  */
 private suspend fun renderFullSize(
     context: android.content.Context,
     asset: MediaAsset,
     recipe: EditRecipe,
     ladder: List<Int>,
+    flattenFor: OutputFormat? = null,
 ): FullSizeRender? = withContext(Dispatchers.IO) {
     val outcome = renderDownTheLadder(ladder) { edge ->
         val limits = DecodeLimits(maxLongEdge = edge, maxPixels = MAX_EXPORT_PIXELS)
         val decoded = decodeUpright(context, asset.contentUri, limits) ?: return@renderDownTheLadder null
-        val rendered = withContext(Dispatchers.Default) {
-            // Exception, not Throwable: an OutOfMemoryError must reach renderDownTheLadder.
-            try {
-                EditRenderer.render(decoded.bitmap, recipe)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                null
-            }
-        } ?: return@renderDownTheLadder null
-        FullSizeRender(rendered, decoded.downscaled)
+        val bitmap = renderThenFlatten(
+            decoded = decoded.bitmap,
+            render = { source ->
+                withContext(Dispatchers.Default) {
+                    // Exception, not Throwable: an OutOfMemoryError must reach renderDownTheLadder.
+                    try {
+                        EditRenderer.render(source, recipe)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            },
+            flatten = { rendered -> if (flattenFor != null) compositeOntoWhiteIfNeeded(rendered, flattenFor) else rendered },
+        ) ?: return@renderDownTheLadder null
+        FullSizeRender(bitmap, decoded.downscaled)
     } ?: return@withContext null
     outcome.value.copy(downscaled = outcome.value.downscaled || outcome.steppedDown)
+}
+
+/**
+ * One rung's work on an already-decoded bitmap: [render] it, then [flatten] the result (which
+ * allocates a second full-size bitmap, so it belongs inside the ladder attempt: an out-of-memory
+ * there must step down a rung like the render does, not escape the ladder).
+ *
+ * Whatever is not handed back is recycled on the way out, success or throw: [decoded] is only the
+ * render's input, and the unflattened render is superseded by its flattened copy. Holding either
+ * while the next rung runs would start that rung short of exactly the memory it needs. Returns null
+ * when [render] does.
+ */
+internal suspend fun renderThenFlatten(
+    decoded: Bitmap,
+    render: suspend (Bitmap) -> Bitmap?,
+    flatten: (Bitmap) -> Bitmap,
+): Bitmap? {
+    var result: Bitmap? = null
+    try {
+        val rendered = render(decoded) ?: return null
+        val flat = try {
+            flatten(rendered)
+        } catch (e: OutOfMemoryError) {
+            if (rendered !== decoded) rendered.recycle()
+            throw e
+        }
+        if (flat !== rendered && rendered !== decoded) rendered.recycle()
+        result = flat
+        return flat
+    } finally {
+        if (decoded !== result) decoded.recycle()
+    }
 }
 
 /** What [CreateImageDocumentContract] asks the system document picker to create. */
