@@ -47,7 +47,7 @@ class AppTextTranslator : TextTranslator {
             val badTag = if (targetCode == null) targetLanguageTag else sourceLanguageTag
             return Result.failure(
                 TranslatorUnavailableException(
-                    "Foto Xplorr's on-device translator has no model for \"$badTag\".",
+                    "Fotoz's on-device translator has no model for \"$badTag\".",
                 ),
             )
         }

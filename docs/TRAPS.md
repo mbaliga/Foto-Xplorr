@@ -56,7 +56,7 @@ change that needs saying out loud. Source: the 6 Aug 2026 handoff plus plan FX-I
     `verifyOfflineRuntimeClasspath`, then a *targeted* FQCN denylist — in that order of
     authority.
 13. **Never the standalone word `Synced`.** Four operating modes, four different
-    promises. `Syncthing · Replicated local folder`, never `Synced by Foto Xplorr`.
+    promises. `Syncthing · Replicated local folder`, never `Synced by Fotoz`.
 14. **Never encode state in colour alone.** Pair every state with shape, label or icon.
 15. **Phase C of a migration is forward-only.** The user writes to the live catalogue
     throughout a backfill; restoring the pre-migration backup to "fix" a failed batch
@@ -65,12 +65,18 @@ change that needs saying out loud. Source: the 6 Aug 2026 handoff plus plan FX-I
     sizes; `-p` silently downgrades correct 16 KB alignment to 4 KB and native libraries
     stop loading on 16 KB devices. Verify with `zipalign -c -P 16 -v 4`.
 
-## 17. An editor must never open the original for writing
+## 17. Overwriting the original is a named, consent-gated choice — never a silent default
 
-`EditedCopyWriter` writes a NEW MediaStore row and nothing else; there is no code path in it that
-opens the source for writing, and there must never be one. A photo library is frequently the only
-copy of an irreplaceable image, and an editor that can overwrite one eventually will. "Save" means
-"save a copy" — see `docs/adr/ADR-007-photo-editing.md`.
+`EditedCopyWriter.save`/`saveTo` write a NEW MediaStore row; `overwrite` is a separate,
+deliberately-named function that DOES open the source for writing — this is Replace the
+Original, one of three save modes a user explicitly picks (see
+`docs/adr/ADR-007-photo-editing.md`). A photo library is frequently the only copy of an
+irreplaceable image, so the invariant is not "never write the source" but: `overwrite` must
+never run without the same three-tier Android consent dance every other in-place write in this
+app uses (`RecoverableSecurityException` pre-Q, `MediaStore.createWriteRequest` on R+), the
+editor must stay open across that round-trip so a declined consent does not silently discard the
+edit, and the default save mode remains "save a copy" — overwrite is opt-in per edit or via an
+explicit, reversible Settings choice, never the silent behaviour of plain "Save".
 
 Related: do not reach for uCrop to "just add crop". It declares `com.squareup.okhttp3:okhttp` and
 hard-fails `verifyOfflineRuntimeClasspath`, whose allowlist holds one exact coordinate and has no

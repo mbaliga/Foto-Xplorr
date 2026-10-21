@@ -62,8 +62,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.hypot
@@ -72,6 +72,12 @@ import kotlin.math.roundToInt
 @Composable
 fun SimilarityExplorerScreen(
     assets: List<MediaAsset>,
+    /** Every image the similarity indexer should actually cover, trashed included (Phase 1 owner
+     *  decision 1, 24 Sep 2026, reversing this screen's own former `isTrashed` exclusion) -- NOT
+     *  the same list as [assets]: [assets] is browsable-filtered for display, so a trashed asset
+     *  indexed from here is deliberately never looked up via `assetById` below and so never
+     *  rendered, exactly matching that decision's "display filtering stays in the UI" half. */
+    indexInput: List<MediaAsset>,
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -92,7 +98,9 @@ fun SimilarityExplorerScreen(
     var message by remember { mutableStateOf<String?>(null) }
 
     val assetById = remember(assets) { assets.associateBy { it.id } }
-    val imageAssets = remember(assets) { assets.filterNot { it.isVideo || it.isTrashed } }
+    // From indexInput, not assets: images only (similarity/embeddings never cover video), but
+    // otherwise everything -- trashed included, per this parameter's own doc comment above.
+    val imageAssets = remember(indexInput) { indexInput.filterNot { it.isVideo } }
     val readyModel = modelState as? LocalModelState.Ready
 
     val modelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -495,6 +503,8 @@ private fun formatBytes(bytes: Long): String = when {
     else -> "$bytes B"
 }
 
+// Fixed on purpose (semantic): categorical data colours, clusters must stay distinct from each
+// other.
 private val CLUSTER_COLORS = listOf(
     Color(0xFF65D1FF), Color(0xFFFF6B9A), Color(0xFFFFCC66), Color(0xFF7BE495),
     Color(0xFFB897FF), Color(0xFFFF8C69), Color(0xFF48D1CC), Color(0xFFF38BA8),

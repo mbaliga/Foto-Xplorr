@@ -9,9 +9,9 @@ import android.media.MediaMetadataRetriever
 import android.os.Build
 import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.openForLocationRead
 import com.fotoxplorr.app.media.uriForLocationRead
+import com.fotoxplorr.core.model.MediaId
 import java.io.FileDescriptor
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -146,7 +146,7 @@ class GeoMetadataRepository(context: Context) {
     /**
      * Record a location the user placed by hand, for a photo whose file carries none.
      *
-     * Written to Foto Xplorr's own index rather than into the photo's EXIF. Editing the user's
+     * Written to Fotoz's own index rather than into the photo's EXIF. Editing the user's
      * original file to add a GPS tag is a destructive change to their data made on their behalf,
      * and it needs a MediaStore write grant per file on modern Android; neither belongs behind a
      * pin drag. The map, the compass and the detail room all read this index, so a hand-placed

@@ -3,7 +3,7 @@ package com.fotoxplorr.app.organize
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Base64
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

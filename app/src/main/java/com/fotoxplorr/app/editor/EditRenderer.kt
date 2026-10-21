@@ -47,6 +47,15 @@ object EditRenderer {
         // bitmap: with only the old single check, a recipe with straightenDegrees set but no
         // manual crop left the rotated-and-cropped bitmap unrecycled on every single render.
         recycleIntermediate(cropped, source, result)
+        // Heals last, in the final image's own coordinates (HealSpot's contract). colour()
+        // always returned a fresh mutable copy, so this writes into a bitmap that is already
+        // ours, never the caller's source.
+        if (recipe.heals.isNotEmpty()) {
+            val pixels = IntArray(result.width * result.height)
+            result.getPixels(pixels, 0, result.width, 0, 0, result.width, result.height)
+            SpotHeal.apply(pixels, result.width, result.height, recipe.heals)
+            result.setPixels(pixels, 0, result.width, 0, 0, result.width, result.height)
+        }
         return result
     }
 

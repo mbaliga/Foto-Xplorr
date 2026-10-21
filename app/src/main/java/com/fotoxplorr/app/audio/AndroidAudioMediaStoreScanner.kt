@@ -6,8 +6,8 @@ import android.database.Cursor
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
-import com.fotoxplorr.app.media.MediaId
-import com.fotoxplorr.app.media.ScanPlan
+import com.fotoxplorr.core.model.MediaId
+import com.fotoxplorr.core.organize.ScanPlan
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -91,6 +91,8 @@ class AndroidAudioMediaStoreScanner(
         add(MediaStore.Audio.AudioColumns.TITLE)
         add(MediaStore.Audio.AudioColumns.ARTIST)
         add(MediaStore.Audio.AudioColumns.ALBUM)
+        add(MediaStore.Audio.AudioColumns.ALBUM_ID)
+        add(MediaStore.Audio.AudioColumns.TRACK)
         add(MediaStore.Audio.AudioColumns.MIME_TYPE)
         add(MediaStore.Audio.AudioColumns.DURATION)
         add(MediaStore.Audio.AudioColumns.SIZE)
@@ -107,6 +109,8 @@ class AndroidAudioMediaStoreScanner(
         private val title = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.TITLE)
         private val artist = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.ARTIST)
         private val album = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.ALBUM)
+        private val albumId = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.ALBUM_ID)
+        private val track = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.TRACK)
         private val mimeType = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.MIME_TYPE)
         private val duration = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.DURATION)
         private val size = cursor.getColumnIndexOrThrow(MediaStore.Audio.AudioColumns.SIZE)
@@ -135,6 +139,8 @@ class AndroidAudioMediaStoreScanner(
                 dateAddedSeconds = cursor.longOrZero(dateAdded),
                 dateModifiedSeconds = cursor.longOrZero(dateModified),
                 relativePath = cursor.stringOrNull(relativePath),
+                albumId = cursor.longOrNull(albumId),
+                trackNumber = trackNumberFrom(cursor.longOrNull(track)),
             )
         }
     }
@@ -179,8 +185,21 @@ internal fun buildAudioSelection(plan: ScanPlan): AudioSelectionQuery {
 /** [com.fotoxplorr.app.media.SelectionQuery]'s exact shape, for the audio query. */
 internal data class AudioSelectionQuery(val clause: String, val args: List<String>)
 
+/**
+ * MediaStore's `TRACK` column packs a disc number into the value as `discNumber * 1000 + track`
+ * once a file's tags carry a disc number at all (e.g. disc 2 track 3 reads back as `2003`) — see
+ * the column's own platform documentation. Every reader of [AudioAsset.trackNumber] wants the
+ * plain in-album track position, not that packed number, so this unpacks it once here rather than
+ * leaving every call site to rediscover the `% 1000` rule (or worse, not know it exists at all and
+ * show "2003" as a track number).
+ */
+internal fun trackNumberFrom(rawTrack: Long?): Int? = rawTrack?.let { (it % 1000).toInt() }
+
 private fun Cursor.stringOrNull(index: Int): String? =
     if (index >= 0 && !isNull(index)) getString(index) else null
 
 private fun Cursor.longOrZero(index: Int): Long =
     if (index >= 0 && !isNull(index)) getLong(index) else 0L
+
+private fun Cursor.longOrNull(index: Int): Long? =
+    if (index >= 0 && !isNull(index)) getLong(index) else null

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The launcher label, recents title, Settings > Apps entry and "Open with" chooser entry. -->
+    <string name="app_name">Fotoz</string>
+</resources>

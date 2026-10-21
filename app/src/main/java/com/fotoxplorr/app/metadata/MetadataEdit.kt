@@ -1,5 +1,7 @@
 package com.fotoxplorr.app.metadata
 
+import com.fotoxplorr.core.metadata.XmpPacket
+
 /**
  * One photo's professional metadata, as a photographer edits it -- not as EXIF or XMP tag names,
  * which is exactly the layer [MetadataWriter] hides behind this.
@@ -15,10 +17,13 @@ package com.fotoxplorr.app.metadata
  *
  * @param keywordsToAdd deliberately ADDITIVE, never a replacement list -- see [MetadataWriter]'s
  *   class doc for why a batch keyword edit must never overwrite a photo's existing keywords with
- *   whatever the batch happened to specify. A caller that wants a photo's keyword list emptied
- *   has no field here to do it with; that is a narrower, rarer, more destructive action than
- *   anything else on this type and does not share its "same shape for one photo or a thousand"
- *   design.
+ *   whatever the batch happened to specify.
+ * @param keywordsToRemove the mirror of [keywordsToAdd]: keywords taken OFF a photo's existing
+ *   list, by value, leaving every keyword not named here untouched. Still not "replace the whole
+ *   list" -- a caller that wants a photo's keywords emptied entirely passes every existing keyword
+ *   here rather than this type growing a third, more destructive shape. A keyword named in both
+ *   [keywordsToAdd] and [keywordsToRemove] in the same edit is removed: removal is the more
+ *   deliberate, more specific action of the two; see [applyToXmp] for where that order is fixed.
  * @param rating `0` clears a rating (no stars, the same "unrated" a fresh photo starts at), `1`
  *   through `5` sets one. `null` leaves whatever rating (if any) already exists untouched.
  * @param setLocation a coordinate to write into the file's own GPS tags, or null to leave the
@@ -37,13 +42,15 @@ data class MetadataEdit(
     val copyright: String? = null,
     val rating: Int? = null,
     val keywordsToAdd: List<String> = emptyList(),
+    val keywordsToRemove: List<String> = emptyList(),
     val setLocation: GpsCoordinate? = null,
     val clearLocation: Boolean = false,
 ) {
     /** True when this edit would not actually change anything -- see [MetadataWriter.write]. */
     val isEmpty: Boolean
         get() = caption == null && creator == null && copyright == null && rating == null &&
-            keywordsToAdd.isEmpty() && setLocation == null && !clearLocation
+            keywordsToAdd.isEmpty() && keywordsToRemove.isEmpty() &&
+            setLocation == null && !clearLocation
 
     /**
      * Combines this edit with a LATER one arriving before this one has been written (P0-08 item
@@ -51,6 +58,13 @@ data class MetadataEdit(
      * always wins over a first for the SAME field, and [keywordsToAdd] unions rather than picking
      * one side, since two field commits adding different keywords (or the same photo tagged from
      * two different UI surfaces) should not make either add silently disappear.
+     *
+     * [keywordsToAdd] and [keywordsToRemove] follow the same "later intent wins" rule per keyword:
+     * a keyword `other` removes is dropped from this edit's adds (and stays on the merged
+     * removals, so a copy already carrying it loses it too), and a keyword `other` adds is dropped
+     * from this edit's removals -- otherwise an add-then-remove (or remove-then-add) pair of
+     * queued edits would resolve by [applyToXmp]'s "removal wins" order instead of by which
+     * action actually came last.
      *
      * [setLocation]/[clearLocation] are merged as ONE combined intent, not two independent fields:
      * `other` only overrides this edit's location intent when `other` actually expresses one
@@ -65,7 +79,10 @@ data class MetadataEdit(
             creator = other.creator ?: creator,
             copyright = other.copyright ?: copyright,
             rating = other.rating ?: rating,
-            keywordsToAdd = (keywordsToAdd + other.keywordsToAdd).distinct(),
+            keywordsToAdd = (keywordsToAdd.filterNot { it in other.keywordsToRemove } + other.keywordsToAdd)
+                .distinct(),
+            keywordsToRemove = (keywordsToRemove.filterNot { it in other.keywordsToAdd } + other.keywordsToRemove)
+                .distinct(),
             setLocation = if (otherTouchesLocation) other.setLocation else setLocation,
             clearLocation = if (otherTouchesLocation) other.clearLocation else clearLocation,
         )
@@ -132,8 +149,13 @@ fun applyToXmp(packet: XmpPacket, edit: MetadataEdit) {
     }
     edit.copyright?.let { packet.setLangAlt(XmpPacket.DC_NS, "dc", "rights", it) }
     edit.rating?.let { packet.setIntValue(XmpPacket.XMP_NS, "xmp", "Rating", it.coerceIn(0, 5).takeIf { r -> r != 0 }) }
-    if (edit.keywordsToAdd.isNotEmpty()) {
-        val merged = (packet.bag(XmpPacket.DC_NS, "subject") + edit.keywordsToAdd).distinct()
+    if (edit.keywordsToAdd.isNotEmpty() || edit.keywordsToRemove.isNotEmpty()) {
+        // Removal wins over addition for the same keyword in the same edit -- see
+        // MetadataEdit.keywordsToRemove's own doc for why that is the deliberate order rather
+        // than an accident of "whichever line runs second".
+        val merged = (packet.bag(XmpPacket.DC_NS, "subject") + edit.keywordsToAdd)
+            .distinct()
+            .filterNot { it in edit.keywordsToRemove }
         packet.setBag(XmpPacket.DC_NS, "dc", "subject", merged)
     }
     // setLocation wins over clearLocation if a caller somehow asks for both in one edit -- the

@@ -28,13 +28,13 @@ import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.fileops.BulkRenameOutcome
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomRow
 import com.fotoxplorr.app.ui.RoomRule
 import com.fotoxplorr.app.ui.RoomStepper
 import com.fotoxplorr.app.ui.RoomStyle
 import com.fotoxplorr.app.ui.RoomToggle
+import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.launch
 
 /**
@@ -219,7 +219,7 @@ fun GalleryActionsRoom(
 
         RoomRow(
             label = "Rescan the library",
-            caption = "Look for photos added or removed outside Foto Xplorr.",
+            caption = "Look for photos added or removed outside Fotoz.",
             onClick = actions.onRefresh,
         )
 
@@ -392,6 +392,11 @@ private fun SelectionActions(
         label = "Share",
         caption = "With frames, a seal, and metadata stripped unless you say otherwise.",
         onClick = { finish { actions.onShare(selectedAssets) } },
+    )
+    RoomRow(
+        label = "Share with options…",
+        caption = "Choose the frame, watermark and metadata handling for this share.",
+        onClick = { finish { actions.onShareClean(selectedAssets) } },
     )
     RoomRow(
         label = if (bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK) {

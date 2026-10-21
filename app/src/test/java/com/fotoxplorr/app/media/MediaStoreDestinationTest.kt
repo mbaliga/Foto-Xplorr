@@ -23,20 +23,20 @@ class MediaStoreDestinationTest {
 
     @Test
     fun `Download is not an allowed image folder, so it falls back`() {
-        assertEquals("Pictures/Foto Xplorr/", mediaStoreRelativePath("Download/", MediaKind.IMAGE))
+        assertEquals("Pictures/Fotoz/", mediaStoreRelativePath("Download/", MediaKind.IMAGE))
     }
 
     @Test
     fun `a WhatsApp media folder is not allowed for images, so it falls back`() {
         assertEquals(
-            "Pictures/Foto Xplorr/",
+            "Pictures/Fotoz/",
             mediaStoreRelativePath("Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/", MediaKind.IMAGE),
         )
     }
 
     @Test
     fun `a null source path falls back`() {
-        assertEquals("Pictures/Foto Xplorr/", mediaStoreRelativePath(null, MediaKind.IMAGE))
+        assertEquals("Pictures/Fotoz/", mediaStoreRelativePath(null, MediaKind.IMAGE))
     }
 
     @Test
@@ -46,14 +46,14 @@ class MediaStoreDestinationTest {
 
     @Test
     fun `Movies is not allowed for images, so it falls back to the image fallback`() {
-        assertEquals("Pictures/Foto Xplorr/", mediaStoreRelativePath("Movies/", MediaKind.IMAGE))
+        assertEquals("Pictures/Fotoz/", mediaStoreRelativePath("Movies/", MediaKind.IMAGE))
     }
 
     @Test
     fun `Documents is not allowed for any collection, so it falls back`() {
-        assertEquals("Pictures/Foto Xplorr/", mediaStoreRelativePath("Documents/", MediaKind.IMAGE))
-        assertEquals("Movies/Foto Xplorr/", mediaStoreRelativePath("Documents/", MediaKind.VIDEO))
-        assertEquals("Music/Foto Xplorr/", mediaStoreRelativePath("Documents/", MediaKind.AUDIO))
+        assertEquals("Pictures/Fotoz/", mediaStoreRelativePath("Documents/", MediaKind.IMAGE))
+        assertEquals("Movies/Fotoz/", mediaStoreRelativePath("Documents/", MediaKind.VIDEO))
+        assertEquals("Music/Fotoz/", mediaStoreRelativePath("Documents/", MediaKind.AUDIO))
     }
 
     @Test
@@ -75,7 +75,7 @@ class MediaStoreDestinationTest {
 
     @Test
     fun `Recordings is not allowed for audio below API 31`() {
-        assertEquals("Music/Foto Xplorr/", mediaStoreRelativePath("Recordings/", MediaKind.AUDIO, sdkInt = 30))
+        assertEquals("Music/Fotoz/", mediaStoreRelativePath("Recordings/", MediaKind.AUDIO, sdkInt = 30))
     }
 
     @Test
@@ -84,7 +84,16 @@ class MediaStoreDestinationTest {
     }
 
     @Test
+    fun `a source already in the legacy Foto Xplorr folder keeps its exact path`() {
+        // Folders created by builds before the rename stay recognised: they are inside an
+        // allowed top folder, so an edit of an old copy is saved beside it, not in Pictures/Fotoz/.
+        assertEquals("Pictures/Foto Xplorr/", mediaStoreRelativePath("Pictures/Foto Xplorr/", MediaKind.IMAGE))
+        assertEquals("Movies/Foto Xplorr/", mediaStoreRelativePath("Movies/Foto Xplorr/", MediaKind.VIDEO))
+        assertEquals("Music/Foto Xplorr/", mediaStoreRelativePath("Music/Foto Xplorr/", MediaKind.AUDIO))
+    }
+
+    @Test
     fun `a blank source path falls back the same as null`() {
-        assertEquals("Pictures/Foto Xplorr/", mediaStoreRelativePath("   ", MediaKind.IMAGE))
+        assertEquals("Pictures/Fotoz/", mediaStoreRelativePath("   ", MediaKind.IMAGE))
     }
 }

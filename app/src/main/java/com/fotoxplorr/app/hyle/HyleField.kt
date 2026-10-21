@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.ui.HyleGrotesk
+import com.fotoxplorr.app.ui.LocalAccentOnLight
 
 /**
  * The five states the Hyle field draws, as the owner's control-sheet lays them out. They are two
@@ -47,8 +48,8 @@ data class HyleFieldStyle(
 
 /**
  * The Hyle field: a text row wearing the language's corner tab. A small leaning **wedge** sits at
- * the top-left, poking above the field and carrying the state's colour — dark when idle, violet
- * when focused, danger-red (with a `!`) when the value is invalid. The field's own top-left corner
+ * the top-left, poking above the field and carrying the state's colour — dark when idle, the chosen
+ * accent when focused, danger-red (with a `!`) when the value is invalid. The field's own top-left corner
  * is cut back to seat it, so the tab reads as *part of* the field rather than a sticker on it.
  *
  * A focused or invalid field also takes a coloured hairline border; a required field shows a `*`
@@ -65,16 +66,19 @@ fun HyleField(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
+    // The focus state is the accent role: the field is a fixed LIGHT control in every theme mode, so
+    // it takes the chosen accent's light-mode form (see LocalAccentOnLight), not a hard-coded violet.
+    val focusAccent = LocalAccentOnLight.current
     val accent = when {
         !style.enabled -> WEDGE_DISABLED
         style.error -> DANGER
-        style.focused -> VIOLET
+        style.focused -> focusAccent
         else -> WEDGE_IDLE
     }
     val border = when {
         !style.enabled -> Color.Transparent
         style.error && style.focused -> DANGER
-        style.focused -> BORDER_BLUE
+        style.focused -> focusAccent
         style.error -> DANGER.copy(alpha = 0.5f)
         else -> Color.Transparent
     }
@@ -157,9 +161,9 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBang() {
 
 /**
  * An editable [HyleField]: a single-line text field wearing the Hyle chrome. Focus lights the
- * wedge and border violet; [error] turns them danger-red and shows the `!`; [mandatory] adds the
- * trailing `*`. Optional [leading]/[trailing] slots ride inside the field for a search glyph or a
- * clear button.
+ * wedge and border in the chosen accent; [error] turns them danger-red and shows the `!`;
+ * [mandatory] adds the trailing `*`. Optional [leading]/[trailing] slots ride inside the field for
+ * a search glyph or a clear button.
  */
 @Composable
 fun HyleTextField(
@@ -194,7 +198,7 @@ fun HyleTextField(
                         fontSize = 17.sp,
                         color = if (enabled) FIELD_INK else FIELD_INK_FAINT,
                     ),
-                    cursorBrush = SolidColor(VIOLET),
+                    cursorBrush = SolidColor(LocalAccentOnLight.current),
                     modifier = Modifier
                         .fillMaxWidth()
                         .onFocusChanged { focused = it.isFocused },
@@ -230,11 +234,11 @@ private const val WEDGE_RISE = 10   // how far the wedge pokes above the field
 private const val WEDGE_INTO = 26   // how far it runs down into/alongside the field
 private const val WEDGE_LEFT = 10
 
+// Fixed on purpose (reference design / semantic): the light control's neutrals and the Hyle danger
+// red. The focus wedge, border and cursor are NOT here; they follow the accent (LocalAccentOnLight).
 private val FIELD_FILL = Color(0xFFF1F1F2)
 private val FIELD_FILL_DISABLED = Color(0xFFF4F4F5)
 private val DANGER = Color(0xFFE5564B)
-private val VIOLET = Color(0xFF8E7BFF)
-private val BORDER_BLUE = Color(0xFF6E97E8)
 private val WEDGE_IDLE = Color(0xFF3A3A44)
 private val WEDGE_DISABLED = Color(0xFFC7C7CC)
 private val FIELD_INK = Color(0xFF2A2A30)

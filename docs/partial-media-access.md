@@ -36,7 +36,7 @@ trustworthy permission-scope count until WP2 makes visibility explicit.
    exactly those; no error surface; banner counts only those.
 2. Background the app, kill it, relaunch → the same items are still there (the
    compatibility-mode revocation bug would empty the grid here).
-3. Add more photos via **system Settings → Apps → Foto Xplorr → Photos and videos** →
+3. Add more photos via **system Settings → Apps → Fotoz → Photos and videos** →
    relaunch → delta scan picks up the additions and says "Added N new items".
 4. Reduce the selection in system Settings → relaunch → removed items disappear from the
    grid **without** any "deleted" messaging, and favourites/tags on them survive a

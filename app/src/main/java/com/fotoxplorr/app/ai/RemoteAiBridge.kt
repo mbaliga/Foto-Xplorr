@@ -48,7 +48,7 @@ interface RemoteAiBridge {
  * cannot do this" (expected, explain calmly) from "the network call failed" (an error).
  */
 class RemoteAiUnavailableException : Exception(
-    "This is the offline build of Foto Xplorr — it ships without any network capability.",
+    "This is the offline build of Fotoz — it ships without any network capability.",
 )
 
 /**

@@ -14,8 +14,8 @@ import com.fotoxplorr.app.gallery.TimelineGrouping
 import com.fotoxplorr.app.gallery.TimelineScreen
 import com.fotoxplorr.app.gallery.timelineGroups
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.core.model.MediaId
 import com.github.takahirom.roborazzi.captureRoboImage
 import org.junit.Rule
 import org.junit.Test

@@ -5,6 +5,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -79,6 +80,11 @@ fun HyleToggle(
 
     Box(
         modifier = modifier
+            // Below the platform's 48dp minimum touch target on its own (32dp tall) -- this pads
+            // the tappable area out to that floor without changing the track's drawn size, the
+            // same ordering (before the fixed `.size`) Material3's own controls use for the same
+            // problem.
+            .minimumInteractiveComponentSize()
             .then(interaction)
             .size(TRACK_W.dp, TRACK_H.dp)
             .clip(RoundedCornerShape(TRACK_RADIUS.dp))
@@ -169,6 +175,8 @@ private const val MARK_RADIUS = 4
 private const val MARK_STROKE = 2
 private const val MARK_DOT = 1
 
+// Fixed on purpose (reference design): control-sheet neutrals, the on state is the knob's position
+// and not a hue.
 private val HYLE_TRACK = Color(0xFFD7D7D9)
 private val HYLE_TRACK_DISABLED = Color(0xFFE6E6E8)
 private val HYLE_KNOB = Color(0xFF0B0B0D)
