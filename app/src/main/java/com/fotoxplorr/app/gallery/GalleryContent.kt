@@ -81,21 +81,29 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Dialog
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.organize.LibraryState
 import com.fotoxplorr.app.organize.MediaCollection
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
+import com.fotoxplorr.core.model.MediaId
 import kotlin.math.exp
 import kotlin.math.hypot
 
 /**
- * Gutter between grid tiles. The mockups draw an essentially seamless mosaic -- a hairline
- * of black between tiles and nothing at the screen edges -- so this is 1dp rather than the
- * 2dp the grid used before, and no content padding is applied.
+ * Gutter between grid tiles. The owner's October 2026 root-grid screenshot (measured, see
+ * `docs/handoff/DESIGN-FIDELITY-GALLERY.md`) draws three columns of 144 x 160dp tiles with a 4dp
+ * black gutter between them and nothing at the screen edges, so this is 4dp -- it was a 1dp
+ * hairline for the earlier "seamless mosaic" mockups -- and still no content padding.
  */
-private val GRID_GUTTER = 1.dp
+private val GRID_GUTTER = 4.dp
+
+/**
+ * The everyday grid tile's shape: 144 wide by 160 tall on the same screenshot, i.e. a little
+ * taller than square. The masonry layout passes each photo's own [MediaAsset.aspectRatio]
+ * instead; see [MediaTile].
+ */
+private const val GRID_TILE_ASPECT = 144f / 160f
 
 /**
  * The pure-black canvas the mockups sit every grid on. Deliberately a literal black rather
@@ -543,12 +551,11 @@ private fun MediaTile(
     onPeek: () -> Unit,
     onPeekEnd: () -> Unit,
     /**
-     * The tile's own shape. `1f` (square) in the everyday grid, and the photo's real
-     * [MediaAsset.aspectRatio] when the caller is the masonry layout -- see
-     * [MediaGridScreen]'s `fitToTile` branch. Defaulted to `1f` so every call site this task did
-     * not touch keeps the square tile it already had.
+     * The tile's own shape. [GRID_TILE_ASPECT] (144 x 160, from the owner's root-grid
+     * screenshot) in the everyday grids, and the photo's real [MediaAsset.aspectRatio] when the
+     * caller is the masonry layout -- see [MediaGridScreen]'s `fitToTile` branch.
      */
-    tileAspectRatio: Float = 1f,
+    tileAspectRatio: Float = GRID_TILE_ASPECT,
 ) {
     // Mouse-only: the panel this opens on a right-click, if anyone upstream wired
     // GridChromeBridge.onContextAction. Per-tile state rather than something hoisted to the
@@ -844,6 +851,7 @@ fun DiscoverScreen(
             TextButton(onClick = { showingPlaces = false }) { Text("Back to Discover") }
             PlacesScreen(
                 assets = spatial.assets,
+                indexInput = spatial.indexInput,
                 geoState = spatial.geoState,
                 onIndexLocations = spatial.onIndexLocations,
                 onOpenAsset = spatial.onOpenAsset,
@@ -1015,7 +1023,7 @@ fun LibraryScreen(
             }
         }
 
-        item { SectionHeading("Tags", "Searchable labels stored only in Foto Xplorr") }
+        item { SectionHeading("Tags", "Searchable labels stored only in Fotoz") }
         item {
             if (library.allTags.isEmpty()) {
                 Text("Select media and choose Add tag to create your first tag.")

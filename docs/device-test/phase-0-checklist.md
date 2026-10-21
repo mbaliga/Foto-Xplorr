@@ -73,8 +73,8 @@ did before this brief.
       copy → the copy sits next to the original in the timeline with the same camera, date and
       location, and its `Orientation` reads normal even if the original camera JPEG's did not.
 - [ ] Edit a WhatsApp image (`Android/media/com.whatsapp/...`) and Save → the copy lands in
-      `Pictures/Foto Xplorr/`, not alongside the WhatsApp original (which the save would otherwise
-      fail into).
+      `Pictures/Fotoz/` (builds before the rename saved to `Pictures/Foto Xplorr/`), not alongside
+      the WhatsApp original (which the save would otherwise fail into).
 - [ ] "Replace original" on a photo, then reopen it → metadata and date are unchanged from before
       the edit.
 - [ ] Convert or edit a video → its `RELATIVE_PATH` lands correctly for a `DCIM`/`Movies`/`Pictures`
@@ -95,7 +95,7 @@ did before this brief.
       exactly, unmangled, alongside the new rating. (`Utf8XmpPreservationTest` proves the decode fix
       against a hand-built packet in this sandbox; a real Lightroom/Capture One export may shape its
       XMP differently.)
-- [ ] Open a HEIC or RAW photo's metadata controls → disabled with "Foto Xplorr can't write
+- [ ] Open a HEIC or RAW photo's metadata controls → disabled with "Fotoz can't write
       metadata into HEIC files yet" the moment the photo is opened, not after tapping a field.
 - [ ] Edit a geotagged photo's caption, then immediately (before the consent screen or write
       finishes) edit its rating too → confirm BOTH land, not just the second one. This is the one
@@ -203,7 +203,7 @@ genuine second-process-start scenario.
 ## P0-18 — "Open with" (`ACTION_VIEW`)
 
 - [ ] In the Files app, browse to a JPEG on external storage (e.g. a USB drive), tap it, and choose
-      "Open with Foto Xplorr" from the system chooser — confirms the app is actually offered by the
+      "Open with Fotoz" from the system chooser — confirms the app is actually offered by the
       OS, not just that its manifest declares an intent filter. The photo opens full-screen,
       zooms/pans, Share and Open-with both work, and Edit/favourite/sensitive/trash/tags/caption/
       location are all absent from the UI entirely, not merely disabled.
@@ -219,7 +219,7 @@ genuine second-process-start scenario.
 ## P0-20 (stretch) — Act as a photo picker
 
 - [ ] From a second real app (or a generic file-manager/picker test app), issue `ACTION_GET_CONTENT`
-      for `image/*` → Foto Xplorr is offered in the system chooser, opens to a grid of only
+      for `image/*` → Fotoz is offered in the system chooser, opens to a grid of only
       browsable photos (nothing locked, archived or sensitive), and tapping one returns control to
       the caller with a usable `content://` uri.
 - [ ] The calling app can actually read the bytes behind the returned uri (`openInputStream` or

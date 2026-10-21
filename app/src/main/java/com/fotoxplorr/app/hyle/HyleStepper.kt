@@ -266,6 +266,8 @@ private const val HIT_H = 48
 private const val GLYPH_BAR = 12
 private const val GLYPH_STROKE = 2.6f   // the weight HyleField draws its `!` at, so marks match
 
+// Fixed on purpose (reference design): control-sheet neutrals, the value is carried by the digits
+// and not by a hue.
 private val HYLE_TRACK = Color(0xFFD7D7D9)
 private val HYLE_TRACK_DISABLED = Color(0xFFE6E6E8)
 private val HYLE_KNOB = Color(0xFF0B0B0D)

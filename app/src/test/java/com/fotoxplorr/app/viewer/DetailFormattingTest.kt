@@ -140,6 +140,28 @@ class DetailFormattingTest {
     fun `dynamic range badge only claims HDR when the XMP gain map is actually present`() {
         assertEquals("ULTRA HDR", DetailFormatting.dynamicRangeBadge(hasHdrGainMap = true))
         assertNull(DetailFormatting.dynamicRangeBadge(hasHdrGainMap = false))
+        assertEquals("ULTRA HDR", DetailFormatting.dynamicRangeBadge(hasHdrGainMap = true, mimeType = "image/heic"))
+    }
+
+    @Test
+    fun `STANDARD is claimed only for a JPEG, where the absence of a gain map is checkable`() {
+        assertEquals("STANDARD", DetailFormatting.dynamicRangeBadge(hasHdrGainMap = false, mimeType = "image/jpeg"))
+        assertEquals("STANDARD", DetailFormatting.dynamicRangeBadge(hasHdrGainMap = false, mimeType = "image/JPG"))
+        // A HEIF or AVIF can carry HDR this check cannot see; no chip rather than a false one.
+        assertNull(DetailFormatting.dynamicRangeBadge(hasHdrGainMap = false, mimeType = "image/heic"))
+        assertNull(DetailFormatting.dynamicRangeBadge(hasHdrGainMap = false, mimeType = "image/avif"))
+        assertNull(DetailFormatting.dynamicRangeBadge(hasHdrGainMap = false, mimeType = "image/png"))
+    }
+
+    @Test
+    fun `exposure bias prints whole stops as integers and carries a sign off zero`() {
+        assertEquals("0 ev", DetailFormatting.exposureBiasText(0.0))
+        assertEquals("0 ev", DetailFormatting.exposureBiasText(-0.04))
+        assertEquals("+1 ev", DetailFormatting.exposureBiasText(1.0))
+        assertEquals("-0.3 ev", DetailFormatting.exposureBiasText(-0.33))
+        assertEquals("+0.7 ev", DetailFormatting.exposureBiasText(0.67))
+        assertEquals("-2 ev", DetailFormatting.exposureBiasText(-2.0))
+        assertEquals("—", DetailFormatting.exposureBiasText(Double.NaN))
     }
 
     @Test

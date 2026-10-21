@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
@@ -38,16 +39,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.viewer.PlaceMorph
+import com.fotoxplorr.app.viewer.PlacePin
+import com.fotoxplorr.core.model.MediaId
 import com.google.gson.JsonObject
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
@@ -83,6 +91,7 @@ import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
 import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 private enum class MapTimeFilter(val label: String, val windowMillis: Long?) {
     ALL("All time", null),
@@ -98,6 +107,13 @@ fun RichPhotoMapScreen(
     onIndexLocations: () -> Unit,
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
     onClose: () -> Unit,
+    /**
+     * Opened from one photo's details room: the camera starts on that photo at street zoom, it is
+     * drawn as its white-bordered tile riding the map, and every other located photo is a filled
+     * dot in its own colour with no clustering -- see [MapFocus]. Null is the Places map exactly as
+     * it always was.
+     */
+    focus: MapFocus? = null,
 ) {
     BackHandler(onBack = onClose)
     val context = LocalContext.current
@@ -131,9 +147,16 @@ fun RichPhotoMapScreen(
                 matchesQuery
         }
     }
+    // The focused photo may be located by its own EXIF and absent from the geo index (the index
+    // is built on demand); it is still what this map is about, so its coordinate comes from the
+    // focus itself.
+    val focusAsset = focus?.let { assetsById[it.assetId] }
 
-    val controller = remember {
-        RichPhotoMapController { mediaId -> selectedId = mediaId }
+    // The cluster bubbles are the accent role, so they take the chosen accent. Read once, as the
+    // controller is made: the accent cannot change while this full-screen map is open.
+    val accentArgb = MaterialTheme.colorScheme.primary.toArgb()
+    val controller = remember(focus) {
+        RichPhotoMapController(focus = focus, accentArgb = accentArgb) { mediaId -> selectedId = mediaId }
     }
     val mapView = remember(context) {
         MapLibre.getInstance(context.applicationContext)
@@ -186,7 +209,9 @@ fun RichPhotoMapScreen(
 
         if (geoState.isIndexing) LinearProgressIndicator(Modifier.fillMaxWidth())
 
-        OutlinedTextField(
+        // The search and the filters are the Places map's own tools; a map opened for ONE photo
+        // is about that photo's place, and the chrome would only push the map down.
+        if (focus == null) OutlinedTextField(
             value = query,
             onValueChange = { query = it },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
@@ -195,7 +220,7 @@ fun RichPhotoMapScreen(
             placeholder = { ComposeText("Search filename, album or tag") },
         )
 
-        LazyRow(
+        if (focus == null) LazyRow(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -229,7 +254,34 @@ fun RichPhotoMapScreen(
                 update = { controller.update(filtered, geoState.metadataById) },
                 modifier = Modifier.fillMaxSize(),
             )
-            if (geoState.scannedCount == 0 && !geoState.isIndexing) {
+            // The focused photo's tile rides the map: its screen position is re-projected on
+            // every camera move by the controller and read here as a placement offset, so the
+            // tile answers touches where it is drawn and the map pans underneath it.
+            if (focus != null && focusAsset != null) {
+                val density = LocalDensity.current
+                val pinWidthPx = with(density) { PlaceMorph.PIN_SIZE_DP.dp.toPx() }
+                val pinHeightPx = with(density) { PlaceMorph.PIN_GROUP_HEIGHT_DP.dp.toPx() }
+                PlacePin(
+                    asset = focusAsset,
+                    modifier = Modifier
+                        // The projected point is read inside the placement and layer lambdas,
+                        // not in composition: a camera move then re-places and re-draws the tile
+                        // without recomposing it (or anything else) per frame.
+                        .offset {
+                            val point = controller.focusScreenPoint.value
+                            if (point == null) {
+                                IntOffset.Zero
+                            } else {
+                                IntOffset(
+                                    x = (point.x - pinWidthPx / 2f).roundToInt(),
+                                    y = (point.y - pinHeightPx / 2f).roundToInt(),
+                                )
+                            }
+                        }
+                        .graphicsLayer { alpha = if (controller.focusScreenPoint.value == null) 0f else 1f },
+                )
+            }
+            if (focus == null && geoState.scannedCount == 0 && !geoState.isIndexing) {
                 Column(
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -282,6 +334,8 @@ fun RichPhotoMapScreen(
 }
 
 private class RichPhotoMapController(
+    private val focus: MapFocus? = null,
+    private val accentArgb: Int,
     private val onSelected: (MediaId) -> Unit,
 ) {
     private var map: MapLibreMap? = null
@@ -292,6 +346,9 @@ private class RichPhotoMapController(
     private var cameraFitted = false
     private var clickListenerInstalled = false
 
+    /** Where the focused photo's coordinate currently falls on screen, in px; null off-map or unfocused. */
+    val focusScreenPoint = mutableStateOf<Offset?>(null)
+
     fun attach(map: MapLibreMap) {
         this.map = map
         map.uiSettings.apply {
@@ -301,15 +358,41 @@ private class RichPhotoMapController(
             isAttributionEnabled = true
             isLogoEnabled = true
         }
-        map.setStyle(Style.Builder().fromUri(OPEN_FREE_MAP_STYLE)) { style ->
-            addTerrainStyling(style)
-            addPhotoLayers(style)
+        val style = if (focus != null) FOCUS_STYLE else OPEN_FREE_MAP_STYLE
+        map.setStyle(Style.Builder().fromUri(style)) { loaded ->
+            addTerrainStyling(loaded)
+            addPhotoLayers(loaded)
             if (!clickListenerInstalled) {
                 clickListenerInstalled = true
                 map.addOnMapClickListener { location -> handleMapClick(map, location) }
             }
+            if (focus != null && !cameraFitted) {
+                // One photo's place: start ON it at street zoom, flat, rather than fitting the
+                // whole library's spread -- that fit is the Places map's opening move, not this one's.
+                cameraFitted = true
+                map.moveCamera(
+                    CameraUpdateFactory.newCameraPosition(
+                        CameraPosition.Builder()
+                            .target(LatLng(focus.latitude, focus.longitude))
+                            .zoom(FOCUS_ZOOM)
+                            .tilt(0.0)
+                            .bearing(0.0)
+                            .build(),
+                    ),
+                )
+                map.addOnCameraMoveListener { projectFocus(map) }
+                map.addOnCameraIdleListener { projectFocus(map) }
+                projectFocus(map)
+            }
             refreshSource()
         }
+    }
+
+    private fun projectFocus(map: MapLibreMap) {
+        val target = focus ?: return
+        val point = runCatching { map.projection.toScreenLocation(LatLng(target.latitude, target.longitude)) }
+            .getOrNull()
+        focusScreenPoint.value = point?.let { Offset(it.x, it.y) }
     }
 
     fun update(assets: List<MediaAsset>, metadata: Map<MediaId, GeoMetadata>) {
@@ -323,11 +406,13 @@ private class RichPhotoMapController(
     }
 
     private fun addPhotoLayers(style: Style) {
+        // Focus mode draws EVERY located photo as its own dot (owner: "every located photo drawn
+        // as a filled colour dot"), so clustering is off there; the Places map keeps its clusters.
         val source = GeoJsonSource(
             PHOTO_SOURCE,
             FeatureCollection.fromFeatures(emptyArray()),
             GeoJsonOptions()
-                .withCluster(true)
+                .withCluster(focus == null)
                 .withClusterRadius(56)
                 .withClusterMaxZoom(14),
         )
@@ -337,7 +422,7 @@ private class RichPhotoMapController(
         val clusters: Layer = CircleLayer(CLUSTER_LAYER, PHOTO_SOURCE).apply {
             setFilter(Expression.has("point_count"))
             setProperties(
-                circleColor(Color.rgb(94, 77, 176)),
+                circleColor(accentArgb),
                 circleRadius(22f),
                 circleOpacity(0.88f),
                 circleStrokeColor(Color.WHITE),
@@ -348,13 +433,26 @@ private class RichPhotoMapController(
 
         val points: Layer = CircleLayer(POINT_LAYER, PHOTO_SOURCE).apply {
             setFilter(Expression.not(Expression.has("point_count")))
-            setProperties(
-                circleColor(Color.rgb(255, 171, 64)),
-                circleRadius(8.5f),
-                circleOpacity(0.94f),
-                circleStrokeColor(Color.WHITE),
-                circleStrokeWidth(2f),
-            )
+            if (focus != null) {
+                // Filled, strokeless, each in the colour its feature carries -- the photo's own
+                // dominant palette colour when known, the accent otherwise (see refreshSource).
+                setProperties(
+                    circleColor(Expression.toColor(Expression.get(COLOR_PROPERTY))),
+                    circleRadius(6.5f),
+                    circleOpacity(0.96f),
+                    circleStrokeWidth(0f),
+                )
+            } else {
+                setProperties(
+                    // Fixed on purpose (semantic): map style colours (point, selection ring,
+                    // terrain, extrusion) are not accent roles.
+                    circleColor(Color.rgb(255, 171, 64)),
+                    circleRadius(8.5f),
+                    circleOpacity(0.94f),
+                    circleStrokeColor(Color.WHITE),
+                    circleStrokeWidth(2f),
+                )
+            }
         }
         style.addLayer(points)
 
@@ -432,6 +530,8 @@ private class RichPhotoMapController(
         val map = map ?: return
         val source = photoSource ?: return
         val features = assets.mapNotNull { asset ->
+            // The focused photo is the tile riding the map, not a dot under it.
+            if (focus != null && asset.id == focus.assetId) return@mapNotNull null
             val geo = metadata[asset.id] ?: return@mapNotNull null
             Feature.fromGeometry(
                 Point.fromLngLat(geo.longitude, geo.latitude),
@@ -441,6 +541,9 @@ private class RichPhotoMapController(
                     addProperty("album", asset.bucketName.orEmpty())
                     addProperty("is_video", asset.isVideo)
                     addProperty("captured_at", asset.dateTakenMillis)
+                    if (focus != null) {
+                        addProperty(COLOR_PROPERTY, "#%06X".format(0xFFFFFF and focus.colorFor(asset.id)))
+                    }
                 },
             )
         }
@@ -513,6 +616,10 @@ private class RichPhotoMapController(
 
     private companion object {
         const val OPEN_FREE_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
+        /** The dark style the plate's snapshot uses, so the expanded map is the plate grown, not a different map. */
+        const val FOCUS_STYLE = "https://tiles.openfreemap.org/styles/dark"
+        const val FOCUS_ZOOM = 15.4
+        const val COLOR_PROPERTY = "color"
         const val PHOTO_SOURCE = "foto-xplorr-media"
         const val CLUSTER_LAYER = "foto-xplorr-clusters"
         const val POINT_LAYER = "foto-xplorr-points"

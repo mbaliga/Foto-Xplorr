@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -107,6 +108,9 @@ fun LiveTextOverlay(
     var selected by remember(blocks) { mutableStateOf(emptySet<Int>()) }
     var containerSize by remember { mutableStateOf(Size.Zero) }
     val clipboard = LocalClipboardManager.current
+    // A selected text block is the accent role, so it follows the chosen accent; drawBehind is not
+    // composable, hence resolved here.
+    val selectionFill = MaterialTheme.colorScheme.primary.copy(alpha = SELECTION_ALPHA)
 
     Box(
         modifier = modifier
@@ -142,7 +146,7 @@ fun LiveTextOverlay(
                     val box = block.toScreenRect(rect)
                     val isSelected = index in selected
                     drawRoundRect(
-                        color = if (isSelected) SELECTION_FILL else HINT_FILL,
+                        color = if (isSelected) selectionFill else HINT_FILL,
                         topLeft = Offset(box.left, box.top),
                         size = Size(box.width, box.height),
                         cornerRadius = androidx.compose.ui.geometry.CornerRadius(
@@ -205,5 +209,6 @@ private const val BOX_RADIUS = 3
 
 /** Faint until touched: the text is discoverable without the photo becoming a wall of boxes. */
 private val HINT_FILL = Color(0x22FFFFFF)
-private val SELECTION_FILL = Color(0x668E7BFF)
+private const val SELECTION_ALPHA = 0.40f
+// Fixed on purpose: a neutral scrim behind the action pill, no accent role.
 private val ACTION_FILL = Color(0xE6121216)

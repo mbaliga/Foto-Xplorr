@@ -7,8 +7,8 @@ import kotlin.math.floor
 import kotlin.math.roundToInt
 
 /**
- * The maths and copy behind the viewer's top room — the place plate, and the flight the photo
- * makes into its own pin as the room opens.
+ * The maths and copy behind the viewer's details room — the place plate, the flight the photo
+ * makes into its own pin as the room opens, and the slide the room's text makes as it settles.
  *
  * Every function here is pure so the feel of the reveal can be asserted in a test rather than
  * eyeballed on a device. That matters more than usual for this surface: the flight is driven
@@ -29,6 +29,19 @@ object PlaceMorph {
 
     /** Degrees between graticule lines — 0.002° is ~220 m, so a plate shows about five. */
     const val GRATICULE_STEP_DEGREES = 0.002
+
+    /**
+     * The pin's geometry, in dp, measured off the owner's reference (6.png at 1 px = 1 dp): an
+     * 80 dp rounded square with a 2 dp white border, and a 14 x 7 dp pointer hanging under it.
+     * The pointer belongs to the pin, so the whole group is [PIN_GROUP_HEIGHT_DP] tall and it is
+     * the GROUP that is centred on the location, which is how the reference draws it.
+     */
+    const val PIN_SIZE_DP = 80
+    const val PIN_BORDER_DP = 2
+    const val PIN_CORNER_DP = 8
+    const val POINTER_WIDTH_DP = 14
+    const val POINTER_HEIGHT_DP = 7
+    const val PIN_GROUP_HEIGHT_DP = PIN_SIZE_DP + POINTER_HEIGHT_DP
 
     /**
      * The reveal curve: smoothstep over the shell's linear drag.
@@ -70,6 +83,15 @@ object PlaceMorph {
     }
 
     /**
+     * The hero scale for a plate [plateWidthDp] wide: the photo starts spanning
+     * [HERO_PLATE_FRACTION] of the plate and lands at [PIN_SIZE_DP]. Pure so the render test can
+     * assert the hero really is "the photo you were just looking at" and not a slightly larger
+     * pin.
+     */
+    fun heroScale(plateWidthDp: Float): Float =
+        if (plateWidthDp <= 0f) 1f else ((plateWidthDp * HERO_PLATE_FRACTION) / PIN_SIZE_DP).coerceAtLeast(1f)
+
+    /**
      * Opacity of the plate under the flying photo. It resolves slightly *after* the photo
      * starts moving, so the ground appears to come up to meet the pin rather than being there
      * all along waiting for it.
@@ -78,6 +100,26 @@ object PlaceMorph {
 
     /** Opacity of the room's text. Last to arrive, so the eye follows the photo first. */
     fun textAlpha(reveal: Float): Float = flight(stagger(reveal, TEXT_START, TEXT_END))
+
+    /**
+     * Opacity of the pin's pointer, from the tile's current [thumbnailScale] and the plate's
+     * [landed] alpha: fully hidden while the photo is still visibly larger than its pin (the
+     * pointer hangs off an edge that is nowhere near it yet), fading in over the last few percent
+     * of the flight, and never brighter than the plate it belongs to.
+     */
+    fun pointerAlpha(thumbnailScale: Float, landed: Float): Float {
+        val nearlyLanded = ((POINTER_APPEAR_SCALE - thumbnailScale) / (POINTER_APPEAR_SCALE - 1f)).coerceIn(0f, 1f)
+        return (nearlyLanded * landed.coerceIn(0f, 1f)).coerceIn(0f, 1f)
+    }
+
+    /**
+     * How far below its resting place the room's text sits, in dp, as it settles: it slides UP
+     * into position over the same window it fades in over (owner: the animated shrinkage and
+     * the sliding text are *"important"*). Starts [TEXT_SLIDE_DP] low and lands at 0, on the
+     * same eased curve as [textAlpha] so the two never visibly disagree about when a block has
+     * arrived.
+     */
+    fun textOffsetDp(reveal: Float): Float = TEXT_SLIDE_DP * (1f - textAlpha(reveal))
 
     /**
      * Offsets of the graticule lines across a plate of [sizePx], as fractions of its size.
@@ -96,6 +138,7 @@ object PlaceMorph {
         stepDegrees: Double = GRATICULE_STEP_DEGREES,
     ): List<Float> {
         if (spanDegrees <= 0.0 || stepDegrees <= 0.0) return emptyList()
+        if (degrees.isNaN() || degrees.isInfinite()) return emptyList()
         val low = degrees - spanDegrees / 2.0
         val high = degrees + spanDegrees / 2.0
         // Start at the first whole step at or above the plate's low edge, then walk up.
@@ -146,8 +189,28 @@ object PlaceMorph {
         )
     }
 
+    /**
+     * Whether a coordinate pair is drawable at all. A NaN or an out-of-range value reaches this
+     * room from a hand-typed location or a malformed EXIF rational, and a plate drawn at it
+     * would either throw inside a draw lambda or draw a confident pin on nonsense.
+     */
+    fun isDrawable(latitude: Double?, longitude: Double?): Boolean {
+        if (latitude == null || longitude == null) return false
+        if (latitude.isNaN() || longitude.isNaN() || latitude.isInfinite() || longitude.isInfinite()) return false
+        return latitude in -90.0..90.0 && longitude in -180.0..180.0
+    }
+
     /** Metres in one degree of latitude — constant enough at this scale to be a constant. */
     private const val METRES_PER_DEGREE_LATITUDE = 111_320.0
+
+    /** How much of the plate's width the thumbnail spans at the start of its flight. */
+    private const val HERO_PLATE_FRACTION = 0.92f
+
+    /** How far the room's text starts below its resting place, in dp. */
+    private const val TEXT_SLIDE_DP = 18f
+
+    /** The tile scale at which the pointer starts to appear; at 1x it is fully there. */
+    private const val POINTER_APPEAR_SCALE = 1.25f
 
     /** The photo is already moving before the room is a third open. */
     private const val FLIGHT_START = 0f

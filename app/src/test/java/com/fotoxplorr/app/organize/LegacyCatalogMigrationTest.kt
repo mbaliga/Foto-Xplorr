@@ -2,7 +2,7 @@ package com.fotoxplorr.app.organize
 
 import android.content.Context
 import com.fotoxplorr.app.favorites.FavoriteStore
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals

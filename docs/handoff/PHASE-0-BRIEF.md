@@ -1,6 +1,6 @@
-# Foto Xplorr — Phase 0 brief for Claude Code
+# Fotoz — Phase 0 brief for Claude Code
 
-**Scope:** fix the defects found in the September 2026 audit, and let other apps open photos and videos in Foto Xplorr ("Open with").
+**Scope:** fix the defects found in the September 2026 audit, and let other apps open photos and videos in Fotoz ("Open with").
 **Baseline:** `mbaliga/Foto-Xplorr` `main` @ `5e59d56` (15 Sep 2026).
 **Source:** the owner's doc "Foto Xplorr — gap analysis: every format + USB drives". This brief is the executable form of its Phase 0.
 
@@ -100,9 +100,9 @@ If your context resets, read `PHASE-0-PROGRESS.md` first and resume from the fir
 | P0-15 | `GridIndexMap`; scrubber correct with headers, hidden in masonry | Scrubber, pill and arrow keys are wrong in Timeline mode (TRAPS #5/#9) | new `gallery/GridIndexMap.kt`, `gallery/GalleryScreen.kt`, `gallery/GalleryContent.kt` |
 | P0-16 | Search and label fixes | `size:500k` means 500 bytes; `type:raw` misses most RAW; `camera:`/`iso:` match nothing; wrong HDR badge | `search/*`, `formats/MediaFormat.kt`, `viewer/DetailFormatting.kt` |
 | P0-17 | Migrate V1 data; remove dead Java | V1 favourites, tags and collections were never migrated | new `organize/LegacyCatalogMigration.kt`, root `*.java` |
-| P0-18 | "Open with" (`ACTION_VIEW`) | Other apps, such as the Files app on a USB drive, can't open photos in Foto Xplorr | new `viewer/ExternalViewerActivity.kt`, `AndroidManifest.xml`, `viewer/ViewerScreen.kt` |
+| P0-18 | "Open with" (`ACTION_VIEW`) | Other apps, such as the Files app on a USB drive, can't open photos in Fotoz | new `viewer/ExternalViewerActivity.kt`, `AndroidManifest.xml`, `viewer/ViewerScreen.kt` |
 | P0-19 | Docs, TRAPS, device checklist, draft PR | Makes the phase reviewable and testable on a phone | `docs/*`, `README.md` |
-| P0-20 | *(Stretch — only if everything else is done)* Act as a photo picker | Other apps can pick from Foto Xplorr | new activity or mode |
+| P0-20 | *(Stretch — only if everything else is done)* Act as a photo picker | Other apps can pick from Fotoz | new activity or mode |
 
 ---
 
@@ -380,7 +380,7 @@ Paths are relative to `app/src/main/java/com/fotoxplorr/app/` unless they start 
    3. Re-open the temp file and check that it decodes with the expected size (bounds only).
    4. Only then stream it into the original with mode `"wt"`.
 4. **Destination.** Add a pure `mediaStoreRelativePath(sourceRelativePath: String?, kind: MediaKind): String`.
-   - If the source's top-level folder is allowed for that collection, keep the full path; otherwise use `Pictures/Foto Xplorr/`, `Movies/Foto Xplorr/` or `Music/Foto Xplorr/`.
+   - If the source's top-level folder is allowed for that collection, keep the full path; otherwise use `Pictures/Fotoz/`, `Movies/Fotoz/` or `Music/Fotoz/`.
    - Allowed today: Images → `DCIM`, `Pictures`; Video → `DCIM`, `Movies`, `Pictures`; Audio → `Music`, `Podcasts`, `Audiobooks`, `Ringtones`, `Notifications`, `Alarms`, and `Recordings` on API 31+.
    - **Check these lists against MediaProvider's rules** (the "Primary directory … not allowed" check) and cite the source in a comment.
    - Use it in `EditedCopyWriter`, `VideoConversionWriter` and `AudioConversionWriter`. `StickerExporter` already uses `Pictures/`.
@@ -393,7 +393,7 @@ Paths are relative to `app/src/main/java/com/fotoxplorr/app/` unless they start 
 
 **Device checks:**
 - Edit a geotagged camera photo and save a copy → it sits next to the original in the timeline and shows the same camera, date and location.
-- Edit a WhatsApp image → the copy saves into `Pictures/Foto Xplorr/`.
+- Edit a WhatsApp image → the copy saves into `Pictures/Fotoz/`.
 
 ---
 
@@ -407,7 +407,7 @@ Paths are relative to `app/src/main/java/com/fotoxplorr/app/` unless they start 
 - "Clear location" removes only EXIF GPS (`MetadataWriter.kt:192–199`) and leaves XMP GPS.
 
 **Do.**
-1. **Writable check before consent.** Add `fun isMetadataWritable(asset): Boolean`: JPEG, PNG or WebP, by magic bytes, falling back to MIME. The detail room's edit controls, bulk metadata edits and "Set/Clear location" (file variant) must check it **before** `MediaStore.createWriteRequest`. If it fails, show "Foto Xplorr can't write metadata into *FORMAT* files yet" and don't open the consent screen.
+1. **Writable check before consent.** Add `fun isMetadataWritable(asset): Boolean`: JPEG, PNG or WebP, by magic bytes, falling back to MIME. The detail room's edit controls, bulk metadata edits and "Set/Clear location" (file variant) must check it **before** `MediaStore.createWriteRequest`. If it fails, show "Fotoz can't write metadata into *FORMAT* files yet" and don't open the consent screen.
 2. **Original access for writes.** On API 29+, if `ACCESS_MEDIA_LOCATION` isn't granted, refuse file metadata writes: "Allow access to photo locations to edit metadata safely". The reason is that writing through a redacted view could erase GPS. Otherwise open through `setRequireOriginal`.
    - **Check what MediaProvider does when a redacted file is opened for writing** (look at MediaProvider's `openFile`/redaction code). Log it under Decisions with the source.
 3. **Temp, verify, then write:**
@@ -696,7 +696,7 @@ Paths are relative to `app/src/main/java/com/fotoxplorr/app/` unless they start 
 
 ### P0-18 — "Open with" (`ACTION_VIEW`)
 
-**Why.** The manifest has only the launcher entry. A photo tapped in the Files app, including on a **USB drive**, can't be opened in Foto Xplorr. This is the cheapest USB win before Phase 3.
+**Why.** The manifest has only the launcher entry. A photo tapped in the Files app, including on a **USB drive**, can't be opened in Fotoz. This is the cheapest USB win before Phase 3.
 
 **Do.**
 1. New `viewer/ExternalViewerActivity.kt`, `exported="true"`, with the same `configChanges` as P0-09 and this intent filter:
@@ -720,12 +720,12 @@ Paths are relative to `app/src/main/java/com/fotoxplorr/app/` unless they start 
 3. **Catalogue match:** if the URI is a MediaStore URI (authority `media`) whose id is in `LibraryRuntime`'s repository, open **that** asset with all its normal actions instead.
 4. **Viewer in external mode:** add `catalogueActions: Boolean = true` to `ViewerScreen`. When false, hide or disable favourite, sensitive, trash, tags, captions, location set/clear, edit, convert and moments export. Keep share (through `SharePreparer`, which works on any readable URI) and "Open with".
    - Never write anything about an external asset to any store (catalogue, geo, recognition, favourites).
-5. In-app "Open with" (`FotoXplorrActivity.kt:719`, `openExternally`): add `Intent.EXTRA_EXCLUDE_COMPONENTS` with `ExternalViewerActivity`'s component, so the chooser doesn't offer Foto Xplorr to itself.
+5. In-app "Open with" (`FotoXplorrActivity.kt:719`, `openExternally`): add `Intent.EXTRA_EXCLUDE_COMPONENTS` with `ExternalViewerActivity`'s component, so the chooser doesn't offer Fotoz to itself.
 
 **Tests:** a manifest-parsing test (the filter exists, `exported=true`, both MIME types); the ad-hoc asset builder's pure part.
 
 **Device checks:**
-- Files app → a USB drive → tap a JPEG → "Open with Foto Xplorr" is offered → it opens, zooms and shares; the catalogue actions are hidden.
+- Files app → a USB drive → tap a JPEG → "Open with Fotoz" is offered → it opens, zooms and shares; the catalogue actions are hidden.
 - A photo already in the library, opened from another app, shows its favourite state.
 
 ---

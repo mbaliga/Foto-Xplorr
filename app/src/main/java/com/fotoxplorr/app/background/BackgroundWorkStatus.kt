@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * What Foto Xplorr's one background job is doing right now, for the settings screen's "right
+ * What Fotoz's one background job is doing right now, for the settings screen's "right
  * now" status line (SettingsTabs.kt's BACKGROUND tab).
  *
  * Deliberately a DIFFERENT shape from [com.fotoxplorr.app.recognition.RecognitionProgress] and

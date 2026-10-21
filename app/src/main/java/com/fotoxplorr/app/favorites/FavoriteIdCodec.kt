@@ -1,6 +1,6 @@
 package com.fotoxplorr.app.favorites
 
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 
 internal object FavoriteIdCodec {
     fun decode(values: Set<String>?): Set<MediaId> = values

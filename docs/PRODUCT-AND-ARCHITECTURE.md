@@ -1,4 +1,4 @@
-# Foto Xplorr — product and architecture
+# Fotoz — product and architecture
 
 A local-first photo and video gallery for Android. Everything it does by default happens on the
 device: the library is indexed from `MediaStore` into a local catalogue, recognition runs on
@@ -17,7 +17,7 @@ supply their own provider key.
 
 ### The library
 
-Foto Xplorr does not browse `MediaStore` live. It maintains its **own catalogue** in a local
+Fotoz does not browse `MediaStore` live. It maintains its **own catalogue** in a local
 SQLite database (`SqliteMediaRepository`), populated by scanning `MediaStore.Files`. That
 indirection is what makes the rest of the app possible — favourites, tags, collections, archive
 state and privacy flags are all keyed to catalogue rows and would have nowhere to live otherwise.
@@ -94,7 +94,7 @@ the app's own organisational layer, not the photos.
 
 ## 2. Interaction patterns
 
-Foto Xplorr uses the **fonebrew spatial pattern**, shared across the constellation via
+Fotoz uses the **fonebrew spatial pattern**, shared across the constellation via
 `dev.aarso:cell-shell`. The full specification is in [`fonebrew-navigation.md`](fonebrew-navigation.md);
 what follows is how this app applies it.
 

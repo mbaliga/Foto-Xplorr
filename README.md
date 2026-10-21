@@ -1,6 +1,8 @@
-# Foto Xplorr
+# Fotoz
 
-Foto Xplorr is a local-first, source-available Android gallery for fast everyday browsing, private organisation, reversible file operations and spatial exploration of a personal media library.
+Fotoz is a local-first, source-available Android gallery for fast everyday browsing, private organisation, reversible file operations and spatial exploration of a personal media library.
+
+Fotoz was previously called Foto Xplorr; the repository name, the `com.fotoxplorr.app` package and some on-device store names keep the old name.
 
 ## V2 Android experience
 
@@ -53,7 +55,7 @@ Foto Xplorr is a local-first, source-available Android gallery for fast everyday
 
 ## Privacy model
 
-Foto Xplorr has no application backend, account, analytics or mandatory cloud service. Location indexing is local and starts only after the user opens Places and requests it.
+Fotoz has no application backend, account, analytics or mandatory cloud service. Location indexing is local and starts only after the user opens Places and requests it.
 
 Sharing strips metadata before a file ever leaves the app, and every stripped output is re-checked
 clean before it is handed to the receiving app — never trusted on the strength of the stripping

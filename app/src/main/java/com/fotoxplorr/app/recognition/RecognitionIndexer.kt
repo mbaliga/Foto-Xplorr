@@ -8,6 +8,9 @@ import androidx.core.graphics.get
 import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.decodeUpright
+import com.fotoxplorr.app.palette.PaletteSampling
+import com.fotoxplorr.app.palette.PaletteSwatch
+import com.fotoxplorr.core.model.MediaId
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceContour
@@ -46,6 +49,11 @@ import com.google.android.gms.tasks.Task
  * for the [SceneCategory] set and [CaptionGenerator] for a caption and hashtags -- both pure,
  * template-based and computed once here, per photo; see [SceneClassifier]'s KDoc for why
  * [SceneCategory.FRIENDS_FAMILY] is the one category that is NOT decided in this pass.
+ *
+ * The same decoded bitmap also yields the photo's colour palette ([PaletteSampling.fromBitmap],
+ * over a 100px sample of it), persisted for `colour:` search and the details room. Photos
+ * recognised before palettes were stored get theirs from [backfillPalettes] -- a second,
+ * palette-only pass that decodes each such photo once at sample size and runs no detector.
  */
 class RecognitionIndexer(
     context: Context,
@@ -61,96 +69,18 @@ class RecognitionIndexer(
             // excludes trashed items; only the "is this row's asset still real" check widens.
             store.removeMissing(assets.mapTo(linkedSetOf()) { it.id })
             val pending = store.pendingAssets(images)
-            if (pending.isEmpty()) {
+            val recognised = if (pending.isEmpty()) {
                 store.publishProgress(RecognitionProgress(running = false, indexedCount = images.size))
-                return@runCatching 0
+                0
+            } else {
+                recognise(pending)
             }
-
-            store.publishProgress(RecognitionProgress(running = true, completed = 0, total = pending.size))
-
-            val faceDetector = FaceDetection.getClient(
-                FaceDetectorOptions.Builder()
-                    // ACCURATE + ALL contours: the contour points are what
-                    // FaceDescriptorBuilder turns into a groupable descriptor, so the cheaper
-                    // FAST mode would leave People detecting faces but unable to group them.
-                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
-                    .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-                    .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
-                    .setMinFaceSize(MIN_FACE_SIZE)
-                    .build(),
-            )
-            val labeler = ImageLabeling.getClient(
-                ImageLabelerOptions.Builder()
-                    .setConfidenceThreshold(LABEL_CONFIDENCE_FLOOR)
-                    .build(),
-            )
-            val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-
-            var completed = 0
-            var failed = 0
-            val batch = ArrayList<AssetRecognition>(BATCH_SIZE)
-            // Progress is THROTTLED, not published per photo.
-            //
-            // RecognitionProgress is a field of GalleryUiState, so every emission recomposes the
-            // whole gallery, which re-derives the entire catalogue. Publishing once per asset
-            // therefore cost one full re-derivation per photo -- tens of thousands of them on a
-            // real library, on the main thread, while the user is trying to scroll. The progress
-            // line is a human-readable count; it cannot be read faster than a few times a second,
-            // so nothing is lost by rate-limiting it and a great deal is gained.
-            var lastPublishAtMs = 0L
-            try {
-                for (asset in pending) {
-                    currentCoroutineContext().ensureActive()
-                    val row = runCatching { analyse(asset, faceDetector, labeler, textRecognizer) }
-                        .getOrElse { error ->
-                            if (error is CancellationException) throw error
-                            failed += 1
-                            // P0-12: previously nothing was recorded on failure, so an
-                            // unreadable file stayed "pending" forever and was retried on every
-                            // pass; recordFailure bounds that to MAX_FAILURE_ATTEMPTS via
-                            // RecognitionStore.pendingAssets's own exclusion.
-                            store.recordFailure(asset.id, asset.recognitionRevision())
-                            null
-                        }
-                    if (row != null) {
-                        store.clearFailure(asset.id)
-                        batch += row
-                        if (batch.size >= BATCH_SIZE) {
-                            store.upsert(batch.toList())
-                            batch.clear()
-                        }
-                    }
-                    completed += 1
-                    val nowMs = System.currentTimeMillis()
-                    if (nowMs - lastPublishAtMs >= PROGRESS_INTERVAL_MS) {
-                        lastPublishAtMs = nowMs
-                        store.publishProgress(
-                            RecognitionProgress(
-                                running = true,
-                                completed = completed,
-                                total = pending.size,
-                                failed = failed,
-                            ),
-                        )
-                    }
-                }
-            } finally {
-                if (batch.isNotEmpty()) store.upsert(batch.toList())
-                runCatching { faceDetector.close() }
-                runCatching { labeler.close() }
-                runCatching { textRecognizer.close() }
-            }
-
-            store.reload()
-            store.publishProgress(
-                RecognitionProgress(
-                    running = false,
-                    completed = completed,
-                    total = pending.size,
-                    failed = failed,
-                ),
-            )
-            completed - failed
+            // After the detectors, not before: on an upgraded install the detector pass is usually
+            // empty and this is the whole of the work, but on a device that has both new photos
+            // and a legacy library, new photos' faces and labels are worth more than old photos'
+            // colours. Nothing to do at all on a fresh install, since analyse() samples as it goes.
+            backfillPalettes(images)
+            recognised
         }.onFailure { error ->
             if (error is CancellationException) {
                 store.publishProgress(RecognitionProgress(running = false))
@@ -163,6 +93,172 @@ class RecognitionIndexer(
                 ),
             )
         }
+    }
+
+    /** The detector pass over [pending]. Returns how many photos were recognised successfully. */
+    private suspend fun recognise(pending: List<MediaAsset>): Int {
+        store.publishProgress(RecognitionProgress(running = true, completed = 0, total = pending.size))
+
+        val faceDetector = FaceDetection.getClient(
+            FaceDetectorOptions.Builder()
+                // ACCURATE + ALL contours: the contour points are what
+                // FaceDescriptorBuilder turns into a groupable descriptor, so the cheaper
+                // FAST mode would leave People detecting faces but unable to group them.
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
+                .setMinFaceSize(MIN_FACE_SIZE)
+                .build(),
+        )
+        val labeler = ImageLabeling.getClient(
+            ImageLabelerOptions.Builder()
+                .setConfidenceThreshold(LABEL_CONFIDENCE_FLOOR)
+                .build(),
+        )
+        val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
+        var completed = 0
+        var failed = 0
+        val batch = ArrayList<AssetRecognition>(BATCH_SIZE)
+        // Progress is THROTTLED, not published per photo.
+        //
+        // RecognitionProgress is a field of GalleryUiState, so every emission recomposes the
+        // whole gallery, which re-derives the entire catalogue. Publishing once per asset
+        // therefore cost one full re-derivation per photo -- tens of thousands of them on a
+        // real library, on the main thread, while the user is trying to scroll. The progress
+        // line is a human-readable count; it cannot be read faster than a few times a second,
+        // so nothing is lost by rate-limiting it and a great deal is gained.
+        var lastPublishAtMs = 0L
+        try {
+            for (asset in pending) {
+                currentCoroutineContext().ensureActive()
+                val row = runCatching { analyse(asset, faceDetector, labeler, textRecognizer) }
+                    .getOrElse { error ->
+                        if (error is CancellationException) throw error
+                        failed += 1
+                        // P0-12: previously nothing was recorded on failure, so an
+                        // unreadable file stayed "pending" forever and was retried on every
+                        // pass; recordFailure bounds that to MAX_FAILURE_ATTEMPTS via
+                        // RecognitionStore.pendingAssets's own exclusion.
+                        store.recordFailure(asset.id, asset.recognitionRevision())
+                        null
+                    }
+                if (row != null) {
+                    store.clearFailure(asset.id)
+                    batch += row
+                    if (batch.size >= BATCH_SIZE) {
+                        store.upsert(batch.toList())
+                        batch.clear()
+                    }
+                }
+                completed += 1
+                val nowMs = System.currentTimeMillis()
+                if (nowMs - lastPublishAtMs >= PROGRESS_INTERVAL_MS) {
+                    lastPublishAtMs = nowMs
+                    store.publishProgress(
+                        RecognitionProgress(
+                            running = true,
+                            completed = completed,
+                            total = pending.size,
+                            failed = failed,
+                        ),
+                    )
+                }
+            }
+        } finally {
+            if (batch.isNotEmpty()) store.upsert(batch.toList())
+            runCatching { faceDetector.close() }
+            runCatching { labeler.close() }
+            runCatching { textRecognizer.close() }
+        }
+
+        store.reload()
+        store.publishProgress(
+            RecognitionProgress(
+                running = false,
+                completed = completed,
+                total = pending.size,
+                failed = failed,
+            ),
+        )
+        return completed - failed
+    }
+
+    /**
+     * Palettes for photos that were recognised before palettes were stored (store v5), and for
+     * nothing else: [RecognitionStore.pendingPaletteOnly] names exactly the photos that have a
+     * recognition row at their current revision and no palette rows at all.
+     *
+     * Deliberately NOT a re-run of [analyse]: that would decode every such photo at 640px and sit
+     * it through three detectors again for faces, labels and text the store already holds. This
+     * pass decodes each photo once, straight to [PaletteSampling.SAMPLE_DIMENSION] on the long
+     * edge, and quantises that -- a few milliseconds of I/O and arithmetic per photo against the
+     * hundreds the detector pass costs, so a 20k-photo library is a few minutes of background
+     * work once, and nothing thereafter. No ML Kit client is created here; see
+     * `RecognitionIndexerPaletteTest`.
+     *
+     * A photo that cannot be decoded is recorded through the same bounded-retry bookkeeping the
+     * detector pass uses (P0-12), so a bad file costs at most [RecognitionStore]'s
+     * `MAX_FAILURE_ATTEMPTS` decodes and then stops being asked. One that decodes but shows
+     * nothing is stored as an empty palette and never asked again.
+     *
+     * Returns how many photos received a palette.
+     */
+    internal suspend fun backfillPalettes(images: List<MediaAsset>): Int {
+        val pending = store.pendingPaletteOnly(images)
+        if (pending.isEmpty()) return 0
+
+        store.publishProgress(RecognitionProgress(running = true, completed = 0, total = pending.size))
+        var completed = 0
+        var failed = 0
+        var lastPublishAtMs = 0L
+        val batch = LinkedHashMap<MediaId, List<PaletteSwatch>>(BATCH_SIZE)
+        try {
+            for (asset in pending) {
+                currentCoroutineContext().ensureActive()
+                val palette = runCatching { PaletteSampling.read(appContext, asset) }
+                    .getOrElse { error ->
+                        if (error is CancellationException) throw error
+                        null
+                    }
+                if (palette == null) {
+                    failed += 1
+                    store.recordFailure(asset.id, asset.recognitionRevision())
+                } else {
+                    batch[asset.id] = palette
+                    if (batch.size >= BATCH_SIZE) {
+                        store.upsertPalettes(batch.toMap())
+                        batch.clear()
+                    }
+                }
+                completed += 1
+                val nowMs = System.currentTimeMillis()
+                if (nowMs - lastPublishAtMs >= PROGRESS_INTERVAL_MS) {
+                    lastPublishAtMs = nowMs
+                    store.publishProgress(
+                        RecognitionProgress(
+                            running = true,
+                            completed = completed,
+                            total = pending.size,
+                            failed = failed,
+                        ),
+                    )
+                }
+            }
+        } finally {
+            if (batch.isNotEmpty()) store.upsertPalettes(batch.toMap())
+        }
+
+        store.reload()
+        store.publishProgress(
+            RecognitionProgress(
+                running = false,
+                completed = completed,
+                total = pending.size,
+                failed = failed,
+            ),
+        )
+        return completed - failed
     }
 
     private suspend fun analyse(
@@ -225,6 +321,11 @@ class RecognitionIndexer(
             val categories = SceneClassifier.classify(labels, faces.size, sceneFaces)
             val generatedCaption = CaptionGenerator.generate(labelTexts, categories, faces.size)
 
+            // From the same bitmap the detectors saw, downscaled to the palette sample size first
+            // -- never quantised at analysis size. Caught on its own so that a palette problem
+            // costs this photo its palette, not the faces, labels and text already in hand.
+            val palette = runCatching { PaletteSampling.fromBitmap(bitmap) }.getOrDefault(emptyList())
+
             return AssetRecognition(
                 mediaId = asset.id,
                 sourceRevision = asset.recognitionRevision(),
@@ -237,6 +338,7 @@ class RecognitionIndexer(
                 categories = categories,
                 caption = generatedCaption.caption,
                 hashtags = generatedCaption.hashtags,
+                palette = palette,
             )
         } finally {
             bitmap.recycle()

@@ -117,7 +117,7 @@ data class ZipExport(val uri: Uri, val failed: List<PreparedItem.Failed>)
 internal fun archiveName(count: Int, includesVideo: Boolean): String {
     val singular = if (includesVideo) "item" else "photo"
     val noun = if (count == 1) singular else "${singular}s"
-    return "Foto Xplorr $count $noun.zip"
+    return "Fotoz $count $noun.zip"
 }
 
 /**

@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.hyle
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 
 /**
  * A job running in the background that the user is entitled to see.
@@ -32,19 +33,34 @@ data class BackgroundActivity(
 }
 
 /**
- * What kind of job it is: its wording and its colour.
+ * What kind of job it is: its wording, its colour and its glyph.
  *
  * The colour is per-KIND rather than per-activity, and that is what makes the collapsed strip
  * readable — three coloured slivers at the top of the screen say *which three things* are running
- * without a word of text, but only if green always means the same thing.
+ * without a word of text, but only if green always means the same thing. So the rule is one
+ * colour = one meaning: no two kinds share a hue, and none borrows the error salmon
+ * (`#FFB4AB`), the track grey or the glyph white.
+ *
+ * Three of the six are the owner's own, sampled from the collapsed-strip reference screenshots
+ * (2026-10): green for the save ("Save applies for cloud storage connected devices", which is
+ * [BACKING_UP]), blue for the move, orange for the copy — each with the glyph that screenshot
+ * draws at the slot's right end. The other three have no reference and take hues that keep the
+ * rule: cyan, magenta and yellow sit between the reference hues on the wheel rather than next to
+ * any one of them.
+ *
+ * @param glyph the small white mark beside the kind's bar when the strip shows several jobs at
+ *   once. Drawn in a 16-unit viewport with its ink in the middle 12 (see [ActivityGlyphs]) so a
+ *   16dp drawing has the reference's 12dp mark.
  */
-enum class ActivityKind(val label: String, val accent: Color) {
-    SCANNING("Reading your library", Color(0xFF3B82F6)),
-    RECOGNISING("Recognising", Color(0xFFF59E0B)),
-    MOVING("Moving", Color(0xFF3B82F6)),
-    COPYING("Copying", Color(0xFF3B82F6)),
-    BACKING_UP("Backing up", Color(0xFF22C55E)),
-    EXPORTING("Exporting", Color(0xFFF59E0B)),
+enum class ActivityKind(val label: String, val accent: Color, val glyph: ImageVector) {
+    // Fixed on purpose (semantic): per-kind job hues must stay distinct from each other, so they
+    // never follow the accent.
+    SCANNING("Reading your library", Color(0xFF00E5FF), ActivityGlyphs.Scan),
+    RECOGNISING("Recognising", Color(0xFFE040FB), ActivityGlyphs.Recognise),
+    MOVING("Moving", Color(0xFF40A0FF), ActivityGlyphs.Move),
+    COPYING("Copying", Color(0xFFFFA100), ActivityGlyphs.Copy),
+    BACKING_UP("Backing up", Color(0xFF4DFF00), ActivityGlyphs.Save),
+    EXPORTING("Exporting", Color(0xFFFFE600), ActivityGlyphs.Export),
 }
 
 /**
@@ -107,8 +123,14 @@ fun shadeAfterDrag(from: ShadeState, dragDp: Float): ShadeState {
     return order[(order.indexOf(from) + delta).coerceIn(0, order.lastIndex)]
 }
 
-/** Collapsed is a sliver: enough colour to notice, not enough to read. */
-internal const val COLLAPSED_HEIGHT = 14
+/**
+ * Collapsed is a sliver: enough colour to notice, not enough to read.
+ *
+ * 28dp, measured off the owner's collapsed-strip screenshots (2026-10): a black band whose 8dp
+ * tracks sit 10dp down, so the strip is exactly as tall as it needs to be to centre them with the
+ * same 10dp above and below.
+ */
+internal const val COLLAPSED_HEIGHT = 28
 
 /** One activity's row in the notification state. */
 internal const val NOTIFICATION_ROW = 50

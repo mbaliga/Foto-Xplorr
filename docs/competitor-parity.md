@@ -1,6 +1,6 @@
 # Competitor parity register
 
-This register prevents Foto Xplorr from copying only competitors' visible home screens. Every capability must be discoverable through search, command palette, contextual actions, settings, or documented menus even when it is not promoted in the primary navigation.
+This register prevents Fotoz from copying only competitors' visible home screens. Every capability must be discoverable through search, command palette, contextual actions, settings, or documented menus even when it is not promoted in the primary navigation.
 
 ## Competitor families reviewed
 

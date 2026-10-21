@@ -260,6 +260,8 @@ private fun BoxScope.ReadyChrome(
             modifier = Modifier
                 .sizeIn(maxWidth = 280.dp, maxHeight = 280.dp)
                 .aspectRatio(cutout.width.toFloat() / cutout.height.toFloat().coerceAtLeast(1f))
+                // Fixed on purpose (semantic): a deliberate mid-grey so the cut-out's alpha shows,
+                // not an accent.
                 .background(Color(0xFF3A3A3A), RoundedCornerShape(12.dp)),
             contentAlignment = Alignment.Center,
         ) {

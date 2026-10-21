@@ -1,6 +1,6 @@
 package com.fotoxplorr.app.curate
 
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 
 /**
  * Turns per-photo signals the app already computes into a REVIEW QUEUE of "you might want to

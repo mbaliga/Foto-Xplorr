@@ -19,7 +19,13 @@ enum class MediaKind { IMAGE, VIDEO, AUDIO }
  *
  * A source already inside an allowed folder keeps its exact path (including any subfolder) rather
  * than being flattened to the fallback — an edit of `DCIM/Camera/IMG_1.jpg` belongs beside the
- * original in `DCIM/Camera/`, not relocated to `Pictures/Foto Xplorr/`.
+ * original in `DCIM/Camera/`, not relocated to `Pictures/Fotoz/`.
+ *
+ * Builds before the product was renamed saved their fallback copies to `Pictures/Foto Xplorr/`,
+ * `Movies/Foto Xplorr/` and `Music/Foto Xplorr/`. Those folders are never renamed or moved and
+ * the scanners index them by MediaStore id like any other folder, so nothing is lost; a source
+ * already inside one keeps its exact path (the top folder is an allowed one), so an edit of an
+ * older copy still lands beside it. Only a fresh fallback now goes to the `Fotoz` folders.
  *
  * Allowed top-level folders per collection, verified against the current MediaProvider behaviour
  * described at https://developer.android.com/training/data-storage/shared/media
@@ -46,9 +52,9 @@ fun mediaStoreRelativePath(sourceRelativePath: String?, kind: MediaKind, sdkInt:
 }
 
 private val FALLBACK_RELATIVE_PATH = mapOf(
-    MediaKind.IMAGE to "Pictures/Foto Xplorr/",
-    MediaKind.VIDEO to "Movies/Foto Xplorr/",
-    MediaKind.AUDIO to "Music/Foto Xplorr/",
+    MediaKind.IMAGE to "Pictures/Fotoz/",
+    MediaKind.VIDEO to "Movies/Fotoz/",
+    MediaKind.AUDIO to "Music/Fotoz/",
 )
 
 private val IMAGE_ALLOWED_TOP_FOLDERS = setOf("DCIM", "Pictures")
