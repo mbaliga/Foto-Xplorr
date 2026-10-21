@@ -177,8 +177,24 @@ internal object HelpCopy {
 
         const val BATTERY_FLOOR = "Charging always counts. Android won't run background work below about 15-20% battery."
 
-        const val PLACES_PRIVACY = "Everything here runs on this device. Only the Street map (Connect build) and " +
-            "AI services you add can go online. Location is used only by Spatial compass."
+        /**
+         * The Places screen's privacy boundary, one per flavour (see [placesPrivacy]). Neither may
+         * claim more than its build does: the Connect list is every network use reachable from
+         * that screen (the similarity model download is offered there too), and the Offline build
+         * names nothing that could go online.
+         */
+        const val PLACES_PRIVACY_OFFLINE = "Everything here runs on this device. Nothing here goes online or " +
+            "uploads your photos."
+        const val PLACES_PRIVACY_CONNECT = "Nothing here uploads your photos. Only Street map tiles, the one-time " +
+            "similarity model download and AI services you add go online."
+        const val PLACES_LOCATION = "Location is used only by Spatial compass."
+
+        /**
+         * What a protected folder is. It is an in-app gate; the files stay where they were, readable
+         * by any other app with photo access (README, "private folders ... not encryption"). Without
+         * this line the word "protected" reads as a vault.
+         */
+        const val PROTECTED_NOT_ENCRYPTED = "Protected folders lock access inside Fotoz. They do not encrypt your files."
         const val AI_SERVICE = "Optional. Use your own ChatGPT, Claude or similar account. Nothing is sent until " +
             "you turn it on and ask. Your key stays encrypted on this device."
         const val RENAME_TOKENS = "Tokens: {counter} {counter:3} {orig} {yyyy} {yy} {MM} {dd} {HH} {mm} {ss}. The extension is kept."
@@ -192,6 +208,13 @@ internal object HelpCopy {
         const val GESTURES_PINCH_OFF = "Pinch to zoom. Two fingers to turn. Swipe between photos. Drag down for " +
             "details, up for actions, from the right for view options."
     }
+
+    /** The Places privacy paragraph for this build ([networkFeatures] is `BuildConfig.NETWORK_FEATURES`). */
+    fun placesPrivacy(networkFeatures: Boolean): String =
+        if (networkFeatures) Note.PLACES_PRIVACY_CONNECT else Note.PLACES_PRIVACY_OFFLINE
+
+    /** "3 protected · in-app lock only": the destination card, short form of [Note.PROTECTED_NOT_ENCRYPTED]. */
+    fun protectedCount(count: Int): String = "$count protected · in-app lock only"
 
     /** "Overnight, 22:00 to 06:00." */
     fun overnight(from: String, to: String): String = "Overnight, $from to $to."

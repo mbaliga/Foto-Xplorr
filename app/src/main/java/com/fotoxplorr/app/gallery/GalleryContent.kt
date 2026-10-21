@@ -1005,7 +1005,7 @@ fun LibraryScreen(
             LibraryActionCard(
                 modifier = Modifier.fillMaxWidth(),
                 title = "Private folders",
-                subtitle = "$privateAlbumCount protected",
+                subtitle = HelpCopy.protectedCount(privateAlbumCount),
                 icon = Icons.Outlined.Lock,
                 onClick = onOpenPrivateFolders,
             )

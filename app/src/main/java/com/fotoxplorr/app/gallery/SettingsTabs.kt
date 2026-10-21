@@ -292,6 +292,7 @@ fun SettingsTabsRoom(
                         actions.onSetHideSensitive,
                     )
                     Paragraph(HelpCopy.Hint.PROTECTED_FOLDERS)
+                    Paragraph(HelpCopy.Note.PROTECTED_NOT_ENCRYPTED)
                 }
 
                 SettingsTab.VIEWER -> {

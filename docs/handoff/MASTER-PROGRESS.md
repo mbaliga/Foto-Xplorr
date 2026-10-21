@@ -694,6 +694,11 @@ publish pinned). **Core** `ceb2243` (`AlphaSniffer`). **Rooms and navigation** `
 - Four copy lines changed meaning-preserving but are legal-ish and want a human read: the offline
   statement, the Places privacy paragraph, the AI-service paragraph and the Pro "nothing is charged
   yet" line (plus the new Connect statement).
+- Two privacy lines were added after review and want the same human read: "Protected folders lock
+  access inside Fotoz. They do not encrypt your files." (Privacy settings and the Protected screen, with
+  "N protected · in-app lock only" on the Library card), and the Places paragraph, now one wording per
+  build (Offline: nothing here goes online; Connect: Street map tiles, the one-time similarity model
+  download and AI services you add are the only network use).
 - Store rename: the hosted privacy policy at the unchanged URL must be republished with the release
   that drops the audio permission, `versionCode` must go to 5 to match `changelogs/5.txt`, and the
   Play permission and foreground-service declarations must be re-answered without audio.

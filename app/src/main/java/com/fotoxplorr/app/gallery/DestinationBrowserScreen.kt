@@ -45,6 +45,7 @@ import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
 import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.PaneScaffold
+import com.fotoxplorr.app.ui.RoomStyle
 import com.fotoxplorr.core.model.MediaId
 import com.fotoxplorr.app.ui.HelpCopy
 
@@ -394,6 +395,13 @@ private fun ProtectedFoldersPane(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        item {
+            Text(
+                HelpCopy.Note.PROTECTED_NOT_ENCRYPTED,
+                color = Color.White.copy(alpha = 0.6f),
+                style = RoomStyle.Caption,
+            )
+        }
         items(lockedFolders.toList().sorted(), key = { it }) { key ->
             val unlocked = key in unlockedFolders
             Row(

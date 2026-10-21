@@ -18,6 +18,7 @@ import com.fotoxplorr.app.gallery.ThemeMode
 import com.fotoxplorr.app.spatial.GeoIndexState
 import com.fotoxplorr.app.spatial.PlacesScreen
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.app.ui.HelpCopy
 import com.fotoxplorr.app.ui.RoomStyle
 import org.junit.Assert.assertEquals
 import org.junit.Assume.assumeFalse
@@ -76,7 +77,11 @@ class PlacesRootPathInkTest {
         )
         assertEquals(
             RoomStyle.InkFaint.toArgb(),
-            textColorOf(compose.onNodeWithText("Everything here runs on this device", substring = true)).toArgb(),
+            textColorOf(compose.onNodeWithText(HelpCopy.placesPrivacy(BuildConfig.NETWORK_FEATURES))).toArgb(),
+        )
+        assertEquals(
+            RoomStyle.InkFaint.toArgb(),
+            textColorOf(compose.onNodeWithText(HelpCopy.Note.PLACES_LOCATION)).toArgb(),
         )
     }
 

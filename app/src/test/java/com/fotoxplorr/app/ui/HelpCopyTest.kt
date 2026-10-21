@@ -1,8 +1,10 @@
 package com.fotoxplorr.app.ui
 
+import com.fotoxplorr.app.BuildConfig
 import java.io.File
 import java.lang.reflect.Modifier
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -100,13 +102,57 @@ class HelpCopyTest {
     }
 
     @Test
-    fun `the places and AI paragraphs keep every boundary they state`() {
-        val places = HelpCopy.Note.PLACES_PRIVACY
+    fun `protected folders are said to be an access lock and not encryption`() {
+        // The only in-app statement of the README's rule that private folders are an access gate:
+        // other apps with photo permission can still read the same files. It was trimmed away once.
+        val note = HelpCopy.Note.PROTECTED_NOT_ENCRYPTED
+        assertTrue(note, note.contains("lock access inside Fotoz"))
+        assertTrue(note, note.contains("do not encrypt your files"))
+        // ...and the destination card carries the short form of it next to the count.
+        assertEquals("3 protected · in-app lock only", HelpCopy.protectedCount(3))
+        assertEquals("0 protected · in-app lock only", HelpCopy.protectedCount(0))
+    }
+
+    @Test
+    fun `the places paragraph in the offline build says nothing here goes online`() {
+        val places = HelpCopy.placesPrivacy(networkFeatures = false)
         assertTrue(places, places.contains("runs on this device"))
-        assertTrue(places, places.contains("Street map"))
-        assertTrue(places, places.contains("Connect build"))
+        assertTrue(places, places.contains("goes online"))
+        assertTrue(places, places.contains("uploads your photos"))
+        // The offline build has no network at all, so it must not name anything that can use it.
+        assertFalse(places, places.contains("AI services"))
+        assertFalse(places, places.contains("Street map"))
+        assertFalse(places, places.contains("download"))
+        assertTrue(places, places.length <= NOTE_MAX)
+    }
+
+    @Test
+    fun `the places paragraph in the connect build lists everything that uses the network`() {
+        val places = HelpCopy.placesPrivacy(networkFeatures = true)
+        assertTrue(places, places.contains("Nothing here uploads your photos"))
+        assertTrue(places, places.contains("Street map tiles"))
+        assertTrue(places, places.contains("one-time similarity model download"))
         assertTrue(places, places.contains("AI services you add"))
-        assertTrue(places, places.contains("Spatial compass"))
+        assertTrue(places, places.length <= NOTE_MAX)
+        // Not the exhaustive-sounding "Only the Street map and AI services" it replaced.
+        assertFalse(places, places.contains("Connect build"))
+    }
+
+    @Test
+    fun `the places paragraph follows the flavour this build was compiled as`() {
+        assertEquals(
+            HelpCopy.placesPrivacy(BuildConfig.NETWORK_FEATURES),
+            if (BuildConfig.NETWORK_FEATURES) HelpCopy.Note.PLACES_PRIVACY_CONNECT else HelpCopy.Note.PLACES_PRIVACY_OFFLINE,
+        )
+        if (!BuildConfig.NETWORK_FEATURES) {
+            // The Offline build also says remote AI is unavailable; the paragraph must not contradict it.
+            assertFalse(HelpCopy.placesPrivacy(BuildConfig.NETWORK_FEATURES).contains("AI services"))
+        }
+    }
+
+    @Test
+    fun `the places paragraphs keep every boundary they state`() {
+        assertTrue(HelpCopy.Note.PLACES_LOCATION.contains("only by Spatial compass"))
 
         val ai = HelpCopy.Note.AI_SERVICE
         assertTrue(ai, ai.contains("Nothing is sent until you turn it on and ask"))

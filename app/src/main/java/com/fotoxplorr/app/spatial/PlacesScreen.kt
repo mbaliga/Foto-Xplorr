@@ -250,7 +250,12 @@ private fun ExploreHub(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Privacy boundaries", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        HelpCopy.Note.PLACES_PRIVACY,
+                        HelpCopy.placesPrivacy(com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = RoomStyle.InkFaint,
+                    )
+                    Text(
+                        HelpCopy.Note.PLACES_LOCATION,
                         style = MaterialTheme.typography.bodySmall,
                         color = RoomStyle.InkFaint,
                     )
