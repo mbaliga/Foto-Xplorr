@@ -14,7 +14,10 @@ change that needs saying out loud. Source: the 6 Aug 2026 handoff plus plan FX-I
 2. **Never squash-merge `shared-libraries` (or `hyle-design-system`) while this app pins
    it.** A squash mints a new SHA and orphans the submodule pin; a fresh
    `clone --recurse-submodules` fails weeks later with `fatal: reference is not a tree`,
-   pointing nowhere near the cause. Merge with `--no-ff`, then bump the pin here.
+   pointing nowhere near the cause. Merge with `--no-ff`, then bump the pin here. Order matters
+   too: the pin must exist on the library's remote before this app's PR merges. Batch 2 pins
+   `1f33d10` on `claude/friendly-lovelace-06dito` (PR #17 in `Shared-Libraries-asoc`), so that PR
+   merges first.
 3. **AGP must match `hyle-design-system` exactly** (currently 8.9.1), Gradle wrapper
    pinned at 8.14.3 in all three builds. Composite builds hard-fail with *"Using multiple
    versions of the Android Gradle plugin"* otherwise.
@@ -77,6 +80,16 @@ app uses (`RecoverableSecurityException` pre-Q, `MediaStore.createWriteRequest` 
 editor must stay open across that round-trip so a declined consent does not silently discard the
 edit, and the default save mode remains "save a copy" — overwrite is opt-in per edit or via an
 explicit, reversible Settings choice, never the silent behaviour of plain "Save".
+
+Consent is only half of it. A Replace can fail after the original has been truncated, and it
+is **best effort, not atomic**: MediaStore has no replace-in-place. The writer therefore throws a
+typed `OverwriteException`: `Refused` (a `Reason` of `METADATA_WOULD_BE_LOST`,
+`WOULD_DESTROY_CONTENT`, `FORMAT_UNSUPPORTED` or `BACKUP_FAILED`) means the original's bytes were
+never opened for writing; `FailedAfterWrite(restored, recoveryFile)` means they were, and says
+whether they were put back. Any other failure type means the original was never opened (an encode
+failure, or write consent declined). A message must never say "your photo is untouched" for the
+second kind, and must never blame Android's consent for a failure that was not a refusal. The full
+contract, and what may be promised about recovery, is #59.
 
 Related: do not reach for uCrop to "just add crop". It declares `com.squareup.okhttp3:okhttp` and
 hard-fails `verifyOfflineRuntimeClasspath`, whose allowlist holds one exact coordinate and has no
@@ -198,7 +211,7 @@ beneath it field for field — including focal length and aperture twice within 
 `ScreenRenderTest`/`NewSurfaceRenderTest` draw the real composables to PNG on the JVM in seconds.
 Use them; a layout you have only read is a layout you have not checked.
 
-## 31. A location read may ask for the unredacted original; nothing else may
+## 31. A location read may ask for the unredacted original; only reads whose bytes stay inside the app may
 
 `Context.uriForLocationRead` exists so this app can show a user their own photo's real GPS —
 `MediaStore.setRequireOriginal`, gated behind the `ACCESS_MEDIA_LOCATION` permission, is how a
@@ -206,8 +219,19 @@ reader asks the platform to skip the Android 10+ location redaction (P0-02: befo
 permission was requested but the method was never called, so every location read silently saw no
 GPS and the absence was then cached forever). Reusing that call, or its already-original uri, on a
 share, zip or export path would launder a redacted uri into one that leaks a location the user
-never consented to send to another app. Only `GeoMetadataRepository` and the detail room's own EXIF
-read call it; every share/zip/export path keeps reading the plain uri exactly as before P0-02.
+never consented to send to another app.
+
+The sanctioned callers are the ones whose output never leaves the app: `GeoMetadataRepository`;
+the detail room's own EXIF read; and, since batch 2, the editor's and the metadata writer's own
+reads, which exist to stop a *redacted* view from being written back over the user's photo —
+`MetadataWriter`'s staging copy (a read only: the write into the original still never goes through
+the unredacted view, #35), `EditedCopyWriter.applySourceMetadata` (the staging metadata copy),
+`EditedCopyWriter`'s `ResolverOriginal.openForRead` (the safety copy, its read-back and the size
+check) and `readOverwriteHazards` (the replace guard's scan). Their bytes feed staging files, the
+private safety copy under `filesDir/overwrite-recovery` and byte comparisons. Every
+share/zip/export path keeps reading the plain uri exactly as before P0-02, and Save As (`saveTo`)
+passes `keepLocation = false` and proves it with `carriesLocation`, so an export to a place the
+user picked never carries a location out. A new caller names, in its KDoc, where the bytes end up.
 
 ## 32. A metadata read failure is not an absence
 
@@ -239,6 +263,13 @@ power of two under it. Nine call sites decoded independently before P0-03, each 
 orientation and under-shooting its own target size. A new decode path that calls `BitmapFactory` or
 `ImageDecoder` directly reintroduces both bugs at once.
 
+Known defect, found in batch 2 and **not fixed**: `decodeWithBitmapFactory` (the path below API 28)
+does its bounds-only pass with `BitmapFactory.decodeStream(stream, null, bounds)` and ends the
+line `?: return null`. A bounds-only decode returns null by design, so the function returns null
+for every image on API 26 and 27 (confirmed by running `decodeUpright` at SDK 26 under
+Robolectric). Read `outWidth`/`outHeight` from the options and ignore the return value. The
+`ImageDecoder` path (API 28+) is fine.
+
 ## 35. A metadata write goes temp → verify → original, never through a redacted view
 
 `MetadataWriter.write` (P0-08) stages the source into `cacheDir/metadata-staging/`, edits and
@@ -247,7 +278,9 @@ unchanged, and only then streams the verified copy into the original with `"wt"`
 location-redacted file descriptor risks `ExifInterface`'s own read-modify-write cycle silently
 erasing GPS tags the edit never touched (see `RedactingFileDescriptor`'s own AOSP javadoc) — so a
 metadata write never opens through `uriForLocationRead`, and never writes straight to the original
-without a verified intermediate copy.
+without a verified intermediate copy. (The staging read itself does use `uriForLocationRead`: #31
+sanctions it because the bytes only land in `cacheDir`. It is the *write target* that must never
+be the redacted view.)
 
 ## 36. A share output is verified clean or it is not sent
 
@@ -444,8 +477,11 @@ video in this session. Second: `ExternalViewerActivity` built every asset with t
 (`resume_-9223372036854775808`) and the manual key-moment button wrote catalogue rows for files this
 app does not own. It now uses `syntheticNegativeMediaId(uri)` with `isExternal = true`;
 `ResumePositionStore` refuses every negative id as a second line; and `VideoPlayer` derives
-`catalogued = catalogueActions && !asset.isExternal` — the VideoPlayer-side gate is load-bearing,
-because `FotoXplorrActivity` never passes `catalogueActions = false` for an external asset.
+`catalogued = catalogueActions && !asset.isExternal` — the VideoPlayer-side gate is load-bearing.
+(An earlier version of this entry added "because `FotoXplorrActivity` never passes
+`catalogueActions = false`". That stopped being true in batch 2: `FotoXplorrActivity`'s viewer now
+passes `catalogueActions = !activeAsset.isExternal` for a photo opened from an EDIT or SEND intent,
+and `ExternalViewerActivity` passes `false`. The `isExternal` gate stays as a second line.)
 
 ## 48. Lift maps taps through the decoded bitmap, never `MediaAsset.width`/`height`
 
@@ -543,3 +579,174 @@ under Robolectric. Use Roborazzi's `captureRoboImage(path)` to write a PNG and r
 `PhotoToPinFlightTest` for the pattern, which doubles as a picture of the frame under
 `app/build/renders/`.
 
+
+*Entries 57 onward were earned in the second owner-feedback batch (October 2026: audio removed, one
+open-with entry point, overwrite robustness, the rooms geography, the Settings page). Like 39 to 56,
+none has run on a phone; what only a device can settle is in `docs/device-test/batch-2-checklist.md`.*
+
+## 57. There is one open-with entry point, and it is `ExternalViewerActivity`
+
+Another app's chooser used to list Fotoz twice: `FotoXplorrActivity` carried VIEW filters beside
+`ExternalViewerActivity`'s, and a `file://` filter on the first made the app read any path it could
+on a sender's say-so. Now `ExternalViewerActivity` is the single VIEW target (`content://` only, in
+the manifest and re-checked in `onCreate` because the activity is exported), and `FotoXplorrActivity`
+holds only EDIT (`image/*`) and SEND (`image/*`, `video/*`). Its SEND filter carries no scheme because
+a share names its Uri in `EXTRA_STREAM`, so `classifyIncomingIntent` enforces `content://` itself.
+Never add a VIEW filter, or a data filter that can match `file://`, to `FotoXplorrActivity`; the
+in-app "Open with" chooser's exclusion of its own component stays correct because EDIT remains.
+
+Every path that opens a photo on another app's say-so (`EXTRA_OPEN_MEDIA_ID`, a `content://media`
+Uri in an EDIT or SEND, process-death restore of the viewer) goes through `browsableAssets`, and the
+set it reads is the stores' `StateFlow` `.value` **at the moment of the call**. The composition-time
+locals start out `emptySet()` (#21), so a check against them would let a locked photo straight
+through during the first frames. A photo the library hides is refused with a notice and never shown
+as an "external" asset; that would put it on screen by a side door (#58).
+
+## 58. Hidden photos have side doors, and a Uri can be spelled many ways
+
+`browsableAssets` hides locked-folder, archived, trashed and sensitive-hidden photos (#33), but an
+outside request names a photo by *address*, and the address has more than one spelling.
+`classifyMediaStoreUri` reads a Uri the way Android does: the authority and each path segment are
+percent-decoded (`%6Dedia`, `/media/%34%32`, `/media/42/thumbnail` all reach row 42), an authority
+may carry a user id (`0@media`, everything up to the last `@`), and the last numeric segment is the
+row id. A photo-picker Uri shares the `media` authority but its trailing number is a *picker* id, not
+a `_ID`: treating it as a row (the old check compared the authority and parsed the last segment) could match the wrong catalogued photo. A media-provider Uri that
+yields no row id is refused, never opened as an external file. A row the catalogue has not scanned
+yet (a photo saved a moment ago, inside the scan debounce) is looked up in MediaStore, with the same
+bucket / relative-path columns the scanner reads, and held to the same folder rules; if MediaStore
+will not describe it the answer is "could not be checked", a refusal, not a pass.
+`ExternalViewerActivity` builds a fresh `PrivateFolderStore` whose unlocked set is empty, so an
+uncatalogued photo in a locked folder is refused there even if the folder is unlocked in the main
+app. An `EXTRA_OPEN_MEDIA_ID` the catalogue does not hold is dropped once the first scan has
+settled, and cannot open a viewer later when that id is scanned in. Process-death restore returns
+only browsable photos (`restoreViewerRun`).
+
+## 59. Replace the original is best effort, and the recovery story must be told as it is
+
+What `EditedCopyWriter.overwrite` promises, and what docs and messages may say:
+
+- It is **not atomic.** MediaStore has no replace-in-place, so the file is truncated and rewritten.
+  A crash between the truncate and the put-back leaves a damaged file.
+- The failure contract is typed (#17): `Refused` = original never opened; `FailedAfterWrite` =
+  opened, with `restored` saying whether it was put back. Both carry text written to be shown as is.
+- The **safety copy** lives in `filesDir/overwrite-recovery`, not the cache (the system clears the
+  cache exactly when storage is tight). It is made and flushed before the truncate, with a sidecar
+  naming the photo, and is deleted when the write verifies, or when a restore read back at the
+  right size. A copy that survives is the only intact copy of a truncated original.
+- A surviving copy is **unresolved until the person answers a dialog** (OK or Delete), which names the
+  photo and offers *Share the copy*. Only then does an age limit start (7 days; 30 for a `.bak`, the
+  copy kept after a failed put-back). It is derived from disk on every start, so a dialog that never
+  appeared, or was dismissed by a tap outside, comes back.
+- **There is no Restore button**; recovery is share-out only, through a staged copy so the private file
+  is never exposed. No doc, message or listing may say a copy "can be retrieved from Fotoz", that the
+  original "is always put back", or that Replace is "safe". It is guarded, and the guard fails open.
+- The guard refuses unless the **whole** relevant metadata was carried (`MetadataCopy.COPIED`) — but
+  "whole" means what `ExifInterface` can carry: IPTC-IIM, extended XMP, PNG text with real content
+  and unknown WebP chunks are refused; MakerNote and the embedded thumbnail are not gated, because
+  refusing them would refuse almost every camera file. Say "metadata Fotoz cannot carry over", never
+  "all metadata". The hazard list (animation, Ultra HDR, Motion Photo, extra images, flattened
+  transparency, lossless WebP) is recognised from bytes and from memory of layouts (Samsung's
+  `MotionPhoto_Data` tag was written from memory and not checked against a real file).
+- The window: JPEG is judged from its first 256 KiB (and last 64 KiB), which is exact for the
+  markers it looks for. A PNG or WebP that fills the window is walked end to end, because its text and
+  extra chunks can follow any amount of image data. Docs that mention "256 KiB" for PNG/WebP are stale.
+
+## 60. A write that must outlive the screen is not owned by the screen
+
+Rotating, changing font size or language, or Android recreating the activity cancels the
+composition's coroutines. A replace running in one used to leave its lock flags set for good (the
+editor stuck, no banner even though the write had failed). `AppStateViewModel.launchWrite` runs the
+code that *records the outcome* in the view model's scope, with `settleInterruptedWrite` as a
+backstop so the flags cannot stay set; the write itself is blocking I/O and finishes either way.
+The manifest also adds `locale|layoutDirection|fontScale|colorMode` to `configChanges` so those
+changes no longer recreate `FotoXplorrActivity` under a write. While a write runs: Save, Cancel and
+Back are off, and an EDIT or SEND for another photo is answered "Finish saving your edit first"
+rather than swapping the editor underneath it. State that records a failure (a refusal, an at-risk
+original, an unanswered recovery notice) is refreshed at the single place a failure is recorded
+(`declineOverwrite`), not scattered, so a failure shows its dialog at once and not at the next start.
+
+## 61. A selection callback must not also close the room
+
+The rail used to select a destination *and* close the room in the same callback. Once the rail
+scrubs (it previews as the finger moves and commits the hovered word after a 140 ms rest, owner #5),
+closing on select would end every scrub at the first word it rested on, and a release would "select"
+what was already selected. Committing a word and closing the room are two decisions: committing is the rail's, closing belongs to tapping the selected word
+(`onReselect`), tapping the parked card or band, or Back. The pinned (wide) rail has no
+`onReselect` and never closes a room. A fling commits once where it lands, not on the way. Release
+only settles. Any new picker inside a room asks the same question: does choosing close it, and who
+decided that?
+
+## 62. A destination select clears `legacyScreen`; anything drawn over the grid is gated on `paneTakenOver()`
+
+Albums, Calendar, Discover, Library and Tidy up are shown through `legacyScreen`, and the
+`legacyScreen != null` branch wins over the grid, so a rail select that did not also set it to null
+left the old screen on top of the new destination (a verified bug). Every select path clears it: the
+room rail, the pinned rail, the seeded search and the folder unlock. Settings and those screens now
+share one scaffold (`PaneScaffold`), and `paneTakenOver(settingsOpen, legacyScreenOpen)` is the one
+predicate for "the photos are not what is showing", so anything drawn over the grid gates on
+that, not on `legacyScreen == null`. Back and Escape use one
+order (`paneBackTarget`: room, pane, selection, search, route); new back-able state is added there
+and nowhere else. A pane is literal black, so text with no explicit colour inherits `onSurface`,
+which is dark in the light theme: the scaffold provides `LocalContentColor` (and Places provides it
+once for its whole hub), and a new page must not paint its own ink.
+
+## 63. Room geography is one table (`ui/RoomGeography.kt`)
+
+Left = navigation, top = details, bottom = actions, right = view options, in the gallery and the
+viewer. Before it, three hand-kept tables had drifted (the gallery had settings on top, actions on
+the right, details at the bottom; the viewer had details on top, actions on the right, settings at
+the bottom), and the viewer's "deviation" was documented as intended. Both screens now build their
+slots through `roomSlots(navigation, details, actions, viewOptions)` and never name an edge, and
+`clearSystemBarsFor(edge)` decides which system bar a room clears from the *edge*, so moving a kind
+moves its padding with it. Settings is a page (#62), not a room. Four things to keep:
+
+- The shell's 72 dp head band is private to `cell-shell`; `PlaceMorph.SHELL_BAND_DP` mirrors it by
+  hand and `RoomGeography.ActionsPeek` is the strip's own height *below* it (the shell adds the band
+  and the navigation bar). A change to the band is a change in two repositories (#41).
+- #41 stands: the details (top) room parks with `SLIDE`, every other room with `SWIVEL`; the viewer
+  still picks by `topPulling`, and the bottom actions room has `vProgress < 0`, so it swivels.
+- `topReserve` stays: the top 56 dp strip is handed back to the notification shade at the root grid,
+  because the shell otherwise claims every pull there for the top room.
+- Help text names edges, so a move needs its captions changed (the viewer's GESTURES note, the
+  Lift hints were checked and name no edge). Any store text that says actions are "in from the right"
+  or settings "up from the bottom" is stale.
+
+## 64. Delete only what the person was shown
+
+The recovery dialog's *Delete copies* removes exactly the copies it listed (`deleteCopies(names)`,
+the same names it marks as seen), never "everything in the directory". A safety copy that appeared
+after the dialog was built (say, a second replace failed while it was open) is neither deleted nor
+marked as answered, and a copy a replace running in this process is using is never listed, swept or deleted
+(`OverwriteRecovery.active`). The age-based sweep likewise only touches what has been announced and
+answered. The rule generalises: a destructive action takes the explicit, visible list as its
+argument, so the thing deleted is the thing the person agreed to.
+
+## 65. `ExifInterface.setAttribute` writes every char above U+007F as `?`
+
+So any raw string handed to it must be 7-bit ASCII. `XmpPacket.serialize` escapes non-ASCII as
+numeric references; the verbatim fallback used for an XMP packet the parser could not read did not,
+and turned "café" into "caf?". An unparseable XMP packet that holds non-ASCII is now skipped rather
+than copied (`copiedXmpValue`). Any new path that passes a string through `setAttribute` checks it
+first.
+
+## 66. A docs claim about metadata is per format and per output
+
+"EXIF/XMP preserved" was written for all saves and was false for HEIC: `applySourceMetadata`
+returns `SKIPPED_HEIC`, so a HEIC the editor writes is pixels only (`HeifWriter.addExifData` is the
+unbuilt fix and needs a device check). The accurate statement is a table: Save a copy keeps EXIF/XMP
+and location for JPEG, PNG and WebP; Save As keeps the same minus all location (verified by
+`carriesLocation`); Replace keeps them and is refused rather than lossy; HEIC keeps none. The same
+care applies to the "Clear location" button in the metadata panel, which deliberately still leaves
+place names that Save As strips. When a store text, README line or help string makes a metadata
+promise, check it against these.
+
+## 67. Robolectric cannot open a file descriptor on `file://` or an unattached authority
+
+`ShadowContentResolver.openFileDescriptor` returns null for `file://` and throws for a provider
+nobody attached, and `ExifInterface(FileDescriptor)` throws under Robolectric because `Os.dup` is
+shadowed to null. `app/src/test/.../editor/FileBackedProvider.kt` attaches a real `ContentProvider`
+whose `openFile` serves real files in `r` and `wt` modes, and `EditedCopyWriter` reads the metadata
+source through `openInputStream` + `ExifInterface(InputStream)` so that path is testable. Tests of
+the overwrite and recovery paths use it; do not write another shadow. `MetadataWriter` itself still
+opens a descriptor on fabricated media Uris, which is why its write test's KDoc still describes a
+sandbox limitation.

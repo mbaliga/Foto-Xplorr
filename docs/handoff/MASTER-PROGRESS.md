@@ -274,11 +274,12 @@ renders its surfaces to real PNGs under Robolectric NATIVE graphics (`GalleryRen
   The grid itself then followed: `GRID_GUTTER` 1dp -> 4dp and 144 x 160 tiles (`GRID_TILE_ASPECT`),
   measured off the root-grid screenshot, replacing the earlier "seamless mosaic" geometry.
   Flagged, not changed: the swivel's visible band (72dp, a shared-shell constant), the pinned
-  rail width ellipsizing "Screenshots" on wide windows, the ten destinations including Audio.
+  rail width ellipsizing "Screenshots" on wide windows, the ten destinations including Audio (Audio was removed in batch 2: nine destinations now).
 - **Viewer to the references.** The details room moves to the TOP room (pull the photo down and
   it shrinks into its own 80dp map tile; `ViewerSettingsRoom` takes the bottom) -- a deliberate
   deviation from the 2026-08-18 "one geography" principle on the owner's later direction,
-  recorded in `ViewerScreen`'s KDoc. The room's order is the screenshot's: title and date, camera
+  recorded in `ViewerScreen`'s KDoc. (Superseded in batch 2, 21 Oct 2026: one geography again, with
+  the viewer's view options on the right and its actions at the bottom.) The room's order is the screenshot's: title and date, camera
   card (its return reverses the 2026-09-01 de-dup pass; the card now owns the capture facts and
   the rows no longer repeat them, so "every fact said once" still holds), the 400 x 400 place
   plate with the photo flown into a bordered tile and pointer, "Add a Caption", Information with
@@ -447,7 +448,7 @@ wiring; `fa82327` flight wiring.
 - The rooms were **not moved** in this batch. (Later batch.)
 - Lift Phase B (a bundled learned model) is **not** in scope.
 - Sticker export is a 2048 px PNG with alpha to `Pictures/Fotoz/Stickers`, on a user action only.
-- Audio is slated for removal later and was not touched.
+- Audio is slated for removal later and was not touched. (Removed in batch 2.)
 
 ### What was built, per report
 
@@ -542,6 +543,8 @@ wiring; `fa82327` flight wiring.
 - The rooms' positions in the viewer (details top, actions right, settings bottom) differ from the
   layout in the original brief for #12 (details top, actions bottom, view options right). Not moved in
   this batch by decision; the owner should say which is intended before the rooms batch.
+  **Resolved in batch 2 by owner feedback #26:** left navigation, top details, bottom actions, right
+  view options, in the gallery and the viewer alike.
 
 ### Residual, for the owner
 
@@ -549,7 +552,153 @@ wiring; `fa82327` flight wiring.
   trade-off is decided; until then hair, fur, glass and low-contrast edges will be rough.
 - The classical solver's honest limits (multi-coloured subject needs a second scribble; a same-colour
   neighbour needs a Background scribble) are in PRODUCT-AND-ARCHITECTURE §5.
-- Audio focus is a visible change: starting a video now pauses the app's own music.
+- Audio focus is a visible change: starting a video now pauses another app's music (Fotoz has no
+  music of its own any more).
 - `proguard-rules.pro` has no Media3 section; the release build relies on the library's consumer
   rules (a device smoke test, listed in the checklist).
 
+
+## Batch 2: audio out, one open-with door, a safer Replace, one room geography (21 Oct 2026)
+
+The owner's second round on the consolidated build. Items quoted in the code that answers them:
+**#18** *"The favourite icon should be visible when a photo is being viewed - doesn't need to hide in
+the right side menu."*; **#16** *"Once slideshow mode is on, the slideshow controls should be overlayed
+in the style of the actions bar at the top."*; **#17** *"When viewing images that have transparency,
+we should be able to choose background - the grey white grid, or white or black."*; **#6** *"The help
+text is too verbose."* The rest arrived as direction rather than a numbered quote: remove Audio from
+the product; the rail should scrub; Settings should take over the page; one toggle look; and **#26**,
+the rooms geography (left navigation, top details, bottom actions, right view options, in the gallery
+and the viewer alike), which answers the question batch 1 left open.
+
+Method: a read-only design pass (six plans and a critic that corrected them, with a short list of
+questions that needed an owner answer and a default for each), then serial code units on this one
+branch, each required to compile for both flavours and pass its own tests, then this docs unit.
+**No device or emulator was available; nothing here has run on a phone.** The full
+`./scripts/verify.sh` gate is the orchestrator's last step and is not recorded here. Device-only
+items are in `docs/device-test/batch-2-checklist.md`; lessons that bind later work are
+`docs/TRAPS.md` #57 to #67, and #17, #31, #34, #35, #47 were corrected.
+
+Commits (oldest first, grouped): **open-with and audio** `0395dfa` (`ExternalViewerActivity` the single
+VIEW target), `fc04c73` `294520a` `8192057` `90d44cb` `e7e7450` (audio removal 1-5), `e1fad2d` (parity
+test: 25 projections per privacy view = 9 destinations + 11 smart albums + 4 sorts + the timeline),
+`e8c394c` (hidden-photo bypasses closed). **Editor** `dec6a54` `abe8c5c` `0970c68` `3d906e8` `f4b72a2`
+`e9ec27a` `88c148a` `5194e55` `f34eeda` `326b48c`. **Video** `e43dcf5` (exporter error mapping and
+publish pinned). **Core** `ceb2243` (`AlphaSniffer`). **Rooms and navigation** `4f48c47` (rail scrub)
+`02bc6fe` (Settings as a page) `5a13e19` (one toggle) `9d33fbe` (one geography) `6d2c47d` `294d75c`
+`7ede90e` `c771edc` `3cd648b` `253f8ba` (the quick strip, library bumps and review fixes). **Viewer**
+`0d3362a` (heart) `026a8b1` (transparency) `84e3e4e` (slideshow bar). **Help text** `27e5c35`.
+
+### Owner decisions applied (not re-asked)
+
+- **Audio is removed**, not hidden: the Audio destination, library, player, tag editor and
+  audio-to-AAC conversion, the `audio/`, `audiotags/` and `playback/` packages, the media-playback
+  service, and `READ_MEDIA_AUDIO` / `FOREGROUND_SERVICE_MEDIA_PLAYBACK`. `WAKE_LOCK` stays in the merged
+  manifest because Media3 contributes it. The old audio database and scan preferences are deleted on
+  first launch; user audio files are never touched; a saved default view of Audio opens on Photos.
+  Kept: Lens text-to-speech, the tab tick sound, the video player's audio-track menu, the editor's mute.
+- **`POST_NOTIFICATIONS`** stays declared and is requested once, on Android 13+, the first time a job
+  runs.
+- **Open-with:** `ExternalViewerActivity` is the single VIEW target (`content://` only); EDIT and SEND
+  stay on `FotoXplorrActivity`; a photo the library hides is never opened from outside (a notice
+  instead).
+- **Replace the original refuses** rather than loses (metadata it cannot carry, animation, Ultra HDR,
+  Motion Photo, transparency, lossless WebP), and writes with a safety copy. **Save As strips
+  location** with no opt-in switch. The README HEIC claim was corrected, not the behaviour. No
+  `android:largeHeap`, no video free-space pre-flight.
+- **One toggle:** `RoomToggle` is `HyleToggle`; disabled is a fade of the live colours; the on state is
+  a position, not a hue (the accent-coloured on-state was not done). `RoomStyle.InkFaint` rose to 0.55
+  alpha and `InkMuted` to 0.70 so the three ink steps stay ordered.
+- **Heart:** in the chrome row, tied to the chrome (so immersive photos hide it), for catalogued photos
+  and videos; the actions room keeps its Favourite row. **Transparency:** default checkerboard; a chrome
+  button only on photos that have transparency, and a row in the view options.
+- **Help text:** one `HelpCopy` object, no onboarding tour; four lines flagged for the owner's or
+  counsel's eye (below).
+- **Store rename:** Fotoz in the fastlane title and description, the privacy policy and the Play
+  Console sheet; contact address and package unchanged.
+
+### What was built, per item
+
+- **Nine destinations; Settings as a page.** `HyleDestination` has nine entries. Settings (nine tabs:
+  Appearance, Media, Library, Privacy, Viewer, Data, Background, Pro, About) and Albums, Calendar,
+  Discover, Library and Tidy up share `PaneScaffold`; `paneTakenOver` and `paneBackTarget` are the one
+  predicate and the one Back order. While a page is up the other rooms' drags and the keyboard
+  shortcuts (Escape excepted) are off, the rail leads back out, and background-job progress shows over
+  it. Settings chips and options have 48 dp targets. The Connect build's About tab said "no INTERNET
+  permission" though its manifest holds INTERNET; it now says what is true for the flavour.
+- **The rail scrubs.** The square tracks the finger; the word that rests on the focus line for 140 ms
+  is committed; a fling commits where it lands; release only settles and never closes the room (TRAPS
+  #61). Selecting a destination now clears `legacyScreen` (a verified bug: a destination screen stayed
+  on top of the one just picked; TRAPS #62).
+- **One geography.** `ui/RoomGeography.kt` is the table; both screens build slots through `roomSlots`.
+  The bottom actions room is two-stage: a quick-action strip at the head on a short pull
+  (`ui/QuickActionStrip.kt`), everything on a longer one. That needed changes in `shared-libraries`
+  (a navigation-bar-aware bottom edge zone, `bottomPeek`, `hasBottomPeek`, `bottomReserve`, a
+  stale-flick guard), pinned here at `1f33d10` (PR #17 there, to be merged first). The viewer passes
+  `bottomReserve` so a vertical-first drag on the filmstrip or the video transport scrubs instead of
+  opening the room; the quick strip is context-aware in the gallery (browse, selection, trash). Escape
+  closes an open room first and every other shortcut is ignored behind it.
+- **Open-with.** One VIEW door; `content://media` Uris read as Android reads them; unscanned rows looked
+  up in MediaStore and held to the folder rules; stale or foreign `EXTRA_OPEN_MEDIA_ID` dropped; only
+  three incoming extras are read (TRAPS #57, #58).
+- **Editor safety.** Typed `OverwriteException`; the hazard and metadata gates; the safety copy in
+  `filesDir/overwrite-recovery`; a recovery dialog that names the photo, offers to share the copy and
+  returns until answered; Save, Cancel and Back locked while a write runs; the write's bookkeeping
+  survives recreation; the in-session warnings name the photo. Save As strips and proves it. Exports no
+  longer shrink by memory class; they step down on a real out-of-memory error (TRAPS #59, #60, #65).
+- **Viewer.** The heart; the slideshow bar with a real pause and a three-second chrome auto-hide (a
+  swipe or the bar's Next now goes in order in a shuffled slideshow; shuffle lives only in the
+  countdown); the transparency backdrop, detected by `AlphaSniffer` from at most 64 KiB of header,
+  cached per photo and modification time.
+- **Help text.** `ui/HelpCopy.kt` holds the trimmed copy in three groups (captions at most 60
+  characters, hints 80, notes 160), with `HelpCopyTest` holding the ceilings. `BackgroundWorkStatusTest`
+  was changed with the strings it pins. Jargon went ("embedding", "tflite", "OpenGL ES").
+
+### What deviated and why
+
+- **The two-stage reveal was planned for later and was done now.** The design pass said to ship the
+  geography only and have the owner file the library change; the library work landed during the batch
+  instead, so the quick strip exists. A short bottom pull no longer "settles to home or fully open".
+- **Rail select no longer closes the room** (owner #5), so the room's close paths are tapping
+  the selected word, the parked card, or Back (the pinned rail has none).
+- **The viewer chrome row got a swatch button as well as the heart** (transparency, only on see-through
+  photos), and the heart's glyph pair is `Outlined.Favorite` / `FavoriteBorder`: the design document
+  thought these were the same hollow heart; a render showed `Favorite` is the solid one.
+- **The slideshow bar is flush to the top edge and taller by the status-bar inset**
+  (`SelectionToolbarTallShape`) instead of a filler strip, with glyph targets of 48 dp rather than the
+  mockup's 46. The hide timer keys on the computed auto-hide boolean and a press counter, not the asset
+  id (otherwise a 2 to 3 second interval would never let it fold). The video "Resume from" chip now
+  sits under the chrome and the bar rather than at a fixed 24 dp.
+- **Backdrop is a composable inside the zoom layer**, so the grid's squares scale with the picture (v1).
+  An optional `onImageSize` callback gives an SVG its drawing's shape.
+- **Help text:** the Connect About statement is new wording the table did not propose; the AI settings
+  device line was shortened rather than dropped (it sits behind a details toggle); the Trash row's
+  caption was verified against the screen before it was kept.
+
+### Found, not fixed (outside the units that found them)
+
+- **`decodeUpright` returns null on API 26 and 27** (TRAPS #34): its bounds-only `BitmapFactory` pass
+  returns null by design and the line ends `?: return null`. The `ImageDecoder` path is fine.
+- `ViewerActionsRoom.ActionRow` still makes only the 22 dp icon clickable; `LiveTextOverlay` still
+  swallows taps and long presses on a photo with recognised text while the chrome is up (TRAPS #50).
+- `EditedCopyWriter`'s class KDoc still says overwrite refuses "a source holding IPTC-IIM or extended
+  XMP" (it now also covers PNG text and unknown WebP chunks).
+- The grid and filmstrip thumbnails and the shrink-to-map flier do not draw the transparency backdrop.
+  A photo that declares an alpha channel but is fully opaque shows the swatch button and the choice
+  changes nothing visible (the sniff reports what the file declares).
+- The Samsung `MotionPhoto_Data` marker was written from memory of its layout and was not checked
+  against a real file.
+
+### Residual, for the owner
+
+- Four copy lines changed meaning-preserving but are legal-ish and want a human read: the offline
+  statement, the Places privacy paragraph, the AI-service paragraph and the Pro "nothing is charged
+  yet" line (plus the new Connect statement).
+- Store rename: the hosted privacy policy at the unchanged URL must be republished with the release
+  that drops the audio permission, `versionCode` must go to 5 to match `changelogs/5.txt`, and the
+  Play permission and foreground-service declarations must be re-answered without audio.
+- The licence is PolyForm Noncommercial 1.0.0, which is source-available and not open source; the
+  store text now says so and `play-console.md`'s old "Apache-2.0" line was wrong.
+- Whether to build a Restore button for a safety copy (recovery is share-out only today), and whether
+  to set `android:largeHeap`.
+- Rooms: the live-preview partial-width detents for the right room's view options still need a
+  shared-shell change.

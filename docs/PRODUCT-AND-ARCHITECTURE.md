@@ -25,10 +25,14 @@ state and privacy flags are all keyed to catalogue rows and would have nowhere t
 Scanning is **incremental**. A full scan runs on first launch and on explicit refresh; everything
 else is a delta against a persisted watermark. See §4 for why this matters more than it sounds.
 
-### Ten destinations
+### Nine destinations
 
-The primary information axis. Each is a lens over the same catalogue, not a separate store —
-except Audio, which has no `MediaAsset` behind it at all (see `audio/`'s own module doc):
+The primary information axis. Each is a lens over the same catalogue, not a separate store
+(`HyleDestination`). There used to be a tenth, Audio, with its own library, player and tag
+editor; it was removed by owner decision in October 2026, and with it the audio permission and
+the media-playback service. Fotoz is a photo and video app. A saved default view of Audio opens
+on Photos, and the old audio database and scan preferences are deleted on first launch
+(`LegacyAudioCleanup`); a user's audio files are never touched.
 
 | Destination | What it shows |
 |---|---|
@@ -41,7 +45,6 @@ except Audio, which has no `MediaAsset` behind it at all (see `audio/`'s own mod
 | **Favourites** | User-marked favourites |
 | **Places** | A map of geotagged media |
 | **Protected** | Password-protected folders |
-| **Audio** | Standalone audio files (music, recordings, podcasts) from `MediaStore.Audio` |
 
 ### Smart albums and organisation
 
@@ -102,21 +105,57 @@ what follows is how this app applies it.
 
 ### Rooms, not screens
 
-The grid is *home*. The destinations rail and settings are **rooms** parked off the left and right
-edges. Dragging from an edge lifts the grid, shrinks it slightly, rounds its corners and parts it
-to reveal the room behind — the grid stays alive and visible the whole time, and dragging it back
-is the way out.
+The grid is *home*. Four rooms are parked off its edges. Dragging from an edge lifts the grid,
+shrinks it slightly, rounds its corners and parts it to reveal the room behind — the grid stays
+alive and visible the whole time, and dragging it back is the way out.
 
 A room is **not a back-stack entry**. Switching to one pushes nothing; Back closes it.
 
+**One geography, in the gallery and the viewer alike** (`ui/RoomGeography.kt`; owner, batch 2
+feedback #26):
+
+| Edge | Room | Gallery | Viewer |
+|---|---|---|---|
+| **Left** | Navigation: where you can go | The destination rail (nine words) and a Settings row | none: the viewer has no left room (Close or Back returns to the grid) |
+| **Top** | Details: what this is | `GalleryInfoRoom`: counts for the current view, and the library | `PhotoDetailRoom`: the photo's facts, camera card, place plate, caption, tags |
+| **Bottom** | Actions: what you can do | Select photos, New collection, Rescan the library, and the selection's actions | Favourite, Slideshow, Share, Edit, Lift subject, Open with, Rename, Convert, Mark sensitive, Move to trash |
+| **Right** | View options: how it is shown | Columns, sort, Videos, Blur or Hide sensitive | Filmstrip, blur, keep awake, transparent-photo background, slideshow seconds and shuffle, loop animations, autoplay, pinch opens panels |
+
+Why it is arranged so: view options sit at the side because you want to watch their effect,
+whereas an action does not need the content in view; actions tilt up from the bottom because that
+is the better motion for something you do once and leave. Both screens build their shell slots
+through `roomSlots` and open rooms through `RoomGeography`'s constants, and the edge decides which
+system bar a room clears (`clearSystemBarsFor`), so moving a kind moves it everywhere.
+
+- **The bottom room is two-stage.** A short pull stops on a strip of quick actions
+  (`QuickActionStrip`, the room's head; `RoomGeography.ActionsPeek`); a longer pull, or a flick
+  up from the strip, opens every action. Flick down or tap the card to close from either stage.
+  The shell adds its own 72 dp head band and the navigation bar's height; the app's strip is just
+  its own 72 dp. The gallery's strip depends on context: browsing is Select, New collection,
+  Refresh; with a selection it is Share, Collection, Favourite (Unfavourite when every chosen
+  photo already is one) and Trash; in the trash, Restore and Delete forever. The viewer's is
+  Favourite, Share, Edit and Trash, and only what the photo allows (an externally opened photo
+  gets Share and Edit). On a window too short for it (split-screen, landscape at a large font)
+  the room is single-stage and shows only the list. The two-stage reveal lives in
+  `shared-libraries/cell-shell` (a separate repository; see "Build composition").
 - **Left edge → destinations.** A word wheel: room names as large text, the focused row brightest
   and heaviest, neighbours dimming progressively with distance. The fade *is* the position
-  indicator, so there is no scrollbar and no selection box. A bullet travels between rows rather
-  than teleporting.
-- **Right edge → settings.** Two depths on one surface: the compact panel, and every setting
-  behind "All settings…". Both render in the app's own dark theme.
-- **Top edge → reserved.** Nothing there yet, deliberately. The pull-down space belongs to the
-  top-room reveal, so no other gesture may claim it.
+  indicator, so there is no scrollbar and no selection box. Scrubbing previews the word under the
+  focus line and commits it after a short pause (140 ms) while the finger is down; release only
+  settles. Tapping the selected word, tapping the parked card, or Back closes the room: selecting
+  a destination does not.
+- **Settings is a page, not a room.** Choosing it (the rail's Settings row, the pinned rail, or
+  the Library card) swings the room closed and puts Settings where the photos were, in
+  `PaneScaffold` (black ground, white ink, a back chevron, 20 dp gutters), with nine tabs:
+  Appearance, Media, Library, Privacy, Viewer, Data, Background, Pro and About. Albums, Calendar,
+  Discover, Library and Tidy up use the same scaffold. While a page is up, the top, bottom and
+  right drags are disabled (navigation only) and Back, Escape and the rail lead out of it in one
+  order (`paneBackTarget`).
+- **The top edge is the details room.** The top 56 dp strip is still handed back to the
+  notification shade (`topReserve`) at the root grid, where a pull there expands the activity
+  strip instead.
+- **Pinch shortcuts** (a viewer setting, on by default): pinch in opens the details, pinch out
+  opens all the actions. Pinch zoom is off while they are on.
 
 Drags are applied **1:1 with the finger** and are reversible mid-flight. Only release animates, on
 a 320ms eased curve with **no spring** — a room is a place you arrive at, not something that
@@ -135,8 +174,9 @@ drag still reaches the shell.
 
 ### Refresh is a shake
 
-Not a pull. The pull-down space is reserved, so refresh moved off the touch plane entirely: a
-deliberate shake needs no affordance, no instructional copy, and competes with no scroll. Three
+Not a pull. The pull-down space belongs to the details room, so refresh moved off the touch plane
+entirely: a deliberate shake needs no affordance, no instructional copy, and competes with no
+scroll. (The actions room's Rescan row and quick-strip Refresh cell do the same job.) Three
 distinct acceleration peaks inside a 900ms window, with a cooldown so one enthusiastic shake
 cannot fire twice.
 
@@ -155,12 +195,37 @@ add to collection, trash.
 
 ### The viewer
 
-The photo (or video) is *home* and the same room mechanics apply, with the viewer's own geography:
-**pull the photo down** for the details room (title, camera card, the place plate, caption,
-information, tags), the **right edge** for the actions room (share, edit, lift subject, favourite,
-trash and the rest), the **bottom** for the viewer's settings. The viewer is the one screen that
-departs from the gallery's room layout; the reasoning is in
-[`handoff/DESIGN-FIDELITY-VIEWER.md`](handoff/DESIGN-FIDELITY-VIEWER.md).
+The photo (or video) is *home* and the same room mechanics apply, with the same geography as the
+gallery (see the table in §2): **pull the photo down** for the details room (title, camera card,
+the place plate, caption, information, tags), **pull up from the bottom** for the actions room (a
+short pull for the quick strip of Favourite, Share, Edit and Trash; further for share, edit, lift
+subject, favourite, trash and the rest), and the **right edge** for the view options (the viewer's
+former "settings" room). Until October 2026 the viewer was the one screen that departed from the
+gallery's layout; that deviation is retired, and `handoff/DESIGN-FIDELITY-VIEWER.md` records how.
+
+- **The chrome row is Close, the position pill and the favourite heart.** The heart (at least
+  48 dp, filled when it is a favourite and outlined when it is not, with the state also in its
+  accessibility description) shows only while the chrome is up and the photo is one the library
+  holds (`ViewerChromePolicy.favouriteShown`: `catalogueActions` and not `isExternal`). It works on
+  videos. The actions room keeps its own Favourite row.
+- **The slideshow has a bar** (owner #16): previous, play or pause, next, on a black coved bar in the
+  shape of the gallery's selection toolbar, hung from the top edge above the chrome row
+  (`SlideshowBar`; whether it shows is `slideshowBarShown`). Pause is real: `AppStateViewModel`
+  keeps a `slideshowPaused` flag, `slideshowMayAdvance` honours it, and ending a slideshow clears
+  it. During a running slideshow the chrome folds away after three seconds
+  (`slideshowChromeMayAutoHide`) and a tap brings it back; it does not auto-hide while paused or
+  over a video. A swipe or the bar's Next always moves to the next photo in order; shuffling
+  happens only when the countdown advances. The actions room's row now reads "Stop slideshow".
+- **Transparent photos get a backdrop** (owner #17): the grey-and-white grid by default, or white
+  or black. The choice is a persisted preference (`GalleryPreferences.viewerTransparencyBackground`,
+  wired in both `FotoXplorrActivity` and `ExternalViewerActivity`), changed from a swatch button
+  in the chrome row that exists only while the photo on view has transparency, and from the
+  "Transparent photos" row of the view options. Whether a photo has transparency is decided by
+  `core:formats` `AlphaSniffer` on at most the first 64 KiB of the file (read on `Dispatchers.IO`,
+  cached per photo and modification time); an unknown answer counts as opaque. It reports what the
+  file declares, so a fully opaque PNG with an alpha channel still shows the button. The backdrop
+  is drawn inside the zoom layer, behind the picture, so it pans, zooms and turns with it (the
+  grid's squares scale too). Not drawn: grid and filmstrip thumbnails, and the shrink-to-map flier.
 
 - **Pulling the details room down shrinks the photo and lands it as the pin on the map** in the
   place block — a shrink-to-appear, explicitly not a tilt of the pane. While that room is pulled the
@@ -198,13 +263,16 @@ Library (the catalogue)
 │       └── Tag
 │
 ├── Rooms                  ← navigation surfaces, not content
-│   ├── LEFT   Destinations rail
-│   ├── RIGHT  Settings → All settings
-│   └── TOP    (reserved)
+│   ├── LEFT   Navigation: the destinations rail
+│   ├── TOP    Details: the view's counts, or the open photo's facts
+│   ├── BOTTOM Actions: a quick strip, then every action
+│   └── RIGHT  View options: columns and sort, or the viewer's switches
+│
+├── Panes                  ← take over the place the photos are
+│   └── Settings (nine tabs), Albums, Calendar, Discover, Library, Tidy up
 │
 └── Overlays               ← full-surface, above everything
     ├── Viewer             ← single asset, with filmstrip and detail
-    ├── Legacy screens     ← Albums / Discover / Library
     └── Dialogs            ← password, rename, tag, collection picker
 ```
 
@@ -227,7 +295,10 @@ Two rules hold this together:
 |---|---|
 | `media/` | The catalogue: `MediaAsset`, `MediaRepository`, `SqliteMediaRepository`, `AndroidMediaStoreScanner`, `MediaIndexer`, `ScanPlan`, `PrefsScanWatermark`, `MediaStoreChangeObserver` |
 | `gallery/` | The browsing surface: `GalleryScreen`, `GalleryProjection` (pure filtering/sorting), `DestinationBrowserScreen`, `TimelineStops`, preferences, dialogs |
-| `viewer/` | Single-asset viewing: the photo and its three rooms, the roll-level filmstrip, `ViewerChromePolicy` (what is drawn when), the shrink-to-map flight (`PhotoToPinFlight`, `PlaceMorph`), detail formatting, and the Media3 video player (`VideoPlayer`, `PlaybackLogic`, `ViewerPlayerFactory`, `ResumePositionStore`) |
+| `viewer/` | Single-asset viewing: the photo and its three rooms, the roll-level filmstrip, `ViewerChromePolicy` (what is drawn when), the slideshow bar (`SlideshowBar`), the transparent-photo backdrop (`TransparencyBackdrop`), the shrink-to-map flight (`PhotoToPinFlight`, `PlaceMorph`), detail formatting, the Media3 video player (`VideoPlayer`, `PlaybackLogic`, `ViewerPlayerFactory`, `ResumePositionStore`), and `ExternalViewerActivity` (the single VIEW target) |
+| `ui/` | Shared UI vocabulary: `RoomGeography` (which edge holds which room), `RoomStyle`/`PaneScaffold` (the black room and page style), `QuickActionStrip`, and `HelpCopy`, the one home of the app's trimmed help and privacy text (length ceilings pinned by `HelpCopyTest`) |
+| `core/*` | Pure Kotlin modules shared with other targets (`model`, `formats`, `metadata`, `search`, `organize`, `db`, `index`). `core:formats` holds the byte sniffers `AnimationSniffer` and `AlphaSniffer`; commonMain stays free of Android and `java.*` imports (`scripts/verify-core-purity.sh`) |
+| `picker/` | `PhotoPickerActivity`: other apps' GET_CONTENT / PICK, over the same `browsableAssets` filter as every screen |
 | `recognition/` | On-device ML: face detection and clustering, pet classification, identity heuristics |
 | `spatial/` | Geo metadata, the MapLibre Places map, OpenGL photo scenes |
 | `experience/` | The 3D photo wall and its renderer/orientation controller |
@@ -236,16 +307,13 @@ Two rules hold this together:
 | `privacy/` | Sensitive-asset and password-protected-folder stores |
 | `favorites/`, `organize/` | Favourites; collections, tags and archive state |
 | `hyle/` | Design-system bridge, `ActivityShade` (background job/status surface), the floating pill |
-| `editor/` | The photo editor, one scrollable tool strip with no tiers (Light, Colour, Curves, Presets, Detail, HSL, Crop, Rotate, Heal): adjustments, a drawn tone-curve editor with a histogram backdrop and a luma curve, HSL, crop, spot heal, presets, undo history, persisted recipes, `EditedCopyWriter` (Save/Save As/Overwrite) |
+| `editor/` | The photo editor, one scrollable tool strip with no tiers (Light, Colour, Curves, Presets, Detail, HSL, Crop, Rotate, Heal): adjustments, a drawn tone-curve editor with a histogram backdrop and a luma curve, HSL, crop, spot heal, presets, undo history, persisted recipes, `EditedCopyWriter` (Save/Save As/Overwrite) and `OverwriteGuard` (what Replace refuses, the safety copy, `OverwriteRecovery`) |
 | `metadata/` | EXIF/XMP read and write: `MetadataWriter`, `XmpPacket`, `MetadataEdit` |
-| `video/` | Video export via Media3 Transformer: `VideoExporter`, `VideoConversionWriter`, export options and codec capability |
+| `video/` | Video export via Media3 Transformer: `VideoExporter`, `VideoConversionWriter`, export options and codec capability. (The audio conversion writer and `AudioTranscoder` were retired with the audio feature.) |
 | `videoeditor/` | The video editor screen and its `VideoEditPlan` (trim/speed/rotate/mirror/crop/mute/filters) |
-| `audio/` | Standalone audio: MediaStore scanning, `SqliteAudioRepository`, the library and player screens |
-| `audiotags/` | Pure ID3v2/MP4/FLAC tag codecs plus the Android-side tag writer |
-| `playback/` | `PlaybackService` (`MediaSessionService`) and the Compose audio-playback controller |
-| `jobs/` | `JobRunner` and `JobForegroundService`: progress-tracked, cancellable background work (conversion, export, copy/move) surfaced through `ActivityShade` |
+| `jobs/` | `JobRunner` and `JobForegroundService`: progress-tracked, cancellable background work (conversion, export, copy/move) surfaced through `ActivityShade`; the `POST_NOTIFICATIONS` request is made once, the first time a job runs |
 | `shell/` | `AppStateViewModel` — navigation and pending-consent state that survives rotation and process death |
-| `openwith/` | Handling this app being opened on an external file (View/Edit/Send) |
+| `openwith/` | Classifying an incoming Edit or Share intent (`content://` only) and the hidden-photo guard for anything another app asks to open (`OpenRequestLookup`, `classifyMediaStoreUri`); View itself is `viewer/ExternalViewerActivity` |
 | `share/` | Share preparation, frames, watermarking, ZIP export |
 | `moments/` | Key-moment detection and short clip/frame export |
 | `lift/`, `lens/` | Subject lift: a scribble-to-select editor (tap or draw to select, a Background polarity, a refine brush, undo/redo, checkerboard preview) and sticker export; the lens explorer tile |
@@ -304,8 +372,8 @@ asset on purpose — TRAPS #39), `videoBottomInsetDp`, `initialChromeVisible`/`r
 
 **Video playback** is Media3 ExoPlayer, built in one place (`buildViewerPlayer`, shared with the video
 editor's preview): decoder fallback on, the movie audio content type with audio focus, pause on
-becoming noisy. Two behaviours are visible to the person: starting a video now pauses the app's own
-music, and an incoming call or navigation prompt pauses the video.
+becoming noisy. Two behaviours are visible to the person: starting a video now pauses another
+app's music, and an incoming call or navigation prompt pauses the video.
 
 - *Armed, not mounted.* `VideoPlayer` is only a poster until it has been on screen 250 ms with no
   finger on the filmstrip; only then does the private `ArmedVideoPlayer` build a player, look up
@@ -352,6 +420,55 @@ index-based `moveTo`/`insertAt`/`removeAt`), `CurveHit` (grab and drag-out hit-t
 (the backdrop), `CurvePresets`. The luma curve travels inside `ChannelLuts.luma` (null when
 identity), so `AdjustmentRenderer` and the export path apply it without a change.
 
+### Saving an edit, and how honest "Replace the original" is
+
+`EditedCopyWriter` has three outputs, and they do not promise the same things.
+
+- **Save a copy** (`save`) inserts a new MediaStore row beside the original and never opens the
+  original for writing. It copies the source's EXIF and XMP into the result (JPEG, PNG, WebP), keeping
+  location. A HEIC output is pixels only (`MetadataCopy.SKIPPED_HEIC`): `ExifInterface` cannot write
+  into it, and `HeifWriter.addExifData` is the unbuilt fix.
+- **Save As** (`saveTo`) writes to a Storage Access Framework destination the user picked. It strips
+  location (every GPS tag, XMP `exif:GPS*`, the IPTC-ext `LocationShown` / `LocationCreated`
+  structures, `photoshop:City` / `State` / `Country`, `Iptc4xmpCore:Location` / `CountryCode`; an
+  unparseable XMP packet is dropped) and then re-reads the staged file with `carriesLocation` and
+  fails the save if any remains. The metadata panel's "Clear location" is deliberately narrower and
+  leaves place names.
+- **Replace the original** (`overwrite`) truncates and rewrites the existing file. MediaStore has no
+  atomic replace, so this is **best effort**, built so that a failure is survivable rather than
+  impossible. In order: (1) it is refused (`OverwriteException.Refused`, original untouched) for a
+  format with no in-place path (HEIC, GIF, RAW), for hazards the re-encode would destroy
+  (`OverwriteHazard`: an animated WebP or APNG, an Ultra HDR gain map, a Motion Photo's video, a
+  depth map or other embedded images, transparency a WebP re-encode flattens on API 30+, lossless
+  WebP, or a file that cannot be read for the scan), and unless the whole source metadata was carried
+  over (`MetadataCopy.COPIED`). The metadata gate refuses IPTC-IIM, extended XMP, PNG text with real
+  content (a prompt, a comment; colour profiles and boilerplate keywords are fine) and other WebP
+  chunks, and a view Android redacted (API 29+ without photo-location access). MakerNote and the
+  embedded thumbnail are deliberately not gated, since nearly every camera file has them. The JPEG
+  scans look at the first 256 KiB (and the last 64 KiB for Motion Photos), which can miss later
+  metadata; a PNG or WebP that fills that window is walked end to end. The guard fails open for
+  variants nobody taught it, so it lowers the risk and does not close it. (2) It copies the
+  original's bytes into `filesDir/overwrite-recovery` (private, and not the cache, because the
+  system clears the cache exactly when storage is tight), flushes them, and writes a small sidecar
+  naming the photo. (3) It writes, flushes and reads back. (4) On any failure after the truncate it
+  writes the copy back and reports `FailedAfterWrite(restored, recoveryFile)`. (5) On success, or on
+  a restore that read back at the right size, it deletes the copy.
+- **If that fails too** (the process is killed mid-write, or the put-back itself fails) the copy is
+  kept, and the next start shows a dialog that names the photo and offers *Share the copy of
+  <name>* (staged through the outgoing-share FileProvider root, so any app can put it back), OK, and
+  Delete copies. It comes back on every start until answered; a tap outside is not an answer. A copy
+  is deleted 7 days after OK (30 for a `.bak`, the one kept after a failed put-back), or at once on
+  Delete. There is no Restore button: recovery is share-out only, and the app does not claim more.
+- **While a replace is running** the editor's Save, Cancel and Back are off, an Edit or Share intent
+  for another photo is answered with "Finish saving your edit first", and
+  `AppStateViewModel.launchWrite` keeps the code that records the outcome alive across activity
+  recreation (the manifest also stops locale, font scale and colour-mode changes recreating it).
+  When the original may be damaged the banner offers only Save a copy.
+- **Export size.** An export starts at the user's cap or 8192 px / 64 MP and steps down 8192, 4096,
+  2048, 1536 only after a real `OutOfMemoryError`, saying "at reduced size". A replace uses one rung
+  so an out-of-memory error writes nothing. `android:largeHeap` is not set (an owner decision left
+  open).
+
 ### Privacy boundaries, as code
 
 - **No Internet permission is needed for the core app.** Recognition is bundled models; the map is
@@ -362,6 +479,17 @@ identity), so `AdjustmentRenderer` and the export path apply it without a change
   contents are cleared too — so the app cannot resume displaying something that should be locked.
 - **AI keys** live in `EncryptedSecretStore`; the OkHttp client deliberately ships **no logging
   interceptor**.
+- **Another app cannot reach what the library hides.** `ExternalViewerActivity` is the single VIEW
+  target (`content://` only; `FotoXplorrActivity` keeps only EDIT and SEND filters, and the SEND
+  filter carries no scheme because the Uri is in `EXTRA_STREAM`, so `classifyIncomingIntent` checks
+  the scheme itself). A `content://media` Uri is read the way Android reads it
+  (`classifyMediaStoreUri`: percent-decoded, an optional `<userId>@` authority prefix, the last
+  numeric segment is the row id; a photo-picker Uri is not a row; a media Uri with no row id is
+  refused). A catalogued photo redirects into the full viewer; one the catalogue has not scanned yet
+  is looked up in MediaStore and held to the same folder rules. Anything `browsableAssets` hides
+  gets a notice ("That photo is hidden or locked in Fotoz, so it was not opened.") and is never shown
+  as an external file. Incoming intents expose only three extras (open-media-id, allow-multiple,
+  stream); the rest are dropped unread, so a hostile parcelable cannot crash the activity.
 
 ### Testing
 
@@ -378,6 +506,14 @@ deliberately — it was once absent, which is how a lint error sat on a branch u
 `dev.aarso:hyle`, `dev.aarso:crash-recovery` and `dev.aarso:cell-shell` are consumed as **git
 submodules + Gradle `includeBuild` dependency substitution** — the constellation's one sanctioned
 sharing mechanism, with no Maven registry involved.
+
+`shared-libraries/` (crash-recovery and cell-shell) is another repository's submodule
+(`mbaliga/Shared-Libraries-asoc`) and is pinned at `1f33d10`, on that repo's
+`claude/friendly-lovelace-06dito` branch (its PR #17). That commit adds what the actions room needs:
+a navigation-bar-aware bottom edge zone, the optional two-stage bottom peek, `bottomReserve` (so a
+vertical-first drag on the filmstrip or video transport scrubs instead of opening the room) and a
+stale-flick guard. **PR #17 must be merged first, with a merge commit (TRAPS #2), and only then this
+app's PR**, or a fresh `clone --recurse-submodules` cannot find the pinned commit.
 
 The explicit `dependencySubstitution` on the Hyle include in `settings.gradle.kts` is
 **load-bearing, not cosmetic**: Hyle still carries a `:crash-recovery` tombstone declaring the same
@@ -400,9 +536,8 @@ hard-fail.
   deleting media without the platform confirmation dialog.
 - **Remote AI is unverified against every provider.** The four provider shapes are implemented;
   only the ones the user configures are exercised.
-- **The Media3-based playback/export/editing pipeline (ADR-008 rev. 2) and the audio playback
-  service have not been run on a real device or emulator** — this environment has neither. They
-  are compile- and unit-test-verified only; see the device checklist each ADR names before
+- **The Media3-based playback/export/editing pipeline (ADR-008 rev. 2) has not been run on a real
+  device or emulator** — this environment has neither. It is compile- and unit-test-verified only; see the device checklist each ADR names before
   treating them as production-proven. (The in-viewer player has since been rebuilt; its own
   checks are in `docs/device-test/batch-1-checklist.md`. A release build's Media3 behaviour is a
   smoke test too: `proguard-rules.pro` has no Media3 section and relies on the library's consumer
@@ -437,3 +572,21 @@ hard-fail.
   ("Lift subject", "Share", any of them) does nothing; and `LiveTextOverlay` consumes every tap and
   long press on a photo with recognised text while the chrome is up, which also blocks
   long-press-to-lift and tap-to-toggle-chrome there (TRAPS #50).
+- **Batch 2 (October 2026: nine destinations, the rooms geography, the Settings page, the viewer
+  heart, slideshow bar and transparency backdrop, the trimmed help text, the overwrite safety net,
+  the single open-with entry point) has not run on a device either.** The pure rules are
+  unit-tested and the screens are exercised under Robolectric (and rendered), but gesture feel, the
+  insets of the moved rooms under a camera cutout or three-button navigation, the cove against a
+  real status bar, TalkBack, a real fling on the rail, and every mid-write failure of Replace are in
+  `docs/device-test/batch-2-checklist.md`.
+- **`decodeUpright` returns null on API 26 and 27, found and not fixed.** The `BitmapFactory`
+  fallback (used below API 28; `ImageDecoder` is used from 28) does its bounds-only pass with
+  `BitmapFactory.decodeStream`, which always returns null for a bounds-only decode, and the line
+  ends in `?: return null`. Every caller of `decodeUpright` (the editor, lift, share frames and the
+  rest) therefore gets nothing on those two releases. The fix is to
+  use the options' `outWidth`/`outHeight` and not the return value; it is outside the units that found
+  it. Until it is fixed, treat stills as unverified on Android 8.0 and 8.1.
+- **Opening a `content://media` photo from another app needs MediaStore access.** Under Android
+  14's "selected photos" access, a photo Fotoz cannot see in MediaStore is refused ("could not be
+  checked against your library") rather than opened, because the hidden-photo rules cannot be
+  applied to a row nobody can describe. This is a deliberate trade, and its feel is a device check.

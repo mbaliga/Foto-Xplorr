@@ -8,11 +8,13 @@ Fotoz was previously called Foto Xplorr; the repository name, the `com.fotoxplor
 
 ### Browse and view
 
-- Ten destinations on a word-only navigation rail: Pets, People, Identity, Screenshots, Photos, Videos, Favourites, Places, Protected, Audio.
+- Nine destinations on a word-only navigation rail: Pets, People, Identity, Screenshots, Photos, Videos, Favourites, Places, Protected. (Fotoz no longer has an Audio destination: it is a photo and video app.)
+- Four rooms, one geography, in the gallery and the viewer alike: **left** is where you can go (the rail), **top** is details (the view's counts, or the open photo's facts), **bottom** is actions (pull up a little for a strip of quick actions, further for all of them) and **right** is view options (columns and sort in the gallery; filmstrip, slideshow, autoplay and the like in the viewer). Settings is not a room: it takes over the page, with a back chevron, from the rail's Settings row.
 - Day, month or ungrouped chronological timeline with a scrubber.
 - A query language over filename, folder, media type, tag, date range, camera and boolean/field operators, plus tuning chips.
 - Sort by newest, oldest, name or size; adjustable grid density with aspect-ratio tiles and a zoom ladder.
-- Full-screen image viewer (EXIF/XMP details, Live Text selection, subject lift with tap-or-draw selection, a refine brush, undo/redo and sticker export, and a photo that shrinks into its map pin as the details pull down) and a full-screen video/audio player built on ExoPlayer/Media3: videos start by themselves (a setting), the filmstrip stays available over a video, variable speed with pitch preservation, embedded and sidecar subtitle tracks, audio-track selection, gestures (double-tap seek, edge-swipe brightness/volume, A-B loop), resume position, a clear error panel with Retry and Open with when a video cannot be played, and Picture-in-Picture.
+- Full-screen image viewer (EXIF/XMP details, Live Text selection, subject lift with tap-or-draw selection, a refine brush, undo/redo and sticker export, and a photo that shrinks into its map pin as the details pull down) and a full-screen video player built on ExoPlayer/Media3: videos start by themselves (a setting), the filmstrip stays available over a video, variable speed with pitch preservation, embedded and sidecar subtitle tracks, audio-track selection, gestures (double-tap seek, edge-swipe brightness/volume, A-B loop), resume position, a clear error panel with Retry and Open with when a video cannot be played, and Picture-in-Picture.
+- A favourite heart in the viewer's top row (filled or outlined, for photos and videos in the library, shown while the controls are), a slideshow bar on the same black coved shape as the gallery's selection toolbar (previous, play or pause, next; a real pause, and the controls fold away after three seconds of a running slideshow), and a choice of what shows behind a transparent photo: the grey-and-white grid (the default), white or black, from a button that appears only on photos that have transparency and from the viewer's view options. Transparency is read from the file's own header, not guessed from its type.
 - SVG support, and real animated playback for GIF, animated WebP and animated AVIF/HEIF — detected
   by inspecting each file's own container (GIF frame count, WebP's `VP8X` flag, PNG's `acTL`/`IDAT`
   ordering, HEIF/AVIF's `ftyp` brand family), not guessed from MIME type alone, so a static
@@ -26,15 +28,16 @@ Fotoz was previously called Foto Xplorr; the repository name, the `com.fotoxplor
 ### Edit
 
 - A Snapseed-style photo editor with one scrollable tool strip: exposure/contrast/highlights/shadows/white balance, HSL by hue band, a drawn curves editor (a histogram behind a curve with draggable points, for RGB, luma and each colour channel), drag-handle crop with aspect lock, straighten, spot heal, vignette/sharpen, built-in and user-saved presets, undo/redo with a persisted non-destructive edit history, and auto-fix suggestions.
-- Save a copy, Save As (JPEG/PNG/WebP/HEIC where the device has an HEVC encoder) to a chosen destination, or Replace the original — each behind the Android consent Fotoz's own writes require, with EXIF/XMP (including orientation) preserved into the result.
+- Three ways to save. **Save a copy** writes a new file beside the original. **Save As** (JPEG, PNG, WebP, or HEIC where the device has an HEVC encoder) writes to a destination you choose, and strips location from the file (the GPS tags and the XMP location fields, place names included), re-reading the result to check; the metadata panel's "Clear location" is narrower and leaves place names. **Replace the original** overwrites the file in place, behind Android's own consent for that photo.
+- Copies in JPEG, PNG and WebP carry the original's EXIF and XMP (camera facts, date, orientation, and location for a copy beside the original). **HEIC copies are pixels only**: EXIF and XMP are not carried into a HEIC the editor writes.
+- Replace the original is best effort, not atomic (Android has no replace-in-place for a library photo), so it is guarded. It is refused, and Save a copy offered instead, when replacing would lose something: an animation (animated WebP or APNG), an Ultra HDR gain map, a Motion Photo's video, a depth map or other embedded pictures, transparency or lossless quality a WebP re-encode would destroy, or metadata Fotoz cannot carry over (IPTC captions and keywords, extended XMP, PNG text such as a generation prompt, other WebP chunks, or a location Android redacted because photo-location access is off). Before writing, Fotoz makes a private safety copy of the original inside its own storage; it puts the original back if the write fails, and deletes the safety copy once the new file reads back correctly. If even that fails, or the app is killed mid-write, the next start names the photo and offers to share the safety copy so you can put it back with any app. This lowers the risk; it does not remove it, and a crash at the wrong moment can still leave a damaged file.
 - A video editor (trim, speed, rotate, mirror, mute, aspect crop, colour filters) built on Media3 Transformer, with a live trimmed-range preview and a real export progress/cancel.
 - Photographer-grade metadata: read and write EXIF and XMP (rating, creator, copyright, keywords, GPS) with the same consent flow, and batch edits across a selection.
 
-### Audio and video conversion
+### Video conversion and Open with
 
-- A standalone Audio destination: browse, search, and play the device's music/recordings/podcasts library with background playback, lock-screen and notification controls, a persisted library, and ID3v2/MP4/FLAC tag editing.
-- Convert a video to H.264/MP4 or an audio file to AAC/M4A as a new file, at a chosen quality.
-- The app can also be opened directly on an image, video or audio file from another app (View/Edit/Send).
+- Convert a video to H.264/MP4 as a new file, at a chosen quality (Media3 Transformer; progress and Cancel in the activity strip).
+- Fotoz appears once in another app's "Open with" list for a photo or video (`content://` only, never `file://`), and accepts images sent to it to edit and images or videos shared to it. A photo that Fotoz itself hides or locks (a locked folder, archive, trash, or sensitive photos you chose to hide) is never opened from outside: you get a short notice instead. A file from another app opens in the viewer without the favourite, tag, caption or location actions, since it is not in your library.
 
 ### Organise
 
@@ -80,6 +83,8 @@ writing a location, re-verifying the result has none. A share this app cannot co
 an unsupported video codec, a corrupt or truncated source — fails with an explanatory error instead
 of silently sending the original with its metadata intact.
 
+Another app cannot use Fotoz to see what Fotoz hides: an open-with or share request that names a photo in a locked folder, the archive, the trash or the hidden-sensitive set is refused with a short notice, however the photo's address is spelled, and the photo picker never offers them. While a Replace the original is running, Fotoz keeps a copy of that one photo in its own private storage so it can put the original back; it is deleted when the write is verified, or kept until you have answered a notice about it (then deleted after 7 days, or 30 if the original could not be put back), and never leaves the app unless you choose to share it.
+
 The current private-folder feature is an **in-app access gate**. It does not encrypt or relocate original MediaStore files, so other applications that have photo access may still read them. It must not be described as an encrypted vault.
 
 The offline map is a coordinate visualisation, the elevation view uses only embedded metadata, and the depth timeline is an experimental 2.5D presentation. They are not downloaded map packs, terrain data or a full 3D engine.
@@ -104,6 +109,14 @@ git submodule update --init
 
 ./scripts/verify.sh
 ```
+
+It also consumes the constellation's shared libraries (`dev.aarso:cell-shell`, the spatial rooms
+shell, and `dev.aarso:crash-recovery`) as a second submodule, `shared-libraries/`, from
+[Shared-Libraries-asoc](https://github.com/mbaliga/Shared-Libraries-asoc), again through a Gradle
+`includeBuild`. The pin on this branch (`1f33d10`, which adds the two-stage bottom room the actions
+rooms use) lives on that repo's `claude/friendly-lovelace-06dito` branch, in its PR #17, which must
+be merged **first**, with a merge commit and not a squash (`docs/TRAPS.md` #2), or this app's pin
+points at a commit that no longer exists.
 
 `scripts/verify.sh` is the one definition of "builds clean" — CI runs the same script.
 It builds, tests and lints **both flavors** and runs the offline enforcement gates.

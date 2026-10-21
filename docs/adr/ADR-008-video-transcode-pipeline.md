@@ -1,9 +1,22 @@
-# ADR-008 — Video/audio pipeline: androidx.media3 (revision 2)
+# ADR-008 — Video pipeline: androidx.media3 (revision 2)
 
 **Status:** accepted — supersedes this ADR's own revision 1 ("native `MediaCodec` only, no
 Media3") outright, and folds in the separate `ADR-008-video-editing.md` written on
 `origin/claude/fotoz-continue` rather than keeping two ADR-008s.
 **Date:** 2026-09-16
+**Updated 2026-10-21 (owner decision, batch 2): audio is out of the product.** Fotoz no longer has an
+Audio destination, an audio player, audio tag editing, or audio-to-AAC conversion. `AudioConversionWriter`,
+`AudioTranscoder` and `PcmTiming` are gone (the last two were already retired by this revision's
+Media3 move; the writer, the `audio/`, `audiotags/` and `playback/` packages and the media-playback
+service went in the audio removal). Read every mention below of an audio *conversion* or *library* as
+history: only the video pipeline, and the audio *track* inside a video (track selection, mute, pitch-
+preserving speed), remain. The pipeline's behaviours are now pinned by tests that did not exist when
+this ADR was written: `VideoExporterMessageTest` (the `ExportException` to wording map, the HDR mode,
+built with `createForAssetLoader(cause, code)`, the only public factory that takes an arbitrary code
+in media3 1.9.0) and `VideoExporterPublishTest` (the publish step: `IS_PENDING`, name, path, and the
+pending row deleted when the copy fails midway). `exportMessage` and `hdrModeFor` are `internal`
+top-level functions and `publish` an `internal` member for that reason. What the tests cannot see (a
+full disk, a real `IS_PENDING` promotion appearing in the gallery) is in the P0-11 device checklist.
 **Still true of this revision:** not verified on a real device or emulator (this environment has
 neither). What changed is *why* that caveat matters less: revision 1's pipeline had never run
 either, and static review of it turned up defects a device pass would likely have caught anyway
@@ -100,7 +113,8 @@ supported size and bitrate instead of failing the export.
   (`EglCore`, `InputSurface`, `DecoderOutputSurface`, `TextureRenderer`) — the hand-written
   decode-GL-encode bridge.
 - `com.fotoxplorr.app.audio.AudioTranscoder` and `com.fotoxplorr.app.audio.PcmTiming` — the
-  hand-written buffer-mode AAC re-encode loop.
+  hand-written buffer-mode AAC re-encode loop. (The whole `audio/` package followed in 2026-10-21's
+  audio removal; see the update note at the top.)
 - `com.fotoxplorr.app.video.EncodedTrack` and its disk-spilling `SampleStore` (the track-buffering
   currency both of the above produced) once nothing else referenced it.
 - Their now-dead, pinned unit tests: `SampleStoreTest`, `RequiredSpillBytesTest`,
@@ -140,12 +154,10 @@ target revision 1 had; its P0-11 HDR and size helpers went with the pipeline the
   `Throwable`, not just `ExportException` — the one weakness the Media3 prototype this was ported
   from (`origin/claude/fotoz-continue`) still had: a publish failure escaping past a narrower catch
   and crashing the caller instead of surfacing as a normal `Result.failure`.
-- **`VideoConversionWriter.convertToH264Mp4(asset)`** and **`AudioConversionWriter.convertToAac(asset)`**
-  keep their exact signatures and now delegate to Transformer; the video writer gained an
-  options+progress overload, the audio writer gained a bitrate parameter and the same shared
-  `mediaStoreRelativePath` rule for its own collection (`Music/`, `Podcasts/`, `Audiobooks/`,
-  `Ringtones/`, `Alarms/`, `Notifications/`, and `Recordings/` from API 31, falling back to
-  `Music/Fotoz/`).
+- **`VideoConversionWriter.convertToH264Mp4(asset)`** keeps its exact signature and now delegates to
+  Transformer, and gained an options+progress overload. (Revision 2 also moved `AudioConversionWriter.
+  convertToAac` onto Transformer, with the shared `mediaStoreRelativePath` rule for the audio
+  collections; that writer was deleted with the audio feature on 2026-10-21.)
 - **Video editor** (`videoeditor/`): `VideoEditPlan` (ported from the prototype's `VideoEditPlan`,
   extended with brightness/contrast/saturation and mapped onto `VideoExportOptions` for export) is
   invariant-checked, rotation-saveable via a `rememberSaveable` `listSaver`, and drives a live
@@ -174,7 +186,7 @@ concrete result.
 
 ## Deliberately not in this revision
 
-Multi-clip timelines/transitions, music/audio-track replacement in the editor (Media3's
+Multi-clip timelines/transitions, audio-track replacement in the editor (Media3's
 `Composition`/`EditedMediaItemSequence` supports the mechanics; the picker UI and audio-sequence
 sync are real, separate work not attempted here), LUT-style colour lookup filters (the brightness/
 contrast/saturation sliders plus four named presets cover v1; a LUT system should be shared with the

@@ -2,13 +2,17 @@ A gallery for the photos and videos already on your phone. It opens fast, it doe
 not want an account, and it never uploads anything.
 
 BROWSE
-• Ten destinations: Pets, People, Identity, Screenshots, Photos, Videos, Audio,
+• Nine destinations: Pets, People, Identity, Screenshots, Photos, Videos,
   Favourites, Places and Protected.
+• Drag from an edge: left for where to go, top for details, bottom for actions
+  (a little for quick ones, further for all), right for view options.
 • A timeline grouped by day or month, or ungrouped, with a scrubber.
 • Search by filename, folder, media type, tag, date range or camera.
 • Sort by newest, oldest, name or size, with an adjustable grid.
-• A full-screen viewer with EXIF/XMP details, swipe, zoom, pan and slideshow.
-• A full video/audio player with variable speed, subtitle and audio-track
+• A full-screen viewer with EXIF/XMP details, swipe, zoom, pan, a favourite
+  heart, and a slideshow with its own play, pause and skip bar.
+• Choose what shows behind transparent photos: a grid, white or black.
+• A full video player with variable speed, subtitle and audio-track
   selection, gestures, resume position, and Picture-in-Picture.
 • RAW (best effort), SVG, and animated GIF, WebP and AVIF.
 • System, light and dark themes with several accent palettes; tablet and
@@ -18,12 +22,15 @@ EDIT
 • A real photo editor: exposure, contrast, highlights/shadows, white balance,
   HSL, per-channel curves, crop, straighten, spot heal, vignette, sharpen,
   presets, and undo/redo with a saved edit history.
-• Save a copy, Save As to a chosen format and destination, or replace the
-  original — always behind Android's own confirmation for the last one.
+• Save a copy, Save As to a chosen format and destination (location removed),
+  or replace the original, behind Android's own confirmation. Replacing is
+  refused when it would lose something, such as an animation, HDR, a motion
+  photo's video or transparency, and a private safety copy is kept while it
+  writes.
 • A video editor: trim, speed, rotate, mirror, mute, crop and colour filters,
   with a live preview and real export progress.
 • Read and write EXIF/XMP: rating, creator, copyright, keywords and location.
-• Convert a video to MP4 or an audio file to AAC, and edit MP3/MP4/FLAC tags.
+• Convert a video to MP4.
 
 ORGANISE, REVERSIBLY
 • Favourites, an archive, a sensitive flag and your own tags, all persistent.
@@ -44,6 +51,9 @@ QUIET BY DESIGN
 • No ads, no accounts, no analytics, no tracking, no network permission at all
   in this build.
 • Your photos are never uploaded, and never used to train anything.
-• Recognition, similarity and background playback all run locally.
+• Recognition and similarity run on your phone.
+• Photos you hide or lock in Fotoz are never shown to other apps that ask to
+  open them.
 
-Foto Xplorr is open source.
+Fotoz (formerly Foto Xplorr) is source-available and free for noncommercial
+use.

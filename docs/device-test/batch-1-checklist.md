@@ -5,7 +5,7 @@ Every device-only claim from the 21 Oct 2026 owner-feedback batch (see `docs/han
 `docs/device-test/phase-0-checklist.md`. This sandbox has no device or emulator, so none of these is
 claimed as verified: each section names the JVM/Robolectric tests that cover its pure logic, and the
 boxes below are for the things those tests cannot see (real decoders, a real finger, process death,
-the system's own audio, PiP and chooser behaviour, how a thing *feels*). Check each box against a
+the system's audio focus, PiP and chooser behaviour, how a thing *feels*). Check each box against a
 real phone, on **both flavours** where a line says so, before relying on the corresponding fix.
 
 The reports being answered, verbatim: **#1** "Fotoz is not playing videos". **#28** "When I scrub
@@ -33,7 +33,7 @@ retry-without-subtitles, collapse rule), `VideoPlayerStartTest`, `ViewerPlayerFa
       with the chrome already up. **Pause works while it is still buffering** (before the first
       frame), and after pausing a tap on the centre glyph resumes it. A tap on the glyph or the
       resume chip must NOT also toggle the chrome.
-- [ ] Turn autoplay off in the viewer's settings room, open a clip → it waits at 0:00 behind the
+- [ ] Turn autoplay off in the viewer's view options room (right edge), open a clip → it waits at 0:00 behind the
       centre glyph; the setting survives a restart.
 - [ ] A 4K HEVC 10-bit clip, a Dolby Vision clip and an MKV → each either plays (decoder fallback)
       or shows the error panel with the right wording ("This device can't play this video's format",
@@ -67,8 +67,8 @@ retry-without-subtitles, collapse rule), `VideoPlayerStartTest`, `ViewerPlayerFa
       OEMs deliver `ON_STOP` around PiP entry.
 - [ ] Close the viewer mid-playback, then press Home → the app must NOT enter picture-in-picture onto
       the gallery (auto-enter is disarmed when the viewer goes).
-- [ ] Audio focus (a visible change): start a video while the in-app music is playing → the music
-      pauses. An incoming call or a navigation prompt pauses the video. Unplugging headphones pauses
+- [ ] Audio focus (a visible change): start a video while **another app's** music is playing (a
+      music or podcast app; Fotoz has no player of its own any more) → that music pauses. An incoming call or a navigation prompt pauses the video. Unplugging headphones pauses
       it instead of playing on the speaker.
 - [ ] The screen stays on during playback and times out normally when paused or ended.
 - [ ] The PiP button is absent on a device without the PiP feature, and on `ExternalViewerActivity`
@@ -234,10 +234,16 @@ rendered, under Robolectric.
 - [ ] A photo whose location could not be *read* (revoke "Allow access to location in media") never
       offers "Add a place" or the picker.
 
+> **Note, 21 Oct 2026.** This checklist was written when the viewer's actions were on the right edge
+> and its settings at the bottom. Since batch 2 the geography is: top details, bottom actions (a
+> short pull shows the quick strip), right view options. Where a step above says "the actions room"
+> it now means the bottom room, and the viewer's old "settings room" is the view options room on the
+> right. The steps for those rooms are in `batch-2-checklist.md`.
+
 ## Across the viewer
 
-- [ ] Open a room over a **playing** video, in the 3D swivel (the settings room from the bottom, the
-      actions room from the right): the video surface follows the rotation and clip acceptably, or it
+- [ ] Open a room over a **playing** video, in the 3D swivel (the actions room from the bottom, the view
+      options room from the right: the rooms moved in batch 2): the video surface follows the rotation and clip acceptably, or it
       does not (unverified). If it shows artefacts, the options are a texture-view layout (costs HDR
       fidelity) or pausing while a room is open; neither was done blind.
 - [ ] Repeat the opening-a-video, filmstrip-over-a-video and pull-down-to-the-map checks above once on

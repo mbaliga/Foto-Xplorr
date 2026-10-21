@@ -15,9 +15,19 @@ the no-location plate is a calm graticule with a ghost pin rather than plain bac
 The original text is kept where it records a decision and marked **[superseded]** where the code no
 longer does it; "Revisions in batch 1" at the end says what replaced it and why.
 
+**Revised again 21 Oct 2026 (batch 2).** The viewer's rooms moved: section A's documented deviation
+is retired (one geography, with actions at the bottom and view options on the right), and the chrome
+row gained a favourite heart and a transparency button while the slideshow gained a bar. "Revisions in
+batch 2" at the end says what changed.
+
 ## What changed, surface by surface
 
 ### A. Details is the pull-DOWN room (a documented deviation from the app's geography)
+
+**[Superseded 21 Oct 2026, batch 2: the deviation is retired. The viewer now has the gallery's
+geography (details top, actions bottom, view options right); the viewer's old "settings" room is its
+view-options room and the actions room moved from the right edge to the bottom. Everything below
+about the *details* room being the top room still holds. See "Revisions in batch 2".]**
 
 `ViewerScreen`'s rooms are now `top = PhotoDetailRoom` (reveal = `shell.vProgress`, POSITIVE, which
 is `SpatialMotion`'s sign for a TOP room) and `bottom = ViewerSettingsRoom`. The pinch shortcut
@@ -363,3 +373,81 @@ flavour never has a map behind it.
   "17." was rewritten to "17.0" under the caret, and a single typed coordinate produced a (lat, 0)
   location; both fixed.
 
+
+## Revisions in batch 2 (21 Oct 2026)
+
+Nothing here has run on a device; `docs/device-test/batch-2-checklist.md` lists what only a phone can
+settle, and `docs/TRAPS.md` #63 records the geography as a rule.
+
+### A. The deviation in section A is gone: one geography (owner #26)
+
+Before: details top, actions on the right, settings at the bottom in the viewer, against the gallery's
+settings on top, actions on the right and details at the bottom. The owner's answer: left navigation,
+top details, bottom actions, right view options, everywhere. `ViewerScreen` now builds its rooms with
+`roomSlots(details = PhotoDetailRoom, actions = ViewerActionsRoom, viewOptions = ViewerSettingsRoom)`
+and the viewer has no left room. The pinch shortcuts follow: pinch in opens the details (top), pinch
+out opens the actions (bottom). `ParkStyle` (TRAPS #41) is unchanged: `SLIDE` while the top room is
+pulled, `SWIVEL` otherwise, which is the bottom actions room's case too.
+
+- **The actions room is two-stage.** A short pull up from the bottom stops on a strip of quick actions
+  (Favourite, Share, Edit, Trash; fewer for an externally opened photo or below API 30); a longer one
+  shows every action. The strip is the head of the room, under the shell's 72 dp band.
+- **The bottom pull zone is lifted above the filmstrip (74 dp) and, for a video with the chrome up, the
+  transport (96 dp; 50 when its second row is folded)**, via the shell's `bottomReserve`, so a
+  vertical-first drag that starts on the scrubber scrubs and does not open the room. The pull zone is
+  the 56 dp band above the navigation bar. Pulling up from ON the filmstrip or transport does not open
+  the actions.
+- **The view-options room** keeps the old settings room's content (filmstrip, blur, keep awake, the
+  slideshow's seconds and shuffle, loop animations, autoplay, pinch panels) and adds "Transparent
+  photos". Its GESTURES note now reads, in effect, *drag the photo down for its details, up from the
+  bottom for what you can do with it, in from the right for these view options*; the lift hints name
+  no edge.
+- The actions room's rows are unchanged and still only the icon is clickable (the known defect);
+  the slideshow row now reads "Stop slideshow", since pause and resume live in the bar.
+
+### B. The favourite heart in the chrome row (owner #18)
+
+The chrome row is Close, the position pill, the heart. The heart is at least 48 dp, filled when the
+photo is a favourite and outlined when not (`Outlined.Favorite` against `FavoriteBorder`: the design
+note assumed these were the same hollow heart, and a render showed they are not), with a small pop on
+turning on and a TalkBack state description. It is drawn only while the chrome is, and only for a photo
+the library holds (`ViewerChromePolicy.favouriteShown`: `catalogueActions` and not `isExternal`); it
+works on videos. Not matched: no reference frame exists for it. Check that it does not collide with
+the video "Resume from" chip, which now sits beneath the chrome row.
+
+### C. The slideshow bar (owner #16)
+
+Previous, play or pause, next, on a black bar in the shape of the gallery's selection toolbar
+(`SelectionToolbarShape`, here a taller `SelectionToolbarTallShape` that keeps the same coves and
+lengthens the straight sides by the status-bar inset, so the bar is flush to the top edge and its
+glyphs sit below the status icons). Targets are 48 dp (the toolbar's pitch is 46). The chip row drops
+by the bar's height while it is up (`chipRowDropDp`) so they stack. Pause is real (a paused flag the
+countdown honours); the chrome folds away after three seconds of a running slideshow and comes back on
+a tap; neither happens while paused or over a video, whose transport and the bar stay up. This is the
+least certain item of the batch: the cove against a real status bar, the stacked height on a 360 dp
+phone and in landscape, and the light theme's status icons over black are all unverified on a device.
+
+### D. A backdrop behind transparent photos (owner #17)
+
+`TransparencyBackdrop` is the first child of the zoom layer, so it pans, zooms and turns with the
+picture and fills the picture's own rectangle (an SVG's comes from its decoded size). Choices: the grid
+(default), white, black (`TransparencyBackground`, persisted in `GalleryPreferences`, read by both
+activities). The chrome swatch button appears only while the current photo declares transparency
+(`AlphaSniffer` on the first 64 KiB, read off the main thread and cached per photo and modification
+time; an unknown answer is opaque), and the choice is also a row in the view options. Not drawn behind
+thumbnails or the shrink-to-map flier. A file that declares alpha but is opaque shows the button and
+no visible change.
+
+### Tests added in batch 2
+
+New files: `ViewerRoomGeographyTest` (which room each edge opens, the pinch shortcuts, the captions),
+`ViewerActionsRoomPeekTest`, `ViewerBottomReserveTest` and `ViewerBottomReserveFoldedTest` (the quick
+strip and the pull zone above the filmstrip and transport), `ViewerHeartTest`,
+`ViewerTransparencyPolicyTest`, `TransparencyBackdropTest` (the backdrop, rendered in each mode),
+`BitmapDecodingAlphaTest` (the `ImageDecoder` path keeps alpha), `ViewerSettingsRoomTransparencyTest`,
+`GalleryPreferencesTransparencyBackgroundTest`, `ViewerSlideshowPolicyTest`, `ViewerSlideshowBarTest`,
+`SlideshowBarRenderTest` (frames under `app/build/renders/`) and `SlideshowPausedStateTest`.
+Extended: `ViewerChromePolicyTest`, `ViewerIntegrationTest`. The render baselines are untracked build
+output, regenerated on each run; the shared `ViewerEdgeCaseTest`, `ViewerRenderTest` and
+`ViewerFixtures` were not edited. The BitmapFactory (API 26-27) alpha path is not tested: it cannot
+pass until the `decodeUpright` defect in TRAPS #34 is fixed.
