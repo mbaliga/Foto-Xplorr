@@ -20,8 +20,10 @@ class PaneBackTargetTest {
         searchVisible: Boolean = false,
         routeIsRoot: Boolean = true,
         mapOpen: Boolean = false,
+        timeEditorShown: Boolean = false,
     ) = paneBackTarget(
         roomOpen, settingsOpen, legacyScreenOpen, selectionActive, searchVisible, routeIsRoot, mapOpen,
+        timeEditorShown,
     )
 
     @Test
@@ -127,8 +129,38 @@ class PaneBackTargetTest {
             target(searchVisible = true),
             target(routeIsRoot = false),
             target(mapOpen = true),
+            target(timeEditorShown = true),
         )
-        assertEquals(7, singles.toSet().size)
+        assertEquals(8, singles.toSet().size)
         assertFalse(PaneBackTarget.NONE in singles)
+    }
+
+    @Test
+    fun `the time panel is closed before the grid state under it`() {
+        assertEquals(PaneBackTarget.CLOSE_TIME_EDITOR, target(timeEditorShown = true, mapOpen = true))
+        assertEquals(
+            PaneBackTarget.CLOSE_TIME_EDITOR,
+            target(timeEditorShown = true, searchVisible = true, routeIsRoot = false),
+        )
+        // And a room still outranks it.
+        assertEquals(PaneBackTarget.CLOSE_ROOM, target(timeEditorShown = true, roomOpen = true))
+    }
+
+    @Test
+    fun `the time panel is shown only where it is drawn`() {
+        assertTrue(timeEditorShown(open = true, selectionActive = false, paneTakenOver = false, rangeApplies = true))
+        assertFalse(timeEditorShown(open = false, selectionActive = false, paneTakenOver = false, rangeApplies = true))
+        // Hidden by another route with the flag still set: Back must not be claimed by it.
+        assertFalse(timeEditorShown(open = true, selectionActive = true, paneTakenOver = false, rangeApplies = true))
+        assertFalse(timeEditorShown(open = true, selectionActive = false, paneTakenOver = true, rangeApplies = true))
+        assertFalse(timeEditorShown(open = true, selectionActive = false, paneTakenOver = false, rangeApplies = false))
+    }
+
+    @Test
+    fun `a flag left set under a selection does not swallow Back`() {
+        val shown = timeEditorShown(open = true, selectionActive = true, paneTakenOver = false, rangeApplies = true)
+        assertEquals(PaneBackTarget.CLEAR_SELECTION, target(selectionActive = true, timeEditorShown = shown))
+        val pinnedSettings = timeEditorShown(open = true, selectionActive = false, paneTakenOver = true, rangeApplies = true)
+        assertEquals(PaneBackTarget.CLOSE_SETTINGS, target(settingsOpen = true, timeEditorShown = pinnedSettings))
     }
 }

@@ -18,6 +18,9 @@ internal enum class PaneBackTarget {
     /** A destination screen (Albums, Calendar, Discover, Library, Tidy up) is on top. */
     CLOSE_LEGACY_SCREEN,
 
+    /** The time range panel is up over the grid or the map: it is the topmost thing there. */
+    CLOSE_TIME_EDITOR,
+
     /** The most specific thing to back out of once the grid is showing. */
     CLEAR_SELECTION,
     CLOSE_SEARCH,
@@ -50,7 +53,13 @@ internal fun paneTakenOver(settingsOpen: Boolean, legacyScreenOpen: Boolean): Bo
  * leaving the map is a smaller step than leaving the album the map is showing. The map screens
  * register no Back handling of their own when embedded; if one did, it would outrank this order.
  *
- * [mapOpen] is last, and defaulted, so a caller that predates the map keeps compiling.
+ * The time panel is first among the grid's own state: it is a transient panel over the grid or
+ * the map, so nothing under it is the next thing to undo. [timeEditorShown] is whether it is
+ * DRAWN, not whether the flag that opens it is set -- see [timeEditorShown] -- so a flag left set
+ * under a selection or a pane never makes Back do nothing.
+ *
+ * [mapOpen] and [timeEditorShown] are last, and defaulted, so a caller that predates them keeps
+ * compiling.
  */
 internal fun paneBackTarget(
     roomOpen: Boolean,
@@ -60,13 +69,29 @@ internal fun paneBackTarget(
     searchVisible: Boolean,
     routeIsRoot: Boolean,
     mapOpen: Boolean = false,
+    timeEditorShown: Boolean = false,
 ): PaneBackTarget = when {
     roomOpen -> PaneBackTarget.CLOSE_ROOM
     settingsOpen -> PaneBackTarget.CLOSE_SETTINGS
     legacyScreenOpen -> PaneBackTarget.CLOSE_LEGACY_SCREEN
+    timeEditorShown -> PaneBackTarget.CLOSE_TIME_EDITOR
     selectionActive -> PaneBackTarget.CLEAR_SELECTION
     searchVisible -> PaneBackTarget.CLOSE_SEARCH
     mapOpen -> PaneBackTarget.CLOSE_MAP
     !routeIsRoot -> PaneBackTarget.LEAVE_ROUTE
     else -> PaneBackTarget.NONE
 }
+
+/**
+ * Whether the time range panel is on screen. The panel is drawn only over the grid or the map
+ * (not over a selection's bar or a pane that has taken the grid's place) and only on a
+ * destination a range applies to; the flag that opens it ([open]) is left set by every other
+ * route that hides it, so Back must key off this, not the flag, or it is swallowed by a panel
+ * nobody can see.
+ */
+internal fun timeEditorShown(
+    open: Boolean,
+    selectionActive: Boolean,
+    paneTakenOver: Boolean,
+    rangeApplies: Boolean,
+): Boolean = open && !selectionActive && !paneTakenOver && rangeApplies

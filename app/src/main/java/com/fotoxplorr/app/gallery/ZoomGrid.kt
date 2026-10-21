@@ -49,6 +49,7 @@ import com.fotoxplorr.app.adaptive.stampAcross
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.core.model.MediaId
+import com.fotoxplorr.core.organize.GridIndexMap
 
 /** The paper a stamp is printed on. */
 private val STAMP_PAPER = Color(0xFFEDE8DC)
@@ -135,6 +136,28 @@ internal fun ZoomGrid(
         PathEffect.dashPathEffect(floatArrayOf(0.01f, with(density) { STAMP_HOLE_PITCH.toPx() }), 0f)
     }
 
+    // The grid keeps its place across a rung change by item KEY, which a month header (Stamps)
+    // does not survive into the headerless columns: re-anchor by ASSET, before the next measure.
+    val gridIndexMap = remember(layout) {
+        GridIndexMap(layout.groups.map { it.assets.size }, layout.hasHeaders, trailingFooter = true)
+    }
+    val anchor = remember { LayoutAnchor() }
+    SideEffect {
+        val previous = anchor.map
+        if (previous != null && previous !== gridIndexMap) {
+            reanchoredGridIndex(
+                old = previous,
+                oldHasHeaders = anchor.hasHeaders,
+                new = gridIndexMap,
+                newHasHeaders = layout.hasHeaders,
+                // Still the old layout's top line: this runs before the next measure.
+                oldFirstVisible = gridState.firstVisibleItemIndex,
+            )?.let { gridState.requestScrollToItem(it) }
+        }
+        anchor.map = gridIndexMap
+        anchor.hasHeaders = layout.hasHeaders
+    }
+
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
@@ -209,6 +232,15 @@ internal fun ZoomGrid(
             MediaPeek(asset = asset, loopAnimations = loopAnimations, animated = asset.id in animatedIds)
         }
     }
+}
+
+/**
+ * What [ZoomGrid] remembers of the layout before this one. Plain fields, not state: they are only
+ * read by the next side effect, and a snapshot read would recompose the grid on every scroll.
+ */
+private class LayoutAnchor {
+    var map: GridIndexMap? = null
+    var hasHeaders = false
 }
 
 /** A month's header row in the stamp view: its name and how many photos follow. */

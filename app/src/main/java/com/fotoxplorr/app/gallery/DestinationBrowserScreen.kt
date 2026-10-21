@@ -180,7 +180,9 @@ fun destinationEmptyMessage(
  *
  * [paneOpen] and [onLeavePane] are the rail's way back from that pane: the selected word is the
  * destination under it, so tapping it is [onReselect], and a scrub that rests on it is
- * [onLeavePane] (see [DestinationWordRail]).
+ * [onLeavePane] (see [DestinationWordRail]). [onTurning] reports whether the wheel is being turned
+ * or is still settling, for a host whose content must not react to a scrub that merely rests on a
+ * word.
  */
 @Composable
 fun DestinationRailPanel(
@@ -192,6 +194,7 @@ fun DestinationRailPanel(
     onReselect: () -> Unit = {},
     paneOpen: Boolean = false,
     onLeavePane: () -> Unit = {},
+    onTurning: (Boolean) -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -206,6 +209,7 @@ fun DestinationRailPanel(
             onReselect = onReselect,
             paneOpen = paneOpen,
             onLeavePane = onLeavePane,
+            onTurning = onTurning,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()

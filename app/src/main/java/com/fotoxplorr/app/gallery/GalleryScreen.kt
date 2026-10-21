@@ -527,6 +527,10 @@ private fun GalleryBrowser(
     // would wipe a restored range. Only the person clears it.
     var timeRange by rememberSaveable(stateSaver = TimeRangeSaver) { mutableStateOf<TimeRange?>(null) }
     var timeEditorOpen by remember { mutableStateOf(false) }
+    // Whether the PINNED rail's wheel is being turned or is still settling. The pull-out room has
+    // its own signal (atHome is false while it is open), but a pinned rail is a sibling of the
+    // grid and commits the hovered word, Map included, while the finger is still down.
+    var railTurning by remember { mutableStateOf(false) }
     // Over a pane or the map the grid is composed (or not) but out of reach: keys must not act on
     // photos nobody can see, and Escape follows the Back order.
     val gridOutOfReach = paneTakenOver || mapOpen
@@ -795,6 +799,14 @@ private fun GalleryBrowser(
         actions.onPendingSearchConsumed()
     }
 
+    // Whether the time panel is actually drawn (see the block that draws it): the flag alone is not
+    // enough, because a selection or a pane hides the panel without clearing it.
+    val timeEditorIsShown = timeEditorShown(
+        open = timeEditorOpen,
+        selectionActive = selection.isActive,
+        paneTakenOver = paneTakenOver,
+        rangeApplies = timeRangeApplies(destination),
+    )
     // What Back undoes next, and what Escape undoes while a pane is up: one list, so a hardware
     // keyboard cannot leave a pane that the Back gesture would have closed.
     fun currentBackTarget() = paneBackTarget(
@@ -805,6 +817,7 @@ private fun GalleryBrowser(
         searchVisible = searchVisible,
         routeIsRoot = route == BrowserRoute.Root,
         mapOpen = mapOpen,
+        timeEditorShown = timeEditorIsShown,
     )
     fun performBack(target: PaneBackTarget) {
         when (target) {
@@ -813,6 +826,7 @@ private fun GalleryBrowser(
             PaneBackTarget.CLOSE_ROOM -> shell.closeAll()
             PaneBackTarget.CLOSE_SETTINGS -> settingsOpen = false
             PaneBackTarget.CLOSE_LEGACY_SCREEN -> legacyScreen = null
+            PaneBackTarget.CLOSE_TIME_EDITOR -> timeEditorOpen = false
             PaneBackTarget.CLEAR_SELECTION -> selection = selection.clear()
             PaneBackTarget.CLOSE_SEARCH -> {
                 searchVisible = false
@@ -824,16 +838,18 @@ private fun GalleryBrowser(
         }
     }
     BackHandler(
-        enabled = !shell.atHome || paneTakenOver || mapOpen ||
+        enabled = !shell.atHome || paneTakenOver || mapOpen || timeEditorIsShown ||
             selection.isActive || searchVisible || route != BrowserRoute.Root,
     ) {
         performBack(currentBackTarget())
     }
     // The time editor is a transient panel over the grid or the map: Back closes it before
-    // anything else, and a room opening over it takes it away. Declared after the handler above,
-    // so it is the one asked first while it is up.
-    LaunchedEffect(shell.atHome) { if (!shell.atHome) timeEditorOpen = false }
-    BackHandler(enabled = timeEditorOpen) { timeEditorOpen = false }
+    // anything else (it is a target of the one handler above, so it cannot outrank or swallow
+    // the others), and anything that hides it -- a room, a selection, a pane, a destination a
+    // range does not apply to -- also drops the flag, so it does not come back by itself later.
+    LaunchedEffect(shell.atHome, timeEditorIsShown) {
+        if (!shell.atHome || (timeEditorOpen && !timeEditorIsShown)) timeEditorOpen = false
+    }
 
     // Where the grid actually is, for the edge scrubber's resting marker. Derived so a scroll
     // invalidates only what draws the marker, not the whole browser.
@@ -1296,6 +1312,7 @@ private fun GalleryBrowser(
                                     legacyScreen = null
                                     settingsOpen = false
                                 },
+                                onTurning = { railTurning = it },
                                 onOpenSettings = {
                                     settingsOpen = true
                                     legacyScreen = null
@@ -1392,7 +1409,10 @@ private fun GalleryBrowser(
                             // grid. It is fed [scrubberAssets] -- the destination, the route, the
                             // search and the time range all applied, and the one visibility
                             // filter -- not the whole library.
-                            mapOpen -> GalleryMapContent(assets = scrubberAssets, settled = shell.atHome)
+                            mapOpen -> GalleryMapContent(
+                                assets = scrubberAssets,
+                                settled = mapPaneSettled(atHome = shell.atHome, railTurning = railTurning),
+                            )
                             // Pull-to-backup is retired (owner direction, 2026-08-05): the
                             // pull-down space at a room's top belongs to the fonebrew
                             // top-room reveal, so no other gesture may claim it — and the
@@ -1841,6 +1861,7 @@ private fun PersistentNavRail(
     onReselect: () -> Unit = {},
     paneOpen: Boolean = false,
     onLeavePane: () -> Unit = {},
+    onTurning: (Boolean) -> Unit = {},
 ) {
     if (presentation == NavRailPresentation.COLLAPSED) {
         Box(
@@ -1871,6 +1892,7 @@ private fun PersistentNavRail(
             onReselect = onReselect,
             paneOpen = paneOpen,
             onLeavePane = onLeavePane,
+            onTurning = onTurning,
         )
         // The collapse affordance: one tap back to NavRailPresentation.COLLAPSED. Pinned is a
         // standing choice, not a one-way door -- see navRailCollapsed's own doc in

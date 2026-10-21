@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -97,6 +98,9 @@ import kotlin.math.roundToInt
  *   a fling that comes to rest on the selected word is a choice of it, not a no-op, and says so
  *   through [onLeavePane] (and not [onReselect], which also closes the room under the finger).
  * @param onLeavePane fired when the wheel rests on the selected word while [paneOpen].
+ * @param onTurning whether the wheel is moving at all: a finger on it, its fling, or the rail's
+ *   own settle. A host that creates something costly from the committed word (the street map)
+ *   waits for false, because a commit arrives while the finger is still down.
  */
 @Composable
 fun DestinationWordRail(
@@ -107,6 +111,7 @@ fun DestinationWordRail(
     onReselect: () -> Unit = {},
     paneOpen: Boolean = false,
     onLeavePane: () -> Unit = {},
+    onTurning: (Boolean) -> Unit = {},
 ) {
     if (items.isEmpty()) return
 
@@ -183,6 +188,16 @@ fun DestinationWordRail(
                 }
             }
         }
+
+        // The wheel's motion, for the host. Reported from here rather than derived by it because
+        // only the rail knows which scrolls count: all of them, the rail's own settle included.
+        val currentOnTurning by rememberUpdatedState(onTurning)
+        LaunchedEffect(scroll) {
+            snapshotFlow { dragging || scroll.isScrollInProgress }.collect { currentOnTurning(it) }
+        }
+        // A rail that leaves the composition mid-turn (a window resize swapping presentations)
+        // must not leave the host believing it is still turning.
+        DisposableEffect(scroll) { onDispose { currentOnTurning(false) } }
 
         LaunchedEffect(selectedIndex, pitchPx) {
             val target = (selectedIndex * pitchPx).roundToInt()
