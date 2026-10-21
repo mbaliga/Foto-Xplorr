@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -69,6 +70,17 @@ import com.fotoxplorr.app.spatial.PlateMapBackdrop
  * @param mapBackdrop what to draw under the pin once settled. Defaults to the flavour's own
  *   [PlateMapBackdrop]; the render test substitutes a stand-in because MapLibre cannot render on
  *   the JVM.
+ * @param flightActive true when a [PhotoToPinFlight] is carrying the photo to this pin. The tile
+ *   then does NOT play its own hero shrink (two copies of the photo shrinking at once is the
+ *   thing this flag exists to stop): it stays at 1x, hidden until the flier hands off to it. False
+ *   (the default) keeps the original in-plate hero, which is what previews and render tests use.
+ * @param flightFlies meaningful only with [flightActive]. False says the flier cannot reach this
+ *   pin (the room is scrolled so the pin is out of reach), so the tile fades in in place instead
+ *   of waiting for a flier that is not coming. See [PlaceMorph.canFly].
+ * @param onPinPositioned the pin tile's bounds in ROOT coordinates, reported whenever its layout
+ *   position changes (which, because the whole room slides during the pull, is every frame of
+ *   it). The room converts this to room-local coordinates and de-duplicates it; see
+ *   [PhotoDetailRoom]. Null measures nothing.
  */
 @Composable
 fun PlacePlate(
@@ -79,6 +91,9 @@ fun PlacePlate(
     modifier: Modifier = Modifier,
     settled: Boolean = false,
     onExpand: ((Rect) -> Unit)? = null,
+    flightActive: Boolean = false,
+    flightFlies: Boolean = true,
+    onPinPositioned: ((Rect) -> Unit)? = null,
     mapBackdrop: @Composable BoxScope.(settled: Boolean) -> Unit = { isSettled ->
         PlateMapBackdrop(
             assetId = asset.id,
@@ -144,13 +159,46 @@ fun PlacePlate(
         // graticule (it is opaque where it exists) and under the pin.
         mapBackdrop(settled)
 
-        PlacePin(
+        RevealingPin(
             asset = asset,
+            reveal = reveal,
+            heroScale = heroScale,
+            mode = PlaceMorph.pinMode(flightActive, flightFlies),
             modifier = Modifier.align(Alignment.Center),
-            thumbnailScale = { PlaceMorph.thumbnailScale(reveal(), heroScale) },
-            landed = { PlaceMorph.plateAlpha(reveal()) },
+            onTilePositioned = onPinPositioned,
         )
     }
+}
+
+/**
+ * The pin as the details room reveals it: [PlacePin] wired to the room's [reveal] according to
+ * [mode] ([PlaceMorph.PinMode]). Shared by the located plate and [PlaceUnknownPlate] so the two
+ * can never arrive differently.
+ *
+ * @param ghost true for the unknown-location plate's pin: darkened by [PlaceMorph.GHOST_DIM] as
+ *   it lands, no pointer (a pointer says "this is a place"), and described as what it is.
+ */
+@Composable
+internal fun RevealingPin(
+    asset: MediaAsset,
+    reveal: () -> Float,
+    heroScale: Float,
+    mode: PlaceMorph.PinMode,
+    modifier: Modifier = Modifier,
+    ghost: Boolean = false,
+    onTilePositioned: ((Rect) -> Unit)? = null,
+) {
+    PlacePin(
+        asset = asset,
+        modifier = modifier,
+        thumbnailScale = { PlaceMorph.pinScale(mode, reveal(), heroScale) },
+        landed = { PlaceMorph.plateAlpha(reveal()) },
+        tileAlpha = { PlaceMorph.pinTileAlpha(mode, reveal()) },
+        pointerGate = { if (ghost) 0f else PlaceMorph.pinPointerGate(mode, reveal()) },
+        dim = { if (ghost) PlaceMorph.GHOST_DIM * PlaceMorph.plateAlpha(reveal()) else 0f },
+        description = if (ghost) "Photo, location unknown" else "Photo location",
+        onTilePositioned = onTilePositioned,
+    )
 }
 
 /**
@@ -165,6 +213,15 @@ fun PlacePlate(
  * @param landed 0..1, how far the plate has resolved: the border and the pointer fade in with it,
  *   so the hero photo starts borderless (it IS the photo the user was just looking at) and gains
  *   its frame as it becomes a pin.
+ * @param tileAlpha opacity of the tile (frame and photo), read at draw time. Below 1 while a
+ *   [PhotoToPinFlight] still carries the photo and this tile waits beneath it.
+ * @param pointerGate a further multiplier on the pointer's opacity, 0 to hide it outright.
+ * @param dim 0..1 black laid over the whole tile (frame included): how a "ghost" pin, for a photo
+ *   with no place, is told apart from a real one.
+ * @param description the tile's accessibility description.
+ * @param onTilePositioned the tile's bounds in ROOT coordinates, measured BEFORE the tile's own
+ *   scale layer, so it reports the 80 dp layout tile and not the hero-scaled one. Fires on every
+ *   position change; callers that only want it once must de-duplicate.
  */
 @Composable
 fun PlacePin(
@@ -172,6 +229,11 @@ fun PlacePin(
     modifier: Modifier = Modifier,
     thumbnailScale: () -> Float = { 1f },
     landed: () -> Float = { 1f },
+    tileAlpha: () -> Float = { 1f },
+    pointerGate: () -> Float = { 1f },
+    dim: () -> Float = { 0f },
+    description: String = "Photo location",
+    onTilePositioned: ((Rect) -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
@@ -182,18 +244,35 @@ fun PlacePin(
         Box(
             modifier = Modifier
                 .size(PlaceMorph.PIN_SIZE_DP.dp)
+                // Measured ahead of the layer below on purpose: a coordinate read after a
+                // graphicsLayer would be the hero-scaled tile, and the flight needs to know where
+                // the tile LANDS, not where it currently is.
+                .then(
+                    if (onTilePositioned != null) {
+                        Modifier.onGloballyPositioned { onTilePositioned(it.boundsInRoot()) }
+                    } else {
+                        Modifier
+                    },
+                )
                 .graphicsLayer {
                     val scale = thumbnailScale()
                     scaleX = scale
                     scaleY = scale
+                    alpha = tileAlpha().coerceIn(0f, 1f)
                 }
                 .clip(RoundedCornerShape(PlaceMorph.PIN_CORNER_DP.dp))
                 // The border is a white ground showing through a padded, clipped photo -- the
                 // way a real frame works -- so it scales with the tile and stays crisp at 1x.
                 .drawBehind { drawRect(Color.White.copy(alpha = landed().coerceIn(0f, 1f))) }
+                // Over frame AND photo, so a ghost pin darkens as one object.
+                .drawWithContent {
+                    drawContent()
+                    val darkness = dim().coerceIn(0f, 1f)
+                    if (darkness > 0f) drawRect(Color.Black.copy(alpha = darkness))
+                }
                 .padding(PlaceMorph.PIN_BORDER_DP.dp)
                 .clip(RoundedCornerShape((PlaceMorph.PIN_CORNER_DP - PlaceMorph.PIN_BORDER_DP).dp))
-                .semantics { contentDescription = "Photo location" },
+                .semantics { contentDescription = description },
         ) {
             MediaImage(
                 asset = asset,
@@ -208,7 +287,10 @@ fun PlacePin(
                 // The pointer appears only once the tile has all but landed: it hangs off the
                 // pin's bottom edge, and while the photo is still large that edge is nowhere
                 // near here -- a triangle floating mid-photo reads as a stray mark.
-                .graphicsLayer { alpha = PlaceMorph.pointerAlpha(thumbnailScale(), landed()) }
+                .graphicsLayer {
+                    alpha = PlaceMorph.pointerAlpha(thumbnailScale(), landed()) *
+                        pointerGate().coerceIn(0f, 1f)
+                }
                 .drawBehind {
                     val path = Path().apply {
                         moveTo(0f, 0f)
@@ -228,11 +310,11 @@ private class PlateCoordinates {
 }
 
 /** Square, like the reference's 400 x 400. */
-private const val PLATE_ASPECT = 1f
+internal const val PLATE_ASPECT = 1f
 internal const val PLATE_CORNER_DP = 12
 private const val GRATICULE_STROKE_DP = 1
 
 // Fixed on purpose (reference design): map-plate neutrals and the white pin frame, measured off the
 // reference.
-private val PLATE_GROUND = Color(0xFF12161C)
-private val GRATICULE = Color(0xFF2E3946)
+internal val PLATE_GROUND = Color(0xFF12161C)
+internal val GRATICULE = Color(0xFF2E3946)

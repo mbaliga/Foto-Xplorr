@@ -58,6 +58,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -157,6 +160,18 @@ internal val MUTED_TEXT = Color(0xFF6A6A6A)
  * @param plateMapBackdrop what the plate draws under its pin once settled; null means the
  *   flavour's own backdrop. The render test passes a stand-in, since MapLibre cannot render on
  *   the JVM.
+ * @param flightActive true when a [PhotoToPinFlight] is carrying the photo to the place plate's
+ *   pin, so the pin waits for it instead of playing its own in-plate hero shrink. Defaults to
+ *   false, which keeps the original in-plate hero (previews, render tests, an unwired viewer).
+ *   The room also checks that the pin is reachable ([PlaceMorph.canFly]) and fades it in place
+ *   when it is not, so a room scrolled before it is closed needs no special handling by the
+ *   caller. See [PhotoToPinFlight] for everything the screen has to supply.
+ * @param onPinPositioned the place plate's pin tile, in THIS ROOM's coordinates (origin at the
+ *   room's top-left, which is the shell's; scroll included). The shell slides the room rigidly,
+ *   so this is the same number at every progress and is reported once, then again only if the
+ *   pin genuinely moves (a scroll, or a header that reflowed). It is what
+ *   [PhotoToPinFlight]'s `pinRect` reads. Reported for a photo with no place too: the ghost pin
+ *   on [PlaceUnknownPlate] is a landing target like any other.
  * @param recognizedText this photo's OCR text, flattened -- read by the viewer the same way
  *   [exif] is. Blank hides the "Search inside this photo" card entirely.
  * @param onSearchLibrary hands recognised text to the library search. Null leaves that one action
@@ -218,7 +233,25 @@ fun PhotoDetailRoom(
     onEmbedKeywords: (() -> Unit)? = null,
     /** Whether Information starts expanded. Collapsed by default: the reference's three rows. */
     informationInitiallyExpanded: Boolean = false,
+    flightActive: Boolean = false,
+    onPinPositioned: ((Rect) -> Unit)? = null,
 ) {
+    // The room's own layout coordinates, held in a plain object (not snapshot state): they are
+    // only ever READ, at the moment a pin report needs converting to room coordinates, and the
+    // room's position changes on every frame of the pull.
+    val roomCoordinates = remember { RoomCoordinates() }
+    val latestOnPinPositioned by rememberUpdatedState(onPinPositioned)
+    // Whether the pin is reachable by a flier. Written only when it flips, so it recomposes the
+    // room at most when a scroll carries the pin away or back, never per frame.
+    var pinFlies by remember { mutableStateOf(true) }
+    val reportPin = remember {
+        val reporter = PinReporter(roomCoordinates) { local, roomWidth, roomHeight ->
+            pinFlies = PlaceMorph.canFly(local, roomWidth, roomHeight)
+            latestOnPinPositioned?.invoke(local)
+        }
+        val report: (Rect) -> Unit = reporter::report
+        report
+    }
     // The shell deliberately consumes no insets — it says so in its own KDoc, because doing so
     // would lift its drag-sensitive edges off the physical screen edge. So a room pads for the
     // system bar itself. This is the TOP room: the shell insets it by the band at the BOTTOM
@@ -226,6 +259,7 @@ fun PhotoDetailRoom(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .onGloballyPositioned { roomCoordinates.coordinates = it }
             .background(ROOM_BACKGROUND)
             .statusBarsPadding()
             // The activity is edge-to-edge, so the window no longer shrinks for the keyboard on
@@ -272,6 +306,9 @@ fun PhotoDetailRoom(
             onWriteIntoFile = onWriteLocationIntoFile,
             onExpandMap = onExpandMap,
             plateMapBackdrop = plateMapBackdrop,
+            flightActive = flightActive,
+            flightFlies = pinFlies,
+            onPinPositioned = reportPin,
         )
         CaptionBlock(
             photoId = asset.id,
@@ -319,7 +356,7 @@ fun PhotoDetailRoom(
  * [PlaceMorph.textAlpha], a vertical slide from [PlaceMorph.textOffsetDp]. Draw-time only -- both
  * are read inside the layer lambda, so a drag re-draws the arrival without recomposing anything.
  */
-private fun Modifier.textArrival(reveal: () -> Float): Modifier = graphicsLayer {
+internal fun Modifier.textArrival(reveal: () -> Float): Modifier = graphicsLayer {
     val r = reveal()
     alpha = PlaceMorph.textAlpha(r)
     translationY = PlaceMorph.textOffsetDp(r) * density
@@ -1055,13 +1092,19 @@ private fun StatusBlock(
 }
 
 /**
- * The place plate, or an honest absence — and the room's only drawing of where this photo was
- * taken.
+ * The place plate, or an honest account of why there is not one -- the room's only drawing of
+ * where this photo was taken.
  *
- * Most libraries are mostly un-geotagged — screenshots, downloads, anything shared through a
- * messenger that strips EXIF. A plate drawn at 0°,0° for those would be a confident lie, so with
- * no location the plate's space is simply empty background (owner's words), with the one
- * explanatory sentence, and the picker when the caller allows a location to be placed by hand.
+ * Most libraries are mostly un-geotagged -- screenshots, downloads, anything shared through a
+ * messenger that strips EXIF. A plate drawn at 0°,0° for those would be a confident lie, so a
+ * photo with no location gets [PlaceUnknownPlate] instead: the same footprint as the real plate
+ * (so the room does not jump when a place is set), a calm static graticule, the photo as a ghost
+ * pin, and the words "No location yet". The photo's flight lands there too, so the shrink has a
+ * target on every photo, not only the geotagged ones.
+ *
+ * "Add a place" is offered only when the caller allows a place to be set AND the metadata read
+ * succeeded (P0-02): a failed read is not evidence the file has no GPS tag, so it never leads to
+ * the picker, which could overwrite one the file already carries.
  */
 @Composable
 private fun PlaceBlock(
@@ -1076,6 +1119,9 @@ private fun PlaceBlock(
     onExpandMap: ((Rect) -> Unit)?,
     plateMapBackdrop: (@Composable BoxScope.(settled: Boolean) -> Unit)?,
     onWriteIntoFile: (() -> Unit)? = null,
+    flightActive: Boolean = false,
+    flightFlies: Boolean = true,
+    onPinPositioned: ((Rect) -> Unit)? = null,
 ) {
     // A hand-placed location stands in for an absent embedded one. It never overrides a real GPS
     // tag: what the camera recorded is a fact about the photograph, and the picker is for photos
@@ -1083,28 +1129,75 @@ private fun PlaceBlock(
     val embedded = PlaceMorph.isDrawable(exif.latitude, exif.longitude)
     val latitude = if (embedded) exif.latitude else manualLatitude
     val longitude = if (embedded) exif.longitude else manualLongitude
+    // Whether a place may be set by hand at all: the caller allows it, the file has no embedded
+    // fix to protect, and the read that says so actually succeeded.
+    val setLocation = onSetLocation.takeIf { exif.readOk && !embedded }
+    val canPlaceByHand = setLocation != null
+    var editing by remember(asset.id) { mutableStateOf(false) }
     Box(Modifier.padding(horizontal = GUTTER)) {
         when {
+            // First, so the picker stays up while a place is being set: the first tap hands the
+            // host a location, which makes the plate drawable, and without this the picker would
+            // be swapped for the plate under the user's finger.
+            editing && setLocation != null -> {
+                Box(Modifier.textArrival(reveal)) {
+                    com.fotoxplorr.app.spatial.LocationPicker(
+                        latitude = latitude,
+                        longitude = longitude,
+                        onSet = setLocation,
+                        onClear = {
+                            onClearLocation?.invoke()
+                            editing = false
+                        },
+                        onWriteIntoFile = onWriteIntoFile,
+                        onDone = { editing = false },
+                    )
+                }
+            }
             PlaceMorph.isDrawable(latitude, longitude) -> {
-                if (plateMapBackdrop != null) {
-                    PlacePlate(
-                        asset = asset,
-                        latitude = latitude!!,
-                        longitude = longitude!!,
-                        reveal = reveal,
-                        settled = settled,
-                        onExpand = onExpandMap,
-                        mapBackdrop = plateMapBackdrop,
-                    )
-                } else {
-                    PlacePlate(
-                        asset = asset,
-                        latitude = latitude!!,
-                        longitude = longitude!!,
-                        reveal = reveal,
-                        settled = settled,
-                        onExpand = onExpandMap,
-                    )
+                Column {
+                    if (plateMapBackdrop != null) {
+                        PlacePlate(
+                            asset = asset,
+                            latitude = latitude!!,
+                            longitude = longitude!!,
+                            reveal = reveal,
+                            settled = settled,
+                            onExpand = onExpandMap,
+                            flightActive = flightActive,
+                            flightFlies = flightFlies,
+                            onPinPositioned = onPinPositioned,
+                            mapBackdrop = plateMapBackdrop,
+                        )
+                    } else {
+                        PlacePlate(
+                            asset = asset,
+                            latitude = latitude!!,
+                            longitude = longitude!!,
+                            reveal = reveal,
+                            settled = settled,
+                            onExpand = onExpandMap,
+                            flightActive = flightActive,
+                            flightFlies = flightFlies,
+                            onPinPositioned = onPinPositioned,
+                        )
+                    }
+                    if (canPlaceByHand) {
+                        // The way back into the picker for a place the user set by hand, and so
+                        // the only way to reach its "remove" and "write into the file" actions.
+                        Text(
+                            text = "Placed by you · Change",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = RoomStyle.Caption,
+                            modifier = Modifier
+                                .textArrival(reveal)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) { editing = true }
+                                .padding(top = 10.dp, bottom = 4.dp),
+                        )
+                    }
                 }
             }
             !exif.readOk -> {
@@ -1121,38 +1214,46 @@ private fun PlaceBlock(
                     )
                 }
             }
-            onSetLocation != null -> {
-                Box(Modifier.textArrival(reveal)) {
-                    com.fotoxplorr.app.spatial.LocationPicker(
-                        latitude = latitude,
-                        longitude = longitude,
-                        onSet = onSetLocation,
-                        onClear = { onClearLocation?.invoke() },
-                        onWriteIntoFile = onWriteIntoFile,
-                    )
-                }
-            }
             else -> {
-                // The plate's area is just empty space in the background, with the one sentence
-                // that says why -- photos saved from messaging apps and websites have their GPS
-                // stripped before they ever reach the device, which is the reason for most of the
-                // empty ones in a real library.
-                Column(Modifier.textArrival(reveal).padding(vertical = 6.dp)) {
-                    Text(
-                        text = "No location in this file",
-                        color = RoomStyle.InkMuted,
-                        style = RoomStyle.Row,
-                    )
-                    Text(
-                        text = "Photos saved from messaging apps and websites usually have their " +
-                            "location removed before they arrive.",
-                        color = RoomStyle.InkFaint,
-                        style = RoomStyle.Caption,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-                }
+                PlaceUnknownPlate(
+                    asset = asset,
+                    reveal = reveal,
+                    onAddPlace = if (canPlaceByHand) ({ editing = true }) else null,
+                    flightActive = flightActive,
+                    flightFlies = flightFlies,
+                    onPinPositioned = onPinPositioned,
+                )
             }
         }
+    }
+}
+
+/** The room's most recent layout coordinates; a plain holder, see [PhotoDetailRoom]. */
+private class RoomCoordinates {
+    var coordinates: LayoutCoordinates? = null
+}
+
+/**
+ * Turns the pin tile's root-space bounds into the ROOM's coordinates and says so only when they
+ * change.
+ *
+ * The tile's root position changes on every frame of the pull (the whole room slides), but its
+ * position within the room does not, so converting and de-duplicating here is what turns a
+ * per-frame stream into "measured once, again on a scroll".
+ */
+private class PinReporter(
+    private val room: RoomCoordinates,
+    private val onChanged: (local: Rect, roomWidth: Float, roomHeight: Float) -> Unit,
+) {
+    private var last: Rect? = null
+
+    fun report(rootBounds: Rect) {
+        val coordinates = room.coordinates?.takeIf { it.isAttached } ?: return
+        val origin = coordinates.positionInRoot()
+        val local = rootBounds.translate(-origin.x, -origin.y)
+        if (PlaceMorph.sameRect(local, last)) return
+        last = local
+        onChanged(local, coordinates.size.width.toFloat(), coordinates.size.height.toFloat())
     }
 }
 

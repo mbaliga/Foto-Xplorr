@@ -1,9 +1,13 @@
 package com.fotoxplorr.app.viewer
 
+import androidx.compose.ui.geometry.Rect
+import dev.aarso.cellshell.SpatialMotion
+import dev.aarso.cellshell.parkDistance
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.floor
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -200,6 +204,292 @@ object PlaceMorph {
         return latitude in -90.0..90.0 && longitude in -180.0..180.0
     }
 
+    // ── The shared-element flight: the photo you were looking at becomes the pin ──────────────
+    //
+    // Everything below is geometry for [PhotoToPinFlight]: where the photo is, where the card
+    // carrying it has parked, where the pin will be, and how those blend as one drag. It is all
+    // a pure function of the shell's vertical progress `v` (0 = photo, 1 = details room open),
+    // so it reverses on close for free and holds perfectly still under a stationary finger.
+    // The older [flight] / [thumbnailScale] above describe the in-plate hero that plays when no
+    // flier is available; they are kept unchanged because that path still has callers and tests.
+
+    /**
+     * The grab band the shell leaves visible under the parked card, in dp. Mirrors cell-shell's
+     * private `BAND_DP` (a shared-library constant this app cannot reference); the room is padded
+     * by it at the bottom, so it is also the amount of the viewport the room does NOT use.
+     */
+    const val SHELL_BAND_DP = 72f
+
+    /** How dark the ghost pin is on the unknown-location plate, 0..1. See [landedDim]. */
+    const val GHOST_DIM = 0.35f
+
+    /**
+     * Where `ContentScale.Fit` draws an image of [imageWidth] x [imageHeight] inside a container
+     * of [containerWidth] x [containerHeight] (container origin at 0,0): centred, aspect kept.
+     *
+     * A degenerate image (a zero or NaN dimension, which a photo whose size was never read
+     * reports) gets the whole container rather than NaN geometry; a degenerate container gets
+     * [Rect.Zero].
+     */
+    fun fitRect(containerWidth: Float, containerHeight: Float, imageWidth: Float, imageHeight: Float): Rect {
+        if (!(containerWidth > 0f) || !(containerHeight > 0f)) return Rect.Zero
+        if (!(imageWidth > 0f) || !(imageHeight > 0f)) return Rect(0f, 0f, containerWidth, containerHeight)
+        val scale = min(containerWidth / imageWidth, containerHeight / imageHeight)
+        val width = imageWidth * scale
+        val height = imageHeight * scale
+        val left = (containerWidth - width) / 2f
+        val top = (containerHeight - height) / 2f
+        return Rect(left, top, left + width, top + height)
+    }
+
+    /**
+     * Where [rect] (a rectangle in the home card's own coordinates -- the photo's fit rect) is
+     * drawn once the shell has parked the card downward by [v] of the way to the top room.
+     *
+     * The shell scales the card about its centre by `1 - PARK_SCALE_DROP * v` and then places it
+     * `v * parkDistance` lower; this is exactly that, from the shell's own constants and its own
+     * [parkDistance], so the two cannot drift apart. There is no swivel term: the viewer parks
+     * the card with a flat SLIDE while the top room is pulled (see [PhotoToPinFlight]'s contract),
+     * because a tilted card has no rectangle to follow.
+     *
+     * @param bandPx the band the shell leaves visible, in px ([SHELL_BAND_DP] x density).
+     */
+    fun parkedCardRect(rect: Rect, viewportWidth: Float, viewportHeight: Float, v: Float, bandPx: Float): Rect {
+        val progress = v.coerceIn(0f, 1f)
+        val scale = 1f - SpatialMotion.PARK_SCALE_DROP * progress
+        val centreX = viewportWidth / 2f
+        val centreY = viewportHeight / 2f
+        val dy = progress * parkDistance(viewportHeight, scale, bandPx)
+        return Rect(
+            left = centreX + (rect.left - centreX) * scale,
+            top = centreY + (rect.top - centreY) * scale + dy,
+            right = centreX + (rect.right - centreX) * scale,
+            bottom = centreY + (rect.bottom - centreY) * scale + dy,
+        )
+    }
+
+    /**
+     * Component-wise blend of two rectangles; [t] is not clamped. The ends are returned as given,
+     * not recomputed: `a + (b - a)` is not always exactly `b` in floating point, and the flier's
+     * landing has to be pixel-exact for the swap to the real pin to be invisible.
+     */
+    fun lerpRect(a: Rect, b: Rect, t: Float): Rect = when (t) {
+        0f -> a
+        1f -> b
+        else -> Rect(
+            left = a.left + (b.left - a.left) * t,
+            top = a.top + (b.top - a.top) * t,
+            right = a.right + (b.right - a.right) * t,
+            bottom = a.bottom + (b.bottom - a.bottom) * t,
+        )
+    }
+
+    /**
+     * How far along its flight the photo is, 0 (still riding the parked card) to 1 (the pin), for
+     * the shell's progress [v]. Smoothstep over the WHOLE pull: the photo leaves the card gently,
+     * and arrives with zero slope so there is no jump into the hand-off at [HANDOFF_START].
+     *
+     * It deliberately starts at 0 rather than at "when the plate comes into view". The old morph
+     * was timed to a window the plate was still off screen for -- the room slides 1:1 from above
+     * -- so most of the shrink happened where nobody could see it. The flier is its own surface,
+     * visible the whole way, so the shrink is visible the whole way.
+     */
+    fun flightT(v: Float): Float = flight(stagger(v, FLY_START, FLY_END))
+
+    /**
+     * The flier's opacity: fully opaque until [HANDOFF_START], then fading out over the last of
+     * the pull while the room's real pin, already fully opaque underneath ([realPinVisible]),
+     * is revealed. Opaque-under-fading-over is what makes the swap exact: cross-fading two
+     * copies that sum to 1 would dim the plate for a few frames.
+     */
+    fun handoff(v: Float): Float = 1f - stagger(v, HANDOFF_START, 1f)
+
+    /** Whether the room's own pin tile is drawn at [v] -- hidden while the flier carries the photo. */
+    fun realPinVisible(v: Float): Boolean = v >= HANDOFF_START
+
+    /**
+     * Where the pin tile is on screen at progress [v], given [pinRoomRect], its rectangle in the
+     * ROOM's own coordinates (origin at the room's top-left, which is the shell's).
+     *
+     * The shell moves the top room with a placement offset of `-viewportHeight * (1 - v)`, a rigid
+     * slide, so the pin's room-local position is constant and its screen position is analytic.
+     * Measuring it once is enough; it never needs a per-frame measurement and cannot drift.
+     */
+    fun pinRectAt(pinRoomRect: Rect, viewportHeight: Float, v: Float): Rect =
+        pinRoomRect.translate(0f, -viewportHeight * (1f - v.coerceIn(0f, 1f)))
+
+    /**
+     * Whether the flier may fly to this pin: the whole tile is inside the room's [roomWidth] x
+     * [roomHeight]. False when the room is scrolled so the pin is partly or wholly out of reach,
+     * in which case there is no honest place to land and the pin simply fades in in place.
+     *
+     * Both the flier and the room's own pin ask this of the same numbers, so they can never
+     * disagree about which of the two is drawing.
+     */
+    fun canFly(pinRoomRect: Rect, roomWidth: Float, roomHeight: Float): Boolean {
+        if (pinRoomRect.width <= 0f || pinRoomRect.height <= 0f) return false
+        val slack = 1f
+        return pinRoomRect.left >= -slack && pinRoomRect.top >= -slack &&
+            pinRoomRect.right <= roomWidth + slack && pinRoomRect.bottom <= roomHeight + slack
+    }
+
+    /** The flier's outer rectangle at [v]: the parked photo blended into the live pin by [flightT]. */
+    fun flightRect(
+        photoRect: Rect,
+        pinRoomRect: Rect,
+        viewportWidth: Float,
+        viewportHeight: Float,
+        bandPx: Float,
+        v: Float,
+    ): Rect = lerpRect(
+        parkedCardRect(photoRect, viewportWidth, viewportHeight, v, bandPx),
+        pinRectAt(pinRoomRect, viewportHeight, v),
+        flightT(v),
+    )
+
+    /**
+     * One frame of the flier.
+     *
+     * @property outer the tile including its white frame, in the overlay's coordinates; equal to
+     *   the pin tile at v = 1.
+     * @property photo the photo's own area inside [outer] (the frame deflated), where the image
+     *   is cropped to.
+     * @property flightT 0..1, see [PlaceMorph.flightT].
+     * @property frameAlpha 0..1 opacity of the white frame; the same curve the pin's frame uses.
+     * @property outerCornerPx the tile's corner radius in px, growing 0 -> the pin's.
+     * @property alpha the whole flier's opacity ([handoff]).
+     */
+    data class FlightFrame(
+        val outer: Rect,
+        val photo: Rect,
+        val flightT: Float,
+        val frameAlpha: Float,
+        val outerCornerPx: Float,
+        val alpha: Float,
+    )
+
+    /**
+     * The flier's frame at [v], or null when it should draw nothing: the shell is closed, the pin
+     * is unknown or out of reach ([canFly]), or there is no photo rectangle.
+     *
+     * @param pinRoomRect the pin tile in the room's coordinates, see [pinRectAt].
+     * @param density px per dp, for the frame and corner.
+     */
+    fun flightFrame(
+        photoRect: Rect,
+        pinRoomRect: Rect,
+        viewportWidth: Float,
+        viewportHeight: Float,
+        bandPx: Float,
+        v: Float,
+        density: Float,
+    ): FlightFrame? {
+        if (!(v > FLY_MIN_PROGRESS)) return null
+        if (photoRect.width <= 0f || photoRect.height <= 0f) return null
+        if (!canFly(pinRoomRect, viewportWidth, viewportHeight - bandPx)) return null
+        val t = flightT(v)
+        val outer = flightRect(photoRect, pinRoomRect, viewportWidth, viewportHeight, bandPx, v)
+        val frameAlpha = plateAlpha(v)
+        val inset = min(PIN_BORDER_DP * density * frameAlpha, min(outer.width, outer.height) / 2f)
+        return FlightFrame(
+            outer = outer,
+            photo = outer.deflate(inset),
+            flightT = t,
+            frameAlpha = frameAlpha,
+            outerCornerPx = PIN_CORNER_DP * density * t,
+            alpha = handoff(v),
+        )
+    }
+
+    /**
+     * How the flier's image is placed: a base layer of the photo's own size ([CropPlacement.scale]
+     * about its top-left, then translated) with only [CropPlacement.window] of it showing.
+     *
+     * The photo morphs from its own aspect to the pin's square, and a single stretched layer
+     * would squash it on the way. So the layer is scaled UNIFORMLY and a window onto it changes
+     * aspect instead: the biggest centred rectangle of the target's aspect that fits the photo,
+     * which is exactly what `ContentScale.Crop` shows at each size, with no re-decode or relayout.
+     *
+     * @param window the visible part, in the base layer's own coordinates.
+     * @param scale uniform scale of the base layer.
+     * @param translationX where the base layer's top-left lands, in the overlay.
+     */
+    data class CropPlacement(
+        val window: Rect,
+        val scale: Float,
+        val translationX: Float,
+        val translationY: Float,
+    )
+
+    /** See [CropPlacement]. Null when either size is degenerate. */
+    fun cropPlacement(baseWidth: Float, baseHeight: Float, target: Rect): CropPlacement? {
+        if (!(baseWidth > 0f) || !(baseHeight > 0f) || target.width <= 0f || target.height <= 0f) return null
+        val targetAspect = target.width / target.height
+        val windowWidth: Float
+        val windowHeight: Float
+        if (targetAspect >= baseWidth / baseHeight) {
+            windowWidth = baseWidth
+            windowHeight = baseWidth / targetAspect
+        } else {
+            windowHeight = baseHeight
+            windowWidth = baseHeight * targetAspect
+        }
+        val windowLeft = (baseWidth - windowWidth) / 2f
+        val windowTop = (baseHeight - windowHeight) / 2f
+        val scale = target.width / windowWidth
+        return CropPlacement(
+            window = Rect(windowLeft, windowTop, windowLeft + windowWidth, windowTop + windowHeight),
+            scale = scale,
+            translationX = target.left - scale * windowLeft,
+            translationY = target.top - scale * windowTop,
+        )
+    }
+
+    /** How dark the pin is once landed: [GHOST_DIM] for a photo with no place, 0 for a located one. */
+    fun landedDim(placeKnown: Boolean): Float = if (placeKnown) 0f else GHOST_DIM
+
+    /** Whether two rectangles agree to within [tolerance] px on every edge. */
+    fun sameRect(a: Rect?, b: Rect?, tolerance: Float = 0.5f): Boolean {
+        if (a == null || b == null) return a == null && b == null
+        return abs(a.left - b.left) <= tolerance && abs(a.top - b.top) <= tolerance &&
+            abs(a.right - b.right) <= tolerance && abs(a.bottom - b.bottom) <= tolerance
+    }
+
+    /**
+     * Who draws the pin tile, and how it arrives.
+     *
+     * - [HERO]: nobody else does. The tile itself starts hero-sized inside the plate and shrinks
+     *   into its place ([thumbnailScale]) -- the original morph, still used where there is no
+     *   flier (previews, render tests, a viewer that has not been wired for the flight).
+     * - [FLIGHT]: a [PhotoToPinFlight] carries the photo, so the tile stays at 1x, is hidden
+     *   until the flier hands off to it ([realPinVisible]), and its pointer comes in with it.
+     * - [FADE]: a flier was expected but the pin is out of reach ([canFly]), so the tile stays
+     *   at 1x and simply fades in with the plate, in place.
+     */
+    enum class PinMode { HERO, FLIGHT, FADE }
+
+    /** The mode for the two switches the room is given. */
+    fun pinMode(flightActive: Boolean, flightFlies: Boolean): PinMode = when {
+        !flightActive -> PinMode.HERO
+        flightFlies -> PinMode.FLIGHT
+        else -> PinMode.FADE
+    }
+
+    /** The tile's scale at [reveal] in [mode]. Only [PinMode.HERO] ever scales. */
+    fun pinScale(mode: PinMode, reveal: Float, heroScale: Float): Float =
+        if (mode == PinMode.HERO) thumbnailScale(reveal, heroScale) else 1f
+
+    /** The tile's opacity at [reveal] in [mode]. */
+    fun pinTileAlpha(mode: PinMode, reveal: Float): Float = when (mode) {
+        PinMode.HERO -> 1f
+        PinMode.FLIGHT -> if (realPinVisible(reveal)) 1f else 0f
+        PinMode.FADE -> plateAlpha(reveal)
+    }
+
+    /** A further multiplier on the pointer's opacity at [reveal] in [mode]. */
+    fun pinPointerGate(mode: PinMode, reveal: Float): Float =
+        if (mode == PinMode.FLIGHT) 1f - handoff(reveal) else 1f
+
     /** Metres in one degree of latitude — constant enough at this scale to be a constant. */
     private const val METRES_PER_DEGREE_LATITUDE = 111_320.0
 
@@ -211,6 +501,16 @@ object PlaceMorph {
 
     /** The tile scale at which the pointer starts to appear; at 1x it is fully there. */
     private const val POINTER_APPEAR_SCALE = 1.25f
+
+    /** The flier leaves the parked card as the pull begins, and has landed by the end of it. */
+    private const val FLY_START = 0f
+    private const val FLY_END = 1f
+
+    /** Below this the shell is closed for practical purposes and the flier draws nothing. */
+    private const val FLY_MIN_PROGRESS = 0.001f
+
+    /** The flier starts fading, and the real pin takes over beneath it, in the last 4% of the pull. */
+    private const val HANDOFF_START = 0.96f
 
     /** The photo is already moving before the room is a third open. */
     private const val FLIGHT_START = 0f
