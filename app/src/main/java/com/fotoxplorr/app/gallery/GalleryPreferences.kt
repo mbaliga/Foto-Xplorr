@@ -98,6 +98,12 @@ data class GalleryPreferencesState(
     val timelineOn: Boolean = true,
     /** Which edge the timeline strip sits on; independent of which way the photos scroll. */
     val timelinePlacement: TimelinePlacement = TimelinePlacement.RIGHT,
+    /**
+     * Which way the photos scroll: down (the default) or across. Separate from where the timeline
+     * strip sits and from the sort, so any strip can sit beside either grid. The stamp view and
+     * the masonry layout stay vertical whatever this says (see [gridScrollsHorizontally]).
+     */
+    val scrollAxis: ScrollAxis = ScrollAxis.VERTICAL,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val accentPalette: AccentPalette = AccentPalette.VIOLET,
     val slideshowIntervalSeconds: Int = DEFAULT_SLIDESHOW_INTERVAL_SECONDS,
@@ -237,6 +243,10 @@ class GalleryPreferences(context: Context) {
         state.value.copy(timelinePlacement = placement),
     ) { putString(KEY_TIMELINE_PLACEMENT, placement.name) }
 
+    fun setScrollAxis(axis: ScrollAxis) = update(
+        state.value.copy(scrollAxis = axis),
+    ) { putString(KEY_SCROLL_AXIS, axis.name) }
+
     fun setThemeMode(mode: ThemeMode) = update(
         state.value.copy(themeMode = mode),
     ) { putString(KEY_THEME_MODE, mode.name) }
@@ -360,6 +370,7 @@ class GalleryPreferences(context: Context) {
         timelineGrouping = enumValue(KEY_TIMELINE_GROUPING, TimelineGrouping.MONTH),
         timelineOn = preferences.getBoolean(KEY_TIMELINE_ON, true),
         timelinePlacement = enumValue(KEY_TIMELINE_PLACEMENT, TimelinePlacement.RIGHT),
+        scrollAxis = enumValue(KEY_SCROLL_AXIS, ScrollAxis.VERTICAL),
         themeMode = enumValue(KEY_THEME_MODE, ThemeMode.SYSTEM),
         accentPalette = enumValue(KEY_ACCENT_PALETTE, AccentPalette.VIOLET),
         slideshowIntervalSeconds = preferences
@@ -426,6 +437,7 @@ class GalleryPreferences(context: Context) {
         const val KEY_TIMELINE_GROUPING = "timeline_grouping"
         const val KEY_TIMELINE_ON = "timeline_on"
         const val KEY_TIMELINE_PLACEMENT = "timeline_placement"
+        const val KEY_SCROLL_AXIS = "scroll_axis"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_ACCENT_PALETTE = "accent_palette"
         const val KEY_SLIDESHOW_INTERVAL = "slideshow_interval"

@@ -1,11 +1,14 @@
 package com.fotoxplorr.app.render
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -17,6 +20,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pinch
 import androidx.compose.ui.geometry.Offset
 import com.fotoxplorr.app.adaptive.ZOOM_RUNG_STAMPS
+import com.fotoxplorr.app.gallery.GRID_TILE_ASPECT
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.GallerySort
 import com.fotoxplorr.app.gallery.GridChromeBridge
@@ -27,7 +31,9 @@ import com.fotoxplorr.app.gallery.sortAssets
 import com.fotoxplorr.app.gallery.stampHeadersShown
 import com.fotoxplorr.app.gallery.zoomLayoutFor
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.core.organize.GridIndexMap
 import com.github.takahirom.roborazzi.captureRoboImage
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -62,8 +68,13 @@ class ZoomGridRenderTest {
     private val bridge = GridChromeBridge()
 
     @Composable
-    private fun Grid(rung: Int) {
-        val layout = zoomLayoutFor(assets, headers = stampHeadersShown(rung, GallerySort.NEWEST, masonry = false))
+    private fun Grid(
+        rung: Int,
+        horizontal: Boolean = false,
+        headers: Boolean = stampHeadersShown(rung, GallerySort.NEWEST, masonry = false),
+        state: LazyGridState = rememberLazyGridState(),
+    ) {
+        val layout = zoomLayoutFor(assets, headers = headers)
         ZoomGrid(
             layout = layout,
             rung = rung,
@@ -75,18 +86,32 @@ class ZoomGridRenderTest {
             emptyMessage = "none",
             onOpen = {},
             onToggleSelection = {},
-            gridState = rememberLazyGridState(),
+            gridState = state,
             fitToTile = true,
             loopAnimations = false,
             animatedIds = emptySet(),
+            horizontal = horizontal,
         )
     }
 
-    private fun render(name: String?, rung: Int) {
+    private fun render(
+        name: String?,
+        rung: Int,
+        horizontal: Boolean = false,
+        headers: Boolean? = null,
+        state: LazyGridState? = null,
+    ) {
         compose.setContent {
             FotoXplorrTheme(GalleryPreferencesState()) {
                 CompositionLocalProvider(LocalGridChromeBridge provides bridge) {
-                    Box(Modifier.fillMaxSize().background(Color.Black)) { Grid(rung) }
+                    Box(Modifier.fillMaxSize().background(Color.Black)) {
+                        Grid(
+                            rung = rung,
+                            horizontal = horizontal,
+                            headers = headers ?: stampHeadersShown(rung, GallerySort.NEWEST, masonry = false),
+                            state = state ?: rememberLazyGridState(),
+                        )
+                    }
                 }
             }
         }
@@ -133,12 +158,12 @@ class ZoomGridRenderTest {
 
     // ---- the pinch reaches the grid at every rung ----
 
-    private fun pinchOutAndIn(rung: Int) {
+    private fun pinchOutAndIn(rung: Int, horizontal: Boolean = false) {
         val zooms = mutableListOf<Float>()
         var ended = 0
         bridge.onZoom = { zooms += it }
         bridge.onZoomEnd = { ended += 1 }
-        render(null, rung)
+        render(null, rung, horizontal)
         // Spread: the factor must come out above one, and the gesture's end must be reported.
         compose.onRoot().performTouchInput {
             pinch(
@@ -177,4 +202,116 @@ class ZoomGridRenderTest {
 
     @Test
     fun `a pinch is heard on the stamps`() = pinchOutAndIn(ZOOM_RUNG_STAMPS)
+
+    @Test
+    fun `a pinch is heard on a sideways grid`() = pinchOutAndIn(3, horizontal = true)
+
+    // ---- the grid on its side ----
+    //
+    // Read off the grid's own layout info rather than semantics: the tiles here are empty, and what
+    // matters is where the lazy grid put them (TRAPS #30: render before believing header spans and
+    // the scrollToItem clamp).
+
+    private val tileKeyPrefix = "header:"
+
+    private fun LazyGridState.tiles() =
+        layoutInfo.visibleItemsInfo.filter { !it.key.toString().startsWith(tileKeyPrefix) && it.key != "footer" }
+
+    private fun LazyGridState.headerItems() =
+        layoutInfo.visibleItemsInfo.filter { it.key.toString().startsWith(tileKeyPrefix) }
+
+    @Test
+    fun `a sideways grid scrolls across and has as many rows as the rung`() {
+        val state = LazyGridState()
+        render("zoom-5-sideways-three-rows", 3, horizontal = true, state = state)
+        assertEquals(Orientation.Horizontal, state.layoutInfo.orientation)
+        val rows = state.tiles().map { it.row }.toSet()
+        assertEquals(setOf(0, 1, 2), rows)
+        // The first tile of each row starts at the same x: the rows line up as columns.
+        assertEquals(1, state.tiles().filter { it.column == 0 }.map { it.offset.x }.toSet().size)
+    }
+
+    @Test
+    fun `a sideways tile is as wide as its row allows by the tile aspect`() {
+        val state = LazyGridState()
+        render("zoom-6-sideways-six-rows", 6, horizontal = true, state = state)
+        val tile = state.tiles().first()
+        // 144 wide to 160 tall, width over height.
+        assertEquals(tile.size.height * GRID_TILE_ASPECT, tile.size.width.toFloat(), 1.5f)
+        // And the rows share the viewport's height less the bottom band kept for the pill.
+        val usable = state.layoutInfo.viewportSize.height - 88 * compose.density.density
+        assertTrue("six rows of ${tile.size.height}px must fit ${usable}px", tile.size.height * 6 <= usable)
+    }
+
+    @Test
+    fun `a sideways month header is a narrow column the height of the rows`() {
+        val state = LazyGridState()
+        render("zoom-7-sideways-headers", 3, horizontal = true, headers = true, state = state)
+        val header = state.headerItems().firstOrNull()
+        assertTrue("no month header on the first screen of a sideways grid", header != null)
+        val density = compose.density.density
+        assertEquals(36 * density, header!!.size.width.toFloat(), 1.5f)
+        // Content padding on the cross axis is not in the layout info's padding fields, so the
+        // viewport less the bottom band kept for the pill is what the header must span.
+        val rowsHeight = state.layoutInfo.viewportSize.height - 88 * density
+        assertEquals(rowsHeight, header.size.height.toFloat(), 1.5f)
+        assertTrue(compose.onAllNodes(headings).fetchSemanticsNodes().isNotEmpty())
+    }
+
+    @Test
+    fun `the stamp view stays vertical whatever the axis`() {
+        val state = LazyGridState()
+        render("zoom-8-stamps-sideways-asked", ZOOM_RUNG_STAMPS, horizontal = true, state = state)
+        assertEquals(Orientation.Vertical, state.layoutInfo.orientation)
+        assertTrue(state.headerItems().isNotEmpty())
+    }
+
+    @Test
+    fun `scrolling a sideways grid to its last item ends flush`() {
+        val state = LazyGridState()
+        render(null, 3, horizontal = true, headers = true, state = state)
+        val last = assets.size + zoomLayoutFor(assets, headers = true).groups.size // photos + headers
+        compose.runOnIdle { runBlocking { state.scrollToItem(last) } }
+        compose.waitForIdle()
+        // The clamp holds on this axis too: it cannot scroll past the end, and the footer is there.
+        assertTrue("still scrollable forward after scrollToItem(last)", !state.canScrollForward)
+        assertTrue(state.layoutInfo.visibleItemsInfo.any { it.key == "footer" })
+    }
+
+    @Test
+    fun `scrolling a sideways grid to a header lands on that month`() {
+        val state = LazyGridState()
+        render(null, 3, horizontal = true, headers = true, state = state)
+        val layout = zoomLayoutFor(assets, headers = true)
+        val map = GridIndexMap(layout.groups.map { it.assets.size }, hasHeaders = true, trailingFooter = true)
+        val target = layout.groups.size / 2
+        val headerIndex = map.gridIndexOf(layout.groups.take(target).sumOf { it.assets.size }) - 1
+        compose.runOnIdle { runBlocking { state.scrollToItem(headerIndex) } }
+        compose.waitForIdle()
+        assertEquals(headerIndex, state.firstVisibleItemIndex)
+        assertEquals("header:${layout.groups[target].key}", state.layoutInfo.visibleItemsInfo.first().key)
+    }
+
+    @Test
+    fun `turning the grid on its side keeps the first photo and drops the offset`() {
+        val state = LazyGridState()
+        val sideways = mutableStateOf(false)
+        compose.setContent {
+            FotoXplorrTheme(GalleryPreferencesState()) {
+                CompositionLocalProvider(LocalGridChromeBridge provides bridge) {
+                    Box(Modifier.fillMaxSize().background(Color.Black)) {
+                        Grid(rung = 3, horizontal = sideways.value, headers = false, state = state)
+                    }
+                }
+            }
+        }
+        compose.runOnIdle { runBlocking { state.scrollToItem(60, 37) } }
+        compose.waitForIdle()
+        val before = state.layoutInfo.visibleItemsInfo.first().key
+        compose.runOnIdle { sideways.value = true }
+        compose.waitForIdle()
+        assertEquals(Orientation.Horizontal, state.layoutInfo.orientation)
+        assertEquals(before, state.layoutInfo.visibleItemsInfo.first().key)
+        assertEquals(0, state.firstVisibleItemScrollOffset)
+    }
 }

@@ -1721,6 +1721,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     onSetTimelineGrouping = galleryPreferences::setTimelineGrouping,
                     onSetTimelineOn = galleryPreferences::setTimelineOn,
                     onSetTimelinePlacement = galleryPreferences::setTimelinePlacement,
+                    onSetScrollAxis = galleryPreferences::setScrollAxis,
                     onSetThemeMode = galleryPreferences::setThemeMode,
                     onSetAccentPalette = galleryPreferences::setAccentPalette,
                     onSetCustomTheme = galleryPreferences::setCustomTheme,

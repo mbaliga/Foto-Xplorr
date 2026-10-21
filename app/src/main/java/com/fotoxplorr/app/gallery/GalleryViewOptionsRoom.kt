@@ -68,6 +68,9 @@ fun GalleryViewOptionsRoom(
         // stamps, so its stepper stops at the sparsest column grid.
         val topRung = if (preferences.fitToTile) ZOOM_RUNG_STAMPS else ZOOM_RUNG_LAST_GRID
         val rung = preferences.gridZoomRung.coerceAtMost(topRung)
+        // The date orders name the side the latest photo sits on, which depends on the way the grid
+        // on screen scrolls (it is vertical at the stamps and in masonry).
+        val horizontal = gridScrollsHorizontally(preferences.scrollAxis, rung, masonry = !preferences.fitToTile)
         RoomRow(label = "Zoom") {
             RoomStepper(
                 value = zoomRungValue(rung),
@@ -78,6 +81,18 @@ fun GalleryViewOptionsRoom(
             )
         }
 
+        // Which way the photos scroll. Its own row, since it is neither the sort nor where the
+        // timeline sits; the stamps and the masonry layout stay vertical whatever it says.
+        RoomRow(
+            label = "Scroll direction",
+            caption = HelpCopy.Caption.SCROLL_AXIS,
+            onClick = {
+                actions.onSetScrollAxis(
+                    if (preferences.scrollAxis == ScrollAxis.VERTICAL) ScrollAxis.HORIZONTAL else ScrollAxis.VERTICAL,
+                )
+            },
+        ) { RoomValue(preferences.scrollAxis.label) }
+
         // Stated rather than ticked: a checkmark column would be the only iconography in a room
         // that has none, and the selected row stays full-strength while the alternatives mute --
         // the same way the destination rail marks the destination you are in. The two date orders
@@ -86,7 +101,7 @@ fun GalleryViewOptionsRoom(
         GallerySort.entries.forEach { sort ->
             val current = preferences.sort == sort
             RoomRow(
-                label = timelineSortLabel(sort),
+                label = timelineSortLabel(sort, horizontal),
                 onClick = { actions.onSetSort(sort) },
             ) { if (current) RoomValue("now") }
         }

@@ -146,7 +146,6 @@ import kotlinx.coroutines.launch
 import com.fotoxplorr.app.adaptive.ChromeMotion
 import com.fotoxplorr.app.adaptive.GalleryShortcut
 import com.fotoxplorr.app.adaptive.GalleryShortcutKey
-import com.fotoxplorr.app.adaptive.MoveDirection
 import com.fotoxplorr.app.adaptive.NavRailPresentation
 import com.fotoxplorr.app.adaptive.chromeMotionFor
 import com.fotoxplorr.app.adaptive.galleryShortcutFor
@@ -278,6 +277,8 @@ data class GalleryActions(
     val onSetTimelineOn: (Boolean) -> Unit = {},
     /** Which edge the timeline strip sits on. */
     val onSetTimelinePlacement: (TimelinePlacement) -> Unit = {},
+    /** Which way the photos scroll (down or across); the stamps and masonry stay vertical. */
+    val onSetScrollAxis: (ScrollAxis) -> Unit = {},
     val onSetThemeMode: (ThemeMode) -> Unit,
     val onSetAccentPalette: (AccentPalette) -> Unit,
     /** Applies validated custom theme JSON -- see `ThemeJson.kt` and `SettingsTabs.kt`'s
@@ -894,6 +895,9 @@ private fun GalleryBrowser(
         activeRung, state.preferences.sort, masonryActive, timelineOn, state.preferences.timelineGrouping,
     )
     val layoutGrouping = headerGrouping(activeRung, state.preferences.timelineGrouping)
+    // Whether the grid on screen scrolls sideways: the setting, except at the stamps and in masonry,
+    // which stay vertical. Latest-first then reads left to right (see timelineSortLabel).
+    val sidewaysGrid = gridScrollsHorizontally(state.preferences.scrollAxis, activeRung, masonryActive)
     // The one layout computation, shared by the grid (ZoomGrid, below) and everything that used to
     // assume grid index == asset index (the scrubber, the pill, arrow keys, and the list handed to
     // the viewer on open) -- see docs/TRAPS.md #5 and #9. Without headers this is the identity: one
@@ -1046,8 +1050,8 @@ private fun GalleryBrowser(
     // for the exact table and why it returns null (rather than a default) for a key it has no
     // opinion about.
     //
-    // Arrow-key navigation walks the rendered photos in strides of the columns the grid has across
-    // right now (the stamp view's count depends on the window's width, so the grid reports it). That
+    // Arrow-key navigation walks the rendered photos in strides of the tiles the grid has across
+    // right now (rows, on a sideways grid -- see arrowKeyStep) (the stamp view's count depends on the window's width, so the grid reports it). That
     // is exact for the headerless grid, and an approximation under the stamps' month headers (a row
     // ends at each month, so a stride drifts by the unfilled slots) and in masonry mode (whose rows
     // do not actually align to a fixed column count) -- acceptable here because it still moves the
@@ -1065,15 +1069,12 @@ private fun GalleryBrowser(
                 // result through GridIndexMap before it ever reaches gridState.
                 val ids = renderedAssets
                 if (ids.isEmpty()) return
-                val columns = chromeBridge.columnsAcross.coerceAtLeast(1)
                 val current = ids.indexOfFirst { it.id == chromeBridge.keyboardFocusedId }
                     .let { if (it < 0) 0 else it }
-                val next = when (shortcut.direction) {
-                    MoveDirection.UP -> current - columns
-                    MoveDirection.DOWN -> current + columns
-                    MoveDirection.LEFT -> current - 1
-                    MoveDirection.RIGHT -> current + 1
-                }.coerceIn(0, ids.lastIndex)
+                // The long stride is the grid's short side (columns, or rows when it scrolls
+                // sideways) and goes to the keys across the lines; the others step one photo.
+                val next = (current + arrowKeyStep(shortcut.direction, chromeBridge.columnsAcross, sidewaysGrid))
+                    .coerceIn(0, ids.lastIndex)
                 chromeBridge.keyboardFocusedId = ids[next].id
                 // scrollToItem, not animateScrollToItem: matches the edge scrubber's own choice
                 // just below -- a held-down arrow key fires many of these in quick succession, and
@@ -1511,6 +1512,7 @@ private fun GalleryBrowser(
                                                 selection = selection,
                                                 onSelectionChange = { selection = it },
                                                 gridState = gridState,
+                                                horizontal = sidewaysGrid,
                                                 onRequestUnlock = { key, name ->
                                                     passwordRequest = PasswordRequest(
                                                         PasswordAction.UNLOCK, key, name,
@@ -1534,6 +1536,7 @@ private fun GalleryBrowser(
                                         fitToTile = state.preferences.fitToTile,
                                         loopAnimations = state.preferences.loopAnimations,
                                         animatedIds = state.animatedIds,
+                                        horizontal = sidewaysGrid,
                                     )
                                 }
                             }

@@ -5,16 +5,21 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.MaterialTheme
@@ -34,12 +39,14 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.adaptive.ZOOM_RUNG_LAST_GRID
@@ -79,6 +86,19 @@ private val STAMP_HOLE_PITCH = 5.dp
  *
  * A masonry grid (the "fit to tile" setting off) is the old staggered layout, still zoomable but
  * only through the column rungs: it never draws stamps or headers.
+ *
+ * [horizontal] turns the column rungs on their side (see [ScrollAxis]): the same items in a
+ * [LazyHorizontalGrid] whose rungs count ROWS across the short axis, each month's header a narrow
+ * full-height column, and each tile as wide as its row is tall allows ([GRID_TILE_ASPECT] is a
+ * width over height ratio). It is the same [LazyGridState] type, so the scrubber, the pill and
+ * `GridIndexMap` need no change. The stamp view and masonry ignore it and stay vertical.
+ *
+ * Shell edge zones: the shell claims a horizontal drag that STARTS within 56dp of the screen's left
+ * or right edge for the rail and view options rooms, before this grid sees it. So a sideways grid
+ * cannot begin a scroll from its first or last 56dp (a fling there opens a room instead) and has
+ * to be started from further in; a drag that starts inside and runs out is unaffected. This is
+ * accepted rather than worked around (insetting the grid's ends would waste the width the sideways
+ * grid exists for); the vertical grid has no such conflict.
  */
 @Composable
 internal fun ZoomGrid(
@@ -96,6 +116,7 @@ internal fun ZoomGrid(
     fitToTile: Boolean,
     loopAnimations: Boolean,
     animatedIds: Set<MediaId>,
+    horizontal: Boolean = false,
 ) {
     val assets = layout.renderedAssets
     if (assets.isEmpty()) {
@@ -124,6 +145,8 @@ internal fun ZoomGrid(
 
     val bridge = LocalGridChromeBridge.current
     val stamps = isStampRung(rung)
+    // Whatever the screen asks for, the stamp view is laid out for a screen's width.
+    val sideways = horizontal && !stamps
     // The peeked photo, if any: one for the whole grid, drawn above all of it rather than inside
     // one cell's bounds, and only one can ever be open.
     var peeked by remember { mutableStateOf<MediaAsset?>(null) }
@@ -141,11 +164,12 @@ internal fun ZoomGrid(
     val gridIndexMap = remember(layout) {
         GridIndexMap(layout.groups.map { it.assets.size }, layout.hasHeaders, trailingFooter = true)
     }
-    val anchor = remember { LayoutAnchor() }
+    val anchor = remember { LayoutAnchor(sideways) }
     SideEffect {
         val previous = anchor.map
+        var target: Int? = null
         if (previous != null && previous !== gridIndexMap) {
-            reanchoredGridIndex(
+            target = reanchoredGridIndex(
                 old = previous,
                 oldHasHeaders = anchor.hasHeaders,
                 new = gridIndexMap,
@@ -153,11 +177,16 @@ internal fun ZoomGrid(
                 headersDiffer = anchor.grouping != layout.grouping,
                 // Still the old layout's top line: this runs before the next measure.
                 oldFirstVisible = gridState.firstVisibleItemIndex,
-            )?.let { gridState.requestScrollToItem(it) }
+            )
         }
+        // Turning the grid on its side keeps the same first item but not the old pixel offset into
+        // it, which was measured along the other axis and could now be longer than the tile.
+        if (target == null && anchor.sideways != sideways) target = gridState.firstVisibleItemIndex
+        target?.let { gridState.requestScrollToItem(it) }
         anchor.map = gridIndexMap
         anchor.hasHeaders = layout.hasHeaders
         anchor.grouping = layout.grouping
+        anchor.sideways = sideways
     }
 
     BoxWithConstraints(
@@ -173,60 +202,51 @@ internal fun ZoomGrid(
             },
     ) {
         val across = columnsAcross(rung, stampAcross(maxWidth.value))
+        // Tiles across the short side: columns for the vertical grid, rows for the sideways one.
         SideEffect { bridge.columnsAcross = across }
 
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(across),
-            state = gridState,
-            modifier = Modifier.fillMaxSize().background(GRID_BACKGROUND),
-            verticalArrangement = Arrangement.spacedBy(GRID_GUTTER),
-            horizontalArrangement = Arrangement.spacedBy(GRID_GUTTER),
-        ) {
-            layout.groups.forEach { group ->
-                if (layout.hasHeaders) {
-                    item(
-                        key = "header:${group.key}",
-                        span = { GridItemSpan(maxLineSpan) },
-                        contentType = "header",
-                    ) { MonthHeader(group) }
-                }
-                items(group.assets, key = { it.id.value }, contentType = { if (stamps) "stamp" else "tile" }) { asset ->
-                    if (stamps) {
-                        StampTile(
-                            asset = asset,
-                            sensitive = asset.id in sensitiveIds,
-                            blurSensitive = blurSensitive,
-                            selected = asset.id in selectedIds,
-                            selectionActive = selectionActive,
-                            perforation = perforation,
-                            onOpen = { onOpen(asset) },
-                            onToggleSelection = { onToggleSelection(asset.id) },
-                            onPeek = { peeked = asset },
-                            onPeekEnd = { peeked = null },
-                        )
-                    } else {
-                        MediaTile(
-                            asset = asset,
-                            favorite = asset.id in favoriteIds,
-                            sensitive = asset.id in sensitiveIds,
-                            blurSensitive = blurSensitive,
-                            selected = asset.id in selectedIds,
-                            selectionActive = selectionActive,
-                            fitToTile = true,
-                            loopAnimations = loopAnimations,
-                            animated = asset.id in animatedIds,
-                            onOpen = { onOpen(asset) },
-                            onToggleSelection = { onToggleSelection(asset.id) },
-                            onPeek = { peeked = asset },
-                            onPeekEnd = { peeked = null },
-                        )
-                    }
-                }
+        val gridItems: LazyGridScope.() -> Unit = {
+            zoomGridItems(
+                layout = layout,
+                stamps = stamps,
+                sideways = sideways,
+                favoriteIds = favoriteIds,
+                sensitiveIds = sensitiveIds,
+                blurSensitive = blurSensitive,
+                selectedIds = selectedIds,
+                selectionActive = selectionActive,
+                loopAnimations = loopAnimations,
+                animatedIds = animatedIds,
+                perforation = perforation,
+                onOpen = onOpen,
+                onToggleSelection = onToggleSelection,
+                onPeek = { peeked = it },
+                onPeekEnd = { peeked = null },
+            )
+        }
+
+        if (sideways) {
+            LazyHorizontalGrid(
+                rows = GridCells.Fixed(across),
+                state = gridState,
+                modifier = Modifier.fillMaxSize().background(GRID_BACKGROUND),
+                // The pill and the two discs float over the bottom edge for good here (a vertical
+                // grid scrolls clear of them with its footer), so the rows stop above them.
+                contentPadding = PaddingValues(bottom = SIDE_GRID_BOTTOM_BAND_DP.dp),
+                verticalArrangement = Arrangement.spacedBy(GRID_GUTTER),
+                horizontalArrangement = Arrangement.spacedBy(GRID_GUTTER),
+            ) {
+                gridItems()
             }
-            // The 88dp spacer every grid here ends with, so the last row clears the pill; it is
-            // the one trailing item `GridIndexMap(trailingFooter = true)` counts.
-            item(key = "footer", span = { GridItemSpan(maxLineSpan) }, contentType = "footer") {
-                Spacer(Modifier.height(88.dp))
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(across),
+                state = gridState,
+                modifier = Modifier.fillMaxSize().background(GRID_BACKGROUND),
+                verticalArrangement = Arrangement.spacedBy(GRID_GUTTER),
+                horizontalArrangement = Arrangement.spacedBy(GRID_GUTTER),
+            ) {
+                gridItems()
             }
         }
 
@@ -240,10 +260,81 @@ internal fun ZoomGrid(
  * What [ZoomGrid] remembers of the layout before this one. Plain fields, not state: they are only
  * read by the next side effect, and a snapshot read would recompose the grid on every scroll.
  */
-private class LayoutAnchor {
+private class LayoutAnchor(var sideways: Boolean) {
     var map: GridIndexMap? = null
     var hasHeaders = false
     var grouping = TimelineGrouping.MONTH
+}
+
+/**
+ * The grid's items, the same for both axes: per group an optional header (spanning the whole line,
+ * so a full-width row on the vertical grid and a full-height column on the sideways one), then its
+ * photos, then the one trailing footer `GridIndexMap(trailingFooter = true)` counts.
+ */
+private fun LazyGridScope.zoomGridItems(
+    layout: ZoomLayout,
+    stamps: Boolean,
+    sideways: Boolean,
+    favoriteIds: Set<MediaId>,
+    sensitiveIds: Set<MediaId>,
+    blurSensitive: Boolean,
+    selectedIds: Set<MediaId>,
+    selectionActive: Boolean,
+    loopAnimations: Boolean,
+    animatedIds: Set<MediaId>,
+    perforation: PathEffect,
+    onOpen: (MediaAsset) -> Unit,
+    onToggleSelection: (MediaId) -> Unit,
+    onPeek: (MediaAsset) -> Unit,
+    onPeekEnd: () -> Unit,
+) {
+    layout.groups.forEach { group ->
+        if (layout.hasHeaders) {
+            item(
+                key = "header:${group.key}",
+                span = { GridItemSpan(maxLineSpan) },
+                contentType = "header",
+            ) { if (sideways) SideMonthHeader(group) else MonthHeader(group) }
+        }
+        items(group.assets, key = { it.id.value }, contentType = { if (stamps) "stamp" else "tile" }) { asset ->
+            if (stamps) {
+                StampTile(
+                    asset = asset,
+                    sensitive = asset.id in sensitiveIds,
+                    blurSensitive = blurSensitive,
+                    selected = asset.id in selectedIds,
+                    selectionActive = selectionActive,
+                    perforation = perforation,
+                    onOpen = { onOpen(asset) },
+                    onToggleSelection = { onToggleSelection(asset.id) },
+                    onPeek = { onPeek(asset) },
+                    onPeekEnd = onPeekEnd,
+                )
+            } else {
+                MediaTile(
+                    asset = asset,
+                    favorite = asset.id in favoriteIds,
+                    sensitive = asset.id in sensitiveIds,
+                    blurSensitive = blurSensitive,
+                    selected = asset.id in selectedIds,
+                    selectionActive = selectionActive,
+                    fitToTile = true,
+                    loopAnimations = loopAnimations,
+                    animated = asset.id in animatedIds,
+                    onOpen = { onOpen(asset) },
+                    onToggleSelection = { onToggleSelection(asset.id) },
+                    onPeek = { onPeek(asset) },
+                    onPeekEnd = onPeekEnd,
+                )
+            }
+        }
+    }
+    // The 88dp spacer every vertical grid here ends with, so the last row clears the pill (the
+    // sideways grid keeps that room along its bottom instead, and ends with a thin column); either
+    // way it is the one trailing item `GridIndexMap(trailingFooter = true)` counts.
+    item(key = "footer", span = { GridItemSpan(maxLineSpan) }, contentType = "footer") {
+        if (sideways) Spacer(Modifier.width(SIDE_FOOTER_DP.dp)) else Spacer(Modifier.height(88.dp))
+    }
 }
 
 /**
@@ -270,6 +361,58 @@ private fun MonthHeader(group: TimelineGroup) {
             style = MaterialTheme.typography.labelMedium,
             color = Color.White.copy(alpha = 0.6f),
         )
+    }
+}
+
+/**
+ * A month's header in the sideways grid: a narrow column as tall as the rows, its title and count
+ * turned to read upward along it. The same words and the same heading semantics as [MonthHeader].
+ */
+@Composable
+private fun SideMonthHeader(group: TimelineGroup) {
+    Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(SIDE_HEADER_DP.dp)
+            .background(GRID_BACKGROUND)
+            .semantics(mergeDescendants = true) {
+                heading()
+                contentDescription = "${group.title}, ${group.assets.size} items"
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .turnedToRead()
+                .padding(start = 12.dp, end = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(group.title, style = MaterialTheme.typography.titleSmall, color = Color.White, maxLines = 1)
+            Text(
+                "${group.assets.size}",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White.copy(alpha = 0.6f),
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/**
+ * Lays the content out as a line of text as long as the space is tall, then turns it a quarter
+ * turn so it reads upward and fills the column. The measured size is swapped to match, so it takes
+ * a column's width rather than a row's.
+ */
+private fun Modifier.turnedToRead(): Modifier = layout { measurable, constraints ->
+    val length = constraints.maxHeight
+    val placeable = measurable.measure(
+        Constraints(minWidth = length, maxWidth = length, minHeight = 0, maxHeight = Constraints.Infinity),
+    )
+    layout(placeable.height, placeable.width) {
+        placeable.placeWithLayer((placeable.height - placeable.width) / 2, (placeable.width - placeable.height) / 2) {
+            rotationZ = -90f
+        }
     }
 }
 

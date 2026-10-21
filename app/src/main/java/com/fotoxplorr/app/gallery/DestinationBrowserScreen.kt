@@ -275,6 +275,7 @@ internal fun DestinationContent(
     onSelectionChange: (GallerySelection) -> Unit,
     gridState: LazyGridState,
     onRequestUnlock: (String, String) -> Unit,
+    horizontal: Boolean = false,
 ) {
     when (destination) {
         HyleDestination.PLACES -> {
@@ -331,6 +332,7 @@ internal fun DestinationContent(
                     fitToTile = state.preferences.fitToTile,
                     loopAnimations = state.preferences.loopAnimations,
                     animatedIds = state.animatedIds,
+                    horizontal = horizontal,
                 )
             }
         }

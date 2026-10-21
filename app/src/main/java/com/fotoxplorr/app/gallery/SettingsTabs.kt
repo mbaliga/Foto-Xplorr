@@ -254,9 +254,12 @@ fun SettingsTabsRoom(
                 }
 
                 SettingsTab.LIBRARY -> {
+                    val horizontal = gridScrollsHorizontally(
+                        preferences.scrollAxis, preferences.gridZoomRung, masonry = !preferences.fitToTile,
+                    )
                     ChoiceRow(
                         "Sort",
-                        GallerySort.entries.map { it to timelineSortLabel(it) },
+                        GallerySort.entries.map { it to timelineSortLabel(it, horizontal) },
                         preferences.sort,
                         actions.onSetSort,
                     )
@@ -278,6 +281,13 @@ fun SettingsTabsRoom(
                         preferences.timelineGrouping,
                         actions.onSetTimelineGrouping,
                     )
+                    ChoiceRow(
+                        "Scroll direction",
+                        ScrollAxis.entries.map { it to it.label },
+                        preferences.scrollAxis,
+                        actions.onSetScrollAxis,
+                    )
+                    Paragraph(HelpCopy.Caption.SCROLL_AXIS)
                     ChoiceRow(
                         "Open the app on",
                         HyleDestination.entries.map { it to it.label },
