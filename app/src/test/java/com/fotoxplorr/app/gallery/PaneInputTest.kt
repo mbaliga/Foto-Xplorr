@@ -118,4 +118,22 @@ class PaneInputTest {
         )
         assertFalse(paneTakenOver(settingsOpen = false, legacyScreenOpen = false))
     }
+
+    @Test
+    fun `Escape over the map leaves the map and the grid keys stay out of reach`() {
+        // GalleryScreen hands `paneTakenOver || mapOpen` to both gates, so the map is held to the
+        // same rules as a pane: Ctrl+A, Delete and Enter would act on photos nobody can touch, and
+        // Escape is the one key that still means something.
+        everyShortcut.forEach {
+            assertEquals("$it", it == GalleryShortcut.CloseOrClear, shortcutActsOverPane(it, paneTakenOver = true))
+        }
+        assertTrue(escapeFollowsBackOrder(paneTakenOver = true, roomOpen = false))
+        assertEquals(
+            PaneBackTarget.CLOSE_MAP,
+            paneBackTarget(
+                roomOpen = false, settingsOpen = false, legacyScreenOpen = false,
+                selectionActive = false, searchVisible = false, routeIsRoot = true, mapOpen = true,
+            ),
+        )
+    }
 }

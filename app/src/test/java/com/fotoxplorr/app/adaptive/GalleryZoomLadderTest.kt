@@ -20,7 +20,7 @@ class GalleryZoomLadderTest {
     // ---- rung <-> level ----
 
     @Test
-    fun `the ladder climbs from the densest grid through every column count to Calendar, Year, Decade, then Map`() {
+    fun `the ladder climbs from the densest grid through every column count to Calendar, Year, then Decade`() {
         val levels = (0 until ladder.rungCount).map { ladder.levelAt(it) }
         assertEquals(
             listOf(
@@ -31,7 +31,6 @@ class GalleryZoomLadderTest {
                 GalleryZoomLevel.Calendar,
                 GalleryZoomLevel.Year,
                 GalleryZoomLevel.Decade,
-                GalleryZoomLevel.MapView,
             ),
             levels,
         )
@@ -53,7 +52,7 @@ class GalleryZoomLadderTest {
     @Test
     fun `levelAt clamps rungs outside the ladder to its two closed ends`() {
         assertEquals(GalleryZoomLevel.Grid(2), ladder.levelAt(-5))
-        assertEquals(GalleryZoomLevel.MapView, ladder.levelAt(999))
+        assertEquals(GalleryZoomLevel.Decade, ladder.levelAt(999))
     }
 
     // ---- pinch accumulation: the threshold/step logic itself ----
@@ -94,30 +93,27 @@ class GalleryZoomLadderTest {
     }
 
     @Test
-    fun `zooming out past the sparsest grid reaches Calendar, and further out reaches Map`() {
-        // One very large pinch-together should walk straight through both, in a single call --
+    fun `zooming out past the sparsest grid reaches Calendar, and further out reaches Decade`() {
+        // One very large pinch-together should walk straight through all of them, in a single call --
         // exactly what a fast real-world gesture across several frames would accumulate to.
         val hugePinchOut = ladder.step(
             GalleryZoomLevel.Grid(ladder.maxColumns),
             residual = 0f,
             scaleFactor = 0.01f,
         )
-        assertEquals(GalleryZoomLevel.MapView, hugePinchOut.level)
+        assertEquals(GalleryZoomLevel.Decade, hugePinchOut.level)
     }
 
     @Test
-    fun `zooming back in from Map reverses through Decade, Year and Calendar before reaching the grid again`() {
-        val oneStepIn = ladder.step(GalleryZoomLevel.MapView, residual = 0f, scaleFactor = 1.30f)
-        assertEquals(GalleryZoomLevel.Decade, oneStepIn.level)
+    fun `zooming back in from Decade reverses through Year and Calendar before reaching the grid again`() {
+        val oneStepIn = ladder.step(GalleryZoomLevel.Decade, residual = 0f, scaleFactor = 1.30f)
+        assertEquals(GalleryZoomLevel.Year, oneStepIn.level)
 
         val twoStepsIn = ladder.step(oneStepIn.level, oneStepIn.residual, scaleFactor = 1.30f)
-        assertEquals(GalleryZoomLevel.Year, twoStepsIn.level)
+        assertEquals(GalleryZoomLevel.Calendar, twoStepsIn.level)
 
         val threeStepsIn = ladder.step(twoStepsIn.level, twoStepsIn.residual, scaleFactor = 1.30f)
-        assertEquals(GalleryZoomLevel.Calendar, threeStepsIn.level)
-
-        val fourStepsIn = ladder.step(threeStepsIn.level, threeStepsIn.residual, scaleFactor = 1.30f)
-        assertEquals(GalleryZoomLevel.Grid(ladder.maxColumns), fourStepsIn.level)
+        assertEquals(GalleryZoomLevel.Grid(ladder.maxColumns), threeStepsIn.level)
     }
 
     @Test
@@ -125,8 +121,8 @@ class GalleryZoomLadderTest {
         val pastDense = ladder.step(GalleryZoomLevel.Grid(ladder.minColumns), residual = 0f, scaleFactor = 3f)
         assertEquals(GalleryZoomLevel.Grid(ladder.minColumns), pastDense.level)
 
-        val pastSparse = ladder.step(GalleryZoomLevel.MapView, residual = 0f, scaleFactor = 0.1f)
-        assertEquals(GalleryZoomLevel.MapView, pastSparse.level)
+        val pastSparse = ladder.step(GalleryZoomLevel.Decade, residual = 0f, scaleFactor = 0.1f)
+        assertEquals(GalleryZoomLevel.Decade, pastSparse.level)
     }
 
     @Test
@@ -134,12 +130,12 @@ class GalleryZoomLadderTest {
         // Regression for the exact thrash this file's KDoc describes: without the end-clamp, a
         // small pinch back from a end that had been over-pinched would jump several rungs at
         // once because the earlier, wasted motion was still "banked" in the residual.
-        val overPinched = ladder.step(GalleryZoomLevel.MapView, residual = 0f, scaleFactor = 0.01f)
-        assertEquals(GalleryZoomLevel.MapView, overPinched.level)
+        val overPinched = ladder.step(GalleryZoomLevel.Decade, residual = 0f, scaleFactor = 0.01f)
+        assertEquals(GalleryZoomLevel.Decade, overPinched.level)
         assertEquals(0f, overPinched.residual, 1e-6f)
 
         val tinyReversal = ladder.step(overPinched.level, overPinched.residual, scaleFactor = 1.02f)
-        assertEquals("a tiny reversal must not immediately step back", GalleryZoomLevel.MapView, tinyReversal.level)
+        assertEquals("a tiny reversal must not immediately step back", GalleryZoomLevel.Decade, tinyReversal.level)
     }
 
     @Test(expected = IllegalArgumentException::class)

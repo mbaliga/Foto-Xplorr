@@ -10,12 +10,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -114,8 +117,17 @@ fun RichPhotoMapScreen(
      * it always was.
      */
     focus: MapFocus? = null,
+    modifier: Modifier = Modifier,
+    /**
+     * Drawn as a pane of the browser rather than as a screen: no header, no close button, no
+     * search, filter chips or footer (the browser has its own search and time range, and they
+     * would be two of each), and no [BackHandler] -- the browser owns the Back order, and a
+     * handler here would outrank it. The map's own attribution and compass are kept, and moved
+     * clear of the browser's controls.
+     */
+    embedded: Boolean = false,
 ) {
-    BackHandler(onBack = onClose)
+    if (!embedded) BackHandler(onBack = onClose)
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var query by remember { mutableStateOf("") }
@@ -155,8 +167,29 @@ fun RichPhotoMapScreen(
     // The cluster bubbles are the accent role, so they take the chosen accent. Read once, as the
     // controller is made: the accent cannot change while this full-screen map is open.
     val accentArgb = MaterialTheme.colorScheme.primary.toArgb()
-    val controller = remember(focus) {
-        RichPhotoMapController(focus = focus, accentArgb = accentArgb) { mediaId -> selectedId = mediaId }
+    // Embedded, the browser's pill and corner discs float along the bottom edge and its view
+    // switcher along the top: the attribution and logo (bottom left) and the compass (top right)
+    // are lifted clear of them. Read once, as the controller is made, like the accent.
+    val chromeDensity = LocalDensity.current
+    val lowerChromePx = if (embedded) {
+        with(chromeDensity) { EMBEDDED_LOWER_CHROME_DP.dp.roundToPx() } +
+            WindowInsets.navigationBars.getBottom(chromeDensity)
+    } else {
+        0
+    }
+    val upperChromePx = if (embedded) {
+        with(chromeDensity) { EMBEDDED_UPPER_CHROME_DP.dp.roundToPx() } +
+            WindowInsets.statusBars.getTop(chromeDensity)
+    } else {
+        0
+    }
+    val controller = remember(focus, embedded) {
+        RichPhotoMapController(
+            focus = focus,
+            accentArgb = accentArgb,
+            lowerChromePx = lowerChromePx,
+            upperChromePx = upperChromePx,
+        ) { mediaId -> selectedId = mediaId }
     }
     val mapView = remember(context) {
         MapLibre.getInstance(context.applicationContext)
@@ -185,8 +218,8 @@ fun RichPhotoMapScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Row(
+    Column(modifier.fillMaxSize()) {
+        if (!embedded) Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -211,7 +244,7 @@ fun RichPhotoMapScreen(
 
         // The search and the filters are the Places map's own tools; a map opened for ONE photo
         // is about that photo's place, and the chrome would only push the map down.
-        if (focus == null) OutlinedTextField(
+        if (focus == null && !embedded) OutlinedTextField(
             value = query,
             onValueChange = { query = it },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
@@ -220,7 +253,7 @@ fun RichPhotoMapScreen(
             placeholder = { ComposeText("Search filename, album or tag") },
         )
 
-        if (focus == null) LazyRow(
+        if (focus == null && !embedded) LazyRow(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -297,6 +330,8 @@ fun RichPhotoMapScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    // Embedded, the card rises above the browser's pill and corner discs.
+                    .padding(bottom = if (embedded) EMBEDDED_LOWER_CHROME_DP.dp else 0.dp)
                     .height(116.dp)
                     .padding(8.dp)
                     .combinedClickable(
@@ -324,7 +359,7 @@ fun RichPhotoMapScreen(
             }
         }
 
-        ComposeText(
+        if (!embedded) ComposeText(
             "Pitched vector map with clustered media, hillshade and 3D building extrusion. MapLibre Android currently provides hillshade rather than a raised terrain mesh.",
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
             style = MaterialTheme.typography.labelSmall,
@@ -336,6 +371,10 @@ fun RichPhotoMapScreen(
 private class RichPhotoMapController(
     private val focus: MapFocus? = null,
     private val accentArgb: Int,
+    /** Px to lift the attribution and logo off the bottom edge; 0 leaves them where MapLibre puts them. */
+    private val lowerChromePx: Int = 0,
+    /** Px to push the compass down from the top edge; 0 leaves it where MapLibre puts it. */
+    private val upperChromePx: Int = 0,
     private val onSelected: (MediaId) -> Unit,
 ) {
     private var map: MapLibreMap? = null
@@ -357,6 +396,16 @@ private class RichPhotoMapController(
             isRotateGesturesEnabled = true
             isAttributionEnabled = true
             isLogoEnabled = true
+            // Moved, never hidden: the attribution is owed to the data's owners.
+            if (lowerChromePx > 0) {
+                setLogoMargins(logoMarginLeft, logoMarginTop, logoMarginRight, lowerChromePx)
+                setAttributionMargins(
+                    attributionMarginLeft, attributionMarginTop, attributionMarginRight, lowerChromePx,
+                )
+            }
+            if (upperChromePx > 0) {
+                setCompassMargins(compassMarginLeft, upperChromePx, compassMarginRight, compassMarginBottom)
+            }
         }
         val style = if (focus != null) FOCUS_STYLE else OPEN_FREE_MAP_STYLE
         map.setStyle(Style.Builder().fromUri(style)) { loaded ->
@@ -396,6 +445,9 @@ private class RichPhotoMapController(
     }
 
     fun update(assets: List<MediaAsset>, metadata: Map<MediaId, GeoMetadata>) {
+        // AndroidView.update runs on every recomposition of the screen, and a refresh rebuilds a
+        // GeoJSON feature for every located photo. The same two lists mean nothing has changed.
+        if (assets === this.assets && metadata === this.metadata) return
         this.assets = assets
         this.metadata = metadata
         refreshSource()
@@ -635,3 +687,9 @@ private class RichPhotoMapController(
 }
 
 private const val MAX_ALBUM_FILTERS = 16
+
+/** Clears a 48dp disc raised 20dp from the bottom edge, plus a gap. */
+private const val EMBEDDED_LOWER_CHROME_DP = 80
+
+/** Clears the browser's view switcher at the top right. */
+private const val EMBEDDED_UPPER_CHROME_DP = 56

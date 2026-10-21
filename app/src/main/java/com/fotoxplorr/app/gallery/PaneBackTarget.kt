@@ -4,7 +4,7 @@ package com.fotoxplorr.app.gallery
  * What the system Back gesture undoes next while browsing.
  *
  * Pulled out of the composable so the order can be pinned by a test: it is a priority list across
- * seven independent pieces of state, and a new one added in the wrong place is a Back press that
+ * eight independent pieces of state, and a new one added in the wrong place is a Back press that
  * exits the app, or leaves a pane sitting over a closed room.
  */
 internal enum class PaneBackTarget {
@@ -21,6 +21,9 @@ internal enum class PaneBackTarget {
     /** The most specific thing to back out of once the grid is showing. */
     CLEAR_SELECTION,
     CLOSE_SEARCH,
+
+    /** The map is showing in place of the grid: back to the grid, route and destination kept. */
+    CLOSE_MAP,
 
     /** Inside an album, a collection or a tag: up to the destination's root. */
     LEAVE_ROUTE,
@@ -40,8 +43,14 @@ internal fun paneTakenOver(settingsOpen: Boolean, legacyScreenOpen: Boolean): Bo
 
 /**
  * The first thing Back should undo. A room wins over a pane, a pane over the grid's own state,
- * and a selection over a search over a route, most specific first -- the same order the keyboard's
- * Escape follows for the part of it that applies there.
+ * and a selection over a search over the map over a route, most specific first -- the same order
+ * the keyboard's Escape follows for the part of it that applies there.
+ *
+ * The map sits below the search because a search is typed over it, and above the route because
+ * leaving the map is a smaller step than leaving the album the map is showing. The map screens
+ * register no Back handling of their own when embedded; if one did, it would outrank this order.
+ *
+ * [mapOpen] is last, and defaulted, so a caller that predates the map keeps compiling.
  */
 internal fun paneBackTarget(
     roomOpen: Boolean,
@@ -50,12 +59,14 @@ internal fun paneBackTarget(
     selectionActive: Boolean,
     searchVisible: Boolean,
     routeIsRoot: Boolean,
+    mapOpen: Boolean = false,
 ): PaneBackTarget = when {
     roomOpen -> PaneBackTarget.CLOSE_ROOM
     settingsOpen -> PaneBackTarget.CLOSE_SETTINGS
     legacyScreenOpen -> PaneBackTarget.CLOSE_LEGACY_SCREEN
     selectionActive -> PaneBackTarget.CLEAR_SELECTION
     searchVisible -> PaneBackTarget.CLOSE_SEARCH
+    mapOpen -> PaneBackTarget.CLOSE_MAP
     !routeIsRoot -> PaneBackTarget.LEAVE_ROUTE
     else -> PaneBackTarget.NONE
 }

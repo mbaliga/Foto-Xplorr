@@ -52,16 +52,21 @@ internal fun escapeFollowsBackOrder(paneTakenOver: Boolean, roomOpen: Boolean): 
  * Whether the notification shade is drawn over what is showing, and so whether its height is
  * reserved at the top for the shade's own pull. It is drawn on the two panes (Settings, a
  * destination screen) and on the root grid, and nowhere else: not inside an album, collection or
- * tag, not on the timeline's headered grid, not on the zoom ladder's sparse rungs. Reserving its
- * height elsewhere would hand the top 56dp-and-more of a screen with no shade to a dead zone
- * where the top room cannot be pulled down.
+ * tag, not on the map, not on the timeline's headered grid, not on the zoom ladder's sparse
+ * rungs. Reserving its height elsewhere would hand the top 56dp-and-more of a screen with no
+ * shade to a dead zone where the top room cannot be pulled down.
  *
  * Mirrors the branches of the browsing `when` in `GalleryScreen`; a screen that gains a shade must
  * be added here too.
+ *
+ * @param mapOpen the map is showing in place of the grid. [zoomIsGrid] and [timelineHeadersOn] are
+ *   the ladder's and the old switcher's, and go when the continuous grid replaces them; they
+ *   default to "a plain grid" so a caller that has dropped them already compiles.
  */
 internal fun shadeIsDrawn(
     paneTakenOver: Boolean,
-    zoomIsGrid: Boolean,
-    timelineHeadersOn: Boolean,
+    mapOpen: Boolean,
     routeIsRoot: Boolean,
-): Boolean = paneTakenOver || (zoomIsGrid && !timelineHeadersOn && routeIsRoot)
+    zoomIsGrid: Boolean = true,
+    timelineHeadersOn: Boolean = false,
+): Boolean = paneTakenOver || (!mapOpen && zoomIsGrid && !timelineHeadersOn && routeIsRoot)

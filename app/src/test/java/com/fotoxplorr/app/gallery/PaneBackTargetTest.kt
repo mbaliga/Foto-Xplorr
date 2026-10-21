@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * What Back undoes next is a priority list across seven independent pieces of state. The order is
+ * What Back undoes next is a priority list across eight independent pieces of state. The order is
  * the behaviour: a pane left on top of a closed room, or a search cleared before the pane over it,
  * is a Back press that does the wrong thing.
  */
@@ -19,7 +19,10 @@ class PaneBackTargetTest {
         selectionActive: Boolean = false,
         searchVisible: Boolean = false,
         routeIsRoot: Boolean = true,
-    ) = paneBackTarget(roomOpen, settingsOpen, legacyScreenOpen, selectionActive, searchVisible, routeIsRoot)
+        mapOpen: Boolean = false,
+    ) = paneBackTarget(
+        roomOpen, settingsOpen, legacyScreenOpen, selectionActive, searchVisible, routeIsRoot, mapOpen,
+    )
 
     @Test
     fun `a bare grid leaves Back to the system`() {
@@ -68,6 +71,43 @@ class PaneBackTargetTest {
     }
 
     @Test
+    fun `the map alone is closed by Back and leaves the route where it was`() {
+        assertEquals(PaneBackTarget.CLOSE_MAP, target(mapOpen = true))
+        assertEquals(PaneBackTarget.CLOSE_MAP, target(mapOpen = true, routeIsRoot = false))
+    }
+
+    @Test
+    fun `a search typed over the map is closed before the map`() {
+        assertEquals(PaneBackTarget.CLOSE_SEARCH, target(mapOpen = true, searchVisible = true))
+    }
+
+    @Test
+    fun `a room and a pane outrank the map`() {
+        assertEquals(PaneBackTarget.CLOSE_ROOM, target(mapOpen = true, roomOpen = true))
+        assertEquals(PaneBackTarget.CLOSE_SETTINGS, target(mapOpen = true, settingsOpen = true))
+        assertEquals(PaneBackTarget.CLOSE_LEGACY_SCREEN, target(mapOpen = true, legacyScreenOpen = true))
+    }
+
+    @Test
+    fun `the map is left before the album it is showing`() {
+        val first = target(mapOpen = true, routeIsRoot = false)
+        assertEquals(PaneBackTarget.CLOSE_MAP, first)
+        // With the map closed, the same state's next Back leaves the route.
+        assertEquals(PaneBackTarget.LEAVE_ROUTE, target(mapOpen = false, routeIsRoot = false))
+    }
+
+    @Test
+    fun `a caller that predates the map still compiles and means no map`() {
+        assertEquals(
+            PaneBackTarget.NONE,
+            paneBackTarget(
+                roomOpen = false, settingsOpen = false, legacyScreenOpen = false,
+                selectionActive = false, searchVisible = false, routeIsRoot = true,
+            ),
+        )
+    }
+
+    @Test
     fun `either pane counts as a takeover and neither does not`() {
         assertFalse(paneTakenOver(settingsOpen = false, legacyScreenOpen = false))
         assertTrue(paneTakenOver(settingsOpen = true, legacyScreenOpen = false))
@@ -86,8 +126,9 @@ class PaneBackTargetTest {
             target(selectionActive = true),
             target(searchVisible = true),
             target(routeIsRoot = false),
+            target(mapOpen = true),
         )
-        assertEquals(6, singles.toSet().size)
+        assertEquals(7, singles.toSet().size)
         assertFalse(PaneBackTarget.NONE in singles)
     }
 }

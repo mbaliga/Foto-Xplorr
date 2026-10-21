@@ -73,6 +73,10 @@ import com.fotoxplorr.app.ui.HelpCopy
  * The field is deliberately not pretending to be geography. It carries a graticule so position
  * reads as position, and nothing else -- inventing coastlines the app does not have data for would
  * be worse than admitting there are none.
+ *
+ * It is also the offline build's map pane inside the browser (`embedded`): the same field with no
+ * header, no close glyph and no Back handling, drawn in place of the grid and fed the photos the
+ * grid was showing. See [PhotoMapPane].
  */
 @Composable
 fun StampMapScreen(
@@ -88,8 +92,22 @@ fun StampMapScreen(
      * Null is the Places map exactly as it always was.
      */
     focus: MapFocus? = null,
+    /**
+     * Drawn as a pane of the browser rather than as a screen: no header and no close glyph, and
+     * -- the part that matters -- no [BackHandler], because the browser owns the Back order and a
+     * handler registered here would outrank it. Leaving the map is the browser's to do.
+     */
+    embedded: Boolean = false,
+    /**
+     * What the field is framed to. The projection is fitted to the bounds of the located photos,
+     * so if it were fitted to [assets] alone, narrowing them (a time range) would re-fit it and
+     * every stamp that stayed would jump. Fitting to this list (and [assets], so nothing is ever
+     * placed off the field) keeps the field still while stamps come and go. Must already pass
+     * the browser's visibility filter, or the bounds would leak where hidden photos were taken.
+     */
+    frameAssets: List<MediaAsset> = assets,
 ) {
-    BackHandler(onBack = onClose)
+    if (!embedded) BackHandler(onBack = onClose)
 
     val located = remember(assets, geoState.metadataById, focus) {
         val fromIndex = assets.mapNotNull { asset ->
@@ -109,8 +127,15 @@ fun StampMapScreen(
             fromIndex
         }
     }
-    val bounds = remember(located) {
-        StampMapProjection.boundsOf(located.map { it.second.latitude to it.second.longitude })
+    val bounds = remember(located, assets, frameAssets, geoState.metadataById) {
+        val framed = if (frameAssets === assets) {
+            located
+        } else {
+            (frameAssets + assets).mapNotNull { asset ->
+                if (asset.isTrashed) null else geoState.metadataById[asset.id]?.let { asset to it }
+            }
+        }
+        StampMapProjection.boundsOf(framed.map { it.second.latitude to it.second.longitude })
     }
     // Thinned to one stamp per grid cell. A library with thousands of located photos would
     // otherwise compose thousands of overlapping stamps -- slow to lay out and unreadable, since
@@ -129,12 +154,19 @@ fun StampMapScreen(
     var panY by remember { mutableFloatStateOf(0f) }
 
     if (stamps.isEmpty() || bounds == null) {
-        EmptyMap(
-            geoState = geoState,
-            onIndexLocations = onIndexLocations,
-            onClose = onClose,
-            modifier = modifier,
-        )
+        if (embedded && bounds != null) {
+            // The library has places but this view has none of them (a time range, a search):
+            // still the field, saying so, rather than the "nothing is indexed" screen.
+            NothingLocatedHere(modifier)
+        } else {
+            EmptyMap(
+                geoState = geoState,
+                onIndexLocations = onIndexLocations,
+                onClose = onClose,
+                modifier = modifier,
+                embedded = embedded,
+            )
+        }
         return
     }
 
@@ -257,7 +289,8 @@ fun StampMapScreen(
             }
         }
 
-        Row(
+        // Embedded, the browser says how many are on the map in the pill, so there is no header.
+        if (!embedded) Row(
             Modifier
                 .align(Alignment.TopStart)
                 .statusBarsPadding()
@@ -299,7 +332,11 @@ fun StampMapScreen(
                     nearby = nearby,
                     onOpen = { onOpenAsset(asset, nearby) },
                     onDismiss = { selected = null },
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                    // Embedded, the browser's pill and discs float along the bottom edge; the
+                    // poster rises above them rather than under.
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = if (embedded) EMBEDDED_CHROME_CLEARANCE.dp else 0.dp),
                 )
             }
         }
@@ -409,6 +446,7 @@ private fun EmptyMap(
     onIndexLocations: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    embedded: Boolean = false,
 ) {
     // Still a map, still turning (owner, 2026-08-18: *"when there is no location data, you must
     // still show me the map, but keep it slowly spinning to indicate no location yet"*). A blank
@@ -417,7 +455,7 @@ private fun EmptyMap(
     Box(modifier.fillMaxSize().background(FIELD)) {
         SpinningField(Modifier.fillMaxSize())
 
-        Text(
+        if (!embedded) Text(
             "✕",
             color = Color.White.copy(alpha = 0.75f),
             style = MaterialTheme.typography.titleMedium,
@@ -429,7 +467,12 @@ private fun EmptyMap(
         )
 
         Column(
-            Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(24.dp),
+            Modifier
+                .align(Alignment.BottomStart)
+                .navigationBarsPadding()
+                // Embedded, the map toggle and the pill sit along the bottom edge.
+                .padding(bottom = if (embedded) EMBEDDED_CHROME_CLEARANCE.dp else 0.dp)
+                .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
@@ -466,6 +509,23 @@ private fun EmptyMap(
     }
 }
 
+/**
+ * The embedded map's answer when the view has no located photo but the library has: the same
+ * field, still, with one line. Not [EmptyMap], whose copy is about locations not having been read.
+ */
+@Composable
+private fun NothingLocatedHere(modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxSize().background(FIELD)) {
+        Graticule()
+        Text(
+            "Nothing in this view has a location",
+            color = Color.White.copy(alpha = 0.7f),
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.align(Alignment.Center).padding(24.dp),
+        )
+    }
+}
+
 /** The stylized field, turning slowly on its own axis while there is nothing pinned to it. */
 @Composable
 private fun SpinningField(modifier: Modifier = Modifier) {
@@ -491,6 +551,12 @@ private val FIELD = Color(0xFF11141C)
 private val FIELD_DEEP = Color(0xFF0A0C12)
 private val STAMP_PAPER = Color(0xFFF5F1E8)
 private const val STAMP_SIZE = 64
+
+/**
+ * How far an embedded map's own bottom-anchored content rises above the edge, to clear the
+ * browser's pill and corner discs (a 48dp disc 20dp up, plus a gap).
+ */
+private const val EMBEDDED_CHROME_CLEARANCE = 80
 /** Radius of one located photo's dot in focus mode: filled, no stroke, its own colour. */
 private const val FOCUS_DOT_DP = 5
 private const val GRATICULE_ROWS = 8

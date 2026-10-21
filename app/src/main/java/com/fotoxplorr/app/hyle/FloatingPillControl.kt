@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -47,21 +48,30 @@ import androidx.compose.ui.unit.sp
  * worse than either alone. So the pill stops competing to *set* position and reports it
  * instead, which is the thing the edge strip is too narrow to say in words.
  *
+ * It keeps clear of BOTH corner discs: the search disc at the right and, mirrored, the map toggle
+ * ([MapToggleFab]) at the left.
+ *
  * @param caption what the middle reads. Empty renders nothing rather than an empty gap, so a
  *   destination with no timeline (Places, Protected) gets a two-button pill instead of a hole.
+ * @param onToggleDensity the grid-density stepper; null leaves the button out (the map has no
+ *   density).
+ * @param onOpenTimeRange opens the time-range editor; null leaves the button out (Places and
+ *   Protected, which no range applies to).
  */
 @Composable
 fun FloatingPillControl(
     caption: String,
-    onToggleDensity: () -> Unit,
+    onToggleDensity: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    onOpenTimeRange: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .padding(
-                start = PILL_MARGIN.dp,
-                // Clear of the search disc and its own margin, with the same gap again between.
+                // Clear of the map toggle and the search disc, each with its own margin and the
+                // same gap again between.
+                start = (SEARCH_FAB_MARGIN_END + SEARCH_FAB_DP + PILL_MARGIN).dp,
                 end = (SEARCH_FAB_MARGIN_END + SEARCH_FAB_DP + PILL_MARGIN).dp,
                 top = PILL_MARGIN.dp,
                 bottom = SEARCH_FAB_MARGIN_BOTTOM.dp,
@@ -89,8 +99,15 @@ fun FloatingPillControl(
                 .padding(horizontal = 8.dp),
         )
 
-        PillIconButton(onClick = onToggleDensity, description = "Change grid density") {
-            Icon(Icons.Outlined.GridView, contentDescription = null, tint = Color.White)
+        if (onOpenTimeRange != null) {
+            PillIconButton(onClick = onOpenTimeRange, description = "Filter by time") {
+                Icon(Icons.Outlined.DateRange, contentDescription = null, tint = Color.White)
+            }
+        }
+        if (onToggleDensity != null) {
+            PillIconButton(onClick = onToggleDensity, description = "Change grid density") {
+                Icon(Icons.Outlined.GridView, contentDescription = null, tint = Color.White)
+            }
         }
     }
 }

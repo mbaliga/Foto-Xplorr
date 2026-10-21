@@ -80,16 +80,25 @@ class RoomOpenInputTest {
 
     @Test
     fun `the shade is drawn on the root grid and on the panes`() {
-        assertTrue(shadeIsDrawn(paneTakenOver = false, zoomIsGrid = true, timelineHeadersOn = false, routeIsRoot = true))
-        assertTrue(shadeIsDrawn(paneTakenOver = true, zoomIsGrid = true, timelineHeadersOn = false, routeIsRoot = false))
-        // A pane wins over whatever state the covered grid is in.
-        assertTrue(shadeIsDrawn(paneTakenOver = true, zoomIsGrid = false, timelineHeadersOn = true, routeIsRoot = false))
+        assertTrue(shadeIsDrawn(paneTakenOver = false, mapOpen = false, routeIsRoot = true, zoomIsGrid = true, timelineHeadersOn = false))
+        assertTrue(shadeIsDrawn(paneTakenOver = true, mapOpen = false, routeIsRoot = false, zoomIsGrid = true, timelineHeadersOn = false))
+        // A pane wins over whatever state the covered grid is in, the map included.
+        assertTrue(shadeIsDrawn(paneTakenOver = true, mapOpen = false, routeIsRoot = false, zoomIsGrid = false, timelineHeadersOn = true))
+        assertTrue(shadeIsDrawn(paneTakenOver = true, mapOpen = true, routeIsRoot = true))
     }
 
     @Test
     fun `the shade is not drawn inside a route, on the timeline or on a zoom rung`() {
-        assertFalse(shadeIsDrawn(paneTakenOver = false, zoomIsGrid = true, timelineHeadersOn = false, routeIsRoot = false))
-        assertFalse(shadeIsDrawn(paneTakenOver = false, zoomIsGrid = true, timelineHeadersOn = true, routeIsRoot = true))
-        assertFalse(shadeIsDrawn(paneTakenOver = false, zoomIsGrid = false, timelineHeadersOn = false, routeIsRoot = true))
+        assertFalse(shadeIsDrawn(paneTakenOver = false, mapOpen = false, routeIsRoot = false, zoomIsGrid = true, timelineHeadersOn = false))
+        assertFalse(shadeIsDrawn(paneTakenOver = false, mapOpen = false, routeIsRoot = true, zoomIsGrid = true, timelineHeadersOn = true))
+        assertFalse(shadeIsDrawn(paneTakenOver = false, mapOpen = false, routeIsRoot = true, zoomIsGrid = false, timelineHeadersOn = false))
+    }
+
+    @Test
+    fun `the shade is not drawn on the map even at the root`() {
+        // The map is drawn in the grid's place with no shade over it; reserving the shade's height
+        // there would leave a dead strip at the top where the top room could not be pulled down.
+        assertFalse(shadeIsDrawn(paneTakenOver = false, mapOpen = true, routeIsRoot = true))
+        assertTrue(shadeIsDrawn(paneTakenOver = false, mapOpen = false, routeIsRoot = true))
     }
 }

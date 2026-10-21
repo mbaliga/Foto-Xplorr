@@ -6,10 +6,13 @@ import kotlin.math.ln
  * Everything a pinch (or Ctrl+scroll) can leave the gallery showing, as ONE ordered ladder.
  *
  * The owner's ask was specific: zoom out past the sparsest grid and you reach Calendar; further
- * out, Map. Modelling that as three unrelated screens the gesture happens to jump between would
- * mean the "further out" rule lives nowhere -- it would have to be re-derived at every call site
- * that touches zoom. Modelling it as one sealed rung on a ladder means "further out" is just
+ * out, Year and Decade. Modelling that as unrelated screens the gesture happens to jump between
+ * would mean the "further out" rule lives nowhere -- it would have to be re-derived at every call
+ * site that touches zoom. Modelling it as one sealed rung on a ladder means "further out" is just
  * "the next rung", checkable once, here.
+ *
+ * The map used to be the outermost rung. It is a mode of the browser now (the bottom-left disc and
+ * the rail's Map word -- see `MapMode.kt`), so a pinch never lands on it.
  */
 sealed interface GalleryZoomLevel {
     /** A grid at a given column count -- more columns is denser (more, smaller tiles). */
@@ -36,17 +39,9 @@ sealed interface GalleryZoomLevel {
     /**
      * Sparser still: a grid of the 10 years in one decade (owner: *"2000s, 2010s, 2020s"*).
      * Tapping a year opens [Year] at that year -- see [com.fotoxplorr.app.gallery.DecadeScreen].
+     * The far end of the ladder.
      */
     data object Decade : GalleryZoomLevel
-
-    /**
-     * Sparser still, and a different AXIS entirely -- geographic, not temporal (see
-     * [com.fotoxplorr.app.gallery.GalleryMapZoomContent]) -- but it stays the ladder's outermost
-     * rung regardless: the owner's "less and less detailed" ask was purely temporal, so Map sits
-     * exactly where it already did rather than being folded into the Decade/Year/Calendar
-     * sequence it has nothing to do with. The far end of the ladder.
-     */
-    data object MapView : GalleryZoomLevel
 }
 
 /**
@@ -56,10 +51,10 @@ sealed interface GalleryZoomLevel {
  * Rung 0 is the densest grid (`Grid(minColumns)` -- fewest columns is the LARGEST tiles, which
  * this file treats as "most zoomed in"; see the class doc above). Rungs climb through
  * `Grid(minColumns + 1) ... Grid(maxColumns)`, then [GalleryZoomLevel.Calendar],
- * [GalleryZoomLevel.Year], [GalleryZoomLevel.Decade], then [GalleryZoomLevel.MapView] at the top.
+ * [GalleryZoomLevel.Year], then [GalleryZoomLevel.Decade] at the top.
  * Climbing a rung is always "zoom out one notch" and descending is always "zoom in one notch",
  * for every rung on the ladder -- the one invariant [step] relies on to treat a grid-density
- * change and a Calendar<->Year<->Decade<->Map transition as the same kind of move.
+ * change and a Calendar<->Year<->Decade transition as the same kind of move.
  */
 class ZoomLadder(val minColumns: Int, val maxColumns: Int) {
     init {
@@ -68,9 +63,9 @@ class ZoomLadder(val minColumns: Int, val maxColumns: Int) {
         }
     }
 
-    /** Grid rungs, plus Calendar, Year, Decade and Map. */
+    /** Grid rungs, plus Calendar, Year and Decade. */
     val rungCount: Int
-        get() = (maxColumns - minColumns + 1) + 4
+        get() = (maxColumns - minColumns + 1) + 3
 
     private val lastGridRung: Int
         get() = maxColumns - minColumns
@@ -81,7 +76,6 @@ class ZoomLadder(val minColumns: Int, val maxColumns: Int) {
         GalleryZoomLevel.Calendar -> lastGridRung + 1
         GalleryZoomLevel.Year -> lastGridRung + 2
         GalleryZoomLevel.Decade -> lastGridRung + 3
-        GalleryZoomLevel.MapView -> lastGridRung + 4
     }
 
     /** The level at [rung], clamped into range -- the ladder has two closed ends, not a wrap. */
@@ -91,8 +85,7 @@ class ZoomLadder(val minColumns: Int, val maxColumns: Int) {
             clamped <= lastGridRung -> GalleryZoomLevel.Grid(minColumns + clamped)
             clamped == lastGridRung + 1 -> GalleryZoomLevel.Calendar
             clamped == lastGridRung + 2 -> GalleryZoomLevel.Year
-            clamped == lastGridRung + 3 -> GalleryZoomLevel.Decade
-            else -> GalleryZoomLevel.MapView
+            else -> GalleryZoomLevel.Decade
         }
     }
 }
@@ -126,14 +119,14 @@ const val PINCH_STEP_THRESHOLD = 0.22f
  * leans on the same identity for exposure stops, for the same reason.
  *
  * Spreading (scaleFactor > 1, zooming in) descends the ladder -- fewer columns, and eventually
- * back out of Calendar/Year/Decade/Map into the grid. Pinching together (scaleFactor < 1,
- * zooming out) climbs it -- more columns, then Calendar, then Year, then Decade, then Map. That
+ * back out of Calendar/Year/Decade into the grid. Pinching together (scaleFactor < 1,
+ * zooming out) climbs it -- more columns, then Calendar, then Year, then Decade. That
  * sign flip is the one place "spread to see fewer/bigger, pinch to see more/smaller" (the
  * owner's own phrasing) becomes a number.
  *
  * The residual is clamped to zero whenever a step lands on either closed end of the ladder
  * ([ZoomLadder.levelAt] cannot go further). Without that, a user who keeps pinching after
- * already reaching Map would silently "charge up" a large negative residual that does nothing
+ * already reaching Decade would silently "charge up" a large negative residual that does nothing
  * visible -- and then a single small reversing pinch would spend that whole charge at once and
  * jump back several rungs in one motion, which is the exact thrashing this function exists to
  * prevent, just deferred to the moment the user changes their mind instead of avoided.
