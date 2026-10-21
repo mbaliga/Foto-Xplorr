@@ -25,6 +25,7 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.moments.MomentSource
 import com.fotoxplorr.app.moments.VideoMoment
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.app.ui.PaneScaffold
 import com.fotoxplorr.app.viewer.ImageExifDetails
 import com.fotoxplorr.app.viewer.KeyMomentBar
 import com.fotoxplorr.app.viewer.MomentScrubber
@@ -141,14 +142,19 @@ class NewSurfaceRenderTest {
     @Test
     fun `settings background rules tab`() {
         render("settings-1-background-rules") {
-            SettingsTabsRoom(
-                state = emptyState(),
-                actions = noOpActions(),
-                onOpenLegacyScreen = {},
-                onOpenSupport = {},
-                onOpenMoreApps = {},
-                initialTab = SettingsTab.BACKGROUND,
-            )
+            // Hosted as the browser hosts it: the Settings pane, which owns the title and the way back.
+            PaneScaffold(title = "Settings", onBack = {}) {
+                SettingsTabsRoom(
+                    state = emptyState(),
+                    actions = noOpActions(),
+                    onOpenLegacyScreen = {},
+                    onOpenSupport = {},
+                    onOpenMoreApps = {},
+                    initialTab = SettingsTab.BACKGROUND,
+                    showHeader = false,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 
@@ -156,14 +162,19 @@ class NewSurfaceRenderTest {
     @Test
     fun `settings library tab with tidy up entry`() {
         render("settings-2-library-tidy-up") {
-            SettingsTabsRoom(
-                state = emptyState(),
-                actions = noOpActions(),
-                onOpenLegacyScreen = {},
-                onOpenSupport = {},
-                onOpenMoreApps = {},
-                initialTab = SettingsTab.LIBRARY,
-            )
+            // Hosted as the browser hosts it: the Settings pane, which owns the title and the way back.
+            PaneScaffold(title = "Settings", onBack = {}) {
+                SettingsTabsRoom(
+                    state = emptyState(),
+                    actions = noOpActions(),
+                    onOpenLegacyScreen = {},
+                    onOpenSupport = {},
+                    onOpenMoreApps = {},
+                    initialTab = SettingsTab.LIBRARY,
+                    showHeader = false,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 

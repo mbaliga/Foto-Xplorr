@@ -78,6 +78,7 @@ import androidx.annotation.DrawableRes
 import androidx.compose.ui.res.painterResource
 import com.fotoxplorr.app.R
 import com.fotoxplorr.app.ui.HyleGrotesk
+import com.fotoxplorr.app.ui.PaneScaffold
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.text.TextStyle
@@ -109,7 +110,6 @@ import com.fotoxplorr.app.hyle.TRASH_DESIGN_W
 import com.fotoxplorr.app.hyle.shadeHeight
 import androidx.compose.foundation.layout.offset
 import dev.aarso.cellshell.EdgeTimelineScrubber
-import dev.aarso.cellshell.RoomEdge
 import dev.aarso.cellshell.ShakeToRefresh
 import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.SpatialShell
@@ -487,6 +487,12 @@ private fun GalleryBrowser(
     var addTagIds by remember { mutableStateOf<Set<MediaId>?>(null) }
     var passwordRequest by remember { mutableStateOf<PasswordRequest?>(null) }
     var legacyScreen by remember { mutableStateOf<LegacyScreen?>(null) }
+    // Settings is a pane, not a room: it takes over the place the photos are, the same way a
+    // destination screen does, and is left by the back chevron or Back. Saveable because the
+    // person who rotates the phone mid-setting expects to still be in it. Mutually exclusive
+    // with [legacyScreen]: opening either clears the other.
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    val paneTakenOver = paneTakenOver(settingsOpen, legacyScreen != null)
     // Hoisted because the shell must reserve the same strip the shade's pull gesture lives in
     // -- see topReserve below. One state, so the shade and the gesture zone cannot differ.
     var shadeState by remember { mutableStateOf(ShadeState.COLLAPSED) }
@@ -722,26 +728,40 @@ private fun GalleryBrowser(
         }
         query = seed
         searchVisible = true
+        // A search has to land on the grid it filters, not under a pane that covers it.
+        settingsOpen = false
+        legacyScreen = null
         // Acknowledged only after the seeding above has actually happened, so a consumer that
         // clears the value cannot race ahead of the state it is acknowledging.
         actions.onPendingSearchConsumed()
     }
 
     BackHandler(
-        enabled = !shell.atHome || legacyScreen != null ||
+        enabled = !shell.atHome || paneTakenOver ||
             selection.isActive || searchVisible || route != BrowserRoute.Root,
     ) {
-        when {
+        when (
+            paneBackTarget(
+                roomOpen = !shell.atHome,
+                settingsOpen = settingsOpen,
+                legacyScreenOpen = legacyScreen != null,
+                selectionActive = selection.isActive,
+                searchVisible = searchVisible,
+                routeIsRoot = route == BrowserRoute.Root,
+            )
+        ) {
             // A room is not a back-stack entry, but Back is still the gesture people reach for
             // to leave one, so it closes the room rather than the app.
-            !shell.atHome -> shell.closeAll()
-            legacyScreen != null -> legacyScreen = null
-            selection.isActive -> selection = selection.clear()
-            searchVisible -> {
+            PaneBackTarget.CLOSE_ROOM -> shell.closeAll()
+            PaneBackTarget.CLOSE_SETTINGS -> settingsOpen = false
+            PaneBackTarget.CLOSE_LEGACY_SCREEN -> legacyScreen = null
+            PaneBackTarget.CLEAR_SELECTION -> selection = selection.clear()
+            PaneBackTarget.CLOSE_SEARCH -> {
                 searchVisible = false
                 query = ""
             }
-            else -> route = BrowserRoute.Root
+            PaneBackTarget.LEAVE_ROUTE -> route = BrowserRoute.Root
+            PaneBackTarget.NONE -> Unit
         }
     }
 
@@ -947,19 +967,19 @@ private fun GalleryBrowser(
             ChromeMotion.SHRINK_AND_PIVOT -> ParkStyle.SWIVEL
         },
         // Hand the notification's own strip back to it. Without this the shell claims the top
-        // 56dp on the Initial pass and every pull on the status line opens the settings room
-        // instead of expanding the line -- the two gestures live in the same pixels.
+        // 56dp on the Initial pass and every pull on the status line opens the top room (when
+        // there is one) instead of expanding the line -- the two gestures live in the same
+        // pixels. Kept although the top edge is unclaimed for now: the details room goes there.
         topReserve = notificationReserve,
         // One geography for the whole app (owner, 2026-08-18: *"the model needs to remain the
         // same"*). Wherever you are, the same edge holds the same KIND of thing:
         //
         //   LEFT   where you can go        RIGHT   what you can do here
-        //   TOP    settings                BOTTOM  what this is
+        //   TOP    (unclaimed)             BOTTOM  what this is
         //
-        // The viewer set that arrangement, the gallery now matches it, and only the contents
-        // differ -- a grid and one open photo can be done different things to, but the user only
-        // has to learn the four edges once. Settings used to be the gallery's RIGHT room, which
-        // put settings and actions on the same edge depending on which screen you were on.
+        // Settings is no longer a room at all: it is a pane that takes over the place the photos
+        // are (see settingsOpen), reached from the rail, so the top edge is free until the
+        // details room is moved onto it.
         left = {
             DestinationRailPanel(
                 items = railItems,
@@ -974,19 +994,16 @@ private fun GalleryBrowser(
                     destination = HyleDestination.valueOf(id)
                     route = BrowserRoute.Root
                     legacyScreen = null
+                    settingsOpen = false
                     gridScope.launch { gridState.scrollToItem(0) }
                 },
                 onReselect = { shell.closeAll() },
-                onOpenSettings = { shell.open(RoomEdge.TOP) },
-            )
-        },
-        top = {
-            SettingsRoom(
-                state = state,
-                actions = actions,
-                onOpenLegacyScreen = {
+                // The room swings closed and the card that comes back IS Settings.
+                onOpenSettings = {
+                    settingsOpen = true
+                    legacyScreen = null
+                    selection = selection.clear()
                     shell.closeAll()
-                    legacyScreen = it
                 },
             )
         },
@@ -1045,7 +1062,7 @@ private fun GalleryBrowser(
                     // The route-scoped actions that lived in that menu are NOT lost -- they move
                     // to RouteOverlayBar below, which appears only when you are actually inside
                     // an album, a collection or a tag. Refresh stays a shake, backup stays in the
-                    // Library screen, and Settings is the right-hand room.
+                    // Library screen, and Settings is a pane reached from the rail.
                 },
                 floatingActionButton = {
                     if (!selection.isActive && legacyScreen == LegacyScreen.ALBUMS) {
@@ -1106,15 +1123,21 @@ private fun GalleryBrowser(
                                     destination = HyleDestination.valueOf(id)
                                     route = BrowserRoute.Root
                                     legacyScreen = null
+                                    settingsOpen = false
                                     gridScope.launch { gridState.scrollToItem(0) }
                                 },
-                                onOpenSettings = { shell.open(RoomEdge.TOP) },
+                                // No room is involved on a pinned rail, so there is nothing to close.
+                                onOpenSettings = {
+                                    settingsOpen = true
+                                    legacyScreen = null
+                                    selection = selection.clear()
+                                },
                                 onExpand = { navRailPreferences.setNavRailCollapsed(false) },
                                 onCollapse = { navRailPreferences.setNavRailCollapsed(true) },
                             )
                         }
                     Column(Modifier.fillMaxHeight().weight(1f)) {
-                        if (searchVisible) {
+                        if (searchVisible && !settingsOpen) {
                             com.fotoxplorr.app.hyle.HyleTextField(
                                 value = query,
                                 onValueChange = { query = it },
@@ -1141,18 +1164,37 @@ private fun GalleryBrowser(
 
                         val legacy = legacyScreen
                         when {
+                            // The two panes. Settings is checked first only for readability: they
+                            // are mutually exclusive, because opening either clears the other.
+                            settingsOpen -> PaneScaffold(
+                                title = "Settings",
+                                onBack = { settingsOpen = false },
+                            ) {
+                                SettingsRoom(
+                                    state = state,
+                                    actions = actions,
+                                    onOpenLegacyScreen = {
+                                        settingsOpen = false
+                                        legacyScreen = it
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
                             legacy != null -> LegacyScreenHost(
                                 screen = legacy,
                                 state = state,
                                 actions = actions,
                                 query = query,
+                                onBack = { legacyScreen = null },
                                 onOpenRoute = { route = it; legacyScreen = null },
                                 onRequestUnlock = { key, name ->
                                     passwordRequest = PasswordRequest(PasswordAction.UNLOCK, key, name)
                                 },
-                                // Settings is the TOP room (the right room is the Actions room), so this is
-                                // how the Appearance > Accent picker is reached from these screens.
-                                onOpenSettings = { shell.open(RoomEdge.TOP) },
+                                // How the Appearance > Accent picker is reached from these screens.
+                                onOpenSettings = {
+                                    settingsOpen = true
+                                    legacyScreen = null
+                                },
                                 onOpenDestination = {
                                     destination = it
                                     route = BrowserRoute.Root
@@ -1293,7 +1335,7 @@ private fun GalleryBrowser(
                     // why the pill no longer carries a scrubber of its own — two position
                     // controls on one screen is one too many, and the edge is the one the owner
                     // asked for.
-                    if (!selection.isActive && legacyScreen == null && scrubberTrackable && scrubberStops.isNotEmpty()) {
+                    if (!selection.isActive && !paneTakenOver && scrubberTrackable && scrubberStops.isNotEmpty()) {
                         EdgeTimelineScrubber(
                             stops = scrubberStops,
                             itemCount = gridIndexMap.itemCount,
@@ -1340,7 +1382,7 @@ private fun GalleryBrowser(
                     // get back OUT of: inside an album, a collection or a tag. Drawn OVER the
                     // mosaic rather than in the Scaffold's topBar slot, so it costs the grid no
                     // height and the root browsing surface stays completely bare.
-                    if (!selection.isActive && route != BrowserRoute.Root) {
+                    if (!selection.isActive && !paneTakenOver && route != BrowserRoute.Root) {
                         RouteOverlayBar(
                             title = route.title(destination),
                             onBack = { route = BrowserRoute.Root },
@@ -1361,7 +1403,7 @@ private fun GalleryBrowser(
                     // Search still makes sense from Calendar/Map (it drives which assets flow
                     // INTO them, same as the grid), so only the density control is grid-only --
                     // the pill itself stays up throughout.
-                    if (!selection.isActive && legacyScreen == null) {
+                    if (!selection.isActive && !paneTakenOver) {
                         FloatingPillControl(
                             caption = if (scrubberTrackable) {
                                 pillCaption(renderedAssets, gridIndexMap.assetIndexAt(firstVisibleIndex))
@@ -1406,7 +1448,7 @@ private fun GalleryBrowser(
                     // reachable, per the owner's ask that these not stay "buried behind
                     // Discover -> Places". Up whenever the equivalent chrome above is -- not
                     // gated on gridActive, since this is the way BACK from Calendar/Map too.
-                    if (!selection.isActive && legacyScreen == null) {
+                    if (!selection.isActive && !paneTakenOver) {
                         GalleryViewModeSwitcher(
                             active = when {
                                 zoomLevel is GalleryZoomLevel.MapView -> GalleryViewMode.MAP
@@ -1554,6 +1596,9 @@ private fun GalleryBrowser(
             onSuccess = {
                 if (request.action == PasswordAction.UNLOCK) {
                     route = BrowserRoute.DeviceAlbum(request.folderKey, request.folderName)
+                    // Unlocking from the Albums screen would otherwise leave Albums on top of the
+                    // album it just opened.
+                    legacyScreen = null
                 }
                 passwordRequest = null
             },
@@ -2154,24 +2199,29 @@ private fun BrowserHeader(
 }
 
 /**
- * The settings room — the surface parked off the right edge.
+ * The content of the Settings pane: the tabs, with the intents that leave the app wired up.
  *
- * One depth, six tabs. It used to be two depths: a compact panel plus everything else behind an
+ * One depth, nine tabs. It used to be two depths: a compact panel plus everything else behind an
  * "All settings…" button, which is what made that second depth feel strange (owner, 2026-08-14)
  * -- it was not a category, it was an overflow, and an overflow is what a surface grows when it
- * has no structure to put things in.
+ * has no structure to put things in. It lived in a room off the top edge until the owner asked
+ * for it to take over the place the photos are (2026-10); the title and the way back are the
+ * hosting [PaneScaffold]'s, so the tabs draw no header of their own here.
  */
 @Composable
 private fun SettingsRoom(
     state: GalleryUiState,
     actions: GalleryActions,
     onOpenLegacyScreen: (LegacyScreen) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     SettingsTabsRoom(
         state = state,
         actions = actions,
         onOpenLegacyScreen = onOpenLegacyScreen,
+        modifier = modifier,
+        showHeader = false,
         // Both leave the app, so both are ordinary implicit intents rather than anything this
         // app handles itself -- and both are runCatching-guarded, because a device with no mail
         // client or no browser is a real device and must not crash for asking.

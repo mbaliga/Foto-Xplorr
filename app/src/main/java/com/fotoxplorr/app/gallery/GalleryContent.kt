@@ -48,6 +48,7 @@ import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -55,7 +56,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -81,6 +81,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Dialog
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.ui.RoomRow
+import com.fotoxplorr.app.ui.RoomStyle
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.organize.LibraryState
 import com.fotoxplorr.app.organize.MediaCollection
@@ -743,7 +745,7 @@ fun AlbumsScreen(
     LazyVerticalGrid(
         columns = GridCells.Adaptive(150.dp),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+        contentPadding = PANE_CONTENT_PADDING,
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -807,13 +809,13 @@ private fun AlbumCard(
 ) {
     Card(
         modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        colors = paneCardColors(),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1.16f)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                .background(RoomStyle.Surface),
             contentAlignment = Alignment.Center,
         ) {
             when {
@@ -832,7 +834,7 @@ private fun AlbumCard(
             Text(
                 if (locked) "Private folder" else "$count items",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = RoomStyle.InkFaint,
             )
         }
     }
@@ -848,7 +850,11 @@ fun DiscoverScreen(
 
     if (showingPlaces && spatial != null) {
         Column(modifier = Modifier.fillMaxSize()) {
-            TextButton(onClick = { showingPlaces = false }) { Text("Back to Discover") }
+            RoomRow(
+                label = "Back to Discover",
+                onClick = { showingPlaces = false },
+                modifier = Modifier.padding(horizontal = RoomStyle.GutterStart),
+            )
             PlacesScreen(
                 assets = spatial.assets,
                 indexInput = spatial.indexInput,
@@ -863,7 +869,7 @@ fun DiscoverScreen(
     LazyVerticalGrid(
         columns = GridCells.Adaptive(160.dp),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+        contentPadding = PANE_CONTENT_PADDING,
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -874,7 +880,7 @@ fun DiscoverScreen(
                         onClick = { showingPlaces = true },
                         onLongClick = { showingPlaces = true },
                     ),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    colors = paneCardColors(),
                 ) {
                     Box(
                         modifier = Modifier.fillMaxWidth().aspectRatio(1.35f),
@@ -899,6 +905,7 @@ fun DiscoverScreen(
                         Text(
                             "Offline map, compass and elevation from embedded metadata",
                             style = MaterialTheme.typography.bodySmall,
+                            color = RoomStyle.InkFaint,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -912,13 +919,13 @@ fun DiscoverScreen(
                     onClick = { onOpen(summary) },
                     onLongClick = { onOpen(summary) },
                 ),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                colors = paneCardColors(),
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(1.35f)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .background(Color.Black),
                     contentAlignment = Alignment.Center,
                 ) {
                     summary.cover?.let {
@@ -940,6 +947,7 @@ fun DiscoverScreen(
                     Text(summary.title, style = MaterialTheme.typography.titleSmall)
                     Text(
                         summary.subtitle,
+                        color = RoomStyle.InkFaint,
                         style = MaterialTheme.typography.bodySmall,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
@@ -967,7 +975,7 @@ fun LibraryScreen(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+        contentPadding = PANE_CONTENT_PADDING,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { SectionHeading("Organise", "Local metadata; original media is unchanged") }
@@ -1007,10 +1015,20 @@ fun LibraryScreen(
             // Not "use the + button": that FAB only exists on the Albums screen, not here --
             // this screen has none, so the old copy pointed at a control the reader could not
             // see.
-            item { Text("Create your first collection from Albums.", style = MaterialTheme.typography.bodyMedium) }
+            item {
+                Text(
+                    "Create your first collection from Albums.",
+                    color = RoomStyle.InkFaint,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
         } else {
             items(library.collections, key = { it.id }) { collection ->
-                Card(onClick = { onOpenCollection(collection) }, modifier = Modifier.fillMaxWidth()) {
+                Card(
+                    onClick = { onOpenCollection(collection) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = paneCardColors(),
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -1019,7 +1037,11 @@ fun LibraryScreen(
                         Icon(Icons.Outlined.Collections, null)
                         Column(Modifier.weight(1f)) {
                             Text(collection.name, style = MaterialTheme.typography.titleSmall)
-                            Text("${collection.mediaIds.size} items", style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                "${collection.mediaIds.size} items",
+                                color = RoomStyle.InkFaint,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
                         }
                     }
                 }
@@ -1029,11 +1051,26 @@ fun LibraryScreen(
         item { SectionHeading("Tags", "Searchable labels stored only in Fotoz") }
         item {
             if (library.allTags.isEmpty()) {
-                Text("Select media and choose Add tag to create your first tag.")
+                Text(
+                    "Select media and choose Add tag to create your first tag.",
+                    color = RoomStyle.InkFaint,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             } else {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(library.allTags, key = { it }) { tag ->
-                        AssistChip(onClick = { onOpenTag(tag) }, label = { Text("#$tag") })
+                        AssistChip(
+                            onClick = { onOpenTag(tag) },
+                            label = { Text("#$tag") },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = RoomStyle.Surface,
+                                labelColor = RoomStyle.Ink,
+                            ),
+                            border = AssistChipDefaults.assistChipBorder(
+                                enabled = true,
+                                borderColor = Color.White.copy(alpha = 0.18f),
+                            ),
+                        )
                     }
                 }
             }
@@ -1041,15 +1078,18 @@ fun LibraryScreen(
 
         item { SectionHeading("Metadata backup", "Collections, tags and archive state") }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TextButton(onClick = onExportMetadata) {
-                    Icon(Icons.Outlined.UploadFile, null)
-                    Text(" Export")
-                }
-                TextButton(onClick = onImportMetadata) {
-                    Icon(Icons.Outlined.Collections, null)
-                    Text(" Import")
-                }
+            // Rows in the rooms' own language rather than Material text buttons.
+            Column {
+                RoomRow(
+                    label = "Export",
+                    onClick = onExportMetadata,
+                    trailing = { Icon(Icons.Outlined.UploadFile, contentDescription = null, tint = RoomStyle.InkMuted) },
+                )
+                RoomRow(
+                    label = "Import",
+                    onClick = onImportMetadata,
+                    trailing = { Icon(Icons.Outlined.Collections, contentDescription = null, tint = RoomStyle.InkMuted) },
+                )
             }
         }
         item {
@@ -1073,11 +1113,11 @@ private fun LibraryActionCard(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit,
 ) {
-    Card(modifier = modifier, onClick = onClick) {
+    Card(modifier = modifier, onClick = onClick, colors = paneCardColors()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(icon, contentDescription = null)
             Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall)
+            Text(subtitle, color = RoomStyle.InkFaint, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -1088,10 +1128,27 @@ private fun SectionHeading(title: String, subtitle: String) {
         modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        Text(subtitle, style = MaterialTheme.typography.bodySmall)
+        Text(title, color = RoomStyle.Ink, style = MaterialTheme.typography.titleMedium)
+        Text(subtitle, color = RoomStyle.InkFaint, style = MaterialTheme.typography.bodySmall)
     }
 }
+
+/**
+ * The cards on the destination panes: raised off the pane's black, with white ink. Material's
+ * defaults would hand them `surfaceVariant` and its dark `onSurfaceVariant`, which is a light grey
+ * slab in light theme sitting on a literal black ground.
+ */
+@Composable
+private fun paneCardColors() = CardDefaults.cardColors(
+    containerColor = RoomStyle.Surface,
+    contentColor = RoomStyle.Ink,
+)
+
+/** The pane screens' padding: the rooms' own 20dp gutters, so every pane lines up with Settings. */
+private val PANE_CONTENT_PADDING = androidx.compose.foundation.layout.PaddingValues(
+    horizontal = RoomStyle.GutterStart,
+    vertical = 12.dp,
+)
 
 @Composable
 internal fun GalleryMessage(message: String) {

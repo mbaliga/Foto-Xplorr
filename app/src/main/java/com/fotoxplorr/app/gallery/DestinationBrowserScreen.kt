@@ -18,16 +18,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -48,6 +44,7 @@ import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
 import com.fotoxplorr.app.ui.HyleGrotesk
+import com.fotoxplorr.app.ui.PaneScaffold
 import com.fotoxplorr.core.model.MediaId
 
 /**
@@ -437,6 +434,8 @@ fun LegacyScreenHost(
     state: GalleryUiState,
     actions: GalleryActions,
     query: String,
+    /** The pane's back chevron: hands the place the photos are back to the destination below. */
+    onBack: () -> Unit,
     onOpenRoute: (BrowserRoute) -> Unit,
     onRequestUnlock: (String, String) -> Unit,
     onOpenSettings: () -> Unit,
@@ -465,7 +464,12 @@ fun LegacyScreenHost(
         )
     }
 
-    Column(Modifier.fillMaxSize()) {
+    // The same scaffold Settings uses, so the five of these and Settings read as one family: black
+    // ground, a way out in the corner, a title, and white ink whatever the theme. Before this they
+    // had no header and no way out but Back, and drew dark-on-black wherever a Text set no colour.
+    PaneScaffold(title = screen.label, onBack = onBack) {
+        // Each screen fills what the header leaves: an unweighted Column child is measured against
+        // the height remaining after the children before it.
         when (screen) {
             LegacyScreen.ALBUMS -> AlbumsScreen(
                 assets = state.assets,
@@ -585,91 +589,3 @@ private fun archiveReviewItems(state: GalleryUiState): List<ArchiveReviewItem> {
         assetsById[suggestion.mediaId]?.let { ArchiveReviewItem(suggestion, it) }
     }
 }
-
-/**
- * The settings panel from the mockup: a small letterspaced "SETTINGS" label over large
- * light "Default View" type, sliding in from the right with the grid still showing at the
- * left edge.
- */
-@Composable
-fun SettingsPanel(
-    preferences: GalleryPreferencesState,
-    onOpenAllSettings: () -> Unit,
-    onSetDefaultDestination: (HyleDestination) -> Unit,
-    onOpenLegacyScreen: (LegacyScreen) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(start = 28.dp, end = 20.dp, top = 32.dp, bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(
-            "SETTINGS",
-            style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp),
-            color = Color.White,
-        )
-        Text(
-            "Default View",
-            style = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Light),
-            color = Color.White,
-            modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
-        )
-        // Now over the nine destinations, not the four retired bottom-nav tabs.
-        HyleDestination.entries.forEach { candidate ->
-            val selected = preferences.defaultDestination == candidate
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSetDefaultDestination(candidate) }
-                    .padding(vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(Modifier.size(width = 20.dp, height = 10.dp), contentAlignment = Alignment.CenterStart) {
-                    if (selected) Box(Modifier.size(8.dp).background(Color.White))
-                }
-                Text(
-                    candidate.label,
-                    style = TextStyle(
-                        fontSize = 18.sp,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Light,
-                    ),
-                    color = Color.White.copy(alpha = if (selected) 1f else 0.55f),
-                )
-            }
-        }
-
-        Text(
-            "MORE",
-            style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp),
-            color = Color.White,
-            modifier = Modifier.padding(top = 26.dp, bottom = 4.dp),
-        )
-        LegacyScreen.entries.forEach { screen ->
-            TextButton(
-                onClick = { onOpenLegacyScreen(screen) },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    screen.label,
-                    color = Color.White.copy(alpha = 0.75f),
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-            }
-        }
-        TextButton(onClick = onOpenAllSettings, modifier = Modifier.fillMaxWidth()) {
-            Text(
-                "All settings…",
-                color = Color.White,
-                modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.bodyLarge,
-            )
-        }
-    }
-}
-
