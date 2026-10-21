@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Edit
@@ -97,6 +98,16 @@ fun ViewerActionsRoom(
      *  mark sensitive, rename and trash, none of which have anything to act on for a file this app
      *  holds no library record for. */
     isExternal: Boolean = false,
+    /**
+     * "Lift subject" -- cut the subject out of this photo as a transparent sticker. Null hides the
+     * row; the host passes it only for a still raster photo (see
+     * [com.fotoxplorr.app.lift.canLiftSubject]), never for video, SVG, RAW or animated images.
+     *
+     * Deliberately NOT behind [catalogueActions]: lifting reads nothing but the photo's URI and
+     * its only output is a new sticker file the person asks for, so it makes as much sense on a
+     * photo opened from another app as on one from the library.
+     */
+    onLiftSubject: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -120,6 +131,9 @@ fun ViewerActionsRoom(
         }
         if (catalogueActions) {
             ActionRow(Icons.Outlined.Edit, "Edit", onEdit)
+        }
+        if (!isVideo && onLiftSubject != null) {
+            ActionRow(Icons.Outlined.ContentCut, "Lift subject", onLiftSubject)
         }
         ActionRow(Icons.Outlined.OpenInNew, "Open with", onOpenWith)
         if (catalogueActions && !isExternal && onRename != null) {

@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.lift
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,9 +14,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -39,14 +40,15 @@ import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.decodeUpright
-import com.fotoxplorr.app.viewer.fittedImageRect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 /**
- * The tappable "lift a subject" layer over a photo, entered from a long press.
+ * The tappable "lift a subject" layer over a photo, entered from a long press or the actions
+ * room's "Lift subject" row.
  *
  * ## Gesture precedence -- read this before changing [com.fotoxplorr.app.viewer.ViewerScreen]
  * This composable renders NOTHING at all -- no `Box`, no `pointerInput`, nothing hit-testable --
@@ -76,10 +78,18 @@ fun LiftOverlay(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Declared before the early return and keyed on `active`, so Back is intercepted exactly while
+    // a lift is on screen and a later re-entry starts from a clean slate. Without this the system
+    // Back gesture closed the whole viewer (or backed out of a room) underneath a half-finished
+    // lift, which reads as "the app threw my selection away".
+    var phase by remember(asset.id, active) { mutableStateOf<LiftPhase>(LiftPhase.Loading) }
+    BackHandler(enabled = active && !asset.isVideo) {
+        if (phase is LiftPhase.Ready) phase = LiftPhase.Picking else onDismiss()
+    }
+
     if (!active || asset.isVideo) return
 
     val context = LocalContext.current
-    var phase by remember(asset.id) { mutableStateOf<LiftPhase>(LiftPhase.Picking) }
     var source by remember(asset.id) { mutableStateOf<Bitmap?>(null) }
     var containerSize by remember { mutableStateOf(Size.Zero) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
@@ -91,8 +101,24 @@ fun LiftOverlay(
     // over the WHOLE image regardless of subject size, not a windowed operation, so this has to
     // stay small enough to run on a background thread without the user noticing, at some cost to
     // how finely a hair-fine edge can be resolved -- see the file KDoc's honest-limits note.
+    //
+    // Every outcome ends in a state the person can see. The decode used to run bare: a null
+    // result left the "Tap the subject" banner up over a tap handler that was never installed
+    // (every tap silently ignored, forever), and an exception from the EXIF read -- which sits
+    // outside decodeUpright's own runCatching -- escaped the LaunchedEffect and took the
+    // composition down with it.
     LaunchedEffect(asset.id) {
-        source = decodeUpright(context, asset.contentUri, LIFT_DECODE_LIMITS)?.bitmap
+        val decoded = catchingResult {
+            decodeUpright(context, asset.contentUri, LIFT_DECODE_LIMITS)?.bitmap
+                ?: throw IOException("the photo could not be decoded")
+        }
+        decoded.fold(
+            onSuccess = { bitmap ->
+                source = bitmap
+                phase = LiftPhase.Picking
+            },
+            onFailure = { phase = LiftPhase.Failed(classifyLiftFailure(it), canRetry = false) },
+        )
     }
 
     // A transient status line for save/share feedback, self-contained rather than routed through
@@ -111,34 +137,39 @@ fun LiftOverlay(
         modifier = modifier
             .fillMaxSize()
             .pointerInput(asset.id, source, phase) {
-                if (phase !is LiftPhase.Picking) return@pointerInput
-                val bitmap = source ?: return@pointerInput
+                // Outside the picking step the overlay still owns the touch: swallowing taps here
+                // keeps a tap on the progress scrim or an error from falling through to the photo
+                // underneath and toggling the viewer's chrome.
+                val bitmap = source
+                if (phase !is LiftPhase.Picking || bitmap == null) {
+                    detectTapGestures { }
+                    return@pointerInput
+                }
                 containerSize = Size(size.width.toFloat(), size.height.toFloat())
                 detectTapGestures(
                     onTap = { point ->
-                        val rect = fittedImageRect(containerSize, asset.width, asset.height)
-                        if (!rect.contains(point)) {
+                        // Mapped through the DECODED bitmap's own size, not asset.width/height --
+                        // see imagePointToBitmapPixel for the failure that avoids.
+                        val pixel = imagePointToBitmapPixel(point, containerSize, bitmap.width, bitmap.height)
+                        if (pixel == null) {
                             // Tapped the letterbox rather than the photo -- read as "never mind",
                             // the same way a tap on empty space dismisses a sheet everywhere else
                             // in this app.
                             onDismiss()
                             return@detectTapGestures
                         }
-                        val fx = ((point.x - rect.left) / rect.width).coerceIn(0f, 1f)
-                        val fy = ((point.y - rect.top) / rect.height).coerceIn(0f, 1f)
-                        val seedX = (fx * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
-                        val seedY = (fy * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
 
                         phase = LiftPhase.Processing
                         scope.launch {
-                            val cutout = withContext(Dispatchers.Default) {
-                                runCatching { LiftRenderer.cutOut(bitmap, seedX, seedY) }.getOrNull()
+                            val outcome = withContext(Dispatchers.Default) {
+                                catchingResult { LiftRenderer.cutOut(bitmap, pixel.x, pixel.y) }
                             }
-                            phase = if (cutout != null) {
-                                LiftPhase.Ready(cutout.bitmap)
-                            } else {
-                                LiftPhase.Failed
-                            }
+                            phase = outcome.fold(
+                                onSuccess = { cutout ->
+                                    if (cutout != null) LiftPhase.Ready(cutout.bitmap) else LiftPhase.Failed(LiftFailure.NoSubject, canRetry = true)
+                                },
+                                onFailure = { LiftPhase.Failed(classifyLiftFailure(it), canRetry = true) },
+                            )
                         }
                     },
                 )
@@ -146,10 +177,12 @@ fun LiftOverlay(
         contentAlignment = Alignment.Center,
     ) {
         when (val current = phase) {
+            is LiftPhase.Loading -> LoadingChrome(onCancel = onDismiss)
             is LiftPhase.Picking -> PickingChrome(onCancel = onDismiss)
             is LiftPhase.Processing -> ProcessingChrome()
             is LiftPhase.Failed -> FailedChrome(
-                onTryAgain = { phase = LiftPhase.Picking },
+                message = current.failure.userMessage(),
+                onTryAgain = if (current.canRetry) ({ phase = LiftPhase.Picking }) else null,
                 onCancel = onDismiss,
             )
             is LiftPhase.Ready -> ReadyChrome(
@@ -190,10 +223,32 @@ fun LiftOverlay(
 
 /** Where a lift attempt currently is. Private: this is UI-flow state, not something worth exposing. */
 private sealed interface LiftPhase {
+    /** The photo is still being decoded; no tap handler exists yet, so say so. */
+    data object Loading : LiftPhase
     data object Picking : LiftPhase
     data object Processing : LiftPhase
     data class Ready(val bitmap: Bitmap) : LiftPhase
-    data object Failed : LiftPhase
+
+    /** [canRetry] is false when the photo itself is the problem, so trying another tap cannot help. */
+    data class Failed(val failure: LiftFailure, val canRetry: Boolean) : LiftPhase
+}
+
+@Composable
+private fun BoxScope.LoadingChrome(onCancel: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f))) {}
+    Column(
+        modifier = Modifier.align(Alignment.Center),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        CircularProgressIndicator(color = Color.White)
+        Text("Opening photo…", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+    }
+    InstructionBanner(
+        text = "Getting ready to lift",
+        modifier = Modifier.align(Alignment.TopCenter),
+        onCancel = onCancel,
+    )
 }
 
 @Composable
@@ -219,7 +274,7 @@ private fun BoxScope.ProcessingChrome() {
 }
 
 @Composable
-private fun BoxScope.FailedChrome(onTryAgain: () -> Unit, onCancel: () -> Unit) {
+private fun BoxScope.FailedChrome(message: String, onTryAgain: (() -> Unit)?, onCancel: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f))) {}
     Column(
         modifier = Modifier.align(Alignment.Center),
@@ -227,13 +282,15 @@ private fun BoxScope.FailedChrome(onTryAgain: () -> Unit, onCancel: () -> Unit) 
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
-            "Couldn't find a clear subject there",
+            message,
             color = Color.White,
             style = MaterialTheme.typography.bodyLarge,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("Try again", color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable(onClick = onTryAgain))
-            Text("Cancel", color = Color.White.copy(alpha = 0.7f), modifier = Modifier.clickable(onClick = onCancel))
+            if (onTryAgain != null) {
+                Text("Try again", color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable(onClick = onTryAgain))
+            }
+            Text("Close", color = Color.White.copy(alpha = 0.7f), modifier = Modifier.clickable(onClick = onCancel))
         }
     }
 }
@@ -298,8 +355,10 @@ private fun ActionLabel(label: String, onClick: () -> Unit, emphasised: Boolean 
 private fun InstructionBanner(text: String, onCancel: () -> Unit, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
+            // The TOP banner clears the status bar, not the navigation bar: it used the latter, so
+            // on a gesture-nav phone it sat under the clock and the Cancel button was half hidden.
+            .statusBarsPadding()
             .padding(top = 24.dp)
-            .navigationBarsPadding()
             .fillMaxWidth()
             .padding(horizontal = 24.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
