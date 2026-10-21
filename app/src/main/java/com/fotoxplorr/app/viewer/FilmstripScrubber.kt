@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -73,6 +74,11 @@ import kotlinx.coroutines.launch
  *   lambda and the scale in each thumbnail's layer lambda, so every frame of the bulge is
  *   re-layout and re-draw, never recomposition.
  *
+ * **Roll-level, never asset-level.** The strip does not know or care what the current asset is: it
+ * is shown for a video exactly as for a photo (see [ViewerChromePolicy.filmstripShown]). It must
+ * stay that way, because it drives the host live -- a strip that vanished when the thumbnail
+ * under the finger turned out to be a video would cancel the drag it was in the middle of.
+ *
  * Every thumbnail is laid out at the same width; magnification is a draw-time effect on top of
  * it, never a change to the box itself. A wider current item would shift the strip's own
  * geometry as selection moved, which is what made the centre drift in the very first version.
@@ -85,11 +91,20 @@ fun FilmstripScrubber(
     modifier: Modifier = Modifier,
     /** Test seam: start the strip already bulged, as if a finger were on it. */
     initialBulge: Float = 0f,
+    /**
+     * True while the user is moving the strip (a finger on it, or the fling that finger threw),
+     * false once it comes to rest -- and false again if the strip leaves composition mid-gesture,
+     * so a host can never be left believing someone is still scrubbing. Not true while the strip
+     * animates itself to the host's current photo. Lets the viewer pause a playing video the
+     * moment the strip is touched and hold off starting the next one until the strip settles.
+     */
+    onScrubbingChanged: (Boolean) -> Unit = {},
 ) {
     if (assets.size <= 1) return
     val listState = rememberLazyListState()
     val currentOnSelect by rememberUpdatedState(onSelect)
     val currentAssets by rememberUpdatedState(assets)
+    val currentOnScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
     val density = LocalDensity.current
     val magnifyRadiusPx = with(density) { FilmstripGeometry.MAGNIFY_RADIUS_DP.dp.toPx() }
     val scope = rememberCoroutineScope()
@@ -160,6 +175,17 @@ fun FilmstripScrubber(
             snapshotFlow { dragged to listState.isScrollInProgress }.collect { (isDragged, scrolling) ->
                 userScroll = isDragged || (userScroll && scrolling)
             }
+        }
+
+        // Tell the host when the user starts and stops moving the strip. The dispose guard matters
+        // because the strip is chrome: toggling the chrome off (or opening the lift editor) in the
+        // middle of a fling removes it with `userScroll` still true, and a host left holding
+        // "scrubbing" would keep its video paused and un-armed for good.
+        LaunchedEffect(listState) {
+            snapshotFlow { userScroll }.collect { currentOnScrubbingChanged(it) }
+        }
+        DisposableEffect(Unit) {
+            onDispose { currentOnScrubbingChanged(false) }
         }
 
         // Turning the strip IS selecting: the moment a different thumbnail is nearest the

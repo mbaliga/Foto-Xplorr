@@ -276,6 +276,25 @@ fun ViewerScreen(
     // photo the user never long-pressed.
     var liftActive by remember(asset.id) { mutableStateOf(false) }
     val shell = rememberSpatialController()
+    // Picture-in-picture shrinks the whole window to a small video: nothing drawn over the photo
+    // (the position chip, the filmstrip) belongs in it. VideoPlayer hides its own transport the
+    // same way; the host's chrome has to ask for itself because it is not inside that composition.
+    val isInPip by rememberIsInPictureInPicture()
+    // True while the user is moving the filmstrip (a finger on it, or its fling). Pauses a playing
+    // video and keeps the next one from starting until the strip settles -- see VideoPlayer's
+    // scrubSuspended. Reset by the strip itself when it leaves composition mid-gesture.
+    var scrubbing by remember { mutableStateOf(false) }
+    // The filmstrip's one rule, in one place, and NOT a function of the current asset: see
+    // ViewerChromePolicy.filmstripShown for why a strip gated on "is this a video" cancels the
+    // drag that scrubbed onto the video. The same flag sizes the video transport's bottom inset
+    // below, so the two can never disagree about whether the strip is there.
+    val filmstripShown = ViewerChromePolicy.filmstripShown(
+        chromeVisible = chromeVisible,
+        inPictureInPicture = isInPip,
+        showFilmstripPreference = showFilmstrip,
+        rollSize = relatedAssets.size,
+        lifting = liftActive,
+    )
 
     // Read here rather than inside the room: the shell only composes a room once it is slightly
     // open, so reading it there would start the EXIF load on the first pixel of the pull and
@@ -572,6 +591,9 @@ fun ViewerScreen(
                         chromeVisible = chromeVisible,
                         autoplayVideos = autoplayVideos,
                         catalogueActions = catalogueActions,
+                        // Sits the transport above the filmstrip band instead of under it.
+                        bottomInset = ViewerChromePolicy.videoBottomInsetDp(filmstripShown).dp,
+                        scrubSuspended = scrubbing,
                     )
                 }
             } else {
@@ -632,9 +654,9 @@ fun ViewerScreen(
             }
 
             // All that is left over the photo, and only when asked for: where you are in the
-            // run. The nine actions are the right room, the facts are the bottom room, and the
-            // settings are the top room -- none of them costs the photo a pixel until pulled.
-            if (chromeVisible) {
+            // run. The nine actions are the right room, the facts are the top room, and the
+            // settings are the bottom room -- none of them costs the photo a pixel until pulled.
+            if (ViewerChromePolicy.chromeShown(chromeVisible, isInPip, liftActive)) {
                 ViewerPositionChip(
                     asset = asset,
                     position = position,
@@ -668,19 +690,21 @@ fun ViewerScreen(
             // drawn over the photo, for the same reason: immersive means immersive by default,
             // and the strip is unambiguously chrome.
             //
-            // Also suppressed for video: VideoPlayer draws its own bottom chrome while a video is
-            // showing (the key-moment pill/menu and a scrubber over the VIDEO's own timeline),
-            // anchored to this exact same screen edge. Leaving this roll-level filmstrip on too
-            // would stack two scrubbers fighting for the same band at the bottom of the screen.
-            // The roll is still reachable while a video plays -- the swipe-to-page gesture above
-            // is not gated on asset type -- just not via this particular thumbnail strip. Not
-            // verified on a device (none available in this environment); if that trade-off turns
-            // out wrong once someone can look at it, this is a one-token `!asset.isVideo` to drop.
-            if (!asset.isVideo && chromeVisible && showFilmstrip && relatedAssets.size > 1) {
+            // NOT gated on the type of the current asset (owner, #28: "When I scrub through the
+            // filmstrip and stop on a video, the video player progress bar etc. replaces the
+            // filmstrip so scrubbing through is no longer possible"). The strip is roll-level
+            // navigation and it drives this screen live, so gating it on `asset.isVideo` removed
+            // it from under the finger the instant the scrub landed on a video. The two used to
+            // be kept apart because both anchor to this bottom edge; instead the video transport
+            // now sits `bottomInset` above the strip's resting band (above), and dims while the
+            // strip is being moved. Last child of this Box on purpose: it stays on top of the
+            // player, so it is the first thing a touch near the bottom edge reaches.
+            if (filmstripShown) {
                 FilmstripScrubber(
                     assets = relatedAssets,
                     currentIndex = position - 1,
                     onSelect = onSelectAsset,
+                    onScrubbingChanged = { scrubbing = it },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding(),
