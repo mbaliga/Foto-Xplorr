@@ -282,6 +282,11 @@ internal fun encode(value: Float): Float {
     return if (v <= 0.0031308f) v * 12.92f else 1.055f * v.pow(1f / 2.4f) - 0.055f
 }
 
+/** Luma below which the luma curve shifts a pixel additively, and the width of the crossfade
+ *  into the hue-preserving ratio form above it. See [applyColour]. */
+private const val LUMA_BLEND_START = 4f
+private const val LUMA_BLEND_SPAN = 12f
+
 /**
  * Apply the per-pixel colour half of an adjustment to a packed ARGB array, in place.
  *
@@ -307,21 +312,19 @@ fun applyColour(pixels: IntArray, luts: ChannelLuts, saturation: Float, vibrance
         if (lumaLut != null) {
             // Scale the pixel so its luma lands where the curve says, which keeps its hue: the
             // ratio between the channels is untouched. Near black the ratio is meaningless (a
-            // luma under 1 is mostly rounding), so there the shift is added to every channel
-            // instead -- a grey lift, not a division by almost zero.
+            // luma of a few is mostly rounding) and, under a lifted-black curve, enormous, so
+            // there the shift is added to every channel instead -- a grey lift, not a division by
+            // almost zero. The two forms are CROSSFADED between a luma of 4 and 16 rather than
+            // switched at a threshold: a hard switch sends (4,0,0) to a dark grey but (5,0,0) to a
+            // fully saturated red, a visible contour in any smooth dark gradient.
             val before = 0.2126f * r + 0.7152f * g + 0.0722f * b
             val after = lumaLut[(before + 0.5f).toInt().coerceIn(0, 255)]
-            if (before < 1f) {
-                val shift = after - before
-                r = (r + shift + 0.5f).toInt()
-                g = (g + shift + 0.5f).toInt()
-                b = (b + shift + 0.5f).toInt()
-            } else {
-                val ratio = after / before
-                r = (r * ratio + 0.5f).toInt()
-                g = (g * ratio + 0.5f).toInt()
-                b = (b * ratio + 0.5f).toInt()
-            }
+            val shift = after - before
+            val t = ((before - LUMA_BLEND_START) / LUMA_BLEND_SPAN).coerceIn(0f, 1f)
+            val ratio = if (before > 0f) after / before else 0f
+            r = (r + shift + (r * ratio - r - shift) * t + 0.5f).toInt()
+            g = (g + shift + (g * ratio - g - shift) * t + 0.5f).toInt()
+            b = (b + shift + (b * ratio - b - shift) * t + 0.5f).toInt()
             r = r.coerceIn(0, 255); g = g.coerceIn(0, 255); b = b.coerceIn(0, 255)
         }
 

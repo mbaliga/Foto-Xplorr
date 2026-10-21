@@ -93,6 +93,38 @@ class CurvesEditorGestureTest {
     }
 
     @Test
+    fun `an endpoint handle can be grabbed from the margin ring outside the plot`() {
+        host(ToneCurve(listOf(CurvePoint(0f, 0f), CurvePoint(0.5f, 0.7f), CurvePoint(1f, 1f))))
+        // 12px left of the plot edge and 8px below the bottom edge: inside the 32px ring, so only
+        // the outer half of the handle's touch target. Drag it up 100px.
+        val start = at(0f, 0f) + Offset(-12f, 8f)
+        graph().performTouchInput {
+            down(start)
+            moveTo(start + Offset(0f, -100f))
+            up()
+        }
+        compose.waitForIdle()
+        assertEquals("grabbed the endpoint, did not add a point", 3, curve.points.size)
+        assertEquals(0f, curve.points[0].x, 0.001f)
+        assertEquals(100f / 336f, curve.points[0].y, 0.02f)
+    }
+
+    @Test
+    fun `the right-hand endpoint is grabbable from the outer ring as well`() {
+        host(ToneCurve(listOf(CurvePoint(0f, 0f), CurvePoint(0.5f, 0.7f), CurvePoint(1f, 1f))))
+        val start = at(1f, 1f) + Offset(12f, -8f)
+        graph().performTouchInput {
+            down(start)
+            moveTo(start + Offset(0f, 60f))
+            up()
+        }
+        compose.waitForIdle()
+        assertEquals(3, curve.points.size)
+        assertEquals(1f, curve.points[2].x, 0.001f)
+        assertEquals(1f - 60f / 336f, curve.points[2].y, 0.02f)
+    }
+
+    @Test
     fun `a fast drag across the graph leaves exactly one added point`() {
         host()
         graph().performTouchInput {

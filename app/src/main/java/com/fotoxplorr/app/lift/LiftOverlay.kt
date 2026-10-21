@@ -146,6 +146,9 @@ fun LiftOverlay(
             editor.visuals = null
             editor.solveFailure = null
             editor.solving = false
+            // Nothing left to preview; a lingering flag would show the Preview chip selected, and
+            // the banner claim a preview, over an empty selection.
+            editor.previewCutout = false
             return@LaunchedEffect
         }
         editor.solving = true
@@ -177,6 +180,12 @@ fun LiftOverlay(
             editor.cutPreview = null
             return@LaunchedEffect
         }
+        if (!visuals.hasSelection) {
+            // The Preview chip is disabled with no selection, so the flag must not outlive one.
+            editor.previewCutout = false
+            editor.cutPreview = null
+            return@LaunchedEffect
+        }
         editor.cutPreview = catchingResult {
             withContext(Dispatchers.Default) { LiftRenderer.maskedPreview(ws.display, visuals.mask).asImageBitmap() }
         }.getOrNull()
@@ -194,8 +203,11 @@ fun LiftOverlay(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
+        // Only a failed LOAD is fatal. A failed solve (say, the overlay bitmap hit memory pressure
+        // on stroke N) leaves the editor up with the message in the banner: the session is intact,
+        // Undo / Start over stay reachable, and the next successful solve clears the failure.
+        // Replacing the editor here would leave nothing but Close and throw away all of that work.
         val fatal = (editor.load as? LoadState.Failed)?.failure
-            ?: editor.solveFailure?.takeIf { it != LiftFailure.NoSubject }
         when {
             editor.load is LoadState.Loading -> LiftLoadingChrome(onCancel = onDismiss)
             fatal != null -> LiftFailureChrome(message = fatal.userMessage(), onClose = onDismiss)
@@ -269,19 +281,26 @@ private fun exportThen(
     editor.exporting = true
     scope.launch {
         try {
-            val cached = editor.exportCache?.takeIf { it.first === session }?.second
-            val bitmap = cached ?: withContext(Dispatchers.Default) {
-                catchingResult {
-                    val full = decodeUpright(context, asset.contentUri, EXPORT_DECODE_LIMITS)?.bitmap
-                    full?.let { LiftRenderer.cutOut(it, mask)?.bitmap }
-                }.getOrNull() ?: LiftRenderer.cutOut(workspace.display, mask)?.bitmap
+            // The WHOLE body is guarded, not just the big decode: the editing-size fallback below
+            // is reached precisely after that decode failed (usually memory pressure), so it is the
+            // likeliest place for the next OutOfMemoryError, and one escaping scope.launch ends the
+            // process rather than the export.
+            val outcome = catchingResult {
+                val cached = editor.exportCache?.takeIf { it.first === session }?.second
+                val bitmap = cached ?: withContext(Dispatchers.Default) {
+                    catchingResult {
+                        val full = decodeUpright(context, asset.contentUri, EXPORT_DECODE_LIMITS)?.bitmap
+                        full?.let { LiftRenderer.cutOut(it, mask)?.bitmap }
+                    }.getOrNull() ?: LiftRenderer.cutOut(workspace.display, mask)?.bitmap
+                }
+                if (bitmap == null) {
+                    editor.statusMessage = LiftFailure.NoSubject.userMessage()
+                } else {
+                    editor.exportCache = session to bitmap
+                    action(StickerExporter(context), bitmap)
+                }
             }
-            if (bitmap == null) {
-                editor.statusMessage = LiftFailure.NoSubject.userMessage()
-            } else {
-                editor.exportCache = session to bitmap
-                action(StickerExporter(context), bitmap)
-            }
+            outcome.onFailure { editor.statusMessage = classifyLiftFailure(it).userMessage() }
         } finally {
             editor.exporting = false
         }

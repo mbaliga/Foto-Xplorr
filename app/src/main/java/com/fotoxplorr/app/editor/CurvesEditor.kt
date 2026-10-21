@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -203,9 +204,12 @@ fun CurvesEditor(
                 val currentChannel by rememberUpdatedState(channel)
 
                 Canvas(
+                    // The gesture area is the WHOLE node, not the plot: the margin ring exists so a
+                    // handle at x=0 or x=1 can be grabbed by the half of its touch target that lies
+                    // outside the plot, and padding the modifier chain would shrink the area to the
+                    // plot itself. The handler shifts positions into plot space instead.
                     Modifier
                         .fillMaxSize()
-                        .padding(HANDLE_PADDING)
                         .pointerInput(Unit) {
                             // Double-tap memory lives outside the per-gesture block. The point is
                             // remembered by x, not index: an index goes stale the moment anything
@@ -214,11 +218,15 @@ fun CurvesEditor(
                             var lastTapDownMillis = 0L
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
-                                val width = size.width.toFloat()
-                                val height = size.height.toFloat()
+                                val pad = HANDLE_PADDING.toPx()
+                                val width = size.width - 2f * pad
+                                val height = size.height - 2f * pad
+                                // Pointer positions are in the full node; the plot starts `pad` in.
+                                fun toPlot(p: Offset) = Offset(p.x - pad, p.y - pad)
+                                val downInPlot = toPlot(down.position)
                                 val which = currentChannel
                                 val grab = CurveHit.planGrab(
-                                    currentCurveFor(which), down.position.x, down.position.y,
+                                    currentCurveFor(which), downInPlot.x, downInPlot.y,
                                     width, height, CurveHit.TOUCH_RADIUS_DP.dp.toPx(),
                                 ) ?: return@awaitEachGesture
                                 down.consume()
@@ -246,7 +254,8 @@ fun CurvesEditor(
                                 try {
                                     // One place that turns a finger position into an edit, used both by
                                     // the loop below and by the event that ended the long-press wait.
-                                    fun follow(position: Offset) {
+                                    fun follow(rawPosition: Offset) {
+                                        val position = toPlot(rawPosition)
                                         if (!signalled) {
                                             signalled = true
                                             currentOnDragActive(true)
@@ -349,15 +358,18 @@ fun CurvesEditor(
                             }
                         },
                 ) {
-                    drawCurveGraph(
-                        active = channel,
-                        activeCurve = curve,
-                        others = CurveChannel.entries.filter { it != channel && it in touchedChannels }
-                            .map { it to curveFor(it) },
-                        histogram = normalised,
-                        selectedIndex = selectedIndex,
-                        armedForRemoval = armedForRemoval,
-                    )
+                    // Drawing, unlike gestures, stays inside the plot rect (inset shrinks `size`).
+                    inset(HANDLE_PADDING.toPx()) {
+                        drawCurveGraph(
+                            active = channel,
+                            activeCurve = curve,
+                            others = CurveChannel.entries.filter { it != channel && it in touchedChannels }
+                                .map { it to curveFor(it) },
+                            histogram = normalised,
+                            selectedIndex = selectedIndex,
+                            armedForRemoval = armedForRemoval,
+                        )
+                    }
                 }
             }
         }

@@ -238,7 +238,8 @@ fun EditorScreen(
     // drag fires this effect on every intermediate frame, and LaunchedEffect keyed on `recipe`
     // cancels and restarts its own delay each time, so only the value the user actually stopped
     // on ever reaches disk or the history stack -- not every frame in between.
-    LaunchedEffect(recipe, asset.id) {
+    LaunchedEffect(recipe, asset.id, pendingResumeChoice) {
+        if (!shouldAutosave(pendingResumeChoice)) return@LaunchedEffect
         delay(HISTORY_COMMIT_DEBOUNCE_MS)
         if (recipe != history.current) history = history.commit(recipe)
         recipeStore.save(asset, recipe)
@@ -1246,3 +1247,11 @@ private const val STRAIGHTEN_LIMIT_DEGREES = 15f
  * the photo still autosaves promptly.
  */
 private const val HISTORY_COMMIT_DEBOUNCE_MS = 400L
+
+/**
+ * Whether the settled-recipe effect may touch history and disk. While the "Continue editing"
+ * choice is pending the live recipe is still the identity placeholder, and [RecipeStore.save]
+ * deletes the stored file for an identity recipe -- so an answer slower than the debounce would
+ * destroy the very edit the dialog is offering to resume.
+ */
+internal fun shouldAutosave(pendingResumeChoice: Boolean): Boolean = !pendingResumeChoice

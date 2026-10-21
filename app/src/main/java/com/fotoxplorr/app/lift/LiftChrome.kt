@@ -95,11 +95,13 @@ internal fun BoxScope.LiftFailureChrome(message: String, onClose: () -> Unit) {
 }
 
 /** What the banner says, from the editor's state: the next useful thing to do, not a manual. */
-private fun hintFor(editor: LiftEditorState): String = when {
+internal fun hintFor(editor: LiftEditorState): String = when {
     editor.solving -> "Working…"
     editor.solveFailure == LiftFailure.NoSubject -> "Couldn't find a clear subject there. Scribble over more of it"
-    editor.previewCutout -> "Previewing the cut-out"
+    editor.solveFailure != null -> editor.solveFailure!!.userMessage() + ". Undo or start over to continue"
+    // Before the preview line: an empty selection has nothing to preview, whatever the flag says.
     editor.session.isEmpty -> "Tap or scribble over the subject"
+    editor.previewCutout -> "Previewing the cut-out"
     editor.tool == LiftTool.Refine -> "Paint to add or erase parts of the selection"
     editor.markSubject -> "Scribble over anything missing, or switch to Background"
     else -> "Scribble over anything that should NOT be included"
@@ -107,7 +109,8 @@ private fun hintFor(editor: LiftEditorState): String = when {
 
 @Composable
 internal fun BoxScope.LiftEditorChrome(editor: LiftEditorState, onCancel: () -> Unit, onDone: () -> Unit) {
-    val canFinish = editor.visuals?.hasSelection == true && !editor.solving
+    // A failed solve leaves the previous mask in `visuals`, which no longer matches the session.
+    val canFinish = editor.visuals?.hasSelection == true && !editor.solving && editor.solveFailure == null
 
     // Top: leave, what to do next, finish.
     Row(
@@ -160,7 +163,7 @@ internal fun BoxScope.LiftEditorChrome(editor: LiftEditorState, onCancel: () -> 
                 label = { Text("Refine") },
             )
             FilterChip(
-                selected = editor.previewCutout,
+                selected = editor.previewCutout && editor.visuals?.hasSelection == true,
                 onClick = { editor.previewCutout = !editor.previewCutout },
                 label = { Text("Preview") },
                 enabled = editor.visuals?.hasSelection == true,
