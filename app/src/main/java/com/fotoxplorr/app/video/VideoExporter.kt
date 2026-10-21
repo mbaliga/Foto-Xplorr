@@ -213,24 +213,13 @@ class VideoExporter(context: Context) {
             .build()
     }
 
-    /**
-     * Always requests HDR-to-SDR tone-mapping: the OpenGL path is a no-op for a source that is
-     * already SDR, and every codec this exporter targets ([VideoCodec]) is SDR-only, so keeping
-     * HDR ([Composition.HDR_MODE_KEEP_HDR]) would silently misinterpret an HLG/PQ source's
-     * transfer function against an SDR encoder -- the exact "washed out" bug ADR-008 revision 2
-     * names. If a device cannot actually tone-map (pre-API-29 GLES, or a vendor gap),
-     * Transformer fails the export and [exportMessage] turns that into a clear, specific error
-     * rather than a silently wrong-looking file.
-     */
-    private fun hdrModeFor(): Int = Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL
-
     private fun constantSpeedProvider(speed: Float): SpeedProvider = object : SpeedProvider {
         override fun getSpeed(presentationTimeUs: Long): Float = speed
         override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = C.TIME_UNSET
     }
 
     /** Copies the finished bytes into MediaStore beside the original; see class doc. */
-    private fun publish(source: MediaAsset, finished: File, nameMarker: String): Uri {
+    internal fun publish(source: MediaAsset, finished: File, nameMarker: String): Uri {
         val resolver = appContext.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, convertedName(source.displayName, marker = nameMarker))
@@ -265,23 +254,36 @@ class VideoExporter(context: Context) {
         return uri
     }
 
-    private fun exportMessage(t: Throwable): String {
-        val e = t as? ExportException ?: return t.message ?: "The export failed."
-        return when (e.errorCode) {
-            ExportException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
-            ExportException.ERROR_CODE_DECODER_INIT_FAILED,
-            -> "This device cannot decode this video's format."
-            ExportException.ERROR_CODE_ENCODING_FORMAT_UNSUPPORTED,
-            ExportException.ERROR_CODE_ENCODER_INIT_FAILED,
-            -> "This device cannot encode the exported video."
-            ExportException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED ->
-                "This device could not process this video (it may be HDR content this device cannot tone-map)."
-            else -> e.message ?: "The export failed."
-        }
-    }
-
     private companion object {
         const val OUTPUT_MIME = "video/mp4"
         const val PROGRESS_POLL_MS = 250L
+    }
+}
+
+/**
+ * Always requests HDR-to-SDR tone-mapping: the OpenGL path is a no-op for a source that is
+ * already SDR, and every codec this exporter targets ([VideoCodec]) is SDR-only, so keeping
+ * HDR ([Composition.HDR_MODE_KEEP_HDR]) would silently misinterpret an HLG/PQ source's
+ * transfer function against an SDR encoder -- the exact "washed out" bug ADR-008 revision 2
+ * names. If a device cannot actually tone-map (pre-API-29 GLES, or a vendor gap),
+ * Transformer fails the export and [exportMessage] turns that into a clear, specific error
+ * rather than a silently wrong-looking file.
+ */
+@UnstableApi
+internal fun hdrModeFor(): Int = Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL
+
+@UnstableApi
+internal fun exportMessage(t: Throwable): String {
+    val e = t as? ExportException ?: return t.message ?: "The export failed."
+    return when (e.errorCode) {
+        ExportException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        ExportException.ERROR_CODE_DECODER_INIT_FAILED,
+        -> "This device cannot decode this video's format."
+        ExportException.ERROR_CODE_ENCODING_FORMAT_UNSUPPORTED,
+        ExportException.ERROR_CODE_ENCODER_INIT_FAILED,
+        -> "This device cannot encode the exported video."
+        ExportException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED ->
+            "This device could not process this video (it may be HDR content this device cannot tone-map)."
+        else -> e.message ?: "The export failed."
     }
 }
