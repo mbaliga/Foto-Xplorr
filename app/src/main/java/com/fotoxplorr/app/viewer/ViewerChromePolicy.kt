@@ -1,5 +1,7 @@
 package com.fotoxplorr.app.viewer
 
+import com.fotoxplorr.app.gallery.TransparencyBackground
+
 /**
  * The viewer's "what is drawn, and when" rules, as pure functions.
  *
@@ -42,6 +44,32 @@ internal object ViewerChromePolicy {
      */
     fun favouriteStateDescription(isFavorite: Boolean): String =
         if (isFavorite) "Favourited" else "Not a favourite"
+
+    // ── the backdrop behind a see-through photo (owner, #17) ──────────────────────────────────
+
+    /**
+     * Whether the transparent-background button is in the chrome row: the chrome is up and the
+     * photo on view declares transparency ([hasAlpha], from the header sniff). Never for a video
+     * (a frame has no alpha to show through). Not gated on the catalogue: the choice is a view
+     * option, so a sticker opened from another app gets it too.
+     */
+    fun transparencyControlShown(chromeShown: Boolean, isVideo: Boolean, hasAlpha: Boolean): Boolean =
+        chromeShown && !isVideo && hasAlpha
+
+    /**
+     * Whether the backdrop is drawn behind the photo. It is image content, not chrome, so it does
+     * not wait for the chrome; it is withdrawn while the lift editor owns the screen (that draws
+     * its own stage) and never exists for a video.
+     */
+    fun transparencyBackdropShown(isVideo: Boolean, hasAlpha: Boolean, lifting: Boolean): Boolean =
+        !isVideo && hasAlpha && !lifting
+
+    /**
+     * The button's spoken label, naming the current choice and what a tap does, so the answer is
+     * not carried by the glyph's picture alone.
+     */
+    fun transparencyControlDescription(current: TransparencyBackground): String =
+        "Transparent background: ${current.label()} (tap for ${current.next().label()})"
 
     /**
      * Whether the filmstrip is drawn.

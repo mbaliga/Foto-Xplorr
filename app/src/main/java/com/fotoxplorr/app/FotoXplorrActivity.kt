@@ -1632,6 +1632,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             animated = activeAsset.id in animatedIds,
             autoplayVideos = preferences.autoplayVideos,
             pinchMode = preferences.viewerPinchMode,
+            transparencyBackground = preferences.viewerTransparencyBackground,
             onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
             onSetBlurSensitive = galleryPreferences::setBlurSensitive,
             onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
@@ -1640,6 +1641,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             onSetLoopAnimations = galleryPreferences::setLoopAnimations,
             onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
             onSetPinchMode = galleryPreferences::setViewerPinchMode,
+            onSetTransparencyBackground = galleryPreferences::setViewerTransparencyBackground,
             relatedAssets = viewerAssets,
             onSelectAsset = { picked ->
                 // From the filmstrip, or from a dot on the expanded map. The filmstrip only ever

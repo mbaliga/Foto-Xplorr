@@ -55,6 +55,20 @@ enum class ViewerPinchMode {
     PANEL_SHORTCUTS,
 }
 
+/**
+ * What the viewer draws behind a photo that has transparency (a PNG sticker, a WebP cut-out):
+ * the grey-and-white grid that says "see-through", or a flat white or black (owner, #17).
+ * [CHECKERBOARD] is the default; a photo with no transparency never shows any of them.
+ * [next] is the tap-to-cycle order used by the viewer's chrome button and its view-options row.
+ */
+enum class TransparencyBackground {
+    CHECKERBOARD,
+    WHITE,
+    BLACK;
+
+    fun next(): TransparencyBackground = entries[(ordinal + 1) % entries.size]
+}
+
 data class GalleryPreferencesState(
     val sort: GallerySort = GallerySort.NEWEST,
     val gridColumns: Int = DEFAULT_GRID_COLUMNS,
@@ -139,6 +153,8 @@ data class GalleryPreferencesState(
     /** Which pinch-in-the-viewer meaning is active. See [ViewerPinchMode]'s own doc. Defaults to
      *  the viewer's original behaviour so nobody who never opens this setting sees any change. */
     val viewerPinchMode: ViewerPinchMode = ViewerPinchMode.OPTICAL_ZOOM,
+    /** What the viewer shows behind a transparent photo. See [TransparencyBackground]. */
+    val viewerTransparencyBackground: TransparencyBackground = TransparencyBackground.CHECKERBOARD,
     /**
      * The full JSON text of the custom theme, when [accentPalette] is
      * [AccentPalette.CUSTOM] -- see `ThemeJson.kt`'s schema. Empty (never null, so a
@@ -266,6 +282,10 @@ class GalleryPreferences(context: Context) {
         state.value.copy(viewerPinchMode = mode),
     ) { putString(KEY_VIEWER_PINCH_MODE, mode.name) }
 
+    fun setViewerTransparencyBackground(background: TransparencyBackground) = update(
+        state.value.copy(viewerTransparencyBackground = background),
+    ) { putString(KEY_VIEWER_TRANSPARENCY_BACKGROUND, background.name) }
+
     /** Applies a validated custom theme -- see `ThemeJson.kt`. [json] is stored VERBATIM, exactly
      *  as the user pasted it: the mandatory preview dialog showed them this exact text, and
      *  reformatting it before saving would make that preview a preview of something else. */
@@ -326,6 +346,9 @@ class GalleryPreferences(context: Context) {
         shareFrame = preferences.getString(KEY_SHARE_FRAME, null) ?: "NONE",
         shareSeal = preferences.getString(KEY_SHARE_SEAL, null).orEmpty(),
         viewerPinchMode = enumValue(KEY_VIEWER_PINCH_MODE, ViewerPinchMode.OPTICAL_ZOOM),
+        viewerTransparencyBackground = enumValue(
+            KEY_VIEWER_TRANSPARENCY_BACKGROUND, TransparencyBackground.CHECKERBOARD,
+        ),
         customThemeJson = preferences.getString(KEY_CUSTOM_THEME_JSON, null).orEmpty(),
     )
 
@@ -360,6 +383,7 @@ class GalleryPreferences(context: Context) {
         const val KEY_SHARE_FRAME = "share_frame"
         const val KEY_SHARE_SEAL = "share_seal"
         const val KEY_VIEWER_PINCH_MODE = "viewer_pinch_mode"
+        const val KEY_VIEWER_TRANSPARENCY_BACKGROUND = "viewer_transparency_background"
         const val KEY_CUSTOM_THEME_JSON = "custom_theme_json"
         const val MAX_SEAL_CHARS = 12
     }

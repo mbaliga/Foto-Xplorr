@@ -164,6 +164,10 @@ class ExternalViewerActivity : ComponentActivity() {
                             // ViewerScreen's default is "autoplay on": without this an externally
                             // opened video would ignore the user turning autoplay off in settings.
                             autoplayVideos = preferences.autoplayVideos,
+                            // A sticker opened from another app gets the same background choice,
+                            // remembered in the same preference.
+                            transparencyBackground = preferences.viewerTransparencyBackground,
+                            onSetTransparencyBackground = galleryPreferences::setViewerTransparencyBackground,
                         )
                     }
                 }

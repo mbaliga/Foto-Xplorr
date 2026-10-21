@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -79,6 +80,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.adaptive.PINCH_STEP_THRESHOLD
+import com.fotoxplorr.app.gallery.TransparencyBackground
 import com.fotoxplorr.app.gallery.ViewerPinchMode
 import com.fotoxplorr.app.lift.LiftOverlay
 import com.fotoxplorr.app.lift.canLiftSubject
@@ -181,6 +183,13 @@ fun ViewerScreen(
      */
     pinchMode: ViewerPinchMode = ViewerPinchMode.OPTICAL_ZOOM,
     onSetPinchMode: (ViewerPinchMode) -> Unit = {},
+    /**
+     * What is drawn behind a photo that has transparency (owner, #17), and the setter the chrome
+     * button and the view options' row share. Defaults to the grid so a caller that does not
+     * wire it still gets the conventional "see-through" signal.
+     */
+    transparencyBackground: TransparencyBackground = TransparencyBackground.CHECKERBOARD,
+    onSetTransparencyBackground: (TransparencyBackground) -> Unit = {},
     /** A location the user placed by hand, for a photo whose file carries no GPS tag. */
     manualLatitude: Double? = null,
     manualLongitude: Double? = null,
@@ -368,6 +377,21 @@ fun ViewerScreen(
     LaunchedEffect(asset.id, metadataRevision) {
         exif = readImageExifDetails(context, asset)
     }
+
+    // Whether this photo's file declares transparency (owner, #17): a bounded header read off the
+    // main thread, remembered per photo, so a transparent PNG gets a backdrop and the chrome
+    // button and an opaque one costs nothing. Starts from the remembered answer so paging back to
+    // a photo already seen draws its backdrop on the first frame. Keyed on the modified time too:
+    // an overwrite changes the bytes under one id.
+    var hasAlpha by remember(asset.id, asset.dateModifiedSeconds) {
+        mutableStateOf(TransparencyProbe.cached(asset) ?: false)
+    }
+    LaunchedEffect(asset.id, asset.dateModifiedSeconds) {
+        hasAlpha = TransparencyProbe.hasAlpha(context, asset)
+    }
+    // The size the image actually decoded to, once Coil reports it; the backdrop's rectangle is
+    // computed from it so it hugs the picture even for a vector image MediaStore gives no size.
+    var decodedSize by remember(asset.id, asset.dateModifiedSeconds) { mutableStateOf<Size?>(null) }
 
     // ── The shrink-to-map flight (owner, #19) ─────────────────────────────────────────────────
     //
@@ -581,6 +605,8 @@ fun ViewerScreen(
                 onSetAutoplayVideos = onSetAutoplayVideos,
                 pinchMode = pinchMode,
                 onSetPinchMode = onSetPinchMode,
+                transparencyBackground = transparencyBackground,
+                onSetTransparencyBackground = onSetTransparencyBackground,
             )
         },
     )
@@ -778,10 +804,22 @@ fun ViewerScreen(
                             translationY = offsetY
                         },
                 ) {
+                    // Behind the photo and inside the zoom layer, so it moves with the picture.
+                    // Image content rather than chrome: it shows with the chrome down.
+                    if (ViewerChromePolicy.transparencyBackdropShown(asset.isVideo, hasAlpha, liftActive)) {
+                        TransparencyBackdrop(
+                            mode = transparencyBackground,
+                            rect = TransparencyBackdropGeometry.rect(
+                                containerSize.width.toFloat(), containerSize.height.toFloat(),
+                                decodedSize, photoRect,
+                            ),
+                        )
+                    }
                     MediaImage(
                         asset = asset,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Fit,
+                        onImageSize = { decodedSize = it },
                         // A GIF plays even before AnimationIndex has sniffed it (P0-14's own
                         // stated fallback) -- almost every real GIF a user has IS animated, and a
                         // static one costs nothing extra through the animated decode path when
@@ -834,6 +872,10 @@ fun ViewerScreen(
                     } else {
                         null
                     },
+                    transparency = transparencyBackground.takeIf {
+                        ViewerChromePolicy.transparencyControlShown(chromeShown, asset.isVideo, hasAlpha)
+                    },
+                    onCycleTransparency = { onSetTransparencyBackground(transparencyBackground.next()) },
                     modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
                 )
             }
@@ -1134,7 +1176,9 @@ internal fun snapRotation(degrees: Float): Float {
  * text buttons, present by default.
  *
  * [onToggleFavorite] null leaves the heart out (a photo opened from another app has no catalogue
- * entry to mark); see [ViewerChromePolicy.favouriteShown].
+ * entry to mark); see [ViewerChromePolicy.favouriteShown]. [transparency] null leaves out the
+ * background button, which only a photo with transparency gets
+ * ([ViewerChromePolicy.transparencyControlShown]).
  */
 @Composable
 private fun ViewerPositionChip(
@@ -1144,6 +1188,8 @@ private fun ViewerPositionChip(
     onClose: () -> Unit,
     isFavorite: Boolean,
     onToggleFavorite: (() -> Unit)?,
+    transparency: TransparencyBackground?,
+    onCycleTransparency: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -1172,6 +1218,9 @@ private fun ViewerPositionChip(
         )
         if (onToggleFavorite != null) {
             FavouriteHeart(assetKey = asset.id, isFavorite = isFavorite, onToggle = onToggleFavorite)
+        }
+        if (transparency != null) {
+            TransparencyButton(current = transparency, onCycle = onCycleTransparency)
         }
     }
 }
@@ -1214,6 +1263,24 @@ private fun FavouriteHeart(assetKey: Any, isFavorite: Boolean, onToggle: () -> U
                 scaleY = pop.value
             },
         )
+    }
+}
+
+/**
+ * The button that cycles what shows behind a see-through photo (grid, white, black). Its glyph is
+ * a swatch of the current choice; its label says the choice and what a tap does.
+ */
+@Composable
+private fun TransparencyButton(current: TransparencyBackground, onCycle: () -> Unit) {
+    IconButton(
+        onClick = onCycle,
+        modifier = Modifier
+            .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+            .size(48.dp)
+            .testTag(TRANSPARENCY_BUTTON_TAG)
+            .semantics { contentDescription = ViewerChromePolicy.transparencyControlDescription(current) },
+    ) {
+        TransparencySwatch(current, Modifier.size(24.dp))
     }
 }
 

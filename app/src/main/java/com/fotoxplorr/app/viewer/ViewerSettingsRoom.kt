@@ -11,9 +11,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.gallery.MAX_SLIDESHOW_INTERVAL_SECONDS
 import com.fotoxplorr.app.gallery.MIN_SLIDESHOW_INTERVAL_SECONDS
+import com.fotoxplorr.app.gallery.TransparencyBackground
 import com.fotoxplorr.app.gallery.ViewerPinchMode
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomGeography
@@ -66,6 +68,9 @@ fun ViewerSettingsRoom(
     /** What a pinch means in this screen. See [ViewerPinchMode]'s own doc. */
     pinchMode: ViewerPinchMode = ViewerPinchMode.OPTICAL_ZOOM,
     onSetPinchMode: (ViewerPinchMode) -> Unit = {},
+    /** What is drawn behind a see-through photo. See [TransparencyBackground]. */
+    transparencyBackground: TransparencyBackground = TransparencyBackground.CHECKERBOARD,
+    onSetTransparencyBackground: (TransparencyBackground) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -108,6 +113,21 @@ fun ViewerSettingsRoom(
             caption = "While a photo is open. Costs battery.",
             onClick = { onSetKeepScreenOn(!keepScreenOn) },
         ) { RoomToggle(keepScreenOn, onSetKeepScreenOn) }
+
+        // The chrome button for this only exists while a see-through photo is on view, so the
+        // choice has to be reachable here too.
+        RoomRow(
+            label = "Transparent photos",
+            caption = "What shows behind see-through parts.",
+            onClick = { onSetTransparencyBackground(transparencyBackground.next()) },
+        ) {
+            Text(
+                text = transparencyBackground.title(),
+                color = RoomStyle.Ink,
+                style = RoomStyle.Row,
+                modifier = Modifier.testTag(TRANSPARENCY_ROW_VALUE_TAG),
+            )
+        }
 
         RoomRule(Modifier.padding(vertical = 14.dp))
         RoomEyebrow("SLIDESHOW")
@@ -192,3 +212,6 @@ fun ViewerSettingsRoom(
         )
     }
 }
+
+/** Test tag on the current choice shown in the view options' transparent-photos row. */
+internal const val TRANSPARENCY_ROW_VALUE_TAG = "viewer-transparency-row-value"
