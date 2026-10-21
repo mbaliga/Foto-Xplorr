@@ -5,6 +5,8 @@ package com.fotoxplorr.app.viewer
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -40,6 +42,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.util.lerp
@@ -56,6 +61,8 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.ui.input.pointer.PointerInputScope
@@ -813,12 +820,20 @@ fun ViewerScreen(
             // All that is left over the photo, and only when asked for: where you are in the
             // run. The actions are the bottom room, the facts are the top room, and the view
             // options are the right room -- none of them costs the photo a pixel until pulled.
-            if (ViewerChromePolicy.chromeShown(chromeVisible, isInPip, liftActive)) {
+            val chromeShown = ViewerChromePolicy.chromeShown(chromeVisible, isInPip, liftActive)
+            if (chromeShown) {
                 ViewerPositionChip(
                     asset = asset,
                     position = position,
                     total = total,
                     onClose = onClose,
+                    isFavorite = isFavorite,
+                    // Null hides the heart: the same gate as the actions room's Favourite row.
+                    onToggleFavorite = if (ViewerChromePolicy.favouriteShown(chromeShown, catalogueActions, isExternal || asset.isExternal)) {
+                        onToggleFavorite
+                    } else {
+                        null
+                    },
                     modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
                 )
             }
@@ -1113,10 +1128,13 @@ internal fun snapRotation(degrees: Float): Float {
 
 /**
  * The only thing that draws over the photo, and only when the chrome is asked for: which shot
- * this is, and the way out.
+ * this is, the way out, and whether it is a favourite.
  *
  * What it replaces was a full-width 78%-opaque plate carrying a filename, a counter and nine
  * text buttons, present by default.
+ *
+ * [onToggleFavorite] null leaves the heart out (a photo opened from another app has no catalogue
+ * entry to mark); see [ViewerChromePolicy.favouriteShown].
  */
 @Composable
 private fun ViewerPositionChip(
@@ -1124,6 +1142,8 @@ private fun ViewerPositionChip(
     position: Int,
     total: Int,
     onClose: () -> Unit,
+    isFavorite: Boolean,
+    onToggleFavorite: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -1150,8 +1170,65 @@ private fun ViewerPositionChip(
                 .background(Color.Black.copy(alpha = 0.55f), CircleShape)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         )
+        if (onToggleFavorite != null) {
+            FavouriteHeart(assetKey = asset.id, isFavorite = isFavorite, onToggle = onToggleFavorite)
+        }
     }
 }
+
+/**
+ * The heart that marks the photo on view: filled and in the accent when it is a favourite,
+ * outlined and white when it is not. The state is in the shape as well as the colour, and in the
+ * semantics (a stable "Favourite" label with the state described separately, so TalkBack says
+ * "Favourite, Favourited" or "Favourite, Not a favourite" rather than re-wording the action).
+ *
+ * Pops once when it turns on. The pop is skipped when the chrome comes up on a photo that already
+ * is a favourite and when the page changes, which is why the last-seen state is keyed on
+ * [assetKey].
+ */
+@Composable
+private fun FavouriteHeart(assetKey: Any, isFavorite: Boolean, onToggle: () -> Unit) {
+    val pop = remember { Animatable(1f) }
+    var seen by remember(assetKey) { mutableStateOf(isFavorite) }
+    LaunchedEffect(isFavorite) {
+        if (isFavorite && !seen) {
+            pop.animateTo(1.25f, tween(durationMillis = 90))
+            pop.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
+        }
+        seen = isFavorite
+    }
+    IconButton(
+        onClick = onToggle,
+        modifier = Modifier
+            .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+            .size(48.dp)
+            .testTag(FAVOURITE_HEART_TAG)
+            .semantics { stateDescription = ViewerChromePolicy.favouriteStateDescription(isFavorite) },
+    ) {
+        Icon(
+            imageVector = favouriteGlyph(isFavorite),
+            contentDescription = "Favourite",
+            tint = if (isFavorite) MaterialTheme.colorScheme.primary else Color.White,
+            modifier = Modifier.graphicsLayer {
+                scaleX = pop.value
+                scaleY = pop.value
+            },
+        )
+    }
+}
+
+/** The test tag on the chrome row's favourite heart. */
+internal const val FAVOURITE_HEART_TAG = "viewer-favourite-heart"
+
+/**
+ * The heart glyph for a favourite state: the solid heart when it is one, the outline when not.
+ * The same pair as the actions room's Favourite row. Note that in the outlined theme it is
+ * `Favorite` that is the solid heart and `FavoriteBorder` the outline, which is the opposite of
+ * what the names suggest; `ViewerHeartTest` renders both so a library change cannot quietly turn
+ * the state back into a tint alone.
+ */
+internal fun favouriteGlyph(isFavorite: Boolean): ImageVector =
+    if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder
 
 /**
  * The zoom navigator, to the owner's reference: bottom-left, a translucent light-blue rectangle

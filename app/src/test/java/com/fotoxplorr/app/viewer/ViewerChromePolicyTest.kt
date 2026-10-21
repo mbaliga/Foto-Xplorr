@@ -10,6 +10,25 @@ import org.junit.Test
  */
 class ViewerChromePolicyTest {
 
+    // ── the favourite heart in the chrome row (#18) ────────────────────────────────────────────
+
+    @Test
+    fun `the heart is shown only with the chrome and only for a catalogued asset`() {
+        fun shown(chrome: Boolean = true, catalogue: Boolean = true, external: Boolean = false) =
+            ViewerChromePolicy.favouriteShown(chrome, catalogue, external)
+
+        assertTrue(shown())
+        assertFalse("immersive, picture-in-picture and the lift editor hide it with the chrome", shown(chrome = false))
+        assertFalse("an asset the catalogue does not own", shown(catalogue = false))
+        assertFalse("an asset opened from another app", shown(external = true))
+    }
+
+    @Test
+    fun `the heart states its state in words`() {
+        assertEquals("Favourited", ViewerChromePolicy.favouriteStateDescription(true))
+        assertEquals("Not a favourite", ViewerChromePolicy.favouriteStateDescription(false))
+    }
+
     // ── the filmstrip is roll-level, never asset-level (#28) ───────────────────────────────────
 
     @Test

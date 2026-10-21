@@ -25,6 +25,25 @@ internal object ViewerChromePolicy {
         chromeVisible && !inPictureInPicture && !lifting
 
     /**
+     * Whether the favourite heart is drawn in the chrome row beside the position chip.
+     *
+     * Exactly when the chrome is up ([chromeShown], so it is gone in picture-in-picture and
+     * under the lift editor with the rest of it) and the photo is one of ours to mark: the same
+     * gate as the actions room's Favourite row, [catalogueActions] and not [isExternal]. A photo
+     * opened from another app is not in the catalogue, so there is nothing for a heart to
+     * toggle. Deliberately not a function of the type of the asset: a video can be a favourite.
+     */
+    fun favouriteShown(chromeShown: Boolean, catalogueActions: Boolean, isExternal: Boolean): Boolean =
+        chromeShown && catalogueActions && !isExternal
+
+    /**
+     * What TalkBack reads as the heart's state. The glyph carries the state by shape (filled or
+     * outlined), not by colour alone, and this carries it for people who cannot see either.
+     */
+    fun favouriteStateDescription(isFavorite: Boolean): String =
+        if (isFavorite) "Favourited" else "Not a favourite"
+
+    /**
      * Whether the filmstrip is drawn.
      *
      * **Deliberately not a function of the current asset.** The strip is roll-level navigation,
