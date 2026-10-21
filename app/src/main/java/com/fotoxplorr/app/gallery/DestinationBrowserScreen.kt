@@ -252,11 +252,19 @@ private fun RailSettingsRow(onClick: () -> Unit) {
 /** The panel's inset from the room's left edge: the bullet's own left edge. */
 private const val RAIL_INSET = 16
 
-/** What a destination actually renders: a grid, the map, or the protected-folder list. */
+/**
+ * What a destination actually renders: the zoomable grid, Places, or the protected-folder list.
+ *
+ * [layout] is the grid's groups and headers, built once by the screen over these same [assets] so
+ * the scrubber, pill and arrow keys count the positions the grid draws; [rung] is how zoomed it is.
+ * A photo tapped here opens the viewer on [ZoomLayout.renderedAssets], the order on screen.
+ */
 @Composable
-fun DestinationContent(
+internal fun DestinationContent(
     destination: HyleDestination,
     assets: List<MediaAsset>,
+    layout: ZoomLayout,
+    rung: Int,
     state: GalleryUiState,
     actions: GalleryActions,
     selection: GallerySelection,
@@ -297,26 +305,24 @@ fun DestinationContent(
                     },
                 )
             }
-            // Either the grid or the empty state, never both: TimelineScreen renders its own
-            // generic "No media matches the current filters" when handed an empty list, which
-            // would otherwise stack above this destination's far more useful message and push
-            // it off-screen, since both fill the available height.
+            // Either the grid or the empty state, never both: the grid renders its own generic
+            // message when handed an empty list, which would otherwise stack above this
+            // destination's far more useful one and push it off-screen, since both fill the
+            // available height.
             if (assets.isEmpty()) {
                 DestinationMessage(destinationEmptyMessage(destination, state.recognitionProgress))
             } else {
-                TimelineScreen(
-                    assets = assets,
-                    grouping = state.preferences.timelineGrouping,
-                    columns = state.preferences.gridColumns,
+                ZoomGrid(
+                    layout = layout,
+                    rung = rung,
                     favoriteIds = state.favoriteIds,
                     sensitiveIds = state.sensitiveIds,
                     blurSensitive = state.preferences.blurSensitive,
                     selectedIds = selection.selectedIds,
                     selectionActive = selection.isActive,
-                    onOpen = { asset -> actions.onOpenAsset(asset, assets) },
+                    emptyMessage = HelpCopy.Hint.NO_MATCHES,
+                    onOpen = { asset -> actions.onOpenAsset(asset, layout.renderedAssets) },
                     onToggleSelection = { id -> onSelectionChange(selection.toggle(id)) },
-                    // The mockups' main grid is one continuous mosaic with no date headers.
-                    showDateHeaders = false,
                     gridState = gridState,
                     fitToTile = state.preferences.fitToTile,
                     loopAnimations = state.preferences.loopAnimations,

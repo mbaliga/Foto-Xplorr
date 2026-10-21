@@ -24,6 +24,8 @@ class RoomOpenInputTest {
         GalleryShortcut.TrashSelected,
         GalleryShortcut.SelectAll,
         GalleryShortcut.FocusSearch,
+        GalleryShortcut.ZoomIn,
+        GalleryShortcut.ZoomOut,
     )
 
     @Test
@@ -80,18 +82,15 @@ class RoomOpenInputTest {
 
     @Test
     fun `the shade is drawn on the root grid and on the panes`() {
-        assertTrue(shadeIsDrawn(paneTakenOver = false, mapOpen = false, routeIsRoot = true, zoomIsGrid = true, timelineHeadersOn = false))
-        assertTrue(shadeIsDrawn(paneTakenOver = true, mapOpen = false, routeIsRoot = false, zoomIsGrid = true, timelineHeadersOn = false))
-        // A pane wins over whatever state the covered grid is in, the map included.
-        assertTrue(shadeIsDrawn(paneTakenOver = true, mapOpen = false, routeIsRoot = false, zoomIsGrid = false, timelineHeadersOn = true))
+        assertTrue(shadeIsDrawn(paneTakenOver = false, mapOpen = false, routeIsRoot = true))
+        assertTrue(shadeIsDrawn(paneTakenOver = true, mapOpen = false, routeIsRoot = false))
+        // A pane wins over whatever the covered grid is doing, the map included.
         assertTrue(shadeIsDrawn(paneTakenOver = true, mapOpen = true, routeIsRoot = true))
     }
 
     @Test
-    fun `the shade is not drawn inside a route, on the timeline or on a zoom rung`() {
-        assertFalse(shadeIsDrawn(paneTakenOver = false, mapOpen = false, routeIsRoot = false, zoomIsGrid = true, timelineHeadersOn = false))
-        assertFalse(shadeIsDrawn(paneTakenOver = false, mapOpen = false, routeIsRoot = true, zoomIsGrid = true, timelineHeadersOn = true))
-        assertFalse(shadeIsDrawn(paneTakenOver = false, mapOpen = false, routeIsRoot = true, zoomIsGrid = false, timelineHeadersOn = false))
+    fun `the shade is not drawn inside a route`() {
+        assertFalse(shadeIsDrawn(paneTakenOver = false, mapOpen = false, routeIsRoot = false))
     }
 
     @Test

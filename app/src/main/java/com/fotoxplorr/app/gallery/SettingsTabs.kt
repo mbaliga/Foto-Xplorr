@@ -43,6 +43,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.flow.drop
+import com.fotoxplorr.app.adaptive.ZOOM_RUNG_LAST_GRID
+import com.fotoxplorr.app.adaptive.ZOOM_RUNG_MIN
+import com.fotoxplorr.app.adaptive.ZOOM_RUNG_STAMPS
+import com.fotoxplorr.app.adaptive.zoomRungValue
 import com.fotoxplorr.app.background.BackgroundScheduler
 import com.fotoxplorr.app.background.BackgroundWorkStatusCenter
 import com.fotoxplorr.app.background.BATTERY_PERCENT_STEP
@@ -186,13 +190,16 @@ fun SettingsTabsRoom(
                         onSetAccentPalette = actions.onSetAccentPalette,
                         onSetCustomTheme = actions.onSetCustomTheme,
                     )
+                    // The rungs are 1..6 columns and then the stamps; a masonry grid has no stamps.
+                    val topRung = if (preferences.fitToTile) ZOOM_RUNG_STAMPS else ZOOM_RUNG_LAST_GRID
+                    val rung = preferences.gridZoomRung.coerceAtMost(topRung)
                     StepperRow(
-                        label = "Grid columns",
-                        value = preferences.gridColumns.toString(),
-                        onDecrease = { actions.onSetGridColumns(preferences.gridColumns - 1) },
-                        onIncrease = { actions.onSetGridColumns(preferences.gridColumns + 1) },
-                        canDecrease = preferences.gridColumns > MIN_GRID_COLUMNS,
-                        canIncrease = preferences.gridColumns < MAX_GRID_COLUMNS,
+                        label = "Grid zoom",
+                        value = zoomRungValue(rung),
+                        onDecrease = { actions.onSetGridZoomRung(rung - 1) },
+                        onIncrease = { actions.onSetGridZoomRung(rung + 1) },
+                        canDecrease = rung > ZOOM_RUNG_MIN,
+                        canIncrease = rung < topRung,
                     )
                 }
 
@@ -794,7 +801,7 @@ private fun ThemePaletteRow(
 
 /**
  * The minus / value / plus control. Extracted because the same three-part pattern was written out
- * longhand for grid columns and again for the slideshow interval, and a stepper copied twice is a
+ * longhand for the grid zoom and again for the slideshow interval, and a stepper copied twice is a
  * stepper that will be fixed once.
  *
  * The control itself is [com.fotoxplorr.app.hyle.HyleStepper] (owner, 2026-09-01: *"As for the

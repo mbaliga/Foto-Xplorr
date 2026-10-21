@@ -12,6 +12,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.adaptive.ZOOM_RUNG_LAST_GRID
+import com.fotoxplorr.app.adaptive.ZOOM_RUNG_MIN
+import com.fotoxplorr.app.adaptive.ZOOM_RUNG_STAMPS
+import com.fotoxplorr.app.adaptive.zoomRungValue
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomGeography
 import com.fotoxplorr.app.ui.RoomRow
@@ -60,13 +64,17 @@ fun GalleryViewOptionsRoom(
     ) {
         RoomEyebrow("ARRANGE")
 
-        RoomRow(label = "Columns") {
+        // Zoom, not columns: the rungs are 1..6 columns and then the stamps. A masonry grid has no
+        // stamps, so its stepper stops at the sparsest column grid.
+        val topRung = if (preferences.fitToTile) ZOOM_RUNG_STAMPS else ZOOM_RUNG_LAST_GRID
+        val rung = preferences.gridZoomRung.coerceAtMost(topRung)
+        RoomRow(label = "Zoom") {
             RoomStepper(
-                value = "${preferences.gridColumns}",
-                onDecrease = { actions.onSetGridColumns(preferences.gridColumns - 1) },
-                onIncrease = { actions.onSetGridColumns(preferences.gridColumns + 1) },
-                canDecrease = preferences.gridColumns > MIN_GRID_COLUMNS,
-                canIncrease = preferences.gridColumns < MAX_GRID_COLUMNS,
+                value = zoomRungValue(rung),
+                onDecrease = { actions.onSetGridZoomRung(rung - 1) },
+                onIncrease = { actions.onSetGridZoomRung(rung + 1) },
+                canDecrease = rung > ZOOM_RUNG_MIN,
+                canIncrease = rung < topRung,
             )
         }
 

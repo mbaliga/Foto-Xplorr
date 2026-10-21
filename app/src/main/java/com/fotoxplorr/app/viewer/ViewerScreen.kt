@@ -1127,7 +1127,7 @@ private suspend fun PointerInputScope.detectViewerGestures(
         var pagingTravel = 0f
         // Accumulated ln(zoomChange) across every frame this gesture has had 2+ fingers down --
         // PANEL_SHORTCUTS only, read once at the gesture's end via [resolvePinchDirection]. Log
-        // scale for the same reason [com.fotoxplorr.app.adaptive.ZoomLadder.step] uses it: sums
+        // scale for the same reason [com.fotoxplorr.app.adaptive.pinchStep] uses it: sums
         // exactly across many frames where multiplying the raw ratios would drift under float
         // rounding.
         var panelPinchLog = 0f
@@ -1196,12 +1196,12 @@ internal enum class PinchDirection { IN, OUT }
 /**
  * Resolves one whole PANEL_SHORTCUTS gesture's accumulated log-scale pinch into a direction, or
  * null if it never crossed [threshold] either way -- pure, so this judgement call can be checked
- * without a live gesture, the same split [com.fotoxplorr.app.adaptive.ZoomLadder.step] makes
+ * without a live gesture, the same split [com.fotoxplorr.app.adaptive.pinchStep] makes
  * between its own pure arithmetic and the pointer-input code that feeds it.
  *
  * Reuses [PINCH_STEP_THRESHOLD] rather than inventing a second "how much pinch counts as
  * deliberate, not twitchy" number for what is, underneath, the exact same judgement call the
- * gallery's own zoom ladder already makes -- see that constant's own doc for the reasoning.
+ * gallery's own zoom rungs already make -- see that constant's own doc for the reasoning.
  *
  * Negative accumulated log (fingers moved together, net, across the gesture) is
  * [PinchDirection.IN] -- the owner's own naming, and the plain-English one: pinching your fingers

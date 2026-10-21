@@ -1,6 +1,10 @@
 package com.fotoxplorr.app.gallery
 
 import android.content.Context
+import com.fotoxplorr.app.adaptive.DEFAULT_ZOOM_RUNG
+import com.fotoxplorr.app.adaptive.ZOOM_RUNG_MIN
+import com.fotoxplorr.app.adaptive.ZOOM_RUNG_STAMPS
+import com.fotoxplorr.app.adaptive.zoomRungFromLegacyColumns
 import com.fotoxplorr.app.editor.EditorSaveMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -71,7 +75,12 @@ enum class TransparencyBackground {
 
 data class GalleryPreferencesState(
     val sort: GallerySort = GallerySort.NEWEST,
-    val gridColumns: Int = DEFAULT_GRID_COLUMNS,
+    /**
+     * How zoomed the grid is: rungs 1..6 are that many columns and 7 is the stamp view (see
+     * `adaptive/GridZoom.kt`). Replaces the old column count, which is read once as the starting
+     * value when this has never been stored.
+     */
+    val gridZoomRung: Int = DEFAULT_ZOOM_RUNG,
     val blurSensitive: Boolean = true,
     val hideSensitive: Boolean = false,
     val showVideos: Boolean = true,
@@ -179,10 +188,15 @@ class GalleryPreferences(context: Context) {
         state.value.copy(sort = sort),
     ) { putString(KEY_SORT, sort.name) }
 
-    fun setGridColumns(columns: Int) {
-        val safeColumns = columns.coerceIn(MIN_GRID_COLUMNS, MAX_GRID_COLUMNS)
-        update(state.value.copy(gridColumns = safeColumns)) {
-            putInt(KEY_GRID_COLUMNS, safeColumns)
+    /**
+     * Called when a pinch settles or a button is pressed, not on every step of a pinch. The old
+     * [KEY_GRID_COLUMNS] is never written again (and never removed, so a downgrade keeps what it
+     * last said).
+     */
+    fun setGridZoomRung(rung: Int) {
+        val safeRung = rung.coerceIn(ZOOM_RUNG_MIN, ZOOM_RUNG_STAMPS)
+        update(state.value.copy(gridZoomRung = safeRung)) {
+            putInt(KEY_GRID_ZOOM_RUNG, safeRung)
         }
     }
 
@@ -316,9 +330,7 @@ class GalleryPreferences(context: Context) {
 
     private fun load(): GalleryPreferencesState = GalleryPreferencesState(
         sort = enumValue(KEY_SORT, GallerySort.NEWEST),
-        gridColumns = preferences
-            .getInt(KEY_GRID_COLUMNS, DEFAULT_GRID_COLUMNS)
-            .coerceIn(MIN_GRID_COLUMNS, MAX_GRID_COLUMNS),
+        gridZoomRung = loadGridZoomRung(),
         blurSensitive = preferences.getBoolean(KEY_BLUR_SENSITIVE, true),
         hideSensitive = preferences.getBoolean(KEY_HIDE_SENSITIVE, false),
         showVideos = preferences.getBoolean(KEY_SHOW_VIDEOS, true),
@@ -360,6 +372,15 @@ class GalleryPreferences(context: Context) {
         customThemeJson = preferences.getString(KEY_CUSTOM_THEME_JSON, null).orEmpty(),
     )
 
+    // A stored rung wins. Without one the old column count decides: 2..6 are the same rung, and a 7
+    // becomes 6 rather than the stamp view, so nobody's grid changes structure under them.
+    private fun loadGridZoomRung(): Int =
+        if (preferences.contains(KEY_GRID_ZOOM_RUNG)) {
+            preferences.getInt(KEY_GRID_ZOOM_RUNG, DEFAULT_ZOOM_RUNG).coerceIn(ZOOM_RUNG_MIN, ZOOM_RUNG_STAMPS)
+        } else {
+            zoomRungFromLegacyColumns(preferences.getInt(KEY_GRID_COLUMNS, DEFAULT_ZOOM_RUNG))
+        }
+
     private inline fun <reified T : Enum<T>> enumValue(key: String, fallback: T): T =
         enumValueOrNull<T>(key) ?: fallback
 
@@ -371,7 +392,9 @@ class GalleryPreferences(context: Context) {
     private companion object {
         const val PREFERENCES_NAME = "foto_xplorr_gallery"
         const val KEY_SORT = "sort"
+        /** Retired column count; read once as the default for [KEY_GRID_ZOOM_RUNG], never written. */
         const val KEY_GRID_COLUMNS = "grid_columns"
+        const val KEY_GRID_ZOOM_RUNG = "grid_zoom_rung"
         const val KEY_BLUR_SENSITIVE = "blur_sensitive"
         const val KEY_HIDE_SENSITIVE = "hide_sensitive"
         const val KEY_SHOW_VIDEOS = "show_videos"
@@ -402,9 +425,6 @@ class GalleryPreferences(context: Context) {
     }
 }
 
-const val MIN_GRID_COLUMNS = 2
-const val MAX_GRID_COLUMNS = 7
-const val DEFAULT_GRID_COLUMNS = 3
 const val MIN_SLIDESHOW_INTERVAL_SECONDS = 2
 const val MAX_SLIDESHOW_INTERVAL_SECONDS = 12
 const val DEFAULT_SLIDESHOW_INTERVAL_SECONDS = 4

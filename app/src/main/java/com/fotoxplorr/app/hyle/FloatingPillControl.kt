@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -53,8 +54,11 @@ import androidx.compose.ui.unit.sp
  *
  * @param caption what the middle reads. Empty renders nothing rather than an empty gap, so a
  *   destination with no timeline (Places, Protected) gets a two-button pill instead of a hole.
- * @param onToggleDensity the grid-density stepper; null leaves the button out (the map has no
- *   density).
+ * @param onToggleDensity the grid-density stepper, which wraps round the zoom rungs (1..6 columns,
+ *   then the stamps); null leaves the button out (the map has no density).
+ * @param densityState where the grid is now, in words ("3 columns", "Stamps"). A screen reader
+ *   announces it as the button's state: this button is the only way to zoom without a gesture, so
+ *   it has to say what it just did.
  * @param onOpenTimeRange opens the time-range editor; null leaves the button out (Places and
  *   Protected, which no range applies to).
  */
@@ -64,6 +68,7 @@ fun FloatingPillControl(
     onToggleDensity: (() -> Unit)?,
     modifier: Modifier = Modifier,
     onOpenTimeRange: (() -> Unit)? = null,
+    densityState: String? = null,
 ) {
     Row(
         modifier = modifier
@@ -105,7 +110,7 @@ fun FloatingPillControl(
             }
         }
         if (onToggleDensity != null) {
-            PillIconButton(onClick = onToggleDensity, description = "Change grid density") {
+            PillIconButton(onClick = onToggleDensity, description = "Change grid density", state = densityState) {
                 Icon(Icons.Outlined.GridView, contentDescription = null, tint = Color.White)
             }
         }
@@ -116,13 +121,17 @@ fun FloatingPillControl(
 private fun PillIconButton(
     onClick: () -> Unit,
     description: String,
+    state: String? = null,
     content: @Composable () -> Unit,
 ) {
     Box(
         modifier = Modifier
             .size(BUTTON_SIZE.dp)
             .clip(CircleShape)
-            .semantics { contentDescription = description }
+            .semantics {
+                contentDescription = description
+                if (state != null) stateDescription = state
+            }
             .pointerInput(onClick) { detectTapGestures { onClick() } },
         contentAlignment = Alignment.Center,
     ) {

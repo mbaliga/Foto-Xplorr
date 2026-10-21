@@ -167,9 +167,9 @@ fun RichPhotoMapScreen(
     // The cluster bubbles are the accent role, so they take the chosen accent. Read once, as the
     // controller is made: the accent cannot change while this full-screen map is open.
     val accentArgb = MaterialTheme.colorScheme.primary.toArgb()
-    // Embedded, the browser's pill and corner discs float along the bottom edge and its view
-    // switcher along the top: the attribution and logo (bottom left) and the compass (top right)
-    // are lifted clear of them. Read once, as the controller is made, like the accent.
+    // Embedded, the browser's pill and corner discs float along the bottom edge: the attribution
+    // and logo (bottom left) are lifted clear of them, and the compass (top right) keeps a gap
+    // below the status bar. Read once, as the controller is made, like the accent.
     val chromeDensity = LocalDensity.current
     val lowerChromePx = if (embedded) {
         with(chromeDensity) { EMBEDDED_LOWER_CHROME_DP.dp.roundToPx() } +
@@ -691,5 +691,8 @@ private const val MAX_ALBUM_FILTERS = 16
 /** Clears a 48dp disc raised 20dp from the bottom edge, plus a gap. */
 private const val EMBEDDED_LOWER_CHROME_DP = 80
 
-/** Clears the browser's view switcher at the top right. */
+/**
+ * The gap kept under the status bar at the top right. It cleared the browser's view switcher,
+ * which no longer exists; the value stays until the compass's place is checked on a device.
+ */
 private const val EMBEDDED_UPPER_CHROME_DP = 56

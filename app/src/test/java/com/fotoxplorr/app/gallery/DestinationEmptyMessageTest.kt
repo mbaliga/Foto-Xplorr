@@ -79,7 +79,7 @@ class DestinationEmptyMessageTest {
 class DestinationEmptyMessageDistinctnessTest {
 
     /**
-     * DestinationContent renders either the grid or this message, never both. TimelineScreen
+     * DestinationContent renders either the grid or this message, never both. The grid
      * has its own generic "Nothing matches your filters" for an empty list, and for a
      * while both were rendered -- stacking two contradictory empty states and pushing the
      * useful one off-screen. If any of these ever collapses into a generic string, the two

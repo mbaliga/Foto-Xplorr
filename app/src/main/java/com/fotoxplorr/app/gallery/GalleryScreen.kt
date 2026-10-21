@@ -66,6 +66,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -139,21 +141,24 @@ import com.fotoxplorr.core.search.SearchDocument
 import com.fotoxplorr.core.search.matchesQuery
 import com.fotoxplorr.core.search.parseSearchQuery
 import kotlinx.coroutines.launch
-// ---- adaptive package: window sizing, the pinch/scroll zoom ladder, and keyboard shortcuts.
+// ---- adaptive package: window sizing, the pinch/scroll zoom rungs, and keyboard shortcuts.
 // See each file's own doc for why this stays pure Kotlin with no Compose/Android import of its
 // own -- the mapping into real Compose types (Key, WindowMetrics, ParkStyle) happens only here,
 // at this call site, same as this file already does for `dev.aarso.cellshell`'s ParkStyle.
 import com.fotoxplorr.app.adaptive.ChromeMotion
 import com.fotoxplorr.app.adaptive.GalleryShortcut
 import com.fotoxplorr.app.adaptive.GalleryShortcutKey
-import com.fotoxplorr.app.adaptive.GalleryZoomLevel
 import com.fotoxplorr.app.adaptive.MoveDirection
 import com.fotoxplorr.app.adaptive.NavRailPresentation
-import com.fotoxplorr.app.adaptive.ZoomLadder
 import com.fotoxplorr.app.adaptive.chromeMotionFor
 import com.fotoxplorr.app.adaptive.galleryShortcutFor
 import com.fotoxplorr.app.adaptive.navRailPresentation
-import com.fotoxplorr.app.adaptive.step
+import com.fotoxplorr.app.adaptive.ZOOM_RUNG_LAST_GRID
+import com.fotoxplorr.app.adaptive.ZOOM_RUNG_STAMPS
+import com.fotoxplorr.app.adaptive.pinchStep
+import com.fotoxplorr.app.adaptive.stepRung
+import com.fotoxplorr.app.adaptive.wrapRung
+import com.fotoxplorr.app.adaptive.zoomRungLabel
 import com.fotoxplorr.app.adaptive.windowSizeClassOf
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -265,7 +270,8 @@ data class GalleryActions(
     val onRequestPermission: () -> Unit,
     val onRefresh: () -> Unit,
     val onSetSort: (GallerySort) -> Unit,
-    val onSetGridColumns: (Int) -> Unit,
+    /** Remembers how zoomed the grid is (rungs 1..6 are columns, 7 the stamps) -- see `GridZoom.kt`. */
+    val onSetGridZoomRung: (Int) -> Unit = {},
     val onSetBlurSensitive: (Boolean) -> Unit,
     val onSetHideSensitive: (Boolean) -> Unit,
     val onSetShowVideos: (Boolean) -> Unit,
@@ -534,30 +540,20 @@ private fun GalleryBrowser(
     // -- see topReserve below. One state, so the shade and the gesture zone cannot differ.
     var shadeState by remember { mutableStateOf(ShadeState.COLLAPSED) }
 
-    // ---- pinch / Ctrl+scroll zoom ladder (grid density <-> Calendar <-> Year <-> Decade) ----
+    // ---- pinch / Ctrl+scroll zoom: the grid's rungs (1..6 columns, then the stamps) ----
     //
-    // One ladder instance for the browsing surface's whole lifetime -- it is stateless arithmetic
-    // over minColumns..maxColumns, so there is nothing to key it on. [zoomLevel] is the ladder's
-    // CURRENT rung; [zoomResidual] is the sub-rung motion [ZoomLadder.step] has not yet spent (see
-    // its own doc for why that has to survive between gesture frames rather than resetting each
-    // one). Seeded from the persisted column count so a pinch continues from wherever the grid
-    // density preference already was, rather than snapping to whatever rung index 0 happens to be.
-    val zoomLadder = remember { ZoomLadder(MIN_GRID_COLUMNS, MAX_GRID_COLUMNS) }
-    var zoomLevel by remember {
-        mutableStateOf<GalleryZoomLevel>(GalleryZoomLevel.Grid(state.preferences.gridColumns))
-    }
-    var zoomResidual by remember { mutableStateOf(0f) }
-    // Whether the grid is showing date-group headers (the "Timeline" entry in the view switcher).
-    // Orthogonal to the ladder's own rungs -- it is still a Grid rung underneath, just drawn with
-    // headers -- so it is its own flag rather than a fourth kind of [GalleryZoomLevel].
-    var timelineHeadersOn by remember { mutableStateOf(false) }
-    // Where to land when a tap on [YearScreen]/[DecadeScreen] drills one rung IN (a month tapped
-    // in Year opens Calendar there; a year tapped in Decade opens Year there) -- the same "tap to
-    // drill in" contract Calendar's own day cells already have into the viewer. Null means "the
-    // latest one with photos", which is also what every one of these screens defaults to on its
-    // own, so leaving these untouched (reached by pinch, or by the view switcher) is unaffected.
-    var pendingCalendarMonth by remember { mutableStateOf<YearMonth?>(null) }
-    var pendingYear by remember { mutableStateOf<Int?>(null) }
+    // [zoomRung] is the LIVE rung, stepped by a pinch as it goes; the stored preference only
+    // follows when the gesture settles or a button is pressed (see onZoomEnd below), so a pinch
+    // is not a SharedPreferences write per step. [zoomResidual] is the sub-rung motion
+    // [pinchStep] has not yet spent: it has to survive between gesture frames rather than reset
+    // on each one. Seeded from the stored rung so a pinch continues from wherever the grid
+    // density already was.
+    var zoomRung by remember { mutableIntStateOf(state.preferences.gridZoomRung) }
+    var zoomResidual by remember { mutableFloatStateOf(0f) }
+    // A change made elsewhere (the Zoom steppers in the view options and in Settings) arrives as
+    // a new stored rung; the live one follows it. A pinch's own write comes back equal and changes
+    // nothing.
+    LaunchedEffect(state.preferences.gridZoomRung) { zoomRung = state.preferences.gridZoomRung }
 
     // Set by the pending-search seeding effect (further down, after the route-change reset it
     // has to outrun) immediately before it changes `route`, so the reset that route change
@@ -624,14 +620,12 @@ private fun GalleryBrowser(
     // gesture starts below the shade. Two sources for this would mean either the shade cannot be
     // pulled or the top room cannot be opened.
     //
-    // Only where the shade is drawn (the panes and the root grid), and 0 elsewhere: in an album, on
-    // the map, on the timeline or on a zoom rung there is no shade, and its reserve would be a dead strip at
-    // the top where the top room could not be pulled down.
+    // Only where the shade is drawn (the panes and the root grid), and 0 elsewhere: in an album or
+    // on the map there is no shade, and its reserve would be a dead strip at the top where the top
+    // room could not be pulled down.
     val shadeDrawn = shadeIsDrawn(
         paneTakenOver = paneTakenOver,
         mapOpen = mapOpen,
-        zoomIsGrid = zoomLevel is GalleryZoomLevel.Grid,
-        timelineHeadersOn = timelineHeadersOn,
         routeIsRoot = route == BrowserRoute.Root,
     )
     val notificationReserve = if (shadeDrawn) shadeHeight(shadeState, activities.size).dp else 0.dp
@@ -779,10 +773,9 @@ private fun GalleryBrowser(
     // things move together, because a search that lands on a surface which cannot show results
     // is the same as no search at all: the drill-down route resets to Root (a search scoped to
     // whichever album the photo happened to live in would silently hide most of its own matches),
-    // the map gives way to the grid, and the zoom ladder drops back to a grid rung (the Calendar
-    // rungs draw months, not photos). The DESTINATION is deliberately left alone: which of the nine categories
-    // the person is browsing is a choice they made, not incidental state, and search reads as a
-    // filter within it.
+    // the map gives way to the grid, and any pane over the grid is closed. The DESTINATION is
+    // deliberately left alone: which of the nine categories the person is browsing is a choice they
+    // made, not incidental state, and search reads as a filter within it.
     LaunchedEffect(state.pendingSearch) {
         val seed = state.pendingSearch ?: return@LaunchedEffect
         if (route != BrowserRoute.Root) {
@@ -790,9 +783,6 @@ private fun GalleryBrowser(
             // re-runs for this route change on the next frame.
             seededRouteChange = true
             route = BrowserRoute.Root
-        }
-        if (zoomLevel !is GalleryZoomLevel.Grid) {
-            zoomLevel = GalleryZoomLevel.Grid(state.preferences.gridColumns)
         }
         query = seed
         searchVisible = true
@@ -884,77 +874,85 @@ private fun GalleryBrowser(
     val rangeDomain = remember(routeBase, timeEditorOpen) {
         if (timeEditorOpen) monthExtent(routeBase) else null
     }
-    // P0-15: whether TimelineScreen is about to take its date-header branch for THIS render --
-    // the one condition (see TimelineScreen's own `!showDateHeaders || grouping == NONE` check)
-    // that decides whether the grid below actually draws header rows, since `showDateHeaders` is
-    // hardcoded true at this screen's own call site (below). Mirrored here, not read back from
-    // TimelineScreen, because GalleryScreen must build `groups`/[GridIndexMap] BEFORE the grid
-    // composes, not after.
-    val headersActive = timelineHeadersOn && state.preferences.timelineGrouping != TimelineGrouping.NONE
-    // The one grouping computation, shared by the grid (TimelineScreen, below) and everything
-    // that used to assume grid index == asset index (the scrubber, the pill, arrow keys, and the
-    // list handed to the viewer on open) -- see docs/TRAPS.md #5 and #9. Without headers this is
-    // the identity: one group holding every asset, unreordered.
-    val groups = if (headersActive) {
-        remember(scrubberAssets, state.preferences.timelineGrouping) {
-            timelineGroups(scrubberAssets, state.preferences.timelineGrouping)
-        }
-    } else {
-        remember(scrubberAssets) { listOf(TimelineGroup("all", "", scrubberAssets)) }
-    }
+    // The masonry layout (the "fit to tile" setting off) is the one grid that has neither stamps nor
+    // headers, and its rungs stop at the sparsest column grid.
+    val masonryActive = !state.preferences.fitToTile
+    val maxZoomRung = if (masonryActive) ZOOM_RUNG_LAST_GRID else ZOOM_RUNG_STAMPS
+    val activeRung = zoomRung.coerceAtMost(maxZoomRung)
+    // Whether the grid below draws month headers (the stamp view in a date order). A plain Boolean
+    // so stepping between the column rungs does not rebuild the layout.
+    val headersActive = stampHeadersShown(activeRung, state.preferences.sort, masonryActive)
+    // The one layout computation, shared by the grid (ZoomGrid, below) and everything that used to
+    // assume grid index == asset index (the scrubber, the pill, arrow keys, and the list handed to
+    // the viewer on open) -- see docs/TRAPS.md #5 and #9. Without headers this is the identity: one
+    // group holding every asset, unreordered.
+    val layout = remember(scrubberAssets, headersActive) { zoomLayoutFor(scrubberAssets, headersActive) }
     // What the grid actually draws, asset-wise, in draw order -- NOT scrubberAssets once headers
-    // regroup/reorder it. This, not scrubberAssets, is what the scrubber, pill, arrow keys and
-    // viewer-open must all key off from here down.
-    val renderedAssets = remember(groups) { groups.flatMap { it.assets } }
+    // regroup it. This, not scrubberAssets, is what the scrubber, pill, arrow keys and viewer-open
+    // must all key off from here down.
+    val renderedAssets = layout.renderedAssets
     // Every grid this screen can show draws one trailing 88dp footer spacer after the last item
-    // (TimelineScreen's grouped branch and both of MediaGridScreen's branches all do) -- see
-    // GridIndexMap's own doc for why headers-off is just the identity plus this one footer.
-    val gridIndexMap = remember(groups, headersActive) {
-        GridIndexMap(groupSizes = groups.map { it.assets.size }, hasHeaders = headersActive, trailingFooter = true)
+    // (ZoomGrid and both of MediaGridScreen's branches all do) -- see GridIndexMap's own doc for why
+    // headers-off is just the identity plus this one footer.
+    val gridIndexMap = remember(layout) {
+        GridIndexMap(
+            groupSizes = layout.groups.map { it.assets.size },
+            hasHeaders = layout.hasHeaders,
+            trailingFooter = true,
+        )
     }
     // The scrubber's stops, in the GRID's index space (its own contract: it does not know or
     // care what an index means, only that stops/itemCount/currentIndex/onScrubTo all agree on
     // one space). timelineStops itself still reasons in asset-index space over renderedAssets --
     // its own month-bucketing has no idea headers exist -- so every stop's target is remapped
-    // through the same map the grid was built from before it reaches the scrubber.
-    val scrubberStops = remember(renderedAssets, gridIndexMap) {
-        timelineStops(renderedAssets).map { it.copy(itemIndex = gridIndexMap.gridIndexOf(it.itemIndex)) }
+    // through the same map the grid was built from before it reaches the scrubber. Under month
+    // headers every stop opens a run (stops and runs both cut where the month changes), so it
+    // targets the header row just above that run's first photo, not the photo: landing on the
+    // photo would leave the month's own header scrolled out of sight.
+    val scrubberStops = remember(renderedAssets, gridIndexMap, layout.hasHeaders) {
+        val headerRows = if (layout.hasHeaders) 1 else 0
+        timelineStops(renderedAssets).map {
+            it.copy(itemIndex = (gridIndexMap.gridIndexOf(it.itemIndex) - headerRows).coerceAtLeast(0))
+        }
     }
-    // Whether the grid (square, masonry, or with Timeline's date headers) is what is actually on
-    // screen right now, as opposed to Calendar, Year or Decade -- none of those draw
-    // gridState's surface, so the edge scrubber and the density pill below would be tracking and
-    // driving a position nothing on screen agrees with.
-    val gridActive = zoomLevel !is GalleryZoomLevel.Calendar && zoomLevel !is GalleryZoomLevel.Year &&
-        zoomLevel !is GalleryZoomLevel.Decade
     // P0-15: masonry's staggered grid keeps its own LazyStaggeredGridState, entirely unreachable
     // from here (see MediaGridScreen's own doc) -- gridState/GridIndexMap describe a grid that,
     // in masonry, is not even the one on screen. Rather than let the scrubber track and drive a
     // position nothing agrees with, it is hidden while masonry is active; the pill's position
     // text is hidden the same way just below, since there is no staggered-grid position to show
-    // in its place without threading a second scroll state up through DestinationContent, a file
-    // this task does not own.
-    val masonryActive = !state.preferences.fitToTile && !headersActive
+    // in its place without threading a second scroll state up through DestinationContent.
     // Nor does the map, which is drawn in the grid's place.
-    val scrubberTrackable = gridActive && !masonryActive && !mapOpen
+    val scrubberTrackable = !masonryActive && !mapOpen
 
-    // ---- desktop input: fold pinch and Ctrl+scroll into the zoom ladder, and the right-click
+    // ---- desktop input: fold pinch and Ctrl+scroll into the zoom rungs, and the right-click
     // context menu into real actions. Both gestures are already consumed in GalleryContent.kt
     // (gridZoomGestures, MediaTile's secondary-button handler and DropdownMenu) -- this is only
     // the wiring GridChromeBridge's own doc calls for.
     //
-    // Reassigned every recomposition rather than set once: both lambdas close over zoomLevel,
-    // zoomResidual and scrubberAssets, all of which change across the browsing surface's life,
-    // and a bridge captured once at `remember` time would forever act on the FIRST
-    // recomposition's values. See GridChromeBridge's own doc for why mutating the remembered
-    // instance's fields -- not re-providing a new instance -- is what keeps this cheap: the
-    // 22k-tile grid below reads the field, not the identity of the bridge that holds it.
+    // Reassigned every recomposition rather than set once: these lambdas close over the
+    // preferences and scrubberAssets, which change across the browsing surface's life, and a
+    // bridge captured once at `remember` time would forever act on the FIRST recomposition's
+    // values. See GridChromeBridge's own doc for why mutating the remembered instance's fields --
+    // not re-providing a new instance -- is what keeps this cheap: the 22k-tile grid below reads
+    // the field, not the identity of the bridge that holds it.
     chromeBridge.onZoom = { scaleFactor ->
-        val step = zoomLadder.step(zoomLevel, zoomResidual, scaleFactor)
-        zoomLevel = step.level
+        val step = pinchStep(zoomRung, zoomResidual, scaleFactor, maxRung = maxZoomRung)
+        zoomRung = step.rung
         zoomResidual = step.residual
-        // Only a Grid rung has a column count to persist; Calendar, Year and Decade do not touch the
-        // preference, so stepping back INTO the grid resumes at whatever density it left off.
-        (step.level as? GalleryZoomLevel.Grid)?.let { actions.onSetGridColumns(it.columns) }
+    }
+    // The pinch (or the wheel) has settled: now, not on every step, the rung is stored, and the
+    // motion it did not spend is dropped so the next, unrelated pinch starts from nothing.
+    chromeBridge.onZoomEnd = {
+        zoomResidual = 0f
+        val settled = zoomRung.coerceAtMost(maxZoomRung)
+        if (settled != state.preferences.gridZoomRung) actions.onSetGridZoomRung(settled)
+    }
+    // A step with no gesture behind it (Ctrl +/-, a screen reader's zoom actions): stored at once.
+    chromeBridge.onZoomStep = { delta ->
+        val next = stepRung(zoomRung, delta, maxZoomRung)
+        zoomRung = next
+        zoomResidual = 0f
+        if (next != state.preferences.gridZoomRung) actions.onSetGridZoomRung(next)
     }
     chromeBridge.onContextAction = { asset, action ->
         when (action) {
@@ -992,11 +990,12 @@ private fun GalleryBrowser(
     // for the exact table and why it returns null (rather than a default) for a key it has no
     // opinion about.
     //
-    // Arrow-key navigation walks [scrubberAssets] in COLUMN-count strides, which is exact for the
-    // square grid and Timeline's headerless variant, and an approximation in masonry mode (whose
-    // rows do not actually align to a fixed column count) -- acceptable here because it still
-    // moves the cursor roughly up/down/across rather than leaving the keyboard unable to drive a
-    // masonry grid at all.
+    // Arrow-key navigation walks the rendered photos in strides of the columns the grid has across
+    // right now (the stamp view's count depends on the window's width, so the grid reports it). That
+    // is exact for the headerless grid, and an approximation under the stamps' month headers (a row
+    // ends at each month, so a stride drifts by the unfilled slots) and in masonry mode (whose rows
+    // do not actually align to a fixed column count) -- acceptable here because it still moves the
+    // cursor roughly up/down/across rather than leaving the keyboard unable to drive those grids.
     fun handleGalleryShortcut(shortcut: GalleryShortcut) {
         // The grid is still composed under a pane but nobody can see it: Ctrl+A, Delete, Enter and
         // the arrows would select, trash and open photos on a screen that is not showing them.
@@ -1010,7 +1009,7 @@ private fun GalleryBrowser(
                 // result through GridIndexMap before it ever reaches gridState.
                 val ids = renderedAssets
                 if (ids.isEmpty()) return
-                val columns = state.preferences.gridColumns.coerceAtLeast(1)
+                val columns = chromeBridge.columnsAcross.coerceAtLeast(1)
                 val current = ids.indexOfFirst { it.id == chromeBridge.keyboardFocusedId }
                     .let { if (it < 0) 0 else it }
                 val next = when (shortcut.direction) {
@@ -1056,6 +1055,8 @@ private fun GalleryBrowser(
             }
             GalleryShortcut.SelectAll -> selection = selection.selectAll(scrubberAssets.map { it.id })
             GalleryShortcut.FocusSearch -> searchVisible = true
+            GalleryShortcut.ZoomIn -> chromeBridge.onZoomStep(-1)
+            GalleryShortcut.ZoomOut -> chromeBridge.onZoomStep(1)
         }
     }
 
@@ -1252,6 +1253,10 @@ private fun GalleryBrowser(
                                 Key.Delete, Key.Backspace -> GalleryShortcutKey.DELETE
                                 Key.Slash -> GalleryShortcutKey.SLASH
                                 Key.A -> GalleryShortcutKey.LETTER_A
+                                // Ctrl + the plus key (which on most layouts is the equals key,
+                                // unshifted) or the numpad's, and Ctrl + minus.
+                                Key.Equals, Key.Plus, Key.NumPadAdd -> GalleryShortcutKey.PLUS
+                                Key.Minus, Key.NumPadSubtract -> GalleryShortcutKey.MINUS
                                 else -> null
                             } ?: return@onKeyEvent false
                             val shortcut = galleryShortcutFor(shortcutKey, event.isCtrlPressed)
@@ -1388,71 +1393,6 @@ private fun GalleryBrowser(
                             // search and the time range all applied, and the one visibility
                             // filter -- not the whole library.
                             mapOpen -> GalleryMapContent(assets = scrubberAssets, settled = shell.atHome)
-                            // ---- the zoom ladder's sparse rungs (owner: "zoom out past the
-                            // sparsest grid and you reach Calendar [-> Year -> Decade]") ----
-                            //
-                            // Checked ahead of the route branches below and independent of them
-                            // on purpose: the ladder is a property of the whole browsing surface,
-                            // not of any one route, so pinching out from inside an album reaches
-                            // Calendar/Year/Decade exactly the same as pinching out from the
-                            // root grid.
-                            //
-                            // Decade and Year sit beyond Calendar on the ladder (see
-                            // GalleryZoomLadder.kt's own doc for why there, not elsewhere): each
-                            // drills one rung IN on a tap, landing the next screen down exactly
-                            // on what was tapped via pendingYear/pendingCalendarMonth, seeded
-                            // just before the rung itself changes.
-                            zoomLevel is GalleryZoomLevel.Decade -> DecadeScreen(
-                                assets = scrubberAssets,
-                                onOpenYear = { year, _ ->
-                                    pendingYear = year
-                                    zoomLevel = GalleryZoomLevel.Year
-                                },
-                            )
-                            zoomLevel is GalleryZoomLevel.Year -> YearScreen(
-                                assets = scrubberAssets,
-                                initialYear = pendingYear,
-                                onOpenMonth = { yearMonth, _ ->
-                                    pendingCalendarMonth = yearMonth
-                                    zoomLevel = GalleryZoomLevel.Calendar
-                                },
-                            )
-                            zoomLevel is GalleryZoomLevel.Calendar -> CalendarScreen(
-                                assets = scrubberAssets,
-                                initialMonth = pendingCalendarMonth,
-                                // A day's cover opens straight into the viewer with that day as
-                                // the paging context -- the calendar has no route of its own to
-                                // drill into (BrowserRoute has no day-granularity variant, and
-                                // adding one would touch selection/search wiring this task does
-                                // not own), so "look at this day" is "open its first photo".
-                                onOpenDay = { dayAssets ->
-                                    dayAssets.firstOrNull()?.let { actions.onOpenAsset(it, dayAssets) }
-                                },
-                            )
-                            // The Timeline entry in the view switcher: the SAME grid, drawn with
-                            // date-group headers. TimelineScreen's grouped branch exists already
-                            // in GalleryContent.kt but had no reachable caller before this task --
-                            // DestinationContent (a file this task does not own) always passes
-                            // `showDateHeaders = false`. Calling it directly from here reaches it
-                            // without touching that file.
-                            timelineHeadersOn -> TimelineScreen(
-                                assets = scrubberAssets,
-                                groups = groups,
-                                grouping = state.preferences.timelineGrouping,
-                                columns = state.preferences.gridColumns,
-                                favoriteIds = state.favoriteIds,
-                                sensitiveIds = state.sensitiveIds,
-                                blurSensitive = state.preferences.blurSensitive,
-                                selectedIds = selection.selectedIds,
-                                selectionActive = selection.isActive,
-                                onOpen = { asset -> actions.onOpenAsset(asset, renderedAssets) },
-                                onToggleSelection = { id -> selection = selection.toggle(id) },
-                                showDateHeaders = true,
-                                gridState = gridState,
-                                fitToTile = state.preferences.fitToTile,
-                                loopAnimations = state.preferences.loopAnimations,
-                                animatedIds = state.animatedIds,
-                            )
                             // Pull-to-backup is retired (owner direction, 2026-08-05): the
                             // pull-down space at a room's top belongs to the fonebrew
                             // top-room reveal, so no other gesture may claim it — and the
@@ -1480,6 +1420,8 @@ private fun GalleryBrowser(
                                     DestinationContent(
                                         destination = destination,
                                         assets = destinationAssets,
+                                        layout = layout,
+                                        rung = activeRung,
                                         state = state,
                                         actions = actions,
                                         selection = selection,
@@ -1493,16 +1435,16 @@ private fun GalleryBrowser(
                                     )
                                 }
                             }
-                            else -> MediaGridScreen(
-                                assets = currentAssets,
-                                columns = state.preferences.gridColumns,
+                            else -> ZoomGrid(
+                                layout = layout,
+                                rung = activeRung,
                                 favoriteIds = state.favoriteIds,
                                 sensitiveIds = state.sensitiveIds,
                                 blurSensitive = state.preferences.blurSensitive,
                                 selectedIds = selection.selectedIds,
                                 selectionActive = selection.isActive,
                                 emptyMessage = if (query.isBlank()) "Nothing here yet" else "No matching media",
-                                onOpen = { asset -> actions.onOpenAsset(asset, currentAssets) },
+                                onOpen = { asset -> actions.onOpenAsset(asset, layout.renderedAssets) },
                                 onToggleSelection = { id -> selection = selection.toggle(id) },
                                 gridState = gridState,
                                 fitToTile = state.preferences.fitToTile,
@@ -1584,32 +1526,22 @@ private fun GalleryBrowser(
                     }
 
                     // The floating pill from the mockups, replacing the retired bottom nav.
-                    // Search still makes sense from Calendar/Map (it drives which assets flow
-                    // INTO them, same as the grid), so only the density control is grid-only --
-                    // the pill itself stays up throughout.
+                    // Search still makes sense on the map (it drives which assets flow INTO it, same
+                    // as the grid), so only the density control is grid-only -- the pill itself
+                    // stays up throughout.
                     if (!selection.isActive && !paneTakenOver) {
                         // On a wide window the pinned rail is a sibling of the grid while these
                         // overlays belong to the whole box, so everything pinned to the left is
                         // inset by the rail's width or it would be drawn over the rail.
                         val railInset = railInsetDp(railPresentation).dp
                         val rangeApplies = timeRangeApplies(destination)
+                        // The one way to zoom without a gesture: a stepper that wraps from the
+                        // stamps back to one column, since a button has no way to go back with.
                         val toggleDensity: () -> Unit = {
-                            val next = state.preferences.gridColumns + 1
-                            val wrapped = if (next > MAX_GRID_COLUMNS) MIN_GRID_COLUMNS else next
-                            actions.onSetGridColumns(wrapped)
-                            // Keeps the ladder's own idea of "where we are" in step with this
-                            // button -- without this a pinch right after tapping density would
-                            // step from whatever rung the LAST pinch left off at, ignoring
-                            // what the button just changed on screen.
-                            zoomLevel = GalleryZoomLevel.Grid(wrapped)
+                            val next = wrapRung(activeRung, maxZoomRung)
+                            zoomRung = next
                             zoomResidual = 0f
-                            timelineHeadersOn = false
-                            // An explicit jump back to the grid is a deliberate reset, not a
-                            // rung-by-rung climb down -- any drill-in position Year/Decade had
-                            // remembered is stale the moment the user leaves the ladder this
-                            // way, so it is cleared rather than silently kept for next time.
-                            pendingCalendarMonth = null
-                            pendingYear = null
+                            actions.onSetGridZoomRung(next)
                         }
                         FloatingPillControl(
                             caption = when {
@@ -1624,6 +1556,7 @@ private fun GalleryBrowser(
                                 null
                             },
                             onToggleDensity = if (mapOpen) null else toggleDensity,
+                            densityState = zoomRungLabel(activeRung),
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .navigationBarsPadding()
@@ -1698,52 +1631,6 @@ private fun GalleryBrowser(
                                 }
                             }
                         }
-                    }
-
-                    // The view switcher: grid / calendar / timeline made directly reachable, per the
-                    // owner's ask that these not stay "buried behind Discover -> Places". Up
-                    // whenever the equivalent chrome above is -- not gated on gridActive, since
-                    // this is the way BACK from Calendar too. Not over the map, whose way back is
-                    // the disc: the switcher's buttons describe the grid's views, and the map is
-                    // drawn in place of all of them. (The map is no longer a button here; it is
-                    // the disc and the rail's Map word.)
-                    if (!selection.isActive && !paneTakenOver && !mapOpen) {
-                        GalleryViewModeSwitcher(
-                            active = when {
-                                // Year and Decade have no button of their own on this switcher --
-                                // they are reached by pinch or by drilling in from Calendar, not
-                                // by a named quick-select -- so both read as "Cal" here, and
-                                // tapping Cal from either is a legitimate way back to it.
-                                zoomLevel is GalleryZoomLevel.Calendar ||
-                                    zoomLevel is GalleryZoomLevel.Year ||
-                                    zoomLevel is GalleryZoomLevel.Decade -> GalleryViewMode.CALENDAR
-                                timelineHeadersOn -> GalleryViewMode.TIMELINE
-                                else -> GalleryViewMode.GRID
-                            },
-                            onSelect = { mode ->
-                                // Same reasoning as the density pill just above: an explicit named
-                                // jump is a deliberate reset of any remembered drill-in position.
-                                pendingCalendarMonth = null
-                                pendingYear = null
-                                when (mode) {
-                                    GalleryViewMode.GRID -> {
-                                        zoomLevel = GalleryZoomLevel.Grid(state.preferences.gridColumns)
-                                        zoomResidual = 0f
-                                        timelineHeadersOn = false
-                                    }
-                                    GalleryViewMode.TIMELINE -> {
-                                        zoomLevel = GalleryZoomLevel.Grid(state.preferences.gridColumns)
-                                        zoomResidual = 0f
-                                        timelineHeadersOn = true
-                                    }
-                                    GalleryViewMode.CALENDAR -> {
-                                        zoomLevel = GalleryZoomLevel.Calendar
-                                        zoomResidual = 0f
-                                    }
-                                }
-                            },
-                            modifier = Modifier.align(Alignment.TopEnd),
-                        )
                     }
                 }
             }
@@ -1891,57 +1778,6 @@ private fun GalleryMapContent(assets: List<MediaAsset>, settled: Boolean) {
         // an implicit non-null here would crash instead of degrading if that ever changed.
         GalleryMessage("Map is unavailable here")
     }
-}
-
-/**
- * The three views the switcher below makes directly reachable. Deliberately NOT the same type as
- * [GalleryZoomLevel]: TIMELINE is a Grid rung drawn with date headers, not a rung of its own on
- * the ladder, and encoding it as a `GalleryZoomLevel` would mean either inventing a rung the pure
- * ladder logic knows nothing about, or letting a pinch land on it by accident. Keeping it a
- * separate, UI-only enum is what lets `GalleryBrowser` derive it FROM `(zoomLevel,
- * timelineHeadersOn)` for display, while the two underlying pieces of state stay independently
- * driven by the ladder and by this switcher respectively.
- */
-private enum class GalleryViewMode { GRID, CALENDAR, TIMELINE }
-
-/**
- * Grid / Calendar / Timeline, made directly reachable rather than left buried behind
- * Discover -> Places (owner's ask). Plain text pills rather than icons, matching this screen's
- * own brutalist chrome elsewhere ([RouteOverlayBar]'s pills, [CalendarScreen]'s `‹`/`›` glyphs) --
- * a fifth icon font import for three one-word labels would buy nothing this app's existing black
- * pill-on-photograph language does not already say.
- */
-@Composable
-private fun GalleryViewModeSwitcher(
-    active: GalleryViewMode,
-    onSelect: (GalleryViewMode) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .statusBarsPadding()
-            .padding(top = 8.dp, end = 8.dp)
-            .background(SCRIM_PILL, RoundedCornerShape(20.dp))
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        GalleryViewModeButton("Grid", active == GalleryViewMode.GRID) { onSelect(GalleryViewMode.GRID) }
-        GalleryViewModeButton("Cal", active == GalleryViewMode.CALENDAR) { onSelect(GalleryViewMode.CALENDAR) }
-        GalleryViewModeButton("Time", active == GalleryViewMode.TIMELINE) { onSelect(GalleryViewMode.TIMELINE) }
-    }
-}
-
-@Composable
-private fun GalleryViewModeButton(label: String, selected: Boolean, onClick: () -> Unit) {
-    Text(
-        text = label.uppercase(),
-        color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White.copy(alpha = 0.75f),
-        style = MaterialTheme.typography.labelSmall,
-        modifier = Modifier
-            .clickable(onClickLabel = "$label view", onClick = onClick)
-            .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(14.dp))
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-    )
 }
 
 /**

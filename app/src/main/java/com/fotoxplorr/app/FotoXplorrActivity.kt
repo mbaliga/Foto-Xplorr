@@ -1714,7 +1714,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     onRequestPermission = ::requestMediaPermissionOrOpenSettings,
                     onRefresh = { runtime.requestScan(true) },
                     onSetSort = galleryPreferences::setSort,
-                    onSetGridColumns = galleryPreferences::setGridColumns,
+                    onSetGridZoomRung = galleryPreferences::setGridZoomRung,
                     onSetBlurSensitive = galleryPreferences::setBlurSensitive,
                     onSetHideSensitive = galleryPreferences::setHideSensitive,
                     onSetShowVideos = galleryPreferences::setShowVideos,

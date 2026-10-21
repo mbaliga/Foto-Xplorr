@@ -51,6 +51,7 @@ import com.fotoxplorr.app.LibraryRuntime
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.openwith.withSafeExtras
 import com.fotoxplorr.app.gallery.GalleryPreferences
+import com.fotoxplorr.app.adaptive.pickerColumnsFor
 import com.fotoxplorr.app.gallery.MediaGridScreen
 import com.fotoxplorr.app.gallery.browsableAssets
 import com.fotoxplorr.app.media.MediaAsset
@@ -93,7 +94,8 @@ class PhotoPickerActivity : ComponentActivity() {
                     PhotoPickerScreen(
                         allowMultiple = allowMultiple,
                         requestedMimeType = requestedMimeType,
-                        gridColumns = preferences.gridColumns,
+                        // The picker has no stamp view: a stored Stamps rung shows as the sparsest column grid.
+                        gridColumns = pickerColumnsFor(preferences.gridZoomRung),
                         onResult = ::finishWithSelection,
                         onCancel = ::finishCancelled,
                     )

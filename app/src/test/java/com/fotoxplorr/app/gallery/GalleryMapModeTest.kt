@@ -91,14 +91,14 @@ class GalleryMapModeTest {
     // ---- the disc ----
 
     @Test
-    fun `the grid offers the map and the old Map pill is gone`() {
+    fun `the grid offers the map and the view switcher is gone`() {
         mount()
         compose.onNodeWithContentDescription("Show map").assertExists()
         compose.onNodeWithContentDescription("Show grid").assertDoesNotExist()
-        // The switcher keeps the views that are still on it; the map is not one of them.
-        compose.onNodeWithText("GRID").assertExists()
-        compose.onNodeWithText("CAL").assertExists()
-        compose.onNodeWithText("TIME").assertExists()
+        // The grid is one continuous layout zoomed by pinch: no Grid / Cal / Time / Map pills.
+        compose.onNodeWithText("GRID").assertDoesNotExist()
+        compose.onNodeWithText("CAL").assertDoesNotExist()
+        compose.onNodeWithText("TIME").assertDoesNotExist()
         compose.onNodeWithText("MAP").assertDoesNotExist()
     }
 
@@ -112,8 +112,8 @@ class GalleryMapModeTest {
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Show grid").assertExists()
         org.junit.Assert.assertEquals("the grid is out of the way", 0, tilesShown())
-        // The switcher describes the grid's views and is not drawn over the map.
-        compose.onNodeWithText("CAL").assertDoesNotExist()
+        // The density stepper describes the grid's zoom and is not drawn over the map.
+        compose.onNodeWithContentDescription("Change grid density").assertDoesNotExist()
 
         compose.onNodeWithContentDescription("Show grid").performClick()
         compose.waitForIdle()

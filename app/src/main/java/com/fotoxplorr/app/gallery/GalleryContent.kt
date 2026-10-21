@@ -57,6 +57,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
@@ -96,6 +97,10 @@ import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
 import com.fotoxplorr.core.model.MediaId
 import kotlin.math.exp
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.hypot
 import com.fotoxplorr.app.ui.HelpCopy
 
@@ -105,14 +110,14 @@ import com.fotoxplorr.app.ui.HelpCopy
  * black gutter between them and nothing at the screen edges, so this is 4dp -- it was a 1dp
  * hairline for the earlier "seamless mosaic" mockups -- and still no content padding.
  */
-private val GRID_GUTTER = 4.dp
+internal val GRID_GUTTER = 4.dp
 
 /**
  * The everyday grid tile's shape: 144 wide by 160 tall on the same screenshot, i.e. a little
  * taller than square. The masonry layout passes each photo's own [MediaAsset.aspectRatio]
  * instead; see [MediaTile].
  */
-private const val GRID_TILE_ASPECT = 144f / 160f
+internal const val GRID_TILE_ASPECT = 144f / 160f
 
 /**
  * The pure-black canvas the mockups sit every grid on. Deliberately a literal black rather
@@ -134,14 +139,12 @@ enum class MediaContextAction { OPEN, TOGGLE_FAVORITE, MOVE_TO_TRASH, SHARE, EDI
  * Wires the grid's mouse- and pinch-driven chrome to whatever owns it, across a boundary a
  * parameter cannot cross.
  *
- * [MediaGridScreen] is reached two ways: directly from `GalleryScreen` for a drill-down route,
- * and through `DestinationBrowserScreen`'s `DestinationContent` for the root "Photos" grid --
- * the app's most-used surface, and a file this task does not own. `DestinationContent`'s own
- * signature is fixed and forwards nothing new, so a plain parameter added here would only ever
- * reach the drill-down call site. This is threaded the same way `LocalSpatialExperience`
- * already is (`com.fotoxplorr.app.spatial.SpatialComposition`): a value read via composition
- * rather than passed down explicitly, so it reaches every tile regardless of what sits between
- * `GalleryScreen` and this file in the tree.
+ * The grid is reached two ways: directly from `GalleryScreen` for a drill-down route, and through
+ * `DestinationBrowserScreen`'s `DestinationContent` for the root "Photos" grid -- the app's
+ * most-used surface. Rather than thread new callbacks through both (and through the grid's own
+ * tiles), this is provided the same way `LocalSpatialExperience` already is
+ * (`com.fotoxplorr.app.spatial.SpatialComposition`): a value read via composition, so it reaches
+ * every tile regardless of what sits between `GalleryScreen` and the tile in the tree.
  *
  * A mutable holder rather than putting the callbacks straight into a `compositionLocalOf` value:
  * `GalleryScreen` recomputes these lambdas on every recomposition (they close over the current
@@ -153,9 +156,26 @@ enum class MediaContextAction { OPEN, TOGGLE_FAVORITE, MOVE_TO_TRASH, SHARE, EDI
  */
 @Stable
 class GridChromeBridge {
-    /** Called with this gesture frame's multiplicative scale change; see [ZoomLadder.step]. */
+    /** Called with this gesture frame's multiplicative scale change; see `pinchStep`. */
     internal var onZoom: (Float) -> Unit = {}
+
+    /**
+     * The gesture that was calling [onZoom] has finished: the fingers came up, or the wheel has
+     * been still for a moment. The owner persists the rung and drops the unspent motion here, not
+     * on every step.
+     */
+    internal var onZoomEnd: () -> Unit = {}
+
+    /** One rung out (+1) or in (-1) without a gesture: the screen reader's zoom actions. */
+    internal var onZoomStep: (Int) -> Unit = {}
     internal var onContextAction: (MediaAsset, MediaContextAction) -> Unit = { _, _ -> }
+
+    /**
+     * How many tiles sit across one row of the grid on screen right now. Written by the grid after
+     * it has measured its width (the stamp view's count depends on it), read by the arrow keys to
+     * step a row at a time. Not observable: nothing draws from it.
+     */
+    internal var columnsAcross: Int = 1
 
     /**
      * What a hold on a tile does, already adjusted for the route (see
@@ -170,7 +190,7 @@ class GridChromeBridge {
         internal set
 
     /**
-     * Which tile the keyboard's arrow keys currently sit on, if any -- unlike the two callbacks
+     * Which tile the keyboard's arrow keys currently sit on, if any -- unlike the callbacks
      * above, this one IS `mutableStateOf`, because a tile reads it reactively to draw its own
      * focus ring. That still costs nothing extra per keystroke beyond what it should: every tile
      * shares this one `State`, so moving the cursor recomposes exactly the tiles currently on
@@ -188,13 +208,20 @@ val LocalGridChromeBridge = staticCompositionLocalOf { GridChromeBridge() }
 private const val MIN_PINCH_SPREAD_PX = 8f
 
 /** How much wheel travel (in px, Android's raw `scrollDelta` unit) equals one "unit" of pinch on
- * the same log scale [ZoomLadder.step] consumes -- picked so three or four notches of a typical
- * mouse wheel cross [com.fotoxplorr.app.adaptive.PINCH_STEP_THRESHOLD] once, matching how many
- * notches a deliberate density change takes on a touchpad's two-finger pinch. */
+ * the same log scale `pinchStep` consumes -- picked so three or four notches of a typical mouse
+ * wheel cross [com.fotoxplorr.app.adaptive.PINCH_STEP_THRESHOLD] once, matching how many notches a
+ * deliberate density change takes on a touchpad's two-finger pinch. */
 private const val SCROLL_ZOOM_SENSITIVITY = 0.02f
 
+/** A wheel has no "fingers up": this long without a notch is the end of its gesture. */
+private const val SCROLL_ZOOM_SETTLE_MILLIS = 250L
+
 /**
- * Multi-touch pinch and Ctrl+scroll, both folded into [bridge]'s `onZoom`, and nothing else.
+ * Multi-touch pinch and Ctrl+scroll, both folded into [bridge]'s `onZoom` (and `onZoomEnd` when the
+ * gesture is over), and nothing else.
+ *
+ * Attached to the ONE grid, so it works at every rung and in both directions: there is no rung
+ * that draws something else without it.
  *
  * Hand-rolled rather than `detectTransformGestures` -- the same call `ViewerScreen` already
  * makes for its own gesture, and for the same reason (see its "Zoom, rotate, pan and page"
@@ -206,199 +233,88 @@ private const val SCROLL_ZOOM_SENSITIVITY = 0.02f
  * completely untouched.
  */
 internal fun Modifier.gridZoomGestures(bridge: GridChromeBridge): Modifier = pointerInput(Unit) {
-    // The previous frame's average finger-to-centroid distance. Reset to null whenever fewer
-    // than two fingers are down, so the frame that brings the SECOND finger down never reports a
-    // "zoom" against a one-finger baseline that was never a spread measurement at all.
-    var previousSpread: Float? = null
-    awaitPointerEventScope {
-        while (true) {
-            val event = awaitPointerEvent(PointerEventPass.Initial)
-            if (event.type == PointerEventType.Scroll) {
-                val change = event.changes.firstOrNull()
-                if (change != null && event.keyboardModifiers.isCtrlPressed) {
-                    change.consume()
-                    val scrollY = change.scrollDelta.y
-                    // A wheel tick is a discrete unit, not a distance -- there is no "previous
-                    // spread" to compare it against, so it maps straight onto the ladder's own
-                    // log scale instead of being folded through a spread ratio like a pinch is.
-                    if (scrollY != 0f) bridge.onZoom(exp(-scrollY * SCROLL_ZOOM_SENSITIVITY))
+    coroutineScope {
+        val gestureScope = this
+        // The previous frame's average finger-to-centroid distance. Reset to null whenever fewer
+        // than two fingers are down, so the frame that brings the SECOND finger down never reports a
+        // "zoom" against a one-finger baseline that was never a spread measurement at all.
+        var previousSpread: Float? = null
+        // Whether this pinch has reported any zoom yet, so lifting a finger after a plain two-finger
+        // touch (which reported nothing) does not announce an end with no beginning.
+        var pinching = false
+        var wheelSettle: Job? = null
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.type == PointerEventType.Scroll) {
+                    val change = event.changes.firstOrNull()
+                    if (change != null && event.keyboardModifiers.isCtrlPressed) {
+                        change.consume()
+                        val scrollY = change.scrollDelta.y
+                        // A wheel tick is a discrete unit, not a distance -- there is no "previous
+                        // spread" to compare it against, so it maps straight onto the rungs' own
+                        // log scale instead of being folded through a spread ratio like a pinch is.
+                        if (scrollY != 0f) {
+                            bridge.onZoom(exp(-scrollY * SCROLL_ZOOM_SENSITIVITY))
+                            wheelSettle?.cancel()
+                            wheelSettle = gestureScope.launch {
+                                delay(SCROLL_ZOOM_SETTLE_MILLIS)
+                                bridge.onZoomEnd()
+                            }
+                        }
+                    }
+                    continue
                 }
-                continue
+                val pressed = event.changes.filter { it.pressed }
+                if (pressed.size < 2) {
+                    previousSpread = null
+                    if (pinching) {
+                        pinching = false
+                        bridge.onZoomEnd()
+                    }
+                    continue
+                }
+                val centroidX = pressed.sumOf { it.position.x.toDouble() }.toFloat() / pressed.size
+                val centroidY = pressed.sumOf { it.position.y.toDouble() }.toFloat() / pressed.size
+                val spread = pressed.sumOf {
+                    hypot((it.position.x - centroidX).toDouble(), (it.position.y - centroidY).toDouble())
+                }.toFloat() / pressed.size
+                val previous = previousSpread
+                if (previous != null && previous > MIN_PINCH_SPREAD_PX) {
+                    pressed.forEach { it.consume() }
+                    pinching = true
+                    bridge.onZoom(spread / previous)
+                }
+                previousSpread = spread
             }
-            val pressed = event.changes.filter { it.pressed }
-            if (pressed.size < 2) {
-                previousSpread = null
-                continue
-            }
-            val centroidX = pressed.sumOf { it.position.x.toDouble() }.toFloat() / pressed.size
-            val centroidY = pressed.sumOf { it.position.y.toDouble() }.toFloat() / pressed.size
-            val spread = pressed.sumOf {
-                hypot((it.position.x - centroidX).toDouble(), (it.position.y - centroidY).toDouble())
-            }.toFloat() / pressed.size
-            val previous = previousSpread
-            if (previous != null && previous > MIN_PINCH_SPREAD_PX) {
-                pressed.forEach { it.consume() }
-                bridge.onZoom(spread / previous)
-            }
-            previousSpread = spread
         }
     }
-}
-
-@Composable
-fun TimelineScreen(
-    assets: List<MediaAsset>,
-    /**
-     * The grouping GalleryScreen already computed -- via the same [timelineGroups] this used to
-     * call itself -- so the scrubber, pill and arrow keys agree with exactly what gets drawn
-     * below (P0-15; see [GridIndexMap]). Unused, and safe to leave at its default, whenever
-     * [showDateHeaders] is false or [grouping] is [TimelineGrouping.NONE]: that branch draws
-     * [assets] directly through [MediaGridScreen] and never reads a group.
-     */
-    groups: List<TimelineGroup> = emptyList(),
-    grouping: TimelineGrouping,
-    columns: Int,
-    favoriteIds: Set<MediaId>,
-    sensitiveIds: Set<MediaId>,
-    blurSensitive: Boolean,
-    selectedIds: Set<MediaId>,
-    /**
-     * Whether the selection chrome is up. Defaults to the old rule -- something is picked -- so
-     * the several grids that do not participate in selection keep working unchanged. The main
-     * gallery passes the real flag, because selection can now be entered with nothing picked yet.
-     */
-    selectionActive: Boolean = selectedIds.isNotEmpty(),
-    onOpen: (MediaAsset) -> Unit,
-    onToggleSelection: (MediaId) -> Unit,
-    /**
-     * Whether to draw date-group headers. The mockups' main grid has none -- it is one
-     * continuous mosaic -- so the primary destination passes `false` here. The Timeline
-     * grouping preference still drives this everywhere it applies (see
-     * the grouped variant this delegates to), so the feature is switched off in
-     * this view rather than deleted.
-     */
-    showDateHeaders: Boolean = true,
-    gridState: LazyGridState = rememberLazyGridState(),
-    fitToTile: Boolean = true,
-    loopAnimations: Boolean = false,
-    /** Which ids actually animate (P0-14) -- a tile only decodes through the animated path when
-     *  both this AND [loopAnimations] say so; the grid's whole reason to check membership here
-     *  at all, rather than every image, is to never spend a decoder on a static tile. */
-    animatedIds: Set<MediaId> = emptySet(),
-) {
-    if (assets.isEmpty()) {
-        GalleryMessage(HelpCopy.Hint.NO_MATCHES)
-        return
-    }
-    if (!showDateHeaders || grouping == TimelineGrouping.NONE) {
-        MediaGridScreen(
-            assets = assets,
-            columns = columns,
-            favoriteIds = favoriteIds,
-            sensitiveIds = sensitiveIds,
-            blurSensitive = blurSensitive,
-            selectedIds = selectedIds,
-            emptyMessage = HelpCopy.Hint.NO_MATCHES,
-            selectionActive = selectionActive,
-            onOpen = onOpen,
-            onToggleSelection = onToggleSelection,
-            gridState = gridState,
-            fitToTile = fitToTile,
-            loopAnimations = loopAnimations,
-            animatedIds = animatedIds,
-        )
-        return
-    }
-    // Its own peek state: this is the date-grouped variant and does not delegate to
-    // MediaGridScreen, so it cannot inherit that one's overlay.
-    var peeked by remember { mutableStateOf<MediaAsset?>(null) }
-    val onPeek: (MediaAsset) -> Unit = { peeked = it }
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(columns),
-        state = gridState,
-        modifier = Modifier.fillMaxSize().background(GRID_BACKGROUND),
-        verticalArrangement = Arrangement.spacedBy(GRID_GUTTER),
-        horizontalArrangement = Arrangement.spacedBy(GRID_GUTTER),
-    ) {
-        groups.forEach { group ->
-            item(
-                key = "header:${group.key}",
-                span = { GridItemSpan(maxLineSpan) },
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(GRID_BACKGROUND)
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(group.title, style = MaterialTheme.typography.titleSmall, color = Color.White)
-                    Text(
-                        "${group.assets.size}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color.White.copy(alpha = 0.6f),
-                    )
-                }
-            }
-            // Square tiles regardless of `fitToTile`, unlike MediaGridScreen below. This
-            // date-grouped branch has no reachable call site today -- the app's one caller
-            // (DestinationContent) always passes `showDateHeaders = false`, which returns
-            // through the un-grouped branch above instead -- so it does not carry the masonry
-            // layout's real cost (a `LazyStaggeredGridState` this branch's own header items,
-            // spanning a full row, would need a DIFFERENT span type to describe). Wiring it
-            // for a surface nothing can currently reach would be exercising code no test or
-            // manual pass could actually observe; if this branch becomes reachable, giving it
-            // masonry too is a follow-up the same shape as MediaGridScreen's below.
-            items(group.assets, key = { it.id.value }) { asset ->
-                MediaTile(
-                    asset = asset,
-                    favorite = asset.id in favoriteIds,
-                    sensitive = asset.id in sensitiveIds,
-                    blurSensitive = blurSensitive,
-                    selected = asset.id in selectedIds,
-                    selectionActive = selectionActive,
-                    fitToTile = fitToTile,
-                    loopAnimations = loopAnimations,
-                    animated = asset.id in animatedIds,
-                    onOpen = { onOpen(asset) },
-                    onToggleSelection = { onToggleSelection(asset.id) },
-                    onPeek = { onPeek(asset) },
-                    onPeekEnd = { peeked = null },
-                )
-            }
-        }
-        item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(88.dp)) }
-    }
-
-    peeked?.let { asset -> MediaPeek(asset = asset, loopAnimations = loopAnimations, animated = asset.id in animatedIds) }
 }
 
 /**
- * The gallery's primary grid, in either of two tile shapes.
+ * The plain grid the photo picker uses, and the masonry layout of the main gallery. The everyday
+ * gallery grid -- every column count and the stamp view -- is [ZoomGrid]; this is what is left of
+ * the older single grid, in either of two tile shapes.
  *
- * `fitToTile = true` (the default, and the ONLY mode this composable had before 2026-08-21) is
- * unchanged in every particular: a fixed [LazyVerticalGrid], every tile forced to a `1f` square,
- * cropped to fill it. Nothing about that path's state, gesture handling or scroll container
- * changed -- the owner's masonry request is additive, not a rewrite of the mode that already
- * carries 22k photos smoothly.
+ * `fitToTile = true` (the default, and what the picker draws) is a fixed [LazyVerticalGrid], every
+ * tile the [GRID_TILE_ASPECT] shape, cropped to fill it.
  *
  * `fitToTile = false` switches to a masonry layout: [LazyVerticalStaggeredGrid], each tile's
- * own height set by its [MediaAsset.aspectRatio] rather than forced square. That field is read
- * straight off the asset's stored MediaStore width/height -- no bitmap is opened and no pixel is
- * measured to learn it -- so a masonry pass costs this grid nothing beyond the one division
- * `aspectRatio` already does, and it is exactly as lazy as the square grid: only the tiles
- * actually on screen are composed or measured, same as always.
+ * own height set by its [MediaAsset.aspectRatio] rather than forced to one shape. That field is
+ * read straight off the asset's stored MediaStore width/height -- no bitmap is opened and no pixel
+ * is measured to learn it -- so a masonry pass costs this grid nothing beyond the one division
+ * `aspectRatio` already does, and it is exactly as lazy as the other grid: only the tiles
+ * actually on screen are composed or measured.
+ *
+ * Masonry zooms like the rest (the same pinch detector, columns 1..6) but never shows stamps or
+ * headers: there is no full-width item in a staggered grid to hang a month header on.
  *
  * The one thing masonry mode does NOT carry over is [gridState] -- a [LazyGridState] cannot
  * drive a [LazyVerticalStaggeredGrid], which needs its own `LazyStaggeredGridState`, and that
- * state is created and owned right here rather than threaded in, because `DestinationContent`
- * (the root "Photos" grid's caller, a file this task does not own) constructs and passes a
- * `LazyGridState` unconditionally regardless of which mode is active. The one visible
+ * state is created and owned right here rather than threaded in. The one visible
  * consequence: `GalleryScreen`'s edge timeline scrubber, which reads and drives that same
  * externally-hoisted `LazyGridState`, cannot track a masonry-mode scroll -- it is hidden while
- * masonry is active rather than left on screen pointing at a position that will not move. See
- * this task's own final report for the full account of that trade-off.
+ * masonry is active rather than left on screen pointing at a position that will not move.
  */
 @Composable
 fun MediaGridScreen(
@@ -409,7 +325,10 @@ fun MediaGridScreen(
     blurSensitive: Boolean,
     selectedIds: Set<MediaId>,
     emptyMessage: String,
-    /** See TimelineScreen's own parameter of this name. */
+    /**
+     * Whether the selection chrome is up. Defaults to the old rule -- something is picked -- so
+     * the grids that do not participate in selection keep working unchanged.
+     */
     selectionActive: Boolean = selectedIds.isNotEmpty(),
     onOpen: (MediaAsset) -> Unit,
     onToggleSelection: (MediaId) -> Unit,
@@ -428,6 +347,7 @@ fun MediaGridScreen(
     // open, and so the overlay draws above the whole grid instead of inside one cell's bounds.
     var peeked by remember { mutableStateOf<MediaAsset?>(null) }
     val zoomBridge = LocalGridChromeBridge.current
+    SideEffect { zoomBridge.columnsAcross = columns }
 
     Box(Modifier.fillMaxSize().gridZoomGestures(zoomBridge)) {
         if (fitToTile) {
@@ -516,7 +436,7 @@ fun MediaGridScreen(
  * share or edit instead.
  */
 @Composable
-private fun MediaPeek(asset: MediaAsset, loopAnimations: Boolean, animated: Boolean) {
+internal fun MediaPeek(asset: MediaAsset, loopAnimations: Boolean, animated: Boolean) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -551,8 +471,96 @@ private fun MediaPeek(asset: MediaAsset, loopAnimations: Boolean, animated: Bool
     }
 }
 
+/**
+ * What a finger does to a photo tile: a tap opens it (or toggles it while a selection runs), a hold
+ * does whatever the "Long press does" setting says, and a screen reader gets the same two actions.
+ * Shared by [MediaTile] and the slimmer stamp tile so the two cannot drift apart.
+ */
 @Composable
-private fun MediaTile(
+internal fun Modifier.tileGestures(
+    asset: MediaAsset,
+    selectionActive: Boolean,
+    onOpen: () -> Unit,
+    onToggleSelection: () -> Unit,
+    onPeek: () -> Unit,
+    onPeekEnd: () -> Unit,
+): Modifier {
+    val chromeBridge = LocalGridChromeBridge.current
+
+    // The handlers below outlive any one composition: pointerInput(chromeBridge) starts once per
+    // tile, so everything they call is read through these. Capturing the parameters directly froze
+    // whichever onOpen the gesture block last started with -- and that closes over the grid's
+    // asset list, so after a sort or filter change a tap could page the viewer through the old
+    // order (TRAPS #50). Keying on the selection state instead would restart the detector on every
+    // toggle, mid-gesture.
+    val currentOnOpen by rememberUpdatedState(onOpen)
+    val currentOnToggleSelection by rememberUpdatedState(onToggleSelection)
+    val currentOnPeek by rememberUpdatedState(onPeek)
+    val currentOnPeekEnd by rememberUpdatedState(onPeekEnd)
+    val currentSelectionActive by rememberUpdatedState(selectionActive)
+    val currentAsset by rememberUpdatedState(asset)
+    val currentHaptic by rememberUpdatedState(LocalHapticFeedback.current)
+    val longClick = LongPressResolver.longClickSemantics(chromeBridge.gridLongPress, selectionActive)
+
+    return this
+        // Click and long-click for a screen reader, whose double-tap and double-tap-and-hold
+        // never reach the pointer handler below as a hold. A long press cannot be performed
+        // as a held preview there, so LongPressResolver.longClickSemantics turns the preview
+        // into Select; Nothing offers no long-click at all. Announced as one tile: the photo's
+        // name from MediaImage plus any favourite / sensitive / selected marks.
+        .semantics(mergeDescendants = true) {
+            onClick(label = LongPressResolver.tapLabel(selectionActive)) {
+                if (selectionActive) currentOnToggleSelection() else currentOnOpen()
+                true
+            }
+            if (longClick != null) {
+                onLongClick(label = longClick.label) {
+                    when (val outcome = longClick.outcome) {
+                        LongPressOutcome.ToggleSelection -> currentOnToggleSelection()
+                        is LongPressOutcome.Run -> chromeBridge.onContextAction(currentAsset, outcome.action)
+                        LongPressOutcome.Peek, LongPressOutcome.None -> Unit
+                    }
+                    true
+                }
+            }
+        }
+        // Hand-rolled rather than combinedClickable, because the peek needs the one thing
+        // that API does not report: the RELEASE. onLongClick tells you the hold began and
+        // nothing tells you it ended, so a peek built on it can only be a modal that outlives
+        // the gesture -- which is exactly what this replaces.
+        //
+        // detectTapGestures gives all three: onPress suspends until the finger lifts or the
+        // gesture is cancelled, onLongPress fires at the timeout, onTap only when it did not.
+        .pointerInput(chromeBridge) {
+            detectTapGestures(
+                onPress = {
+                    // Returns on release AND on cancellation -- so a peek cannot be stranded
+                    // on screen by the grid scrolling out from under the finger.
+                    tryAwaitRelease()
+                    currentOnPeekEnd()
+                },
+                // What a hold does is the "Long press does" setting, read from the bridge at
+                // the moment it completes; LongPressResolver owns the rules (including that a
+                // running selection is extended, whatever the setting).
+                onLongPress = {
+                    val outcome = LongPressResolver.resolve(chromeBridge.gridLongPress, currentSelectionActive)
+                    if (outcome != LongPressOutcome.None) {
+                        currentHaptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    }
+                    when (outcome) {
+                        LongPressOutcome.Peek -> currentOnPeek()
+                        LongPressOutcome.ToggleSelection -> currentOnToggleSelection()
+                        is LongPressOutcome.Run -> chromeBridge.onContextAction(currentAsset, outcome.action)
+                        LongPressOutcome.None -> Unit
+                    }
+                },
+                onTap = { if (currentSelectionActive) currentOnToggleSelection() else currentOnOpen() },
+            )
+        }
+}
+
+@Composable
+internal fun MediaTile(
     asset: MediaAsset,
     favorite: Boolean,
     sensitive: Boolean,
@@ -581,81 +589,20 @@ private fun MediaTile(
     var contextMenuVisible by remember { mutableStateOf(false) }
     val chromeBridge = LocalGridChromeBridge.current
 
-    // The handlers below outlive any one composition: pointerInput(chromeBridge) starts once per
-    // tile, so everything they call is read through these. Capturing the parameters directly froze
-    // whichever onOpen the gesture block last started with -- and that closes over the grid's
-    // asset list, so after a sort or filter change a tap could page the viewer through the old
-    // order (TRAPS #50). Keying on the selection state instead would restart the detector on every
-    // toggle, mid-gesture.
-    val currentOnOpen by rememberUpdatedState(onOpen)
-    val currentOnToggleSelection by rememberUpdatedState(onToggleSelection)
-    val currentOnPeek by rememberUpdatedState(onPeek)
-    val currentOnPeekEnd by rememberUpdatedState(onPeekEnd)
-    val currentSelectionActive by rememberUpdatedState(selectionActive)
-    val currentAsset by rememberUpdatedState(asset)
-    val currentHaptic by rememberUpdatedState(LocalHapticFeedback.current)
-    val longClick = LongPressResolver.longClickSemantics(chromeBridge.gridLongPress, selectionActive)
-
     Box(
         modifier = Modifier
             .aspectRatio(tileAspectRatio)
             // Black rather than surfaceVariant: an unloaded tile should read as a gap in the
             // mosaic, not as a light grey block punched through it.
             .background(GRID_BACKGROUND)
-            // Click and long-click for a screen reader, whose double-tap and double-tap-and-hold
-            // never reach the pointer handler below as a hold. A long press cannot be performed
-            // as a held preview there, so LongPressResolver.longClickSemantics turns the preview
-            // into Select; Nothing offers no long-click at all. Announced as one tile: the photo's
-            // name from MediaImage plus any favourite / sensitive / selected marks.
-            .semantics(mergeDescendants = true) {
-                onClick(label = LongPressResolver.tapLabel(selectionActive)) {
-                    if (selectionActive) currentOnToggleSelection() else currentOnOpen()
-                    true
-                }
-                if (longClick != null) {
-                    onLongClick(label = longClick.label) {
-                        when (val outcome = longClick.outcome) {
-                            LongPressOutcome.ToggleSelection -> currentOnToggleSelection()
-                            is LongPressOutcome.Run -> chromeBridge.onContextAction(currentAsset, outcome.action)
-                            LongPressOutcome.Peek, LongPressOutcome.None -> Unit
-                        }
-                        true
-                    }
-                }
-            }
-            // Hand-rolled rather than combinedClickable, because the peek needs the one thing
-            // that API does not report: the RELEASE. onLongClick tells you the hold began and
-            // nothing tells you it ended, so a peek built on it can only be a modal that outlives
-            // the gesture -- which is exactly what this replaces.
-            //
-            // detectTapGestures gives all three: onPress suspends until the finger lifts or the
-            // gesture is cancelled, onLongPress fires at the timeout, onTap only when it did not.
-            .pointerInput(chromeBridge) {
-                detectTapGestures(
-                    onPress = {
-                        // Returns on release AND on cancellation -- so a peek cannot be stranded
-                        // on screen by the grid scrolling out from under the finger.
-                        tryAwaitRelease()
-                        currentOnPeekEnd()
-                    },
-                    // What a hold does is the "Long press does" setting, read from the bridge at
-                    // the moment it completes; LongPressResolver owns the rules (including that a
-                    // running selection is extended, whatever the setting).
-                    onLongPress = {
-                        val outcome = LongPressResolver.resolve(chromeBridge.gridLongPress, currentSelectionActive)
-                        if (outcome != LongPressOutcome.None) {
-                            currentHaptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        }
-                        when (outcome) {
-                            LongPressOutcome.Peek -> currentOnPeek()
-                            LongPressOutcome.ToggleSelection -> currentOnToggleSelection()
-                            is LongPressOutcome.Run -> chromeBridge.onContextAction(currentAsset, outcome.action)
-                            LongPressOutcome.None -> Unit
-                        }
-                    },
-                    onTap = { if (currentSelectionActive) currentOnToggleSelection() else currentOnOpen() },
-                )
-            }
+            .tileGestures(
+                asset = asset,
+                selectionActive = selectionActive,
+                onOpen = onOpen,
+                onToggleSelection = onToggleSelection,
+                onPeek = onPeek,
+                onPeekEnd = onPeekEnd,
+            )
             // A second, independent pointerInput block rather than folding this into the one
             // above: `detectTapGestures` only ever sees the PRIMARY button, so a right-click
             // free-rides through it as an ordinary tap on any device that reports one at all.
