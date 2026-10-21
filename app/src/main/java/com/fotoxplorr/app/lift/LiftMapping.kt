@@ -24,14 +24,34 @@ data class PixelPoint(val x: Int, val y: Int)
  * what is on screen, so it is the only thing to map through.
  */
 fun imagePointToBitmapPixel(point: Offset, containerSize: Size, bitmapWidth: Int, bitmapHeight: Int): PixelPoint? {
+    val norm = imagePointToNormalized(point, containerSize, bitmapWidth, bitmapHeight, clamp = false) ?: return null
+    return PixelPoint(
+        x = (norm.x * bitmapWidth).toInt().coerceIn(0, bitmapWidth - 1),
+        y = (norm.y * bitmapHeight).toInt().coerceIn(0, bitmapHeight - 1),
+    )
+}
+
+/**
+ * [imagePointToBitmapPixel] without the quantisation: a position as a fraction (0..1) of the
+ * image's width and height, which is the resolution-independent form [SelectionOp] strokes are
+ * stored in. With [clamp] false a point in the letterbox returns null; with it true the point is
+ * pulled onto the nearest edge of the image, which is what a stroke that wanders off the photo
+ * wants (the scribble keeps going, it just stops at the border).
+ */
+fun imagePointToNormalized(
+    point: Offset,
+    containerSize: Size,
+    bitmapWidth: Int,
+    bitmapHeight: Int,
+    clamp: Boolean,
+): NormPoint? {
     if (bitmapWidth <= 0 || bitmapHeight <= 0 || containerSize.width <= 0f || containerSize.height <= 0f) return null
     val rect = fittedImageRect(containerSize, bitmapWidth, bitmapHeight)
-    if (rect.width <= 0f || rect.height <= 0f || !rect.contains(point)) return null
-    val fx = ((point.x - rect.left) / rect.width).coerceIn(0f, 1f)
-    val fy = ((point.y - rect.top) / rect.height).coerceIn(0f, 1f)
-    return PixelPoint(
-        x = (fx * bitmapWidth).toInt().coerceIn(0, bitmapWidth - 1),
-        y = (fy * bitmapHeight).toInt().coerceIn(0, bitmapHeight - 1),
+    if (rect.width <= 0f || rect.height <= 0f) return null
+    if (!clamp && !rect.contains(point)) return null
+    return NormPoint(
+        x = ((point.x - rect.left) / rect.width).coerceIn(0f, 1f),
+        y = ((point.y - rect.top) / rect.height).coerceIn(0f, 1f),
     )
 }
 

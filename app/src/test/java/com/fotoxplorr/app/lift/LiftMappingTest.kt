@@ -72,6 +72,36 @@ class LiftMappingTest {
         assertNull(imagePointToBitmapPixel(Offset(1f, 1f), Size.Zero, 10, 10))
     }
 
+    // ---- tap -> normalised position (what strokes are stored in) ----
+
+    @Test
+    fun `normalised positions are fractions of the drawn image, not of the container`() {
+        val n = imagePointToNormalized(Offset(500f, 500f), Size(1000f, 1000f), 800, 400, clamp = false)
+        assertEquals(0.5f, n!!.x, 0.0001f)
+        assertEquals(0.5f, n.y, 0.0001f)
+
+        val quarter = imagePointToNormalized(Offset(250f, 375f), Size(1000f, 1000f), 800, 400, clamp = false)
+        assertEquals(0.25f, quarter!!.x, 0.0001f)
+        assertEquals(0.25f, quarter.y, 0.0001f)
+    }
+
+    @Test
+    fun `the letterbox is null unless clamping, which pulls it onto the nearest edge`() {
+        val container = Size(1000f, 1000f)
+        assertNull(imagePointToNormalized(Offset(500f, 100f), container, 800, 400, clamp = false))
+
+        val above = imagePointToNormalized(Offset(500f, 100f), container, 800, 400, clamp = true)
+        assertEquals(0f, above!!.y, 0.0001f)
+        val farRight = imagePointToNormalized(Offset(5000f, 500f), container, 800, 400, clamp = true)
+        assertEquals(1f, farRight!!.x, 0.0001f)
+    }
+
+    @Test
+    fun `degenerate input has no normalised position`() {
+        assertNull(imagePointToNormalized(Offset(1f, 1f), Size(100f, 100f), 0, 10, clamp = true))
+        assertNull(imagePointToNormalized(Offset(1f, 1f), Size.Zero, 10, 10, clamp = true))
+    }
+
     // ---- failure classification ----
 
     @Test

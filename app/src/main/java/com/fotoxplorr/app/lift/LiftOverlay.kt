@@ -1,54 +1,63 @@
 package com.fotoxplorr.app.lift
 
+import android.content.Intent
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.sizeIn
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.decodeUpright
+import com.fotoxplorr.app.viewer.fittedImageRect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
- * The tappable "lift a subject" layer over a photo, entered from a long press or the actions
- * room's "Lift subject" row.
+ * The "lift a subject" editor over a photo, entered from a long press or the actions room's
+ * "Lift subject" row.
+ *
+ * ## What the person can do
+ * Tap the subject, or scribble over it, and the selection grows to the edges
+ * ([GeodesicSegmenter]). Scribble with the Background mode to push the selection back off
+ * something it swallowed; switch to Refine to paint pixels in or out directly; Undo / Redo walk
+ * the history ([SelectionSession]); Preview shows the cut-out on a checkerboard; Done opens the
+ * result, which can be copied, shared or saved as a sticker (a 2048px PNG with real alpha, in
+ * Pictures/Fotoz/Stickers). Nothing is written anywhere until one of those buttons is pressed.
  *
  * ## Gesture precedence -- read this before changing [com.fotoxplorr.app.viewer.ViewerScreen]
  * This composable renders NOTHING at all -- no `Box`, no `pointerInput`, nothing hit-testable --
@@ -64,12 +73,18 @@ import java.io.IOException
  * by ordering, which is exactly the class of bug this file's header comment on the THREE-detector
  * rewrite already paid for once.
  *
- * When this IS composed (a long press armed it), its own `pointerInput` sits as a CHILD of
- * ViewerScreen's photo `Box`, at the same tree depth as [com.fotoxplorr.app.viewer.LiveTextOverlay]
- * -- both children are hit-tested before their ancestors during Compose's pointer dispatch, so a
- * tap that lands here is consumed here and never reaches the outer chrome-toggle /
- * double-tap-zoom detector. That is the intended behaviour while a lift is in progress: nothing
- * else on the photo should react to a tap meant to choose a subject.
+ * When this IS composed, its pointer handlers sit as CHILDREN of ViewerScreen's photo `Box`, at
+ * the same tree depth as [com.fotoxplorr.app.viewer.LiveTextOverlay] -- children are hit-tested
+ * before their ancestors, so a touch that lands here is consumed here and never reaches the outer
+ * chrome-toggle / double-tap-zoom / page-swipe detectors. Every touch on the canvas and on the
+ * tool panels is consumed on purpose, including the ones that do nothing (a touch on the
+ * letterbox): nothing else on the photo should react while a selection is being made.
+ *
+ * ## The editor draws the photo itself
+ * It paints its own opaque backdrop and the decoded bitmap, fitted by that bitmap's OWN
+ * dimensions ([imagePointToNormalized]), instead of relying on the viewer's image underneath. The
+ * mask overlay, the checkerboard preview and every touch mapping then share one coordinate frame
+ * by construction, whatever the viewer's zoom or the asset's reported size.
  */
 @Composable
 fun LiftOverlay(
@@ -82,312 +97,410 @@ fun LiftOverlay(
     // a lift is on screen and a later re-entry starts from a clean slate. Without this the system
     // Back gesture closed the whole viewer (or backed out of a room) underneath a half-finished
     // lift, which reads as "the app threw my selection away".
-    var phase by remember(asset.id, active) { mutableStateOf<LiftPhase>(LiftPhase.Loading) }
+    var showingResult by remember(asset.id, active) { mutableStateOf(false) }
     BackHandler(enabled = active && !asset.isVideo) {
-        if (phase is LiftPhase.Ready) phase = LiftPhase.Picking else onDismiss()
+        if (showingResult) showingResult = false else onDismiss()
     }
 
     if (!active || asset.isVideo) return
 
     val context = LocalContext.current
-    var source by remember(asset.id) { mutableStateOf<Bitmap?>(null) }
-    var containerSize by remember { mutableStateOf(Size.Zero) }
-    var statusMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val editor = remember(asset.id) { LiftEditorState() }
 
     // Decoded once per photo, lazily -- this LaunchedEffect only exists in the composition at all
-    // once `active` is true, so a photo nobody ever long-presses never pays for this decode.
-    // Bounded well below the editor's own export size: segmentation is an O(pixels) flood fill
-    // over the WHOLE image regardless of subject size, not a windowed operation, so this has to
-    // stay small enough to run on a background thread without the user noticing, at some cost to
-    // how finely a hair-fine edge can be resolved -- see the file KDoc's honest-limits note.
+    // once `active` is true, so a photo nobody ever lifts never pays for this decode.
     //
     // Every outcome ends in a state the person can see. The decode used to run bare: a null
-    // result left the "Tap the subject" banner up over a tap handler that was never installed
-    // (every tap silently ignored, forever), and an exception from the EXIF read -- which sits
-    // outside decodeUpright's own runCatching -- escaped the LaunchedEffect and took the
-    // composition down with it.
+    // result left a "Tap the subject" banner over a tap handler that was never installed (every
+    // tap silently ignored, forever), and an exception from the EXIF read -- which sits outside
+    // decodeUpright's own runCatching -- escaped the LaunchedEffect and took the composition down.
     LaunchedEffect(asset.id) {
-        val decoded = catchingResult {
-            decodeUpright(context, asset.contentUri, LIFT_DECODE_LIMITS)?.bitmap
+        val loaded = catchingResult {
+            val decoded = decodeUpright(context, asset.contentUri, LIFT_DECODE_LIMITS)?.bitmap
                 ?: throw IOException("the photo could not be decoded")
+            withContext(Dispatchers.Default) { buildWorkspace(decoded) }
         }
-        decoded.fold(
-            onSuccess = { bitmap ->
-                source = bitmap
-                phase = LiftPhase.Picking
-            },
-            onFailure = { phase = LiftPhase.Failed(classifyLiftFailure(it), canRetry = false) },
+        editor.load = loaded.fold(
+            onSuccess = { LoadState.Ready(it) },
+            onFailure = { LoadState.Failed(classifyLiftFailure(it)) },
         )
     }
 
-    // A transient status line for save/share feedback, self-contained rather than routed through
-    // the host Activity's own message channel: ViewerScreen has no `onMessage` callback today, and
-    // adding one would mean widening its public API (and FotoXplorrActivity's call site, which
-    // this change does not own) for a two-line toast. Auto-clears itself; nothing here needs to be
-    // remembered past the moment the user reads it.
-    LaunchedEffect(statusMessage) {
-        if (statusMessage != null) {
+    // Copy and share each write a fresh PNG to the private cache; sweep the old ones whenever the
+    // editor opens so that directory cannot grow for ever. Best-effort: a failure here is nothing
+    // the person needs to hear about.
+    LaunchedEffect(Unit) {
+        catchingResult { StickerExporter(context).pruneCache() }
+    }
+
+    // The selection is DERIVED from the history, never edited in place: whenever the session
+    // changes the whole thing is replayed. Keyed on the session so a newer stroke cancels a solve
+    // that is still running (the solver polls `isActive` and throws), and so Undo is just "replay
+    // one operation fewer" with no snapshots to hold.
+    val workspace = (editor.load as? LoadState.Ready)?.workspace
+    LaunchedEffect(workspace, editor.session) {
+        val ws = workspace ?: return@LaunchedEffect
+        val session = editor.session
+        if (session.isEmpty) {
+            editor.visuals = null
+            editor.solveFailure = null
+            editor.solving = false
+            return@LaunchedEffect
+        }
+        editor.solving = true
+        val outcome = catchingResult {
+            withContext(Dispatchers.Default) {
+                val mask = SelectionOps.replay(ws.pixels, ws.width, ws.height, session.ops, shouldStop = { !isActive })
+                MaskVisuals(
+                    mask = mask,
+                    overlay = LiftRenderer.selectionOverlay(mask, SELECTION_RGB, SELECTION_MAX_ALPHA).asImageBitmap(),
+                    hasSelection = SubjectSegmentation.boundingBox(mask) != null,
+                )
+            }
+        }
+        editor.solving = false
+        outcome.fold(
+            onSuccess = {
+                editor.visuals = it
+                editor.solveFailure = if (!it.hasSelection && session.hasForeground) LiftFailure.NoSubject else null
+            },
+            onFailure = { editor.solveFailure = classifyLiftFailure(it) },
+        )
+    }
+
+    // The checkerboard preview of the cut-out inside the editor: rebuilt only while Preview is on.
+    LaunchedEffect(workspace, editor.visuals, editor.previewCutout) {
+        val ws = workspace
+        val visuals = editor.visuals
+        if (ws == null || visuals == null || !editor.previewCutout) {
+            editor.cutPreview = null
+            return@LaunchedEffect
+        }
+        editor.cutPreview = catchingResult {
+            withContext(Dispatchers.Default) { LiftRenderer.maskedPreview(ws.display, visuals.mask).asImageBitmap() }
+        }.getOrNull()
+    }
+
+    // Save/share/copy feedback, self-contained rather than routed through the host Activity's
+    // message channel: ViewerScreen has no `onMessage` callback today, and adding one would mean
+    // widening its public API for a two-line toast. Auto-clears; nothing here needs to be
+    // remembered past the moment the person reads it.
+    LaunchedEffect(editor.statusMessage) {
+        if (editor.statusMessage != null) {
             delay(STATUS_MESSAGE_MS)
-            statusMessage = null
+            editor.statusMessage = null
         }
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .pointerInput(asset.id, source, phase) {
-                // Outside the picking step the overlay still owns the touch: swallowing taps here
-                // keeps a tap on the progress scrim or an error from falling through to the photo
-                // underneath and toggling the viewer's chrome.
-                val bitmap = source
-                if (phase !is LiftPhase.Picking || bitmap == null) {
-                    detectTapGestures { }
-                    return@pointerInput
-                }
-                containerSize = Size(size.width.toFloat(), size.height.toFloat())
-                detectTapGestures(
-                    onTap = { point ->
-                        // Mapped through the DECODED bitmap's own size, not asset.width/height --
-                        // see imagePointToBitmapPixel for the failure that avoids.
-                        val pixel = imagePointToBitmapPixel(point, containerSize, bitmap.width, bitmap.height)
-                        if (pixel == null) {
-                            // Tapped the letterbox rather than the photo -- read as "never mind",
-                            // the same way a tap on empty space dismisses a sheet everywhere else
-                            // in this app.
-                            onDismiss()
-                            return@detectTapGestures
-                        }
-
-                        phase = LiftPhase.Processing
-                        scope.launch {
-                            val outcome = withContext(Dispatchers.Default) {
-                                catchingResult { LiftRenderer.cutOut(bitmap, pixel.x, pixel.y) }
-                            }
-                            phase = outcome.fold(
-                                onSuccess = { cutout ->
-                                    if (cutout != null) LiftPhase.Ready(cutout.bitmap) else LiftPhase.Failed(LiftFailure.NoSubject, canRetry = true)
-                                },
-                                onFailure = { LiftPhase.Failed(classifyLiftFailure(it), canRetry = true) },
-                            )
-                        }
-                    },
-                )
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        when (val current = phase) {
-            is LiftPhase.Loading -> LoadingChrome(onCancel = onDismiss)
-            is LiftPhase.Picking -> PickingChrome(onCancel = onDismiss)
-            is LiftPhase.Processing -> ProcessingChrome()
-            is LiftPhase.Failed -> FailedChrome(
-                message = current.failure.userMessage(),
-                onTryAgain = if (current.canRetry) ({ phase = LiftPhase.Picking }) else null,
-                onCancel = onDismiss,
-            )
-            is LiftPhase.Ready -> ReadyChrome(
-                cutout = current.bitmap,
-                statusMessage = statusMessage,
-                onTryAgain = { phase = LiftPhase.Picking },
-                onDismiss = onDismiss,
-                onSave = {
-                    scope.launch {
-                        val exporter = StickerExporter(context)
-                        val result = exporter.saveToGallery(current.bitmap, asset.displayName)
-                        statusMessage = result.fold(
-                            onSuccess = { "Saved to Pictures" },
-                            onFailure = { it.message ?: "Could not save the sticker" },
+    Box(modifier = modifier.fillMaxSize()) {
+        val fatal = (editor.load as? LoadState.Failed)?.failure
+            ?: editor.solveFailure?.takeIf { it != LiftFailure.NoSubject }
+        when {
+            editor.load is LoadState.Loading -> LiftLoadingChrome(onCancel = onDismiss)
+            fatal != null -> LiftFailureChrome(message = fatal.userMessage(), onClose = onDismiss)
+            workspace != null && showingResult -> LiftResultScreen(
+                preview = rememberResultPreview(workspace, editor.visuals?.mask),
+                statusMessage = editor.statusMessage,
+                busy = editor.exporting,
+                onCopy = {
+                    exportThen(scope, editor, context, asset, workspace) { exporter, bitmap ->
+                        editor.statusMessage = exporter.copyToClipboard(bitmap).fold(
+                            onSuccess = { "Copied to clipboard" },
+                            onFailure = { it.message ?: "Could not copy the sticker" },
                         )
                     }
                 },
                 onShare = {
-                    scope.launch {
-                        val exporter = StickerExporter(context)
-                        val result = exporter.prepareForShare(current.bitmap)
-                        result.fold(
+                    exportThen(scope, editor, context, asset, workspace) { exporter, bitmap ->
+                        exporter.prepareForShare(bitmap).fold(
                             onSuccess = { uri ->
                                 runCatching {
-                                    context.startActivity(
-                                        android.content.Intent.createChooser(exporter.shareIntent(uri), "Send sticker"),
-                                    )
-                                }.onFailure { statusMessage = "No compatible app was found" }
+                                    context.startActivity(Intent.createChooser(exporter.shareIntent(uri), "Send sticker"))
+                                }.onFailure { editor.statusMessage = "No compatible app was found" }
                             },
-                            onFailure = { statusMessage = it.message ?: "Could not prepare the sticker" },
+                            onFailure = { editor.statusMessage = it.message ?: "Could not prepare the sticker" },
                         )
                     }
                 },
+                onSave = {
+                    exportThen(scope, editor, context, asset, workspace) { exporter, bitmap ->
+                        editor.statusMessage = exporter.saveToGallery(bitmap, asset.displayName).fold(
+                            onSuccess = { "Saved to Pictures/Fotoz/Stickers" },
+                            onFailure = { it.message ?: "Could not save the sticker" },
+                        )
+                    }
+                },
+                onEditSelection = { showingResult = false },
+                onClose = onDismiss,
             )
-        }
-    }
-}
-
-/** Where a lift attempt currently is. Private: this is UI-flow state, not something worth exposing. */
-private sealed interface LiftPhase {
-    /** The photo is still being decoded; no tap handler exists yet, so say so. */
-    data object Loading : LiftPhase
-    data object Picking : LiftPhase
-    data object Processing : LiftPhase
-    data class Ready(val bitmap: Bitmap) : LiftPhase
-
-    /** [canRetry] is false when the photo itself is the problem, so trying another tap cannot help. */
-    data class Failed(val failure: LiftFailure, val canRetry: Boolean) : LiftPhase
-}
-
-@Composable
-private fun BoxScope.LoadingChrome(onCancel: () -> Unit) {
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f))) {}
-    Column(
-        modifier = Modifier.align(Alignment.Center),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        CircularProgressIndicator(color = Color.White)
-        Text("Opening photo…", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-    }
-    InstructionBanner(
-        text = "Getting ready to lift",
-        modifier = Modifier.align(Alignment.TopCenter),
-        onCancel = onCancel,
-    )
-}
-
-@Composable
-private fun BoxScope.PickingChrome(onCancel: () -> Unit) {
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.25f))) {}
-    InstructionBanner(
-        text = "Tap the subject to lift it",
-        modifier = Modifier.align(Alignment.TopCenter),
-        onCancel = onCancel,
-    )
-}
-
-@Composable
-private fun BoxScope.ProcessingChrome() {
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f))) {}
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        CircularProgressIndicator(color = Color.White)
-        Text("Lifting…", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-@Composable
-private fun BoxScope.FailedChrome(message: String, onTryAgain: (() -> Unit)?, onCancel: () -> Unit) {
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f))) {}
-    Column(
-        modifier = Modifier.align(Alignment.Center),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(
-            message,
-            color = Color.White,
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            if (onTryAgain != null) {
-                Text("Try again", color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable(onClick = onTryAgain))
+            workspace != null -> {
+                LiftCanvas(editor = editor, workspace = workspace)
+                LiftEditorChrome(
+                    editor = editor,
+                    onCancel = onDismiss,
+                    onDone = { showingResult = true },
+                )
             }
-            Text("Close", color = Color.White.copy(alpha = 0.7f), modifier = Modifier.clickable(onClick = onCancel))
         }
     }
 }
 
-@Composable
-private fun BoxScope.ReadyChrome(
-    cutout: Bitmap,
-    statusMessage: String?,
-    onTryAgain: () -> Unit,
-    onDismiss: () -> Unit,
-    onSave: () -> Unit,
-    onShare: () -> Unit,
+/**
+ * Build (or reuse) the full-size sticker for the current selection and hand it to [action].
+ *
+ * The export is decoded again at [StickerExporter.EXPORT_LONG_EDGE_PX] rather than reusing the
+ * 1024px editing bitmap, with the 512px mask resampled up to it, so a sticker is not capped at
+ * the resolution the interactive solve needed. It is cached per selection (Copy then Share then
+ * Save must not decode three times); if the big decode fails, say for memory, the editing-size
+ * cut-out is exported instead of nothing.
+ */
+private fun exportThen(
+    scope: kotlinx.coroutines.CoroutineScope,
+    editor: LiftEditorState,
+    context: android.content.Context,
+    asset: MediaAsset,
+    workspace: Workspace,
+    action: suspend (StickerExporter, Bitmap) -> Unit,
 ) {
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f))) {}
-    Column(
-        modifier = Modifier.align(Alignment.Center).padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        // A flat mid-grey card behind the cutout, not a photo backdrop: the whole point of this
-        // preview is to show the alpha channel worked, and a mid-tone is the one background that
-        // reads as "not part of the subject" against almost any photo's colours.
-        Box(
-            modifier = Modifier
-                .sizeIn(maxWidth = 280.dp, maxHeight = 280.dp)
-                .aspectRatio(cutout.width.toFloat() / cutout.height.toFloat().coerceAtLeast(1f))
-                // Fixed on purpose (semantic): a deliberate mid-grey so the cut-out's alpha shows,
-                // not an accent.
-                .background(Color(0xFF3A3A3A), RoundedCornerShape(12.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Image(
-                bitmap = cutout.asImageBitmap(),
-                contentDescription = "Lifted sticker",
-                modifier = Modifier.fillMaxSize().padding(8.dp),
-                contentScale = ContentScale.Fit,
-            )
-        }
-        if (statusMessage != null) {
-            Text(statusMessage, color = Color.White, style = MaterialTheme.typography.labelMedium)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-            ActionLabel("Save", onSave)
-            ActionLabel("Share", onShare)
-            ActionLabel("Try again", onTryAgain)
-            ActionLabel("Close", onDismiss, emphasised = false)
+    if (editor.exporting) return
+    val mask = editor.visuals?.mask ?: return
+    val session = editor.session
+    editor.exporting = true
+    scope.launch {
+        try {
+            val cached = editor.exportCache?.takeIf { it.first === session }?.second
+            val bitmap = cached ?: withContext(Dispatchers.Default) {
+                catchingResult {
+                    val full = decodeUpright(context, asset.contentUri, EXPORT_DECODE_LIMITS)?.bitmap
+                    full?.let { LiftRenderer.cutOut(it, mask)?.bitmap }
+                }.getOrNull() ?: LiftRenderer.cutOut(workspace.display, mask)?.bitmap
+            }
+            if (bitmap == null) {
+                editor.statusMessage = LiftFailure.NoSubject.userMessage()
+            } else {
+                editor.exportCache = session to bitmap
+                action(StickerExporter(context), bitmap)
+            }
+        } finally {
+            editor.exporting = false
         }
     }
 }
 
+/** The editing-size cut-out shown in the result card; null while it is being built. */
 @Composable
-private fun ActionLabel(label: String, onClick: () -> Unit, emphasised: Boolean = true) {
-    Text(
-        label,
-        color = if (emphasised) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.7f),
-        style = MaterialTheme.typography.bodyMedium,
-        modifier = Modifier.clickable(onClick = onClick),
-    )
+private fun rememberResultPreview(workspace: Workspace, mask: SubjectSegmentation.Mask?): ImageBitmap? {
+    val preview = remember(workspace, mask) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(workspace, mask) {
+        preview.value = if (mask == null) null else catchingResult {
+            withContext(Dispatchers.Default) { LiftRenderer.cutOut(workspace.display, mask)?.bitmap?.asImageBitmap() }
+        }.getOrNull()
+    }
+    return preview.value
 }
 
-@Composable
-private fun InstructionBanner(text: String, onCancel: () -> Unit, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier
-            // The TOP banner clears the status bar, not the navigation bar: it used the latter, so
-            // on a gesture-nav phone it sat under the clock and the Cancel button was half hidden.
-            .statusBarsPadding()
-            .padding(top = 24.dp)
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text,
-            color = Color.White,
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier
-                .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(50))
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-        )
-        Text(
-            "Cancel",
-            color = Color.White.copy(alpha = 0.8f),
-            modifier = Modifier
-                .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(50))
-                .clickable(onClick = onCancel)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-        )
+// ---- state --------------------------------------------------------------------------------
+
+internal enum class LiftTool { Select, Refine }
+
+internal sealed interface LoadState {
+    data object Loading : LoadState
+    data class Failed(val failure: LiftFailure) : LoadState
+    data class Ready(val workspace: Workspace) : LoadState
+}
+
+/** The decoded photo (for display and export) and its downscaled pixels (for the solver). */
+internal class Workspace(
+    val display: Bitmap,
+    val displayImage: ImageBitmap,
+    val pixels: IntArray,
+    val width: Int,
+    val height: Int,
+)
+
+/** One solved selection with the pieces the editor draws from it. */
+internal class MaskVisuals(
+    val mask: SubjectSegmentation.Mask,
+    val overlay: ImageBitmap,
+    val hasSelection: Boolean,
+)
+
+private fun buildWorkspace(display: Bitmap): Workspace {
+    val working = LiftRenderer.scaledToLongEdge(display, WORKING_LONG_EDGE_PX)
+    val pixels = IntArray(working.width * working.height)
+    working.getPixels(pixels, 0, working.width, 0, 0, working.width, working.height)
+    val width = working.width
+    val height = working.height
+    if (working !== display) working.recycle()
+    return Workspace(display, display.asImageBitmap(), pixels, width, height)
+}
+
+/**
+ * Everything the editor remembers. A plain holder of Compose state rather than a pile of
+ * `remember`ed locals so the chrome, the canvas and the export code all read and write one thing.
+ * Not saved across process death or rotation: the history is cheap to redo and the alternative is
+ * persisting a selection per photo, which nobody asked for.
+ */
+@Stable
+internal class LiftEditorState {
+    var load by mutableStateOf<LoadState>(LoadState.Loading)
+    var session by mutableStateOf(SelectionSession())
+    var visuals by mutableStateOf<MaskVisuals?>(null)
+    var cutPreview by mutableStateOf<ImageBitmap?>(null)
+    var solving by mutableStateOf(false)
+    var solveFailure by mutableStateOf<LiftFailure?>(null)
+
+    var tool by mutableStateOf(LiftTool.Select)
+    var markSubject by mutableStateOf(true)
+    var paintAdd by mutableStateOf(true)
+    var brushRadius by mutableFloatStateOf(DEFAULT_REFINE_RADIUS)
+    var previewCutout by mutableStateOf(false)
+
+    var statusMessage by mutableStateOf<String?>(null)
+    var exporting by mutableStateOf(false)
+    var exportCache: Pair<SelectionSession, Bitmap>? = null
+
+    /** The stroke being drawn right now, in canvas pixels. Cleared the moment the finger lifts. */
+    val liveStroke = mutableStateListOf<Offset>()
+
+    fun apply(op: SelectionOp) {
+        session = session.apply(op)
     }
 }
 
-/** The bound for [decodeUpright] when decoding for segmentation: big enough that a cut-out looks
- * sharp at the sticker sizes people actually use, small enough that flood fill -- an O(pixels)
- * pass regardless of the subject's size -- stays interactive on a background thread. Deliberately
- * smaller than the editor's preview budget. */
-private val LIFT_DECODE_LIMITS = DecodeLimits(maxLongEdge = LIFT_DECODE_EDGE_PX, maxPixels = LIFT_DECODE_EDGE_PX.toLong() * LIFT_DECODE_EDGE_PX)
-private const val LIFT_DECODE_EDGE_PX = 1024
+// ---- the canvas -----------------------------------------------------------------------------
+
+@Composable
+private fun LiftCanvas(editor: LiftEditorState, workspace: Workspace) {
+    val checker = rememberCheckerBrush()
+    val imageWidth = workspace.display.width
+    val imageHeight = workspace.display.height
+
+    Canvas(
+        modifier = Modifier
+            .fillMaxSize()
+            // Fixed on purpose (semantic): an opaque near-black stage, so the editor reads the same
+            // over any photo and on either theme, and the checkerboard is the only transparency cue.
+            .background(Color(0xFF0B0B0B))
+            .pointerInput(workspace) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    down.consume()
+                    val container = Size(size.width.toFloat(), size.height.toFloat())
+                    val first = imagePointToNormalized(down.position, container, imageWidth, imageHeight, clamp = false)
+
+                    val points = ArrayList<Offset>()
+                    points.add(down.position)
+                    var moved = false
+                    if (first != null) {
+                        editor.liveStroke.clear()
+                        editor.liveStroke.add(down.position)
+                    }
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            change.consume()
+                            if (!change.pressed) break
+                            val p = change.position
+                            if (!moved && (p - down.position).getDistance() > viewConfiguration.touchSlop) moved = true
+                            if (moved && first != null && (p - points.last()).getDistance() >= MIN_POINT_SPACING_PX) {
+                                points.add(p)
+                                editor.liveStroke.add(p)
+                            }
+                        }
+                    } finally {
+                        editor.liveStroke.clear()
+                    }
+
+                    // A touch that began on the letterbox is swallowed and ignored: dismissing on
+                    // it (the old behaviour) threw away work on a stray tap.
+                    if (first == null) return@awaitEachGesture
+                    val path = if (moved) {
+                        points.mapNotNull { imagePointToNormalized(it, container, imageWidth, imageHeight, clamp = true) }
+                    } else {
+                        listOf(first)
+                    }
+                    if (path.isEmpty()) return@awaitEachGesture
+                    editor.apply(
+                        when (editor.tool) {
+                            LiftTool.Select ->
+                                SelectionOp.Hint(editor.markSubject, BrushStroke(path, SCRIBBLE_RADIUS))
+                            LiftTool.Refine ->
+                                SelectionOp.Paint(editor.paintAdd, BrushStroke(path, editor.brushRadius))
+                        },
+                    )
+                }
+            },
+    ) {
+        val rect = fittedImageRect(size, imageWidth, imageHeight)
+        val dstOffset = IntOffset(rect.left.roundToInt(), rect.top.roundToInt())
+        val dstSize = IntSize(rect.width.roundToInt(), rect.height.roundToInt())
+
+        val cut = editor.cutPreview
+        if (editor.previewCutout && cut != null) {
+            drawRect(brush = checker, topLeft = rect.topLeft, size = rect.size)
+            drawImage(cut, dstOffset = dstOffset, dstSize = dstSize, filterQuality = FilterQuality.Medium)
+        } else {
+            drawImage(workspace.displayImage, dstOffset = dstOffset, dstSize = dstSize, filterQuality = FilterQuality.Medium)
+            editor.visuals?.let {
+                drawImage(it.overlay, dstOffset = dstOffset, dstSize = dstSize, filterQuality = FilterQuality.Medium)
+            }
+        }
+
+        val stroke = editor.liveStroke
+        if (stroke.isNotEmpty()) {
+            val radiusFraction = if (editor.tool == LiftTool.Select) SCRIBBLE_RADIUS else editor.brushRadius
+            val widthPx = 2f * radiusFraction * max(rect.width, rect.height)
+            val adding = if (editor.tool == LiftTool.Select) editor.markSubject else editor.paintAdd
+            // Fixed on purpose (semantic): green = "this is subject / add", red = "this is not /
+            // erase". Not accents, so they read the same under any theme and any photo.
+            val colour = (if (adding) Color(0xFF4CAF50) else Color(0xFFF44336)).copy(alpha = 0.55f)
+            if (stroke.size == 1) {
+                drawCircle(colour, radius = widthPx / 2f, center = stroke[0])
+            } else {
+                val path = Path().apply {
+                    moveTo(stroke[0].x, stroke[0].y)
+                    for (i in 1 until stroke.size) lineTo(stroke[i].x, stroke[i].y)
+                }
+                drawPath(path, colour, style = Stroke(width = widthPx, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            }
+        }
+    }
+}
+
+// ---- constants ------------------------------------------------------------------------------
+
+/**
+ * The bound for [decodeUpright] when decoding for the editor: big enough to be a sharp stage to
+ * work on, small enough to hold in memory next to the working copy and the preview bitmaps.
+ */
+private val LIFT_DECODE_LIMITS = DecodeLimits(maxLongEdge = 1024, maxPixels = 1024L * 1024L)
+
+/** The bound for the one-off decode behind Copy / Share / Save: the sticker's real resolution. */
+private val EXPORT_DECODE_LIMITS = DecodeLimits(
+    maxLongEdge = StickerExporter.EXPORT_LONG_EDGE_PX,
+    maxPixels = StickerExporter.EXPORT_LONG_EDGE_PX.toLong() * StickerExporter.EXPORT_LONG_EDGE_PX,
+)
+
+/**
+ * Long edge of the copy the solver runs on. The geodesic solve is two Dijkstra sweeps over every
+ * pixel: at 512 it answers in a fraction of a second (fast enough to re-run after every stroke
+ * and every Undo), at 1024 it is four times the work for edges the 2048px export resamples from
+ * the mask anyway.
+ */
+private const val WORKING_LONG_EDGE_PX = 512
+
+/** Brush radius, as a fraction of the image's long edge, for tap and scribble hints. */
+private const val SCRIBBLE_RADIUS = 0.02f
+private const val DEFAULT_REFINE_RADIUS = 0.035f
+
+/** Closest two recorded points of a stroke may be, in canvas pixels. */
+private const val MIN_POINT_SPACING_PX = 4f
+
+/** The selection wash: a fixed cyan at up to 45% (semantic, like the stroke colours above). */
+private const val SELECTION_RGB = 0x2EC4FF
+private const val SELECTION_MAX_ALPHA = 115
 
 private const val STATUS_MESSAGE_MS = 2600L
