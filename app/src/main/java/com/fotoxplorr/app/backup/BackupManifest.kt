@@ -33,6 +33,7 @@ object ManifestFormat {
 object BackupLayout {
     private val packPattern = Regex("^pack-(\\d{4,9})\\.fzbp$")
     private val manifestPattern = Regex("^manifest-(\\d{4,9})\\.fzbm$")
+    private val indexPattern = Regex("^pack-(\\d{4,9})\\.fzbx$")
 
     fun packName(number: Int): String {
         require(number in 1..999_999_999) { "Pack number out of range" }
@@ -45,6 +46,20 @@ object BackupLayout {
     }
 
     fun isPackName(name: String): Boolean = packPattern.matches(name)
+
+    /** The encrypted index written beside pack [number] once the pack is closed (resume reads it). */
+    fun indexName(number: Int): String {
+        require(number in 1..999_999_999) { "Pack number out of range" }
+        return "pack-%04d.fzbx".format(number)
+    }
+
+    fun indexNumber(name: String): Int? = indexPattern.matchEntire(name)?.groupValues?.get(1)?.toIntOrNull()
+
+    fun isIndexName(name: String): Boolean = indexPattern.matches(name)
+
+    /** True for every file name a backup set writes; anything else in the folder is not ours. */
+    fun isBackupFileName(name: String): Boolean =
+        isPackName(name) || isIndexName(name) || manifestGeneration(name) != null
 
     fun packNumber(name: String): Int? = packPattern.matchEntire(name)?.groupValues?.get(1)?.toIntOrNull()
 
@@ -181,24 +196,7 @@ class ManifestWriter(private val out: Appendable) {
         ready()
         validateEntry(entry)
         entries++
-        val fields = linkedMapOf<String, JsonValue>(
-            "t" to "e".toJson(),
-            "id" to entry.entryId.toJson(),
-            "mid" to entry.mediaId.toJson(),
-            "name" to entry.displayName.toJson(),
-            "dir" to entry.relativePath.toJson(),
-            "mime" to entry.mimeType.toJson(),
-            "size" to entry.sizeBytes.toJson(),
-            "taken" to entry.dateTakenMillis.toJson(),
-            "mod" to entry.dateModifiedSeconds.toJson(),
-            "sha" to entry.sha256.toJson(),
-            "pack" to entry.packName.toJson(),
-        )
-        entry.quickHash?.let { fields["qh"] = it.toJson() }
-        if (entry.flags.isNotEmpty()) {
-            fields["f"] = jsonArrayOf(entry.flags.sortedBy { it.ordinal }.map { it.code.toJson() })
-        }
-        line(JsonValue.JsonObject(fields))
+        line(manifestEntryJson(entry))
     }
 
     fun writePack(pack: ManifestPack) {
@@ -332,7 +330,7 @@ object ManifestReader {
         )
     }
 
-    private fun parseEntry(f: Map<String, JsonValue>): ManifestEntry {
+    internal fun parseEntry(f: Map<String, JsonValue>): ManifestEntry {
         val entry = ManifestEntry(
             entryId = nonNegative(f, "id"),
             mediaId = long(f, "mid"),
@@ -382,6 +380,28 @@ object ManifestReader {
     private const val MAX_EXACT = 9_007_199_254_740_992.0
 }
 
+/** The JSON line of one `e` record; the per-pack index ([PackIndexWriter]) writes the same shape. */
+internal fun manifestEntryJson(entry: ManifestEntry): JsonValue {
+    val fields = linkedMapOf<String, JsonValue>(
+        "t" to "e".toJson(),
+        "id" to entry.entryId.toJson(),
+        "mid" to entry.mediaId.toJson(),
+        "name" to entry.displayName.toJson(),
+        "dir" to entry.relativePath.toJson(),
+        "mime" to entry.mimeType.toJson(),
+        "size" to entry.sizeBytes.toJson(),
+        "taken" to entry.dateTakenMillis.toJson(),
+        "mod" to entry.dateModifiedSeconds.toJson(),
+        "sha" to entry.sha256.toJson(),
+        "pack" to entry.packName.toJson(),
+    )
+    entry.quickHash?.let { fields["qh"] = it.toJson() }
+    if (entry.flags.isNotEmpty()) {
+        fields["f"] = jsonArrayOf(entry.flags.sortedBy { it.ordinal }.map { it.code.toJson() })
+    }
+    return JsonValue.JsonObject(fields)
+}
+
 private val HEX64 = Regex("^[0-9a-f]{64}$")
 
 private fun validateEntry(entry: ManifestEntry) {
@@ -394,7 +414,7 @@ private fun validateEntry(entry: ManifestEntry) {
 }
 
 /** Splits on newline only, with a ceiling on one line so a hostile file cannot fill memory. */
-private class BoundedLines(source: Reader, private val maxChars: Int) {
+internal class BoundedLines(source: Reader, private val maxChars: Int) {
     private val reader = if (source is java.io.BufferedReader) source else java.io.BufferedReader(source, 1 shl 16)
 
     fun next(): String? {

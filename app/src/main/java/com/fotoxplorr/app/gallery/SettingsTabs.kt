@@ -47,6 +47,8 @@ import com.fotoxplorr.app.adaptive.ZOOM_RUNG_LAST_GRID
 import com.fotoxplorr.app.adaptive.ZOOM_RUNG_MIN
 import com.fotoxplorr.app.adaptive.ZOOM_RUNG_STAMPS
 import com.fotoxplorr.app.adaptive.zoomRungValue
+import com.fotoxplorr.app.backup.BackupCopy
+import com.fotoxplorr.app.backup.EncryptedBackupRows
 import com.fotoxplorr.app.background.BackgroundScheduler
 import com.fotoxplorr.app.background.BackgroundWorkStatusCenter
 import com.fotoxplorr.app.background.BATTERY_PERCENT_STEP
@@ -369,6 +371,13 @@ fun SettingsTabsRoom(
                     ActionText("Save tags and collections to a file", actions.onExportMetadata)
                     ActionText("Restore tags and collections from a file", actions.onImportMetadata)
                     Paragraph(HelpCopy.Hint.BACKUP_RESTORE)
+
+                    // The second option. Its rows and dialogs are self-contained (backup/BackupUi.kt),
+                    // so no field was added to GalleryActions or GalleryUiState for it.
+                    SectionLabel(BackupCopy.SECTION_LABEL)
+                    Paragraph(HelpCopy.Hint.BACKUP_ENCRYPTED_ADDS, strong = true)
+                    Paragraph(HelpCopy.Note.BACKUP_NO_RECOVERY)
+                    EncryptedBackupRows()
 
                     SectionLabel("LIBRARY")
                     ActionText("Rescan for new photos", actions.onRefresh)

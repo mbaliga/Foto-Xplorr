@@ -1,0 +1,479 @@
+package com.fotoxplorr.app.backup
+
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.BatteryManager
+import android.os.Build
+import android.os.PowerManager
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
+import com.fotoxplorr.app.BuildConfig
+import com.fotoxplorr.app.LibraryRuntime
+import com.fotoxplorr.app.editor.RecipeStore
+import com.fotoxplorr.app.favorites.FavoriteStore
+import com.fotoxplorr.app.hyle.ActivityKind
+import com.fotoxplorr.app.jobs.JobRunner
+import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.organize.LibraryStore
+import com.fotoxplorr.app.privacy.PrivateFolderStore
+import com.fotoxplorr.app.privacy.SensitiveStore
+import com.fotoxplorr.app.spatial.GeoMetadataRepository
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+internal enum class BackupPurpose { BACKUP, CHECK }
+
+/** Where the person is in "Back up everything, encrypted" or "Check a backup". */
+internal sealed interface BackupStage {
+    data object Idle : BackupStage
+
+    /** Something is being read or worked out; the person can stop it. */
+    class Working(val message: String) : BackupStage
+
+    /** [newSet]: the folder holds no backup, so the person is choosing a passphrase, not entering one. */
+    class Passphrase(val purpose: BackupPurpose, val newSet: Boolean, val folderLabel: String, val wrong: Boolean) : BackupStage
+
+    /** The plan, shown before anything is written. */
+    class Preflight(
+        val preparation: BackupPreparation,
+        val folderLabel: String,
+        val onPhoneStorage: Boolean,
+        val managedByAnotherApp: Boolean,
+        val freeBytes: Long?,
+        val leftoversConfirm: Boolean = false,
+    ) : BackupStage
+
+    class Message(val title: String, val text: String) : BackupStage
+}
+
+/**
+ * The state machine behind the two Settings rows. It owns nothing the rest of the app reads:
+ * no `GalleryActions` field, no `GalleryUiState` field. It reaches the process's stores itself,
+ * at the moment a button is tapped, so what it sees is current, and it launches its job on the
+ * activity's `JobRunner` so the notification, the shade and Cancel come for free.
+ *
+ * The passphrase is held as typed only in the dialog's text state and, while it is derived, in a
+ * `CharArray` that [BackupKeys.derive] wipes. It is never written to a Bundle, a preference, a
+ * file or a log: nothing here uses `rememberSaveable`, so a rotation or process death asks for it
+ * again. The derived key lives in [keys] until the job (which takes it over) or [dispose] closes it.
+ */
+internal class BackupFlow(
+    context: Context,
+    private val scope: CoroutineScope,
+    private val jobRunner: () -> JobRunner?,
+) {
+    private val appContext = context.applicationContext
+
+    var stage: BackupStage by mutableStateOf(BackupStage.Idle)
+        private set
+
+    /** Bumped when the location permission may have changed, so the preflight card re-reads it. */
+    var permissionRevision by mutableIntStateOf(0)
+        private set
+
+    /** Set by the screen: opens the system folder picker. */
+    var pickFolder: () -> Unit = {}
+
+    private var purpose = BackupPurpose.BACKUP
+    private var treeUri: Uri? = null
+    private var grantTaken = false
+    private var destination: SafBackupDestination? = null
+    private var setState: SetState = SetState.Empty
+    private var keys: BackupKeys? = null
+    private var snapshot: List<MediaAsset> = emptyList()
+    private var work: Job? = null
+
+    /** The activity's job runner, or null where there is no activity (a preview). */
+    fun runner(): JobRunner? = jobRunner()
+
+    fun isRunning(): Boolean = jobRunner()?.jobs?.value?.any { it.title == BackupCopy.JOB_TITLE || it.title == BackupCopy.CHECK_JOB_TITLE } == true
+
+    fun begin(chosen: BackupPurpose) {
+        if (isRunning()) {
+            stage = BackupStage.Message(BackupCopy.OPTION_LABEL, BackupCopy.ALREADY_RUNNING)
+            return
+        }
+        purpose = chosen
+        pickFolder()
+    }
+
+    fun onFolderPicked(uri: Uri?) {
+        if (uri == null) return
+        releaseFolder()
+        // The grant of a picked folder is otherwise tied to this screen; a backup outlives it. A grant
+        // the app already held for this folder (another feature's) is left alone and never released here.
+        val resolver = appContext.contentResolver
+        val alreadyHeld = runCatching {
+            resolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission && it.isWritePermission }
+        }.getOrDefault(false)
+        grantTaken = !alreadyHeld && runCatching {
+            resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }.isSuccess
+        treeUri = uri
+        val folder = SafBackupDestination(appContext, uri)
+        destination = folder
+        stage = BackupStage.Working(BackupCopy.CHECKING_FOLDER)
+        work = scope.launch {
+            try {
+                val state = withContext(Dispatchers.IO) { BackupSetLoader.inspect(folder) }
+                setState = state
+                stage = when {
+                    state is SetState.Unreadable -> BackupStage.Message(BackupCopy.OPTION_LABEL, state.reason)
+                    state is SetState.Empty && purpose == BackupPurpose.CHECK ->
+                        BackupStage.Message(BackupCopy.CHECK_LABEL, "This folder has no backup in it.")
+                    else -> BackupStage.Passphrase(purpose, newSet = state is SetState.Empty, folderLabel = folder.label, wrong = false)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail(e, "The folder could not be read.")
+            }
+        }
+    }
+
+    /** The passphrase form was submitted. [passphrase] is wiped by the key derivation. */
+    fun submit(passphrase: CharArray) {
+        val folder = destination ?: return
+        val state = setState
+        stage = BackupStage.Working(BackupCopy.DERIVING)
+        work = scope.launch {
+            var opened: BackupKeys? = null
+            try {
+                opened = withContext(Dispatchers.Default) { openKeys(passphrase, state) }
+                // The derivation cannot be interrupted, so a screen that went away meanwhile is noticed here.
+                ensureActive()
+                if (opened == null) {
+                    stage = BackupStage.Message(BackupCopy.OPTION_LABEL, BackupCopy.KEY_SELF_CHECK_FAILED)
+                    return@launch
+                }
+                keys = opened
+                when (purpose) {
+                    BackupPurpose.BACKUP -> plan(folder, opened)
+                    BackupPurpose.CHECK -> check(folder, opened)
+                }
+            } catch (e: CancellationException) {
+                opened?.close()
+                throw e
+            } catch (e: Exception) {
+                closeKeys()
+                opened?.close()
+                fail(e, "The backup could not be opened.")
+            }
+        }
+    }
+
+    /** Opens the set (the passphrase is proved here, not inside the job) and then runs the check as a job. */
+    private suspend fun check(folder: SafBackupDestination, opened: BackupKeys) {
+        stage = BackupStage.Working(BackupCopy.CHECKING_FOLDER)
+        val loaded = try {
+            withContext(Dispatchers.IO) { BackupSetLoader.load(folder, opened) }
+        } catch (e: BackupException.WrongPassphraseOrDamaged) {
+            closeKeys()
+            stage = BackupStage.Passphrase(purpose, newSet = false, folderLabel = folder.label, wrong = true)
+            return
+        }
+        startCheck(folder, opened, loaded)
+    }
+
+    private suspend fun openKeys(passphrase: CharArray, state: SetState): BackupKeys? {
+        if (!BackupSelfCheck.passes()) {
+            passphrase.fill('\u0000')
+            return null
+        }
+        return when (state) {
+            is SetState.Existing -> BackupKeys.derive(passphrase, state.header.setSalt, state.header.iterations)
+            else -> BackupKeys.newSet(passphrase)
+        }
+    }
+
+    private suspend fun plan(folder: SafBackupDestination, opened: BackupKeys) {
+        stage = BackupStage.Working(BackupCopy.PLANNING)
+        val assets = LibraryRuntime.get(appContext).repository.awaitLoaded().filterNot { it.isExternal }
+        if (assets.isEmpty()) {
+            closeKeys()
+            stage = BackupStage.Message(BackupCopy.OPTION_LABEL, BackupCopy.NO_CATALOGUE)
+            return
+        }
+        snapshot = assets
+        val prepared = try {
+            withContext(Dispatchers.IO) {
+                val locked = PrivateFolderStore(appContext).observeLockedFolders().value
+                val sensitive = SensitiveStore(appContext).observe().value
+                val archived = LibraryStore.get(appContext).observe().value.archivedIds
+                val candidates = BackupCandidates.from(assets, locked, sensitive, archived)
+                val byId = assets.associateBy { it.id.value }
+                BackupPreparer.prepare(folder, opened, candidates, BackupOptions(), MediaStoreBackupSource(appContext, byId))
+            }
+        } catch (e: BackupException.WrongPassphraseOrDamaged) {
+            closeKeys()
+            stage = BackupStage.Passphrase(purpose, newSet = false, folderLabel = folder.label, wrong = true)
+            return
+        }
+        val free = withContext(Dispatchers.IO) { folder.freeBytes() }
+        stage = BackupStage.Preflight(
+            preparation = prepared,
+            folderLabel = folder.label,
+            onPhoneStorage = folder.isOnPhoneStorage,
+            managedByAnotherApp = folder.isManagedByAnotherApp,
+            freeBytes = free,
+        )
+    }
+
+    /** The facts the preflight card is drawn from, with the two that can change under it read now. */
+    fun factsFor(preflight: BackupStage.Preflight): BackupCopy.PreflightFacts {
+        val prep = preflight.preparation
+        val plan = prep.plan
+        val tooLarge = plan.skippedFor(SkipReason.TOO_LARGE_FOR_PACK)
+        return BackupCopy.PreflightFacts(
+            newFiles = plan.copies.size,
+            newSourceBytes = plan.bytesToCopy,
+            estimatedBytes = prep.estimatedBytes,
+            packs = plan.packs.size,
+            alreadyBackedUp = plan.unchanged.size + plan.moved.size,
+            tooLargeNames = tooLarge.map { it.candidate.displayName },
+            tooLargeCount = tooLarge.size,
+            leftoverCount = prep.loaded.leftovers.size,
+            leftoverBytes = prep.loaded.leftoverBytes,
+            freeBytes = preflight.freeBytes,
+            photosSeen = prep.candidateCount,
+            locationApplicable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q,
+            locationGranted = locationGranted(),
+            onPhoneStorage = preflight.onPhoneStorage,
+            managedByAnotherApp = preflight.managedByAnotherApp,
+            batteryLowAndNotCharging = batteryLowAndNotCharging(),
+            newSet = prep.isNewSet,
+        )
+    }
+
+    fun locationGranted(): Boolean =
+        ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    fun permissionMayHaveChanged() {
+        permissionRevision++
+    }
+
+    /** Hands the plan to the job runner. From here the notification is the progress display. */
+    fun start() {
+        val current = stage as? BackupStage.Preflight ?: return
+        val runner = jobRunner()
+        val folder = destination
+        val opened = keys
+        if (runner == null || folder == null || opened == null) return
+        val assets = snapshot
+        val prep = current.preparation
+        val uri = treeUri.takeIf { grantTaken }
+        keys = null
+        destination = null
+        treeUri = null
+        stage = BackupStage.Idle
+        val byId = assets.associateBy { it.id.value }
+        runner.launch(title = BackupCopy.JOB_TITLE, kind = ActivityKind.BACKING_UP) { onProgress ->
+            val wake = holdWakeLock()
+            try {
+                attempt {
+                    val job = BackupJob(
+                        destination = folder,
+                        source = MediaStoreBackupSource(appContext, byId),
+                        keys = opened,
+                        appVersion = BuildConfig.VERSION_NAME,
+                        sections = { sectionSource().gather(assets, System.currentTimeMillis()) },
+                    )
+                    val outcome = job.run(prep) { onProgress(it.fraction) }
+                    // A clean run is a passing notice. One that left files out says so in a dialog, which stays.
+                    if (outcome.needsAttention) throw BackupRefused(BackupCopy.done(outcome)) else BackupCopy.done(outcome)
+                }
+            } finally {
+                opened.close()
+                wake?.let { runCatching { if (it.isHeld) it.release() } }
+                releaseGrant(uri)
+            }
+        }
+    }
+
+    private fun startCheck(folder: SafBackupDestination, opened: BackupKeys, loaded: LoadedSet) {
+        val runner = jobRunner()
+        val uri = treeUri.takeIf { grantTaken }
+        if (runner == null) {
+            closeKeys()
+            return
+        }
+        keys = null
+        destination = null
+        treeUri = null
+        stage = BackupStage.Idle
+        runner.launch(title = BackupCopy.CHECK_JOB_TITLE, kind = ActivityKind.BACKING_UP) { onProgress ->
+            val wake = holdWakeLock()
+            try {
+                attempt {
+                    val report = BackupVerifier.verify(folder, opened, onProgress = { onProgress(it) }, loaded = loaded)
+                    if (report.isClean) BackupCopy.verifyClean(report) else throw BackupRefused(BackupCopy.verifyProblems(report))
+                }.recoverWrongPassphrase()
+            } finally {
+                opened.close()
+                wake?.let { runCatching { if (it.isHeld) it.release() } }
+                releaseGrant(uri)
+            }
+        }
+    }
+
+    /** The person chose to remove the leftovers they were shown; nothing else in the folder is touched. */
+    fun removeLeftovers() {
+        val current = stage as? BackupStage.Preflight ?: return
+        val folder = destination ?: return
+        val opened = keys ?: return
+        val names = current.preparation.loaded.leftovers.map { it.name }
+        stage = BackupStage.Working(BackupCopy.PLANNING)
+        work = scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    folder.list() // refresh the name table; only names the person was shown are deleted
+                    names.forEach { folder.delete(it) }
+                }
+                plan(folder, opened)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                closeKeys()
+                fail(e, "The leftover files could not be removed.")
+            }
+        }
+    }
+
+    fun askRemoveLeftovers() {
+        val current = stage as? BackupStage.Preflight ?: return
+        stage = BackupStage.Preflight(
+            current.preparation, current.folderLabel, current.onPhoneStorage, current.managedByAnotherApp, current.freeBytes, leftoversConfirm = true,
+        )
+    }
+
+    fun keepLeftovers() {
+        val current = stage as? BackupStage.Preflight ?: return
+        stage = BackupStage.Preflight(
+            current.preparation, current.folderLabel, current.onPhoneStorage, current.managedByAnotherApp, current.freeBytes, leftoversConfirm = false,
+        )
+    }
+
+    /** Back to the passphrase form after a wrong one; the folder stays picked. */
+    fun cancel() {
+        work?.cancel()
+        work = null
+        closeKeys()
+        releaseFolder()
+        stage = BackupStage.Idle
+    }
+
+    fun dismissMessage() {
+        if (stage is BackupStage.Message) stage = BackupStage.Idle
+    }
+
+    fun dispose() {
+        work?.cancel()
+        closeKeys()
+        if (stage !is BackupStage.Idle) releaseFolder()
+    }
+
+    private fun fail(error: Exception, fallback: String) {
+        releaseFolder()
+        val text = when {
+            error is BackupRefused -> error.message ?: fallback
+            error is BackupException.WrongPassphraseOrDamaged -> BackupCopy.WRONG_PASSPHRASE
+            error is BackupException -> "${error.message}. ${BackupCopy.CHOOSE_ANOTHER_FOLDER}"
+            error is SecurityException -> "Android would not let Fotoz use that folder."
+            error is IOException -> fallback
+            else -> fallback
+        }
+        stage = BackupStage.Message(if (purpose == BackupPurpose.CHECK) BackupCopy.CHECK_LABEL else BackupCopy.OPTION_LABEL, text)
+    }
+
+    private fun closeKeys() {
+        keys?.close()
+        keys = null
+    }
+
+    private fun releaseFolder() {
+        val uri = treeUri.takeIf { grantTaken }
+        treeUri = null
+        destination = null
+        grantTaken = false
+        releaseGrant(uri)
+    }
+
+    private fun releaseGrant(uri: Uri?) {
+        if (uri == null) return
+        runCatching {
+            appContext.contentResolver.releasePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+    }
+
+    private fun sectionSource() = BackupSectionSource(
+        libraryStore = LibraryStore.get(appContext),
+        favoriteStore = FavoriteStore(appContext),
+        sensitiveStore = SensitiveStore(appContext),
+        privateFolderStore = PrivateFolderStore(appContext),
+        geoRepository = GeoMetadataRepository(appContext),
+        recipeStore = RecipeStore(appContext),
+    )
+
+    /**
+     * Keeps the CPU running while the screen is off: a copy that stops when the screen turns off is
+     * not a backup. Released in the job's `finally`, and on its own after [WAKE_LOCK_LIMIT_MILLIS].
+     */
+    private fun holdWakeLock(): PowerManager.WakeLock? = runCatching {
+        appContext.getSystemService(PowerManager::class.java)
+            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "fotoz:backup")
+            ?.apply {
+                setReferenceCounted(false)
+                acquire(WAKE_LOCK_LIMIT_MILLIS)
+            }
+    }.getOrNull()
+
+    private fun batteryLowAndNotCharging(): Boolean {
+        val status = appContext.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return false
+        val level = status.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = status.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        val state = status.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+        val charging = state == BatteryManager.BATTERY_STATUS_CHARGING || state == BatteryManager.BATTERY_STATUS_FULL
+        if (level < 0 || scale <= 0) return false
+        return level * 100 / scale < LOW_BATTERY_PERCENT && !charging
+    }
+
+    private companion object {
+        const val LOW_BATTERY_PERCENT = 20
+        const val WAKE_LOCK_LIMIT_MILLIS = 6L * 60 * 60 * 1000
+    }
+}
+
+/**
+ * The key-derivation self-check, run once per process on the first backup or check (ADR-014): it
+ * proves this phone's PBKDF2 turns the passphrase into the same key every other phone gets. A
+ * false answer means a backup made here might not open elsewhere, so none is started.
+ */
+internal object BackupSelfCheck {
+    @Volatile
+    private var result: Boolean? = null
+
+    suspend fun passes(): Boolean = result ?: withContext(Dispatchers.Default) {
+        runCatching { BackupKeys.providerMatchesGoldenVector() }.getOrDefault(false)
+    }.also { result = it }
+}
+
+/** A wrong passphrase in a check is the same sentence the passphrase form uses. */
+private fun Result<String>.recoverWrongPassphrase(): Result<String> = exceptionOrNull()?.let { error ->
+    if (error is BackupException.WrongPassphraseOrDamaged) Result.failure(BackupRefused(BackupCopy.WRONG_PASSPHRASE)) else this
+} ?: this

@@ -234,6 +234,16 @@ share/zip/export path keeps reading the plain uri exactly as before P0-02, and S
 passes `keepLocation = false` and proves it with `carriesLocation`, so an export to a place the
 user picked never carries a location out. A new caller names, in its KDoc, where the bytes end up.
 
+Since batch 5 there is one more sanctioned caller, and it is the one exception that DOES write the
+original location somewhere the person chose: `MediaStoreBackupSource` (`backup/BackupSource.kt`), the
+reader of the encrypted backup (#75). A backup that quietly lost every photo's GPS would be a worse
+copy than the photo it replaces, so it reads the unredacted original on purpose. The bytes end up
+only inside an AES-GCM encrypted pack, in the folder the person picked, readable only with their
+passphrase; nothing hands a plain stream, or a uri that carries the original, to another app. The
+preflight card says when `ACCESS_MEDIA_LOCATION` is not granted ("Photo locations will NOT be in this
+backup"), and an entry records whether it carries the original location (`EntryFlag.ORIGINAL_LOCATION`).
+Any OTHER new caller on a path that leaves the app is still a violation.
+
 ## 32. A metadata read failure is not an absence
 
 Three places distinguish "there is genuinely nothing here" from "the read itself failed":
@@ -892,3 +902,39 @@ row carries the coordinates out of the app in one gesture (#31). The video read 
 viewer, browsable by construction (#33) -- so "Nearby in time" counts photos in that run, not the whole
 library; never pass it `libraryAssets`, which is unfiltered. A new row label must not contain "Palette"
 (the palette tests assert the old row is gone by that text).
+
+## 75. The encrypted backup is additive, resumes from its own folder, and the passphrase is its only key
+
+`backup/` writes a set of files into a folder the person picked (`SafBackupDestination`, one
+`DocumentsContract` child query, not `DocumentFile.listFiles()`): `pack-NNNN.fzbp` (about 1 GiB of
+records `u64 id, u64 size, bytes, sha256`), `pack-NNNN.fzbx` (the encrypted index of that pack),
+`manifest-NNNN.fzbm` (a whole snapshot). Rules that hold it together:
+
+- **Nothing is overwritten or removed.** `BackupDestination.create` refuses a name that exists; a
+  listing that fails throws instead of answering "empty" (an empty answer is a decision to start over);
+  a plain `IOException` while reading a manifest is NOT damage, so the loader never falls back to an
+  older snapshot and writes a newer one that forgets files (`BackupSetLoader.isDamage`). The only
+  deletions are of the file THIS run created and could not finish, and of leftovers the person was
+  shown and confirmed. `create` is called before the `try` whose catch deletes, so a name collision
+  can never delete the file that was already there.
+- **Resume needs no local state.** A pack is written whole, then its index; the index is what makes
+  the pack count. No journal on the phone: clearing data, or another phone, loses nothing and no file
+  name is written to app storage. A pack with no index, or an index whose pack is gone, is a leftover
+  (never reused: its number is reserved so the new pack's index cannot collide with it).
+- **A wrong passphrase must stop before a byte is written.** With backup files in the folder, the run
+  proves the key (a manifest, an index or a pack's first segment) before it plans; GCM cannot tell a
+  wrong passphrase from damage and the copy says so ("wrong passphrase, or the backup is damaged").
+- **The passphrase never leaves the dialog.** No `rememberSaveable` anywhere near it (a Bundle can reach
+  disk), a `CharArray` that `BackupKeys.derive` wipes, keys closed in the job's `finally`. Notification
+  titles and job names carry no file name and no count (`BackupCopy.JOB_TITLE`).
+- **A cancelled or failed run still writes a manifest for what it finished**, under `NonCancellable`;
+  cancellation is rethrown as cancellation, never as a failure message (#49).
+- **The size on the wire is the provider's size now**, not the scan's: a file edited since the scan is
+  copied as it is; one whose bytes do not add up to its length is padded to keep the pack well formed,
+  reported, and left out of the index so it is tried again.
+- **The service type is data sync** for a backup (`JobForegroundService.foregroundTypeFor`), including on
+  Android 15, where `onTimeout` stops the notification; the job is not cancelled, and a backup that is
+  cut off simply resumes. A partial wake lock keeps the copy going with the screen off.
+- A SAF provider may rename a created file (a number, an extension); the destination checks the name it
+  got and refuses the folder rather than let the set's names drift.
+

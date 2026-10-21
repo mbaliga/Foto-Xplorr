@@ -97,6 +97,12 @@ class GeoMetadataRepository(context: Context) {
 
     fun observe(): StateFlow<GeoIndexState> = state.asStateFlow()
 
+    /**
+     * The pins the person placed by hand (not the ones read from a photo's own GPS), for the
+     * encrypted backup: those cannot be recomputed from the file, so they are the ones worth keeping.
+     */
+    suspend fun manualPins(): List<GeoMetadata> = withContext(Dispatchers.IO) { helper.readManual() }
+
     suspend fun indexMissing(assets: List<MediaAsset>) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val existingIds = helper.readIndexedIds()
@@ -391,6 +397,25 @@ private class GeoOpenHelper(context: Context) : SQLiteOpenHelper(
         buildSet(cursor.count) {
             val idColumn = cursor.getColumnIndexOrThrow(COL_MEDIA_ID)
             while (cursor.moveToNext()) add(MediaId(cursor.getLong(idColumn)))
+        }
+    }
+
+    fun readManual(): List<GeoMetadata> = readableDatabase.query(
+        TABLE_GEO,
+        ALL_COLUMNS,
+        "$COL_MANUAL = 1 AND $COL_HAS_LOCATION = 1",
+        null,
+        null,
+        null,
+        null,
+    ).use { cursor ->
+        val id = cursor.getColumnIndexOrThrow(COL_MEDIA_ID)
+        val latitude = cursor.getColumnIndexOrThrow(COL_LATITUDE)
+        val longitude = cursor.getColumnIndexOrThrow(COL_LONGITUDE)
+        buildList {
+            while (cursor.moveToNext()) {
+                add(GeoMetadata(MediaId(cursor.getLong(id)), cursor.getDouble(latitude), cursor.getDouble(longitude), null, null))
+            }
         }
     }
 

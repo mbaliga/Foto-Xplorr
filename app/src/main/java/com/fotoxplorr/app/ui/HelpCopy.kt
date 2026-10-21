@@ -85,6 +85,12 @@ internal object HelpCopy {
         /** The plain file's one privacy fact, shown wherever it is offered: it is readable by anyone who has it. */
         const val BACKUP_NOT_ENCRYPTED = "Not encrypted. Anyone who gets the file can read your captions and tags."
         const val BACKUP_RESTORE = "Restoring adds to what you have. Replacing needs a second confirmation."
+
+        /** The encrypted backup's own lines. "Not your photos" above is about the plain file only. */
+        const val BACKUP_ENCRYPTED = "Photos, videos, tags and locks, encrypted with your passphrase."
+        const val BACKUP_ENCRYPTED_ADDS = "Adds what is new each time. Photos you delete from the phone stay in it."
+        const val BACKUP_UNDERSTAND = "I understand: Fotoz cannot recover this backup without the passphrase"
+        const val BACKUP_CHECK = "Reads the whole backup and proves every file is intact."
         const val RESCAN_AUTO = "Fotoz spots new photos by itself. Use this to force a check."
         const val BILLING = "Nothing is charged yet. This only remembers Pro on this device."
 
@@ -201,6 +207,14 @@ internal object HelpCopy {
          * this line the word "protected" reads as a vault.
          */
         const val PROTECTED_NOT_ENCRYPTED = "Protected folders lock access inside Fotoz. They do not encrypt your files."
+
+        /**
+         * The encrypted backup has no recovery of any kind, by design (ADR-014). This sentence is
+         * shown in the passphrase dialog and under the Settings entry, and `HelpCopyTest` pins its
+         * words: a later trim of this copy must not be able to delete the warning.
+         */
+        const val BACKUP_NO_RECOVERY = "Fotoz never stores this passphrase. If you forget it, nobody, including us, " +
+            "can open the backup. There is no reset."
         const val AI_SERVICE = "Optional. Use your own ChatGPT, Claude or similar account. Nothing is sent until " +
             "you turn it on and ask. Your key stays encrypted on this device."
         const val RENAME_TOKENS = "Tokens: {counter} {counter:3} {orig} {yyyy} {yy} {MM} {dd} {HH} {mm} {ss}. The extension is kept."

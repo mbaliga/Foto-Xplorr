@@ -154,6 +154,9 @@ object QuickHash {
  * manifest, so a pack the person deleted is noticed and its files are copied again. Pass the
  * entries of the newest manifest AND any recovered from the encrypted index beside a pack that
  * no manifest mentions yet, and a run interrupted after some packs resumes from there.
+ * [reservedPackNumbers] are numbers the destination uses without a pack file to show for it (an
+ * index left behind by a pack that was deleted): never handed out again, because the new pack's
+ * index would collide with the old one's name.
  */
 object BackupPlanner {
     fun plan(
@@ -163,13 +166,17 @@ object BackupPlanner {
         existingPacks: Set<String>,
         limits: PackLimits = PackLimits(),
         aead: ChunkedAead = TinkChunkedAead,
+        reservedPackNumbers: Collection<Int> = emptyList(),
     ): BackupPlan {
         val skipped = ArrayList<SkippedFile>()
         val matching = match(known, candidates, options, existingPacks, skipped)
 
         var nextEntryId = (known.maxOfOrNull { it.entryId } ?: -1L) + 1
-        val firstPack = (existingPacks.mapNotNull(BackupLayout::packNumber) + known.mapNotNull { BackupLayout.packNumber(it.packName) })
-            .maxOrNull()?.plus(1) ?: 1
+        val firstPack = (
+            existingPacks.mapNotNull(BackupLayout::packNumber) +
+                known.mapNotNull { BackupLayout.packNumber(it.packName) } +
+                reservedPackNumbers
+            ).maxOrNull()?.plus(1) ?: 1
         val layout = PackPlanner.layout(matching.toCopy, { it.sizeBytes }, firstPack, limits, aead)
         layout.oversize.forEach { skipped += SkippedFile(it, SkipReason.TOO_LARGE_FOR_PACK) }
         // The oversize call comes after the paths were matched, so a changed file that turned out

@@ -56,6 +56,19 @@ class RecipeStore(context: Context) {
         return EditRecipe()
     }
 
+    /** Every stored recipe with the photo and file revision it belongs to, for the encrypted backup. */
+    fun stored(): List<StoredRecipe> = directory.listFiles().orEmpty().mapNotNull { file ->
+        val match = FILE_NAME.matchEntire(file.name) ?: return@mapNotNull null
+        val json = runCatching { file.readText() }.getOrNull() ?: return@mapNotNull null
+        StoredRecipe(match.groupValues[1].toLong(), match.groupValues[2].toLong(), json)
+    }.sortedWith(compareBy({ it.mediaId }, { it.dateModifiedSeconds }))
+
+    class StoredRecipe(val mediaId: Long, val dateModifiedSeconds: Long, val json: String)
+
     private fun fileFor(asset: MediaAsset): File =
         File(directory, "${asset.id.value}-${asset.dateModifiedSeconds}.json")
+
+    private companion object {
+        val FILE_NAME = Regex("^(\\d{1,18})-(\\d{1,18})\\.json$")
+    }
 }

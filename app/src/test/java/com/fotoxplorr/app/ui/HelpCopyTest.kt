@@ -107,6 +107,29 @@ class HelpCopyTest {
     }
 
     @Test
+    fun `the encrypted backup says plainly that there is no recovery`() {
+        // Pinned word for word. This sentence is the only thing between a forgotten passphrase and a
+        // person who believed "Fotoz can reset it"; a later trim of the copy must not delete it.
+        assertEquals(
+            "Fotoz never stores this passphrase. If you forget it, nobody, including us, can open the backup. There is no reset.",
+            HelpCopy.Note.BACKUP_NO_RECOVERY,
+        )
+        assertTrue(HelpCopy.Note.BACKUP_NO_RECOVERY.length <= NOTE_MAX)
+        // The tick the person must set before the first backup of a set says the same thing.
+        assertEquals(
+            "I understand: Fotoz cannot recover this backup without the passphrase",
+            HelpCopy.Hint.BACKUP_UNDERSTAND,
+        )
+        // The two options are told apart: the plain file is "Not your photos" and "Not encrypted"; the
+        // encrypted one holds photos, and says it is encrypted and that deletions stay in it.
+        assertTrue(HelpCopy.Hint.BACKUP_ENCRYPTED.startsWith("Photos, videos"))
+        assertTrue(HelpCopy.Hint.BACKUP_ENCRYPTED.contains("encrypted"))
+        assertFalse(HelpCopy.Hint.BACKUP_ENCRYPTED.contains("Not your photos"))
+        assertTrue(HelpCopy.Hint.BACKUP_ENCRYPTED_ADDS.contains("Photos you delete from the phone stay in it"))
+        assertTrue(HelpCopy.Hint.BACKUP_CHECK.contains("every file"))
+    }
+
+    @Test
     fun `protected folders are said to be an access lock and not encryption`() {
         // The only in-app statement of the README's rule that private folders are an access gate:
         // other apps with photo permission can still read the same files. It was trimmed away once.

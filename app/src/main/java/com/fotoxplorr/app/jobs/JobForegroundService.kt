@@ -9,6 +9,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.fotoxplorr.app.hyle.ActivityKind
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
@@ -54,13 +55,23 @@ class JobForegroundService : LifecycleService() {
             return
         }
         val notification = buildNotification(jobs)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING)
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        val type = foregroundTypeFor(jobs.map { it.kind }, Build.VERSION.SDK_INT)
+        if (type != 0) {
+            startForeground(NOTIFICATION_ID, notification, type)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+    }
+
+    /**
+     * Android 15 gives a data-sync service a time budget (about six hours in a day) and calls this
+     * when it is spent; the service must stop at once or the system raises an error. The job itself
+     * lives in the ViewModel and is not cancelled here, but without its notification the process may
+     * be stopped, which an encrypted backup survives by design: run it again and it carries on.
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     private fun buildNotification(jobs: List<RunningJob>) = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -112,6 +123,24 @@ class JobForegroundService : LifecycleService() {
     }
 
     companion object {
+        /**
+         * The foreground-service type to start with, as a bit mask (0 below Android 10, which has none).
+         * A backup copies bytes to a folder: that is data sync, on every version. Media processing is
+         * for the transcodes, and is what Android 15 and later get for every other kind of job, as
+         * before. A mix of the two asks for both; both are declared in the manifest.
+         */
+        internal fun foregroundTypeFor(kinds: Collection<ActivityKind>, sdk: Int): Int {
+            if (sdk < Build.VERSION_CODES.Q) return 0
+            if (sdk < Build.VERSION_CODES.VANILLA_ICE_CREAM) return ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            val backup = kinds.any { it == ActivityKind.BACKING_UP }
+            val other = kinds.any { it != ActivityKind.BACKING_UP }
+            return when {
+                backup && other -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+                backup -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                else -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+            }
+        }
+
         private const val CHANNEL_ID = "foto_xplorr_jobs"
         private const val NOTIFICATION_ID = 4210
         private const val PERCENT_MAX = 100

@@ -13,6 +13,13 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 
+/**
+ * One folder's lock exactly as stored: the PBKDF2 salt and hash of its password, Base64. Never the
+ * password. The encrypted backup carries these inside its encrypted manifest so a restore can put
+ * the same locks back (the old passwords then keep working); nothing else reads them.
+ */
+data class FolderLockRecord(val folderKey: String, val saltBase64: String, val hashBase64: String)
+
 class PrivateFolderStore(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val lockedFoldersState = MutableStateFlow(loadFolderNames())
@@ -90,6 +97,13 @@ class PrivateFolderStore(context: Context) {
             registerFailure(folderKey, now)
         }
         matches
+    }
+
+    /** Every lock this phone holds, for the encrypted backup. Records are copied; the store is not changed. */
+    fun lockRecords(): List<FolderLockRecord> = lockedFoldersState.value.sorted().mapNotNull { key ->
+        val salt = preferences.getString(keySalt(key), null) ?: return@mapNotNull null
+        val hash = preferences.getString(keyHash(key), null) ?: return@mapNotNull null
+        FolderLockRecord(key, salt, hash)
     }
 
     fun lock(folderKey: String) {
