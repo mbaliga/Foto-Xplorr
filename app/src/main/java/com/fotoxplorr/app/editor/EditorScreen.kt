@@ -58,6 +58,7 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.decodeUpright
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -334,14 +335,15 @@ fun EditorScreen(
             saving = true
             scope.launch {
                 val overwriting = mode == EditorSaveMode.OVERWRITE && canOverwriteInPlace
-                // An overwrite is rendered at the absolute ceiling, never the user's long-edge cap
-                // and never the memory-derived one: a smaller export is a fine COPY, but silently
-                // re-encoding the ORIGINAL at reduced size would destroy pixels that cannot be
-                // recovered (docs/TRAPS.md #17). A render that fails for lack of memory is
-                // harmless -- it reports and nothing is written -- and a render that still had to
-                // downscale is refused below.
-                val edge = if (overwriting) MAX_EXPORT_EDGE else options.renderEdge(context)
-                val rendered = renderFullSize(context, asset, recipe, edge)
+                // An overwrite is rendered at the absolute ceiling and on a single rung, never the
+                // user's long-edge cap and never stepped down after an OutOfMemoryError: a
+                // smaller export is a fine COPY, but silently re-encoding the ORIGINAL at reduced
+                // size would destroy pixels that cannot be recovered (docs/TRAPS.md #17). A render
+                // that fails for lack of memory is harmless -- it reports and nothing is written
+                // -- and a render that still had to downscale is refused below. A COPY starts at
+                // the user's cap (or the ceiling) and steps down only after a real OOM.
+                val ladder = if (overwriting) listOf(MAX_EXPORT_EDGE) else exportEdgeLadder(options.renderEdge())
+                val rendered = renderFullSize(context, asset, recipe, ladder)
                 if (rendered == null) {
                     saving = false
                     onSaved("Could not read the photo at full size")
@@ -408,7 +410,7 @@ fun EditorScreen(
             saving = true
             scope.launch {
                 val resolvedFormat = options.format ?: outputFormatFor(asset.mimeType)
-                val rendered = renderFullSize(context, asset, recipe, options.renderEdge(context))
+                val rendered = renderFullSize(context, asset, recipe, exportEdgeLadder(options.renderEdge()))
                 if (rendered == null) {
                     saving = false
                     onSaved("Could not read the photo at full size")
@@ -992,7 +994,8 @@ private data class FullSizeRender(val bitmap: Bitmap, val downscaled: Boolean) {
 }
 
 /**
- * Render at FULL resolution (or [edge], whichever is smaller) and return the result.
+ * Render at FULL resolution (or the first rung of [ladder], whichever is smaller) and return the
+ * result.
  *
  * A second decode rather than reusing the preview bitmap, which is the whole point: the preview is
  * capped at 2048px so a slider drag stays interactive, and saving that would hand the user a
@@ -1001,27 +1004,39 @@ private data class FullSizeRender(val bitmap: Bitmap, val downscaled: Boolean) {
  * correctly at either size.
  *
  * Decoded through [decodeUpright] (docs/TRAPS.md #34), which applies EXIF orientation and samples
- * to the exact bound, so a sideways-shot photo is never exported sideways. Capped at [edge] /
- * [MAX_EXPORT_PIXELS] because a 108-megapixel phone photo is 432 MB as ARGB_8888 and several
- * copies of that exist at once inside the pipeline. Above the cap the export is downscaled rather
- * than the app being killed mid-save, and the caller says so ([FullSizeRender.downscaled]).
+ * to the exact bound, so a sideways-shot photo is never exported sideways. Capped at the rung's
+ * edge / [MAX_EXPORT_PIXELS] because a 108-megapixel phone photo is 432 MB as ARGB_8888 and several
+ * copies of that exist at once inside the pipeline. Above the cap the export is downscaled, and
+ * the caller says so ([FullSizeRender.downscaled]).
  *
- * @param edge defaults to [maxExportEdge], the memory-derived safety ceiling; a caller may pass a
- *   smaller value (the export controls' own long-edge presets) but never needs to pass a larger
- *   one — [performSave] already clamps its own request against the same ceiling before calling in.
+ * The cap is a fixed decode limit, not a guess at the device's free memory. If the decode or the
+ * render actually throws [OutOfMemoryError], the next, smaller rung of [ladder] is tried (see
+ * [renderDownTheLadder]) and the result reports `downscaled = true` even when the source was
+ * smaller than the first rung's edge. A caller that must not accept a smaller render (OVERWRITE)
+ * passes a one-rung ladder and gets null on an OOM.
  */
 private suspend fun renderFullSize(
     context: android.content.Context,
     asset: MediaAsset,
     recipe: EditRecipe,
-    edge: Int = maxExportEdge(context),
+    ladder: List<Int>,
 ): FullSizeRender? = withContext(Dispatchers.IO) {
-    val limits = DecodeLimits(maxLongEdge = edge, maxPixels = MAX_EXPORT_PIXELS)
-    val decoded = decodeUpright(context, asset.contentUri, limits) ?: return@withContext null
-    val rendered = withContext(Dispatchers.Default) {
-        runCatching { EditRenderer.render(decoded.bitmap, recipe) }.getOrNull()
+    val outcome = renderDownTheLadder(ladder) { edge ->
+        val limits = DecodeLimits(maxLongEdge = edge, maxPixels = MAX_EXPORT_PIXELS)
+        val decoded = decodeUpright(context, asset.contentUri, limits) ?: return@renderDownTheLadder null
+        val rendered = withContext(Dispatchers.Default) {
+            // Exception, not Throwable: an OutOfMemoryError must reach renderDownTheLadder.
+            try {
+                EditRenderer.render(decoded.bitmap, recipe)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+        } ?: return@renderDownTheLadder null
+        FullSizeRender(rendered, decoded.downscaled)
     } ?: return@withContext null
-    FullSizeRender(rendered, decoded.downscaled)
+    outcome.value.copy(downscaled = outcome.value.downscaled || outcome.steppedDown)
 }
 
 /** What [CreateImageDocumentContract] asks the system document picker to create. */
@@ -1047,65 +1062,6 @@ private class CreateImageDocumentContract : ActivityResultContract<SaveToRequest
     override fun parseResult(resultCode: Int, intent: android.content.Intent?): Uri? =
         intent.takeIf { resultCode == android.app.Activity.RESULT_OK }?.data
 }
-
-/**
- * The longest edge an export may reach on THIS device, derived from [ActivityManager.memoryClass]
- * rather than the fixed [MAX_EXPORT_EDGE] this used to be.
- *
- * [MAX_EXPORT_EDGE] alone allows a 67-megapixel ARGB_8888 buffer -- ~270 MB -- and the export
- * pipeline holds several of those at once (the decode, [AdjustmentRenderer]'s output copy, and
- * its own shared scratch pair for sharpen/clarity -- see that file's own doc). A phone with a
- * small `memoryClass` (the per-app heap ceiling Android itself enforces) would be killed by its
- * own OS before a save at that size finished, on exactly the low-end devices a photo editor most
- * needs to not crash on. `memoryClass` stands in for "available heap" here because that is the
- * number this app can actually get without an allocation of its own to measure against — the
- * real ceiling, not an estimate of what happens to be free at this instant.
- */
-private fun maxExportEdge(context: android.content.Context): Int {
-    val activityManager = context.getSystemService(android.content.Context.ACTIVITY_SERVICE)
-        as? android.app.ActivityManager
-    val memoryClassMb = (activityManager?.memoryClass ?: DEFAULT_MEMORY_CLASS_MB).coerceAtLeast(16)
-    val budgetBytes = (memoryClassMb.toDouble() * 1024.0 * 1024.0 * EXPORT_MEMORY_BUDGET_FRACTION).toLong()
-    val maxPixels = (budgetBytes / (BYTES_PER_ARGB_PIXEL * EXPORT_CONCURRENT_BUFFERS)).coerceAtLeast(1L)
-    val edge = kotlin.math.sqrt(maxPixels.toDouble()).toInt()
-    return edge.coerceIn(MIN_EXPORT_EDGE, MAX_EXPORT_EDGE)
-}
-
-/** The long edge an export under these options is rendered at: the user's own cap, when they
- *  chose one, but never above this device's [maxExportEdge] safety ceiling. */
-private fun ExportOptions.renderEdge(context: android.content.Context): Int =
-    maxEdge.edgePx?.coerceAtMost(maxExportEdge(context)) ?: maxExportEdge(context)
-
-/** Used only when the platform declines to report a memory class at all. */
-private const val DEFAULT_MEMORY_CLASS_MB = 192
-
-/** Share of the app's own heap ceiling this export is allowed to occupy at once. */
-private const val EXPORT_MEMORY_BUDGET_FRACTION = 0.35
-
-private const val BYTES_PER_ARGB_PIXEL = 4L
-
-/** How many full-resolution buffers the export pipeline holds at the same time: the decode,
- *  [AdjustmentRenderer]'s output copy, and its shared sharpen/clarity scratch pair counted as one
- *  more -- see that file's own doc for why the pair collapsed to a single reused allocation. */
-private const val EXPORT_CONCURRENT_BUFFERS = 3L
-
-/** Never decode below this even on the smallest reported memory class -- a crop or straighten
- *  tool needs enough real pixels to look sharp once exported. */
-private const val MIN_EXPORT_EDGE = 1536
-
-/**
- * The absolute ceiling on an export's longest edge, regardless of how generous a device's
- * `memoryClass` is — see [maxExportEdge], which is what callers actually use.
- *
- * 8192 is 67 megapixels at 1:1 and covers every phone camera in circulation, so there is never a
- * reason to decode above it even on a device that reports an unusually large heap.
- */
-private const val MAX_EXPORT_EDGE = 8192
-
-/** The pixel-count budget alongside [MAX_EXPORT_EDGE] -- P0-03: a source can be under the edge
- * cap on both axes yet still exceed a sane pixel count on an unusual aspect ratio, so both limits
- * apply together, exactly like [com.fotoxplorr.app.media.DecodeLimits] everywhere else. */
-private const val MAX_EXPORT_PIXELS = 64_000_000L
 
 @Composable
 internal fun LabelledSlider(
