@@ -439,4 +439,44 @@ class MetadataBackupTest {
         val replaced = merge(MetadataBackup.emptyLibrary(), lib(tags = """{"only":[1]}"""))
         assertEquals(setOf("only"), replaced["tags"].asObject().keys)
     }
+
+    @Test
+    fun `ids the caller already settled are used as they are and only the rest are matched by identity`() {
+        val built = fileFor(phoneA)
+        val file = usable(built.json.stringify())
+        // The caller knows photo 1 is now 501 and photo 2 is 502; photos 3 and 4 are on the phone under other ids.
+        val phoneB = mapOf(
+            501L to phoneA.getValue(1),
+            502L to phoneA.getValue(2),
+            703L to phoneA.getValue(3),
+            // Photo 4 is not here at all.
+        )
+        val prepared = MetadataBackup.prepare(file, phoneB, known = mapOf(1L to 501L, 2L to 502L))
+
+        assertEquals(setOf(501L, 502L), ids(prepared.library["tags"].asObject().getValue("beach")))
+        assertEquals(setOf(703L), ids(prepared.library["tags"].asObject().getValue("dog")))
+        assertEquals(setOf(501L), prepared.favoriteIds)
+        assertEquals(1, prepared.summary.photosMissing)
+        assertEquals(3, prepared.summary.photosFound)
+    }
+
+    @Test
+    fun `a photo the caller settled is never also claimed by an identity match`() {
+        val file = usable(fileFor(phoneA).json.stringify())
+        // Photo 3's twin (same name, size, date) is the only candidate, but the caller already gave that id to photo 1.
+        val phone = mapOf(900L to phoneA.getValue(3))
+        val prepared = MetadataBackup.prepare(file, phone, known = mapOf(1L to 900L))
+        assertTrue("tag 'dog' has no photo left", prepared.library["tags"].asObject()["dog"] == null)
+        assertEquals(setOf(900L), ids(prepared.library["tags"].asObject().getValue("beach")))
+    }
+
+    @Test
+    fun `a file read from a tree is the same as one read from its text`() {
+        val built = fileFor(phoneA)
+        val fromText = usable(built.json.stringify())
+        val fromTree = (MetadataBackup.readTree(built.json) as MetadataBackup.FileRead.Usable).file
+        assertEquals(fromText.identity, fromTree.identity)
+        assertTrue(MetadataBackup.readTree(null) is MetadataBackup.FileRead.Unusable)
+        assertTrue(MetadataBackup.readTree(json("[1]")) is MetadataBackup.FileRead.Unusable)
+    }
 }

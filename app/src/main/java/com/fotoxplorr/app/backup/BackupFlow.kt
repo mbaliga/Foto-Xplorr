@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Environment
 import android.os.PowerManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -34,9 +35,9 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-internal enum class BackupPurpose { BACKUP, CHECK }
+internal enum class BackupPurpose { BACKUP, CHECK, RESTORE }
 
-/** Where the person is in "Back up everything, encrypted" or "Check a backup". */
+/** Where the person is in "Back up everything, encrypted", "Check a backup" or the encrypted restore. */
 internal sealed interface BackupStage {
     data object Idle : BackupStage
 
@@ -57,6 +58,12 @@ internal sealed interface BackupStage {
     ) : BackupStage
 
     class Message(val title: String, val text: String) : BackupStage
+
+    /** The backup is open: what it holds, and the choice of what to put back. */
+    class RestoreChoose(val set: RestoreSet, val folderLabel: String) : BackupStage
+
+    /** What the chosen restore would do on this phone, before anything is written. */
+    class RestoreReview(val preparation: RestorePreparation, val folderLabel: String, val freeBytes: Long?) : BackupStage
 }
 
 /**
@@ -99,7 +106,7 @@ internal class BackupFlow(
     /** The activity's job runner, or null where there is no activity (a preview). */
     fun runner(): JobRunner? = jobRunner()
 
-    fun isRunning(): Boolean = jobRunner()?.jobs?.value?.any { it.title == BackupCopy.JOB_TITLE || it.title == BackupCopy.CHECK_JOB_TITLE } == true
+    fun isRunning(): Boolean = jobRunner()?.jobs?.value?.any { isBackupJob(it.title) } == true
 
     fun begin(chosen: BackupPurpose) {
         if (isRunning()) {
@@ -132,8 +139,8 @@ internal class BackupFlow(
                 setState = state
                 stage = when {
                     state is SetState.Unreadable -> BackupStage.Message(BackupCopy.OPTION_LABEL, state.reason)
-                    state is SetState.Empty && purpose == BackupPurpose.CHECK ->
-                        BackupStage.Message(BackupCopy.CHECK_LABEL, "This folder has no backup in it.")
+                    state is SetState.Empty && purpose != BackupPurpose.BACKUP ->
+                        BackupStage.Message(labelFor(purpose), "This folder has no backup in it.")
                     else -> BackupStage.Passphrase(purpose, newSet = state is SetState.Empty, folderLabel = folder.label, wrong = false)
                 }
             } catch (e: CancellationException) {
@@ -163,6 +170,7 @@ internal class BackupFlow(
                 when (purpose) {
                     BackupPurpose.BACKUP -> plan(folder, opened)
                     BackupPurpose.CHECK -> check(folder, opened)
+                    BackupPurpose.RESTORE -> openForRestore(folder, opened)
                 }
             } catch (e: CancellationException) {
                 opened?.close()
@@ -329,6 +337,93 @@ internal class BackupFlow(
         }
     }
 
+    /** Opens the set (the passphrase is proved here) and shows what it holds, with the choice of what to restore. */
+    private suspend fun openForRestore(folder: SafBackupDestination, opened: BackupKeys) {
+        stage = BackupStage.Working(BackupCopy.CHECKING_FOLDER)
+        val loaded = try {
+            withContext(Dispatchers.IO) { BackupSetLoader.load(folder, opened) }
+        } catch (e: BackupException.WrongPassphraseOrDamaged) {
+            closeKeys()
+            stage = BackupStage.Passphrase(purpose, newSet = false, folderLabel = folder.label, wrong = true)
+            return
+        }
+        val set = RestoreSet.from(loaded)
+        if (set.isEmpty) {
+            closeKeys()
+            releaseFolder()
+            stage = BackupStage.Message(RestoreCopy.ROW_LABEL, RestoreCopy.NOTHING_IN_BACKUP)
+            return
+        }
+        stage = BackupStage.RestoreChoose(set, folder.label)
+    }
+
+    /** The person chose what to restore: work out what that would do on this phone and show it. */
+    fun prepareRestore(what: RestoreScope) {
+        val current = stage as? BackupStage.RestoreChoose ?: return
+        stage = BackupStage.Working(RestoreCopy.LOOKING)
+        work = scope.launch {
+            try {
+                val assets = LibraryRuntime.get(appContext).repository.awaitLoaded()
+                snapshot = assets
+                val prepared = RestorePreparer.prepare(current.set, what, AndroidRestore.target(appContext, assets))
+                val free = withContext(Dispatchers.IO) {
+                    runCatching { Environment.getExternalStorageDirectory().usableSpace }.getOrNull()?.takeIf { it > 0 }
+                }
+                stage = BackupStage.RestoreReview(prepared, current.folderLabel, free)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                closeKeys()
+                fail(e, "The photos on this phone could not be read.")
+            }
+        }
+    }
+
+    fun backToRestoreChoice() {
+        val current = stage as? BackupStage.RestoreReview ?: return
+        val folder = destination ?: return
+        stage = BackupStage.RestoreChoose(current.preparation.set, folder.label)
+    }
+
+    fun reviewFacts(review: BackupStage.RestoreReview): RestoreCopy.ReviewFacts = RestoreCopy.ReviewFacts(
+        freeBytes = review.freeBytes,
+        locationApplicable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q,
+        locationGranted = locationGranted(),
+    )
+
+    /** Hands the prepared restore to the job runner. From here the notification is the progress display. */
+    fun startRestore() {
+        val current = stage as? BackupStage.RestoreReview ?: return
+        val runner = jobRunner()
+        val folder = destination
+        val opened = keys
+        if (runner == null || folder == null || opened == null) return
+        val assets = snapshot
+        val prep = current.preparation
+        val uri = treeUri.takeIf { grantTaken }
+        keys = null
+        destination = null
+        treeUri = null
+        stage = BackupStage.Idle
+        runner.launch(title = RestoreCopy.JOB_TITLE, kind = ActivityKind.BACKING_UP) { onProgress ->
+            val wake = holdWakeLock()
+            try {
+                attempt {
+                    val job = RestoreJob(folder, opened, AndroidRestore.target(appContext, assets), AndroidRestore.applier(appContext))
+                    val outcome = job.run(prep) { onProgress(it) }
+                    AndroidRestore.rescan(appContext)
+                    val text = RestoreCopy.done(outcome)
+                    // A clean restore is a passing notice. One that left something out says so in a dialog, which stays.
+                    if (outcome.needsAttention) throw BackupRefused(text) else text
+                }
+            } finally {
+                opened.close()
+                wake?.let { runCatching { if (it.isHeld) it.release() } }
+                releaseGrant(uri)
+            }
+        }
+    }
+
     /** The person chose to remove the leftovers they were shown; nothing else in the folder is touched. */
     fun removeLeftovers() {
         val current = stage as? BackupStage.Preflight ?: return
@@ -395,7 +490,13 @@ internal class BackupFlow(
             error is IOException -> fallback
             else -> fallback
         }
-        stage = BackupStage.Message(if (purpose == BackupPurpose.CHECK) BackupCopy.CHECK_LABEL else BackupCopy.OPTION_LABEL, text)
+        stage = BackupStage.Message(labelFor(purpose), text)
+    }
+
+    private fun labelFor(purpose: BackupPurpose): String = when (purpose) {
+        BackupPurpose.BACKUP -> BackupCopy.OPTION_LABEL
+        BackupPurpose.CHECK -> BackupCopy.CHECK_LABEL
+        BackupPurpose.RESTORE -> RestoreCopy.ROW_LABEL
     }
 
     private fun closeKeys() {
@@ -458,6 +559,10 @@ internal class BackupFlow(
         const val WAKE_LOCK_LIMIT_MILLIS = 6L * 60 * 60 * 1000
     }
 }
+
+/** True for the title of any job the backup flow starts: a backup, a check, or a restore. */
+internal fun isBackupJob(title: String): Boolean =
+    title == BackupCopy.JOB_TITLE || title == BackupCopy.CHECK_JOB_TITLE || title == RestoreCopy.JOB_TITLE
 
 /**
  * The key-derivation self-check, run once per process on the first backup or check (ADR-014): it

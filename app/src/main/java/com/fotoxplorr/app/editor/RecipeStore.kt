@@ -65,6 +65,21 @@ class RecipeStore(context: Context) {
 
     class StoredRecipe(val mediaId: Long, val dateModifiedSeconds: Long, val json: String)
 
+    /**
+     * Puts back a recipe from an encrypted backup, for photo [mediaId] at file revision
+     * [dateModifiedSeconds]. Additive: a recipe the person already has for that photo and revision
+     * is never replaced, and text that is not a recipe, or is the identity (nothing to continue),
+     * is refused. Returns whether a file was written.
+     */
+    fun importStored(mediaId: Long, dateModifiedSeconds: Long, json: String): Boolean {
+        if (mediaId < 0 || dateModifiedSeconds <= 0) return false
+        val parsed = parseJson(json) as? JsonValue.JsonObject ?: return false
+        if (EditRecipe.fromJson(parsed).isIdentity) return false
+        val file = File(directory, "$mediaId-$dateModifiedSeconds.json")
+        if (file.exists()) return false
+        return runCatching { file.writeText(json) }.isSuccess
+    }
+
     private fun fileFor(asset: MediaAsset): File =
         File(directory, "${asset.id.value}-${asset.dateModifiedSeconds}.json")
 

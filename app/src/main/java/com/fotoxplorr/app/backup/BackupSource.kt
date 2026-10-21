@@ -88,8 +88,15 @@ class MediaStoreBackupSource(
 ) : BackupSource {
     private val appContext = context.applicationContext
 
-    override fun open(candidate: BackupCandidate): OpenedSource? {
-        val plain: Uri = assetsById[candidate.mediaId]?.contentUri ?: return null
+    override fun open(candidate: BackupCandidate): OpenedSource? = openById(candidate.mediaId)
+
+    /**
+     * The same read by media id. A restore uses it to hash the photos already on the phone the way
+     * the backup hashed them (the unredacted original when the location is readable), in memory,
+     * to compare; the bytes go nowhere.
+     */
+    fun openById(mediaId: Long): OpenedSource? {
+        val plain: Uri = assetsById[mediaId]?.contentUri ?: return null
         val requested = appContext.uriForLocationRead(plain)
         val opened = openForLocationRead(requested, plain) { uri ->
             appContext.contentResolver.openAssetFileDescriptor(uri, "r")

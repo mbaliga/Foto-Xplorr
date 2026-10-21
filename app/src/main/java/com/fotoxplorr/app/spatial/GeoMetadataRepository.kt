@@ -13,12 +13,17 @@ import com.fotoxplorr.app.media.openForLocationRead
 import com.fotoxplorr.app.media.uriForLocationRead
 import com.fotoxplorr.core.model.MediaId
 import java.io.FileDescriptor
+import java.util.Collections
+import java.util.WeakHashMap
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -95,13 +100,51 @@ class GeoMetadataRepository(context: Context) {
     private val mutex = Mutex()
     private val state = MutableStateFlow(helper.readState())
 
+    init {
+        peers.add(this)
+    }
+
     fun observe(): StateFlow<GeoIndexState> = state.asStateFlow()
+
+    /**
+     * Reads the index again once no write or scan of THIS instance is running. The gallery, the
+     * backup and a restore each build their own instance over the same database; a pin written
+     * through one is shown by the others only after this.
+     */
+    private fun reloadWhenFree() {
+        reloadScope.launch {
+            mutex.withLock { state.value = helper.readState().copy(totalCount = state.value.totalCount) }
+        }
+    }
 
     /**
      * The pins the person placed by hand (not the ones read from a photo's own GPS), for the
      * encrypted backup: those cannot be recomputed from the file, so they are the ones worth keeping.
      */
     suspend fun manualPins(): List<GeoMetadata> = withContext(Dispatchers.IO) { helper.readManual() }
+
+    /**
+     * Puts back hand-placed pins from an encrypted backup. Additive: a photo that already has a
+     * hand-placed pin keeps it, and a pin outside the globe is refused. Returns how many were
+     * written. The caller should wait until the catalogue lists these photos, because [pruneTo]
+     * removes the rows of photos it does not know.
+     */
+    suspend fun importManualPins(pins: List<GeoMetadata>): Int = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val have = helper.readManual().mapTo(HashSet()) { it.mediaId }
+            var added = 0
+            for (pin in pins) {
+                if (pin.mediaId in have || pin.latitude !in -90.0..90.0 || pin.longitude !in -180.0..180.0) continue
+                helper.upsertManual(pin.mediaId, pin.latitude, pin.longitude)
+                have += pin.mediaId
+                added++
+            }
+            if (added > 0) state.value = helper.readState().copy(totalCount = state.value.totalCount)
+            added
+        }.also { added ->
+            if (added > 0) synchronized(peers) { peers.toList() }.forEach { if (it !== this@GeoMetadataRepository) it.reloadWhenFree() }
+        }
+    }
 
     suspend fun indexMissing(assets: List<MediaAsset>) = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -269,6 +312,10 @@ class GeoMetadataRepository(context: Context) {
 
     private companion object {
         const val INDEX_BATCH_SIZE = 32
+
+        /** Live instances, weakly held, so one that is garbage collected is simply gone. */
+        val peers: MutableSet<GeoMetadataRepository> = Collections.synchronizedSet(Collections.newSetFromMap(WeakHashMap()))
+        val reloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }
 

@@ -8,7 +8,7 @@ a real card, process death, a real notification, a real finger, a real phone's P
 a real phone, on **both flavours** where a line says so, before relying on the corresponding change.
 
 This file is for the **write side** (unit 14: the encrypted backup, its check, and the plain
-tags-and-collections file's new entry points). Section 13 is left for the restore unit to fill in.
+tags-and-collections file's new entry points) and, in section 13, the **restore side** (unit 15).
 
 What is being tested: Settings > Data now has two named options. **Tags and collections** is the
 existing plain JSON file (not encrypted, merge by default, a confirmed Replace, an identity block so
@@ -246,13 +246,85 @@ changes no existing file; changed files are copied, the old copy stays; deletion
 - [ ] Selecting a cloud-app folder never makes the **Offline** build touch the network: watch it with the
       system's per-app data usage while a backup into such a folder runs; the app's own line stays at zero.
 
-## 13. Restore (to be filled in by the restore unit)
+## 13. Restore (unit 15)
 
-- [ ] Restore everything, and tags/collections only, on a second phone or after Clear data.
-- [ ] Restore twice in a row creates no duplicates; a conflicting name becomes `name (restored).ext`.
-- [ ] Protected folders are locked again after a restore; sensitive and archived flags are back; photos
-      that had GPS have it.
-- [ ] A wrong passphrase on restore; a tampered pack on restore.
+Sandbox coverage: `RestoreJobTest` (the whole path on the JVM, through the real cipher: a backup written
+by `BackupJob` into a folder, opened, planned and restored to an in-memory phone; a second run writes
+nothing; a run cancelled half way finishes on the next; a name clash gives `name (restored).jpg` and leaves
+the other file alone; hostile paths; a wrong passphrase; a flipped bit in a pack, a pack cut short, a
+missing pack and a damaged manifest never put a wrong photo on the phone; a refused create, a failed write
+and a full phone; ids remapped; pins and edits; locks before the first write), `RestorePlannerTest`,
+`ProtectedPlacementTest`, `PackReaderTest`, `RestoreSetTest`, `MediaStoreRestoreWriterTest` (the insert,
+`IS_PENDING`, `DATE_TAKEN`, the new id from the uri, on Robolectric's stand-in for MediaStore),
+`AndroidRestoreApplierTest` and `RestoreLocksTest` (the real stores), `RestoreDialogsTest`.
+**Not covered**, because Robolectric's MediaStore is a stand-in: what the real provider does with a
+folder, a type or a name it dislikes, the scanner after `IS_PENDING = 0`, the expiry of a pending row, and
+everything about a real folder provider, a real notification and a real kill.
+
+Prepare once: make a full backup of the 200-photo library from the top of this file (with a protected
+folder, sensitive photos, an archived one, a manual pin, an unsaved edit, tags and a collection), then
+restore it on **a second phone** (or this phone after Settings > Apps > Fotoz > Clear data **and** deleting
+the photos, which is the real disaster case). Do the lines below on both.
+
+- [ ] Settings > Data > **Restore from an encrypted backup** is there, with "Puts photos and tags back
+      from an encrypted backup. Replaces nothing." While a backup, check or restore runs it is greyed out.
+- [ ] Pick the backup folder. A folder with no backup says so. A wrong passphrase says "That passphrase did
+      not open the backup..." and asks again; the folder stays picked. A folder made by a newer Fotoz says so.
+- [ ] The first card says the date the backup was made, "by Fotoz <version>", the number of photos and
+      videos and the size, the tags it holds, and "Also: N folder locks, N map pins, N saved edits". With a
+      pack deleted from the folder it warns that N files cannot be restored.
+- [ ] **Everything** is chosen by default; **Tags and collections only** is greyed out for a backup made
+      without tags. Continue shows "Looking at the photos on this phone..." and then the second card.
+- [ ] The second card on an **empty** phone: "N files (size) will be copied back", free space, "Nothing on
+      this phone is replaced or deleted...", and a Restore button. On a phone that already has some of the
+      photos: "N already are on this phone and are skipped" and "N will be renamed". With the free space
+      lower than the size it shows the red "Not enough room" line.
+- [ ] With **ACCESS_MEDIA_LOCATION not granted**, the second card warns that photos already on the phone may
+      come back as copies, and "Allow reading photo locations" turns the warning off. (Reading a local file
+      without its location gives different bytes from the backed-up original, so it would not be recognised
+      as already here.) Test it: restore onto a phone that has the same photos, with and without the permission.
+- [ ] Restore. The notification reads "Restoring your library" with a progress bar and **no file name, no
+      count**; Cancel in the notification stops it and says nothing alarming. The screen can be switched off.
+- [ ] The result lists restored, already here, renamed "(restored)", could not be restored (missing pack),
+      skipped, and what else was put back (tags, locks, pins, edits). A clean restore is a passing notice;
+      anything left out is a dialog that stays.
+- [ ] Restored photos are in their **own folders** (DCIM/Camera and so on), appear in the gallery with the
+      right **date taken** (the order of the grid is the order of the original), are byte for byte the
+      originals (compare a few with the backup phone: size, and a checksum if you can), and a photo that
+      had GPS has it again (open its info). Photos from a folder Android refuses (Download, WhatsApp) are in
+      Pictures/Fotoz, and videos in Movies/Fotoz.
+- [ ] **Restore twice in a row** creates nothing new: the second card says everything is already here and
+      its button is greyed out. A photo whose name was taken came back as `name (restored).jpg` the first
+      time and is recognised on the second.
+- [ ] **Kill the app mid-restore** (swipe it away from recents while a few hundred photos are going back),
+      start it again and run the restore again with the same folder and passphrase: no duplicate photos, no
+      broken or zero-length items in any gallery, and the rest comes back. A file the killed run was writing
+      is a pending row that other gallery apps do not show; each carries an expiry a day ahead, so it should
+      be gone by itself within a day. Record whether it was (this is the platform's documented behaviour,
+      not something that has been watched happen here).
+- [ ] Protected folders: after a restore the formerly protected folder is **locked** with the **old
+      password**, **before** you see any of its photos (watch the grid while the restore runs: no protected
+      photo is ever visible without its lock, even for a moment). A protected photo that came from a folder
+      Android refuses is in "Pictures/Fotoz/Restored protected/..." and that folder is locked with the same
+      password. A phone that already had a lock on the same folder keeps ITS password.
+- [ ] Sensitive photos are hidden **as they arrive** with "Hide sensitive" on (not only at the end);
+      favourites, the archive, captions, tags and collections are back on the right photos (spot-check
+      ten against the old phone); nothing you had written on this phone was replaced.
+- [ ] The map pin placed by hand is back on the **right** photo (give the app a minute after the restore,
+      it waits for the gallery to list the new photos), and an unsaved edit offers "Continue editing" on the
+      restored photo. If the edit is missing, note whether a rescan changed the photo's modified time: the
+      edit is stored against the file's revision when the restore finishes.
+- [ ] **Tags and collections only** on a phone that already has the photos: no photo is copied, tags land on
+      the right photos, and photos the phone does not have are counted as "not on this phone".
+- [ ] A wrong passphrase on restore; a pack whose bytes you changed with a hex editor (the result says N
+      files were damaged and lists no wrong photo); a pack you cut in half; a pack you deleted; a manifest
+      you changed (the photos still come back, the tags do not). None of these leaves a half file behind.
+- [ ] A phone with **almost no free space**: the restore stops with "The phone's storage is full. N files
+      came back before it stopped. Free some space.", nothing is left pending, and running it again after
+      freeing space finishes.
+- [ ] **Android 8 or 9** (before Android 10): photos come back to the default folders, protected photos are
+      left out and the card says so ("...before Android 10 Fotoz cannot put a photo in a folder of its own...").
+- [ ] Both flavours: Offline and Connect behave the same; Offline makes no network request while restoring.
 
 ## 14. Size and speed (record the numbers)
 

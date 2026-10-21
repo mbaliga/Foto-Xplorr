@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performScrollTo
 import com.fotoxplorr.app.backup.BackupCopy
+import com.fotoxplorr.app.backup.RestoreCopy
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.SettingsTab
 import com.fotoxplorr.app.gallery.SettingsTabsRoom
@@ -72,6 +73,8 @@ class BackupSettingsRenderTest {
         compose.onNodeWithText(BackupCopy.SECTION_LABEL).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(BackupCopy.OPTION_LABEL).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(BackupCopy.CHECK_LABEL).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(RestoreCopy.ROW_LABEL).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(HelpCopy.Hint.BACKUP_RESTORE_ENCRYPTED).performScrollTo().assertIsDisplayed()
     }
 
     @Test

@@ -49,7 +49,7 @@ import com.fotoxplorr.app.ui.RoomRow
 import com.fotoxplorr.app.ui.RoomStyle
 
 /**
- * The two Settings > Data rows of the encrypted backup, and every dialog behind them. Self-contained
+ * The Settings > Data rows of the encrypted backup (back up, check, restore), and every dialog behind them. Self-contained
  * on purpose: it takes no argument and adds no field to `GalleryActions` or `GalleryUiState`. It
  * finds the activity's `JobRunner` through the view-model store (the same instance the activity
  * uses), and the stores it needs it opens itself when a button is tapped. See [BackupFlow].
@@ -82,7 +82,7 @@ fun EncryptedBackupRows() {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { flow.permissionMayHaveChanged() }
 
     val jobs by (flow.runner()?.jobs ?: NO_JOBS).collectAsState()
-    val running = jobs.any { it.title == BackupCopy.JOB_TITLE || it.title == BackupCopy.CHECK_JOB_TITLE }
+    val running = jobs.any { isBackupJob(it.title) }
     RoomRow(
         label = BackupCopy.OPTION_LABEL,
         caption = HelpCopy.Hint.BACKUP_ENCRYPTED,
@@ -93,6 +93,12 @@ fun EncryptedBackupRows() {
         label = BackupCopy.CHECK_LABEL,
         caption = HelpCopy.Hint.BACKUP_CHECK,
         onClick = { flow.begin(BackupPurpose.CHECK) },
+    )
+    RoomRow(
+        label = RestoreCopy.ROW_LABEL,
+        caption = HelpCopy.Hint.BACKUP_RESTORE_ENCRYPTED,
+        enabled = !running,
+        onClick = { flow.begin(BackupPurpose.RESTORE) },
     )
 
     BackupDialogs(flow, requestLocation = { locationPermission.launch(Manifest.permission.ACCESS_MEDIA_LOCATION) })
@@ -113,6 +119,8 @@ private fun BackupDialogs(flow: BackupFlow, requestLocation: () -> Unit) {
             stage = stage,
             requestLocation = requestLocation,
         )
+        is BackupStage.RestoreChoose -> RestoreChooseDialog(flow, stage)
+        is BackupStage.RestoreReview -> RestoreReviewDialog(flow, stage, requestLocation)
         is BackupStage.Message -> AlertDialog(
             onDismissRequest = flow::dismissMessage,
             title = { Text(stage.title) },

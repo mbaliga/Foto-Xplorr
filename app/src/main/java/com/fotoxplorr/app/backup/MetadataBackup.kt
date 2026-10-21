@@ -160,7 +160,14 @@ object MetadataBackup {
      */
     fun read(text: String): FileRead {
         if (text.length > MAX_FILE_BYTES) return FileRead.Unusable("This file is too large to be a Fotoz backup.")
-        val root = parseJson(text)
+        return readTree(parseJson(text))
+    }
+
+    /**
+     * [read] for a file that is already a tree: the encrypted backup carries this same file as a
+     * section of its manifest ([BackupSections.METADATA]) and restores it through the same checks.
+     */
+    fun readTree(root: JsonValue?): FileRead {
         if (root !is JsonValue.JsonObject) return FileRead.Unusable("This is not a Fotoz backup, or it is damaged.")
 
         val nested = root.entries[KEY_LIBRARY]
@@ -318,15 +325,24 @@ object MetadataBackup {
      * For a file with identity that is a real match; for one without, the ids are kept and the
      * caller has already shown the "same phone only" warning.
      */
-    fun prepare(file: MetadataFile, catalogue: Map<Long, MediaIdentity>): PreparedRestore {
+    fun prepare(file: MetadataFile, catalogue: Map<Long, MediaIdentity>, known: Map<Long, Long> = emptyMap()): PreparedRestore {
         val mentioned = mentionedIds(file.envelope)
         val identity = file.identity
         val oldToNew: Map<Long, Long> = if (identity == null) {
             mentioned.associateWith { it }
         } else {
+            // [known] is what the caller already settled for certain (the encrypted backup's restore
+            // knows exactly which new id each file it wrote or found got); only the rest is matched
+            // by identity, and never onto a photo [known] already claimed.
+            val result = LinkedHashMap<Long, Long>()
+            for (id in mentioned) known[id]?.let { result[id] = it }
+            val claimed = result.values.toSet()
             val wanted = LinkedHashMap<Long, MediaIdentity>()
-            for (id in mentioned.sorted()) identity[id]?.let { wanted[id] = it }
-            IdRemap.matchIdentities(wanted, catalogue).oldToNew
+            for (id in mentioned.sorted()) if (id !in result) identity[id]?.let { wanted[id] = it }
+            if (wanted.isNotEmpty()) {
+                result.putAll(IdRemap.matchIdentities(wanted, catalogue.filterKeys { it !in claimed }).oldToNew)
+            }
+            result
         }
         val remapped = IdRemap.remapEnvelope(file.envelope, oldToNew)
         val out = remapped.json

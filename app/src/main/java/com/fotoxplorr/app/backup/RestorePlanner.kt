@@ -4,13 +4,21 @@ import com.fotoxplorr.app.media.MediaKind
 import com.fotoxplorr.app.media.mediaStoreRelativePath
 import java.util.Locale
 
-/** A file already on the phone, as the restore planner needs it. */
+/**
+ * A file already on the phone, as the restore planner needs it. [dateTakenMillis] and
+ * [dateModifiedSeconds] are not used to plan; the id remap matches photos by them
+ * ([MediaIdentity]) and a restored edit recipe is stored against the file's revision.
+ */
 data class RestoreLocalFile(
     val mediaId: Long,
     val displayName: String,
     val relativePath: String?,
     val sizeBytes: Long,
-)
+    val dateTakenMillis: Long = 0L,
+    val dateModifiedSeconds: Long = 0L,
+) {
+    val identity: MediaIdentity get() = MediaIdentity(displayName, sizeBytes, dateTakenMillis, relativePath?.takeIf { it.isNotEmpty() })
+}
 
 enum class RestoreAction {
     /** Written under its own name in its own folder. */
@@ -24,6 +32,13 @@ enum class RestoreAction {
 
     /** Not an image or a video; a restore writes only those. */
     SKIP_UNSUPPORTED,
+
+    /**
+     * A photo from a protected folder that this Android version cannot be told to put in a folder
+     * of its own (before Android 10), so it could not be kept behind its lock. Left out, not
+     * written somewhere it would be visible ([ProtectedPlacement]).
+     */
+    SKIP_NEEDS_FOLDER,
 
     /** The backup knows this photo but the pack holding it was not in the folder ([EntryFlag.MISSING]). */
     SKIP_MISSING,
@@ -149,11 +164,18 @@ object RestorePlanner {
 
     private val restoredSuffix = Regex("^(.+) \\(restored( [0-9]{1,6})?\\)$")
 
+    /**
+     * Image or video, and a type that looks like one (`type/subtype`, no spaces or control
+     * characters): the manifest is untrusted and the type goes straight into a MediaStore insert.
+     */
     fun kindOf(mimeType: String): MediaKind? = when {
+        !safeMime.matches(mimeType) -> null
         mimeType.startsWith("image/", ignoreCase = true) -> MediaKind.IMAGE
         mimeType.startsWith("video/", ignoreCase = true) -> MediaKind.VIDEO
         else -> null
     }
+
+    private val safeMime = Regex("^[A-Za-z0-9]{1,32}/[A-Za-z0-9][A-Za-z0-9.+_-]{0,95}$")
 
     /**
      * A MediaStore RELATIVE_PATH made safe: forward slashes only, no empty, `.` or `..` segments

@@ -265,4 +265,32 @@ class RestorePlannerTest {
         assertEquals(1, plan.count(RestoreAction.SKIP_UNSUPPORTED))
         assertEquals(entry(2).sizeBytes, plan.bytesToWrite)
     }
+
+    @Test
+    fun `a type that is not a plain image or video type is not written`() {
+        // The type goes straight into a MediaStore insert; anything that does not look like type/subtype is refused.
+        val odd = listOf(
+            "image/jpeg\u0000x",
+            "image/ jpeg",
+            "image/",
+            "image",
+            "image/jpeg; charset=x",
+            "video/mp4\n",
+            "image/" + "a".repeat(200),
+        )
+        for (mime in odd) assertNull(mime, RestorePlanner.kindOf(mime))
+        assertEquals(MediaKind.IMAGE, RestorePlanner.kindOf("image/jpeg"))
+        assertEquals(MediaKind.IMAGE, RestorePlanner.kindOf("IMAGE/HEIC"))
+        assertEquals(MediaKind.IMAGE, RestorePlanner.kindOf("image/svg+xml"))
+        assertEquals(MediaKind.VIDEO, RestorePlanner.kindOf("video/x-matroska"))
+        assertEquals(RestoreAction.SKIP_UNSUPPORTED, plan(listOf(entry(1, mime = "image/jpeg\u0000x"))).items.single().action)
+    }
+
+    @Test
+    fun `a local file carries the identity the metadata restore matches by`() {
+        val file = RestoreLocalFile(1, "a.jpg", "DCIM/Camera/", 10, dateTakenMillis = 5, dateModifiedSeconds = 6)
+        assertEquals(MediaIdentity("a.jpg", 10, 5, "DCIM/Camera/"), file.identity)
+        assertNull(RestoreLocalFile(1, "a.jpg", "", 10).identity.relativePath)
+        assertNull(RestoreLocalFile(1, "a.jpg", null, 10).identity.relativePath)
+    }
 }

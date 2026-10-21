@@ -91,6 +91,7 @@ internal object HelpCopy {
         const val BACKUP_ENCRYPTED_ADDS = "Adds what is new each time. Photos you delete from the phone stay in it."
         const val BACKUP_UNDERSTAND = "I understand: Fotoz cannot recover this backup without the passphrase"
         const val BACKUP_CHECK = "Reads the whole backup and proves every file is intact."
+        const val BACKUP_RESTORE_ENCRYPTED = "Puts photos and tags back from an encrypted backup. Replaces nothing."
         const val RESCAN_AUTO = "Fotoz spots new photos by itself. Use this to force a check."
         const val BILLING = "Nothing is charged yet. This only remembers Pro on this device."
 

@@ -127,6 +127,9 @@ class HelpCopyTest {
         assertFalse(HelpCopy.Hint.BACKUP_ENCRYPTED.contains("Not your photos"))
         assertTrue(HelpCopy.Hint.BACKUP_ENCRYPTED_ADDS.contains("Photos you delete from the phone stay in it"))
         assertTrue(HelpCopy.Hint.BACKUP_CHECK.contains("every file"))
+        // Restoring says the one thing a person is afraid of: nothing on the phone is replaced.
+        assertTrue(HelpCopy.Hint.BACKUP_RESTORE_ENCRYPTED.contains("Replaces nothing"))
+        assertFalse(HelpCopy.Hint.BACKUP_RESTORE_ENCRYPTED.contains("Not your photos"))
     }
 
     @Test
