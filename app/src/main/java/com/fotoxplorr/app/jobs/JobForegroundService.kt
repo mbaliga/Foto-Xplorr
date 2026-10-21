@@ -118,9 +118,15 @@ class JobForegroundService : LifecycleService() {
         private const val ACTION_CANCEL = "com.fotoxplorr.app.jobs.action.CANCEL"
         private const val EXTRA_JOB_ID = "jobId"
 
-        /** Idempotent: safe to call every time the job list goes from empty to non-empty. */
+        /**
+         * Idempotent: safe to call every time the job list goes from empty to non-empty. Never
+         * throws: from the background Android 12+ can refuse a foreground start, and the job
+         * itself runs on regardless (it lives in the ViewModel), only without its notification.
+         */
         fun start(context: Context) {
-            ContextCompat.startForegroundService(context, Intent(context, JobForegroundService::class.java))
+            runCatching {
+                ContextCompat.startForegroundService(context, Intent(context, JobForegroundService::class.java))
+            }
         }
 
         fun stop(context: Context) {

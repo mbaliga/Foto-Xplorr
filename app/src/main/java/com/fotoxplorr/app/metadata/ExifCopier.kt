@@ -75,23 +75,99 @@ enum class UncarriedMetadata(val label: String) {
 
     /** Extended XMP: the overflow packet for XMP larger than one JPEG segment. */
     EXTENDED_XMP("extended XMP"),
+
+    /** PNG `tEXt` / `zTXt` / `iTXt` text other than the XMP packet: where image generators keep
+     *  the prompt and settings, and where cameras and editors keep comments. */
+    PNG_TEXT("PNG text such as a generation prompt"),
+
+    /** A PNG `iCCP` chunk: the embedded colour profile. */
+    COLOR_PROFILE("embedded colour profile"),
+
+    /** A WebP chunk that is neither image data, EXIF, XMP nor a colour profile. */
+    WEBP_CHUNK("other WebP metadata"),
 }
 
-/** How much of a file's start [uncarriedMetadataIn] needs: JPEG keeps all of this before the scan. */
+/** How much of a file's start [uncarriedMetadataIn] looks at: a JPEG keeps all of this before the scan,
+ *  and a PNG or WebP keeps its metadata chunks ahead of the image data in the files this app writes. */
 internal const val UNCARRIED_SCAN_BYTES = 256 * 1024
 
 /**
- * The metadata in [head] (a JPEG's first bytes) that [ExifCopier.copy] cannot carry to another
- * file, because [ExifInterface] neither reads nor writes it: an IPTC-IIM block and extended XMP.
- * Both are looked for by walking the JPEG's marker segments up to the start of the image data, so
- * a coincidental string inside pixel data or a thumbnail is not a match. Anything that is not a
- * JPEG answers empty; a segment cut off by the end of [head] is not seen.
+ * The metadata in [head] (a file's first bytes) that [ExifCopier.copy] cannot carry to another
+ * file, because [ExifInterface] neither reads nor writes it.
+ *
+ *  - JPEG: an IPTC-IIM block and extended XMP, found by walking the marker segments up to the
+ *    start of the image data, so a coincidental string inside pixel data or a thumbnail is not a
+ *    match.
+ *  - PNG: text chunks other than the XMP packet, and a colour profile, found by walking the chunk
+ *    list (image data is skipped by its length, not read).
+ *  - WebP: any chunk other than image data, EXIF, XMP and a colour profile.
+ *
+ * Anything else answers empty; a segment or chunk cut off by the end of [head] is not seen, though
+ * a chunk whose header is there is reported even when its body is cut off.
  *
  * Not covered, on purpose: `MakerNote` and the embedded thumbnail, which [EXCLUDED_TAGS] drops for
  * a stated reason and which nearly every camera file has, so refusing on them would refuse nearly
  * every replace.
  */
-internal fun uncarriedMetadataIn(head: ByteArray): Set<UncarriedMetadata> {
+internal fun uncarriedMetadataIn(head: ByteArray): Set<UncarriedMetadata> = when {
+    isPng(head) -> uncarriedPngMetadata(head)
+    isWebp(head) -> uncarriedWebpMetadata(head)
+    else -> uncarriedJpegMetadata(head)
+}
+
+private val PNG_SIGNATURE = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+private val XMP_ITXT_KEYWORD = "XML:com.adobe.xmp\u0000".toByteArray(Charsets.ISO_8859_1)
+
+private fun isPng(head: ByteArray) = head.size >= PNG_SIGNATURE.size && startsWith(head, 0, head.size, PNG_SIGNATURE)
+
+private fun isWebp(head: ByteArray) = head.size >= 12 &&
+    fourCc(head, 0) == "RIFF" && fourCc(head, 8) == "WEBP"
+
+private fun fourCc(b: ByteArray, at: Int) = String(b, at, 4, Charsets.ISO_8859_1)
+
+private fun uncarriedPngMetadata(head: ByteArray): Set<UncarriedMetadata> {
+    val found = mutableSetOf<UncarriedMetadata>()
+    var pos = PNG_SIGNATURE.size.toLong()
+    while (pos + 8 <= head.size) {
+        val at = pos.toInt()
+        val length = ((head[at].toLong() and 0xFF) shl 24) or ((head[at + 1].toLong() and 0xFF) shl 16) or
+            ((head[at + 2].toLong() and 0xFF) shl 8) or (head[at + 3].toLong() and 0xFF)
+        when (val type = fourCc(head, at + 4)) {
+            "IEND" -> break
+            "tEXt", "zTXt" -> found += UncarriedMetadata.PNG_TEXT
+            "iTXt" -> {
+                val start = at + 8
+                val end = minOf(pos + 8 + length, head.size.toLong()).toInt()
+                // The one iTXt ExifInterface carries is the XMP packet; one whose keyword is cut
+                // off cannot be told from a prompt, so it counts.
+                if (!startsWith(head, start, end, XMP_ITXT_KEYWORD)) found += UncarriedMetadata.PNG_TEXT
+            }
+            "iCCP" -> found += UncarriedMetadata.COLOR_PROFILE
+            else -> Unit
+        }
+        // Length, type, data, CRC.
+        pos += 12 + length
+    }
+    return found
+}
+
+private val WEBP_CARRIED_CHUNKS = setOf("VP8 ", "VP8L", "VP8X", "ALPH", "EXIF", "XMP ", "ICCP")
+
+private fun uncarriedWebpMetadata(head: ByteArray): Set<UncarriedMetadata> {
+    val found = mutableSetOf<UncarriedMetadata>()
+    var pos = 12L
+    while (pos + 8 <= head.size) {
+        val at = pos.toInt()
+        if (fourCc(head, at) !in WEBP_CARRIED_CHUNKS) found += UncarriedMetadata.WEBP_CHUNK
+        val size = (head[at + 4].toLong() and 0xFF) or ((head[at + 5].toLong() and 0xFF) shl 8) or
+            ((head[at + 6].toLong() and 0xFF) shl 16) or ((head[at + 7].toLong() and 0xFF) shl 24)
+        // Header, payload padded to an even length.
+        pos += 8 + size + (size and 1)
+    }
+    return found
+}
+
+private fun uncarriedJpegMetadata(head: ByteArray): Set<UncarriedMetadata> {
     val found = mutableSetOf<UncarriedMetadata>()
     if (head.size < 4 || head[0] != 0xFF.toByte() || head[1] != 0xD8.toByte()) return found
     var pos = 2

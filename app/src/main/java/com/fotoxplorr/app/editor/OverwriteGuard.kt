@@ -386,9 +386,11 @@ internal const val BACKUP_SLACK_BYTES = 1L * 1024 * 1024
  * Where the safety copies live: under the app's private `filesDir`, not the cache, because the
  * system clears the cache exactly when storage is tight and a copy of the user's only original
  * must outlive that. A copy lands here as `backup-*.bin` while a replace is in flight and is
- * deleted when the replace verifies; one that survives (the process died, or the file could not
- * be put back) is the only intact copy of a truncated original, so it is kept for
- * [ORPHAN_MAX_AGE_MS] by [sweepOrphans] before it is let go.
+ * deleted when the replace verifies; one that survives (the process died, or the put-back could
+ * not be confirmed on storage) is the only intact copy of a truncated original, so it is kept for
+ * [ORPHAN_MAX_AGE_MS] by [sweepOrphans] before it is let go. A `.bak` (the file could not be put
+ * back) is never deleted by the sweep. Nothing in the app opens either kind: they exist so the
+ * bytes are not destroyed, and [orphanedBackupNotice] is how the person is told one remains.
  */
 object OverwriteRecovery {
     private const val DIR_NAME = "overwrite-recovery"
@@ -413,6 +415,22 @@ object OverwriteRecovery {
 }
 
 internal const val MAX_SWEPT_FILES = 500
+
+/**
+ * What to tell the person at app start when [sweepOrphans] left safety copies behind, or null when
+ * there are none. An earlier replace of a photo did not finish (the app was closed or killed
+ * mid-write, or the original could not be put back), so one photo may be damaged. The copy cannot
+ * be opened from the app, so the notice sends the person to the photos they edited recently
+ * rather than promising a way to retrieve it.
+ */
+fun orphanedBackupNotice(remaining: List<File>): String? {
+    val count = remaining.count { it.name.endsWith(".bak") || (it.name.startsWith("backup-") && it.name.endsWith(".bin")) }
+    return when (count) {
+        0 -> null
+        1 -> "An earlier save over a photo did not finish. Check the photos you edited last."
+        else -> "$count earlier saves over a photo did not finish. Check the photos you edited last."
+    }
+}
 
 internal fun sweepOrphanBackups(dir: File, nowMillis: Long, maxAgeMillis: Long): List<File> = try {
     val remaining = mutableListOf<File>()
@@ -445,8 +463,7 @@ internal fun sweepOrphanBackups(dir: File, nowMillis: Long, maxAgeMillis: Long):
  *  3. Run [verifyWritten] (which throws if what is now on disk is not [staged]).
  *  4. On any failure in 2 or 3, write the backup back, and throw [OverwriteException.FailedAfterWrite]
  *     saying whether that worked. If it did not, the backup is moved to [recoveryDir] and kept.
- *  5. Only after 3 passed and the write reached storage, delete the backup. If the flush could not
- *     be confirmed the backup stays for [OverwriteRecovery.sweepOrphans] to age out.
+ *  5. Once 3 passed, delete the backup, whether or not the flush to storage could be confirmed.
  *
  * This is best effort, not atomic: a crash between the truncate and the restore still leaves the
  * damaged file, with the backup left in [backupDir] for [OverwriteRecovery.sweepOrphans] to age out.
@@ -527,14 +544,17 @@ internal fun replaceWithRestore(
             message = if (restore.written) {
                 "Replacing the photo failed partway, so the original was put back exactly as it was."
             } else {
-                "Replacing the photo failed and the original could not be put back. A safety copy of it is " +
-                    "kept inside Fotoz: save a copy of your edit now, and do not clear the app's storage."
+                "Replacing the photo failed and the original could not be put back, so it may be damaged. " +
+                    "Save a copy of your edit now. A safety copy of the original is held in Fotoz's private " +
+                    "storage, which the app cannot open for you, so do not rely on getting it back."
             },
             cause = t,
         )
     }
-    // Verified, and on storage: only now is the safety copy surplus.
-    if (durable) backup.delete()
+    // Verified: the file reads back as written, so the safety copy is surplus even when the flush
+    // to storage could not be confirmed (a full-size copy kept for a week is not a safeguard worth
+    // that much space, and nothing here can say what a crash would find).
+    backup.delete()
 }
 
 /** Flushes this stream's file to storage when it is backed by a file descriptor; false when that

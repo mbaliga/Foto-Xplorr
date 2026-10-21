@@ -49,6 +49,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.LibraryRuntime
 import com.fotoxplorr.app.ScanState
+import com.fotoxplorr.app.openwith.withSafeExtras
 import com.fotoxplorr.app.gallery.GalleryPreferences
 import com.fotoxplorr.app.gallery.MediaGridScreen
 import com.fotoxplorr.app.gallery.browsableAssets
@@ -78,7 +79,9 @@ class PhotoPickerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val allowMultiple = intent?.getBooleanExtra(Intent.EXTRA_ALLOW_MULTIPLE, false) ?: false
+        // Any app can start this picker; a hostile extra reads as "no extras", not a crash.
+        intent?.withSafeExtras()
+        val allowMultiple = intent?.let { runCatching { it.getBooleanExtra(Intent.EXTRA_ALLOW_MULTIPLE, false) }.getOrNull() } ?: false
         val requestedMimeType = intent?.type
 
         setContent {

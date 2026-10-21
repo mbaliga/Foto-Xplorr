@@ -78,10 +78,41 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
     /** Survives process death even though [editingAsset] itself cannot; see the class doc. */
     val editingAssetId: MediaId? get() = editingAssetIdState
 
+    /**
+     * Opens the editor on [asset], or closes it for null. The failed-overwrite state belongs to
+     * the one photo whose replace failed, so it is cleared whenever the editor closes or opens on
+     * a different photo: left behind, the next editor would show the old banner, and "Save a
+     * copy" would write the old photo's bitmap.
+     */
     fun setEditingAsset(asset: MediaAsset?) {
+        if (asset == null || asset.id != editingAssetState?.id) clearOverwriteFailure()
         editingAssetState = asset
         editingAssetIdState = asset?.id
         writeId(KEY_EDITING_ASSET_ID, asset?.id)
+    }
+
+    /**
+     * True while the editor must not be dismissed: the replace failed after the original was
+     * opened and it could not be put back, so the edited bitmap held here is the only good
+     * version. Back and close then change nothing and the banner (which offers only "Save a
+     * copy") stays up.
+     */
+    val editorCloseBlocked: Boolean get() = overwriteDeclined && overwriteOriginalAtRisk
+
+    /** Closes the editor unless [editorCloseBlocked]; true when it closed. */
+    fun closeEditor(): Boolean {
+        if (editorCloseBlocked) return false
+        setEditingAsset(null)
+        return true
+    }
+
+    /** Forgets a failed overwrite and the photo and bitmap it was holding for "Save a copy". */
+    fun clearOverwriteFailure() {
+        pendingOverwriteAsset = null
+        pendingOverwriteBitmap = null
+        overwriteDeclined = false
+        overwriteFailureMessage = null
+        overwriteOriginalAtRisk = false
     }
 
     /**
@@ -159,6 +190,9 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
      * 20,000-photo library being re-enumerated because the phone turned sideways.
      */
     var initialScanSent: Boolean by mutableStateOf(false)
+
+    /** True once this process has swept the editor's leftover safety copies, so a rotation does not repeat it. */
+    var recoverySweepDone: Boolean = false
 
     override fun onCleared() {
         jobRunner.cancelAll()

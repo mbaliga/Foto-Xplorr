@@ -67,8 +67,9 @@ fun restoreViewerRun(browsable: List<MediaAsset>, savedIds: List<Long>, openId: 
  * The folder identity of [row] is built from the same bucket / relative-path columns the scanner
  * reads, so a photo just saved into a locked folder is held to the lock like every catalogued
  * one. [Unknown][OpenRequestLookup.Unknown] here means "not catalogued, but nothing hides it":
- * the caller may read it as an external file. A null [row] (the query failed, the row is gone, or
- * this app has no access to it) is [Unverified][OpenRequestLookup.Unverified]: refused.
+ * the caller may read it as an external file. A null [row] (the collection query and the row's own Uri
+ * both came back empty: the row is gone, or this app has no access to it) is
+ * [Unverified][OpenRequestLookup.Unverified]: refused.
  *
  * @param browsableOf the one definition of "may be shown", applied to the single stub row.
  */

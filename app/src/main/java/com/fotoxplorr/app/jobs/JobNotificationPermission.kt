@@ -13,3 +13,13 @@ import android.os.Build
  */
 internal fun shouldAskForJobNotifications(sdkInt: Int, granted: Boolean, alreadyAsked: Boolean): Boolean =
     sdkInt >= Build.VERSION_CODES.TIRAMISU && !granted && !alreadyAsked
+
+/**
+ * Whether the result delivered for the notification prompt is the person's answer, as opposed to a
+ * request the system dropped. A grant is an answer. A refusal is one only if the system now offers
+ * a rationale for the permission, which it does after the person turned the prompt down once and
+ * not for a request that never showed one (another permission request was pending, the activity
+ * was not in front): that one must be asked again, not recorded as asked.
+ */
+internal fun notificationPromptWasAnswered(granted: Boolean, shouldShowRationale: Boolean): Boolean =
+    granted || shouldShowRationale

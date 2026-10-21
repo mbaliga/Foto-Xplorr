@@ -40,6 +40,7 @@ import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.openwith.syntheticNegativeMediaId
+import com.fotoxplorr.app.openwith.withSafeExtras
 import com.fotoxplorr.app.share.PreparedItem
 import com.fotoxplorr.app.share.ShareFrame
 import com.fotoxplorr.app.share.ShareOptions
@@ -81,6 +82,9 @@ class ExternalViewerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         if (CrashRecovery.maybeShowRecovery(this, appLabel = "Fotoz", style = crashRecoveryStyle(this))) return
         enableEdgeToEdge()
+        // Exported and reachable by any app: this activity reads no extras itself, but a hostile
+        // one must not be left packed in the intent for a later reader to trip on.
+        intent?.withSafeExtras()
 
         val uri = intent?.data
         // The manifest only routes content:// here, but this activity is exported and an explicit

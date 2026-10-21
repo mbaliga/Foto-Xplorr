@@ -111,12 +111,42 @@ class ReplaceWithRestoreDurabilityTest {
     }
 
     @Test
-    fun `a write that cannot be confirmed on storage keeps the safety copy`() {
-        run(FileOriginal(plainStream = true))
+    fun `a write that cannot be confirmed on storage but reads back as written leaves no safety copy`() {
+        var verified = false
+        run(FileOriginal(plainStream = true)) { verified = true }
 
+        assertTrue(verified)
         assertArrayEquals("the replace itself still happened", newBytes, originalFile.readBytes())
-        assertEquals("the copy stays until it can be aged out", 1, backups().size)
-        assertArrayEquals(originalBytes, backups().single().readBytes())
+        assertTrue("a full-size copy is not kept once the write verified", backups().isEmpty())
+    }
+
+    @Test
+    fun `a write that cannot be confirmed and fails verification is put back and the failure says so`() {
+        val failure = runCatching { run(FileOriginal(plainStream = true)) { error("does not read back") } }
+            .exceptionOrNull() as OverwriteException.FailedAfterWrite
+
+        assertTrue(failure.restored)
+        assertArrayEquals(originalBytes, originalFile.readBytes())
+    }
+
+    @Test
+    fun `the wording for an original that could not be put back promises no way to get it back`() {
+        val original = object : OriginalFile {
+            var writes = 0
+            override fun openForRead(): InputStream? = originalFile.inputStream()
+            override fun openForTruncatingWrite(): OutputStream? =
+                if (writes++ == 0) originalFile.outputStream() else null
+            override fun currentSizeBytes(): Long = originalBytes.size.toLong()
+        }
+
+        val failure = runCatching { run(original) { error("does not read back") } }.exceptionOrNull() as OverwriteException.FailedAfterWrite
+
+        assertFalse(failure.restored)
+        val message = failure.message!!
+        assertTrue(message, "Save a copy" in message)
+        assertFalse(message, "kept inside Fotoz" in message)
+        assertTrue(message, "cannot open" in message)
+        assertTrue("the copy is kept", failure.recoveryFile!!.exists())
     }
 
     @Test

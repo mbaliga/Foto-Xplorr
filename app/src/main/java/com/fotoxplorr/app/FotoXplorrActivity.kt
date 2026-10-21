@@ -59,6 +59,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fotoxplorr.app.curate.AutoCurationPass
 import com.fotoxplorr.app.editor.EditedCopyWriter
 import com.fotoxplorr.app.editor.EditorScreen
+import com.fotoxplorr.app.editor.OverwriteRecovery
+import com.fotoxplorr.app.editor.orphanedBackupNotice
 import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.gallery.GalleryActions
@@ -72,6 +74,7 @@ import com.fotoxplorr.app.gallery.rememberGeoRepository
 import com.fotoxplorr.app.hyle.ActivityKind
 import com.fotoxplorr.app.jobs.JobForegroundService
 import com.fotoxplorr.app.jobs.humanMessage
+import com.fotoxplorr.app.jobs.notificationPromptWasAnswered
 import com.fotoxplorr.app.jobs.shouldAskForJobNotifications
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.metadata.GpsCoordinate
@@ -87,6 +90,7 @@ import com.fotoxplorr.app.openwith.classifyMediaStoreUri
 import com.fotoxplorr.app.openwith.lookupOpenRequest
 import com.fotoxplorr.app.openwith.lookupUncataloguedRow
 import com.fotoxplorr.app.openwith.restoreViewerRun
+import com.fotoxplorr.app.openwith.withSafeExtras
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
@@ -135,12 +139,15 @@ class FotoXplorrActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
+        // Unpacked once, guarded, before anything reads an extra: see withSafeExtras.
+        setIntent(intent.withSafeExtras())
         incomingIntentGeneration++
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Any app can send this activity an intent; a hostile extra must not crash it on launch.
+        intent?.withSafeExtras()
         // First thing, per dev.aarso:crash-recovery's documented contract: if a crash was
         // captured last run, show the recovery screen instead of this activity's real
         // content and finish this instance.
@@ -303,6 +310,16 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
     }
 
+    // Once per process, off the main thread: ages out the editor's leftover in-flight safety copies
+    // and, if a copy of a photo that was not put back still remains, says so. Nothing else ever
+    // called OverwriteRecovery.sweepOrphans, so a copy left by a crash lived forever.
+    LaunchedEffect(Unit) {
+        if (viewModel.recoverySweepDone) return@LaunchedEffect
+        viewModel.recoverySweepDone = true
+        val remaining = withContext(Dispatchers.IO) { OverwriteRecovery.sweepOrphans(applicationContext) }
+        orphanedBackupNotice(remaining)?.let { transientNotice = TransientNotice(it) }
+    }
+
     // [assets] narrowed to what the person may see right now (not trashed, archived, in a locked
     // folder or sensitive-hidden), read from the stores' own StateFlows at CALL time. The values
     // collected into locals above start as empty sets for the first composition, which would let a
@@ -341,7 +358,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             consumedOpenMediaIdExtra = false
         }
         if (consumedOpenMediaIdExtra) return@LaunchedEffect
-        val requestedId = intent.getLongExtra(FotoXplorrActivity.EXTRA_OPEN_MEDIA_ID, NO_MEDIA_ID)
+        val requestedId = runCatching { intent.getLongExtra(FotoXplorrActivity.EXTRA_OPEN_MEDIA_ID, NO_MEDIA_ID) }
+            .getOrDefault(NO_MEDIA_ID)
         if (requestedId == NO_MEDIA_ID) {
             consumedOpenMediaIdExtra = true
             return@LaunchedEffect
@@ -424,17 +442,32 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // The progress notification needs POST_NOTIFICATIONS on Android 13+, and this is the only place
     // that asks for it: once, the first time a job actually runs (see shouldAskForJobNotifications).
     // "Asked" is recorded when the system dialog has been ANSWERED, not when it was launched: a
-    // launch the system drops (the activity was not in front) must be tried again next time.
+    // launch the system drops (the activity was not in front, or another permission request was
+    // already pending, which is answered with an empty result and no dialog) must be tried again.
     var notificationAskInFlight by remember { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
-    ) {
+    ) { granted ->
         notificationAskInFlight = false
-        applicationContext.getSharedPreferences("job_notifications", android.content.Context.MODE_PRIVATE)
-            .edit().putBoolean("asked", true).apply()
+        // The permission state afterwards tells a real answer from a dropped request.
+        val answered = notificationPromptWasAnswered(
+            granted = granted,
+            shouldShowRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+                this@FotoXplorrApp,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ),
+        )
+        if (answered) {
+            applicationContext.getSharedPreferences("job_notifications", android.content.Context.MODE_PRIVATE)
+                .edit().putBoolean("asked", true).apply()
+        }
     }
     LaunchedEffect(anyJobRunning) {
         if (anyJobRunning) {
+            // First, and not behind the ask below: that waits for RESUMED, and a job started while
+            // the app is in the background (the case this service exists for) must still get its
+            // notification now.
+            JobForegroundService.start(applicationContext)
             val prefs = applicationContext.getSharedPreferences("job_notifications", android.content.Context.MODE_PRIVATE)
             val granted = ContextCompat.checkSelfPermission(
                 applicationContext,
@@ -450,7 +483,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
             }
-            JobForegroundService.start(applicationContext)
         } else {
             JobForegroundService.stop(applicationContext)
         }
@@ -1308,13 +1340,16 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             },
         )
     } else if (editing != null) {
-        BackHandler { viewModel.setEditingAsset(null) }
+        // While a failed replace has left the original at risk, Back and close change nothing:
+        // the banner below stays up, with only "Save a copy" to leave by (the edited bitmap held
+        // for it is the only good version). Otherwise closing also clears the failure state.
+        BackHandler { viewModel.closeEditor() }
         Box(Modifier.fillMaxSize()) {
             EditorScreen(
                 asset = editing,
                 saveMode = preferences.editorSaveMode,
                 onSetSaveMode = galleryPreferences::setEditorSaveMode,
-                onClose = { viewModel.setEditingAsset(null) },
+                onClose = { viewModel.closeEditor() },
                 onSaved = { message ->
                     viewModel.setEditingAsset(null)
                     transientNotice = TransientNotice(message)
