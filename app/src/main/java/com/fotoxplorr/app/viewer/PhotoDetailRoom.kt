@@ -60,7 +60,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -68,21 +67,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.hyle.HyleTextField
-import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.decodeUpright
 import com.fotoxplorr.app.metadata.CurrentMetadata
-import com.fotoxplorr.app.palette.PaletteExtractor
-import com.fotoxplorr.app.palette.PaletteMemo
 import com.fotoxplorr.app.palette.PaletteSwatch
-import com.fotoxplorr.app.palette.PaletteSwatchRow
 import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomStyle
-import com.fotoxplorr.core.search.ColourSearch
 import com.fotoxplorr.core.model.MediaId
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 import com.fotoxplorr.app.ui.HelpCopy
 
@@ -120,8 +111,8 @@ internal val MUTED_TEXT = Color(0xFF6A6A6A)
  * card *is* the way back.
  *
  * The order is the owner's reference (6.png), top to bottom: the filename and date; the camera
- * card; the map plate the photo flies into; the caption; "Information" with a Show More/Show Less
- * toggle; "Tags". Everything this app knows that the reference does not draw comes after that --
+ * card with the colour strip under it; the map plate the photo flies into; the caption;
+ * "Information" with a Show More/Show Less toggle; "Tags". Everything this app knows that the reference does not draw comes after that --
  * the OCR card, the rating/creator/copyright fields, the library marks -- so nothing a previous
  * round made reachable has been deleted, it has only moved below the reference's own content.
  *
@@ -200,7 +191,7 @@ fun PhotoDetailRoom(
     /**
      * This photo's stored palette, off the recognition index (`RecognitionIndex.paletteFor`).
      * Empty for a photo the indexer has not sampled yet, in which case the row decodes it once
-     * itself -- see [PaletteRow]. Each swatch is a button that searches the library for that
+     * itself -- see [PaletteBlock]. Each swatch is a button that searches the library for that
      * colour through [onSearchLibrary].
      */
     palette: List<PaletteSwatch> = emptyList(),
@@ -298,6 +289,15 @@ fun PhotoDetailRoom(
                 facts = remember(asset, exif) { CameraCardFacts.from(asset, exif) },
                 modifier = Modifier.padding(horizontal = GUTTER - PANEL_INSET),
             )
+            // The colours sit on the same raised panel, right under the card, where they are on
+            // screen the moment the room opens -- not a screenful down inside Information (#11).
+            Spacer(Modifier.height(CARD_TO_PALETTE))
+            PaletteBlock(
+                asset = asset,
+                indexed = palette,
+                onSearchLibrary = onSearchLibrary,
+                modifier = Modifier.padding(horizontal = GUTTER - PANEL_INSET),
+            )
         }
         Spacer(Modifier.height(PANEL_TO_PLATE))
         PlaceBlock(
@@ -331,8 +331,6 @@ fun PhotoDetailRoom(
             manualLongitude = manualLongitude,
             reveal = reveal,
             initiallyExpanded = informationInitiallyExpanded,
-            palette = palette,
-            onSearchLibrary = onSearchLibrary,
         )
         TagsBlock(
             photoId = asset.id,
@@ -1300,8 +1298,9 @@ private class PinReporter(
 /**
  * "Information": the reference's three rows (Modified, colour space, colour profile) with a
  * Show More / Show Less toggle; expanded, every remaining fact about the file that the camera
- * card does not already state -- aspect, a video's duration, album, folder, the coordinate, and
- * the palette. Labels are present whether or not the file answers them, with a dash where it
+ * card does not already state -- aspect, a video's duration, album, folder and the coordinate. The
+ * palette is not one of them: it has its own always-visible strip under the card
+ * ([PaletteBlock]). Labels are present whether or not the file answers them, with a dash where it
  * does not: an absent row tells the reader nothing, a dashed one tells them this photo does not
  * record that.
  *
@@ -1317,9 +1316,6 @@ private fun InformationBlock(
     manualLongitude: Double?,
     reveal: () -> Float,
     initiallyExpanded: Boolean,
-    /** The stored palette and the search a swatch tap opens -- see [PaletteRow]. */
-    palette: List<PaletteSwatch>,
-    onSearchLibrary: ((String) -> Unit)?,
 ) {
     var expanded by remember(asset.id) { mutableStateOf(initiallyExpanded) }
     Column(
@@ -1366,9 +1362,6 @@ private fun InformationBlock(
                     null
                 },
             )
-            // Not a video: MediaImage never decodes a video's frames here, and readImagePalette
-            // returns nothing for one anyway — so the row is only worth adding for a still photo.
-            if (!asset.isVideo) PaletteRow(asset = asset, indexed = palette, onSearchLibrary = onSearchLibrary)
         }
     }
 }
@@ -1416,116 +1409,6 @@ private fun InformationRow(label: String, value: String?) {
     }
 }
 
-/**
- * The colour palette, as one more row of Information: a segmented bar, each colour's width its own
- * share of the photo, hex values under it -- and every segment a button that searches the library
- * for that colour (`colour:#rrggbb`, through the same [onSearchLibrary] the Search pill uses).
- *
- * Three sources, in order. The recognition index first ([indexed], sampled by the indexer at the
- * same 100 px as the decode below, so the two never disagree); then [PaletteMemo], what this
- * process already decoded; and only for a photo the indexer has not reached yet, one decode of
- * its own off the main thread via [readImagePalette]. Whatever is shown also goes into the memo,
- * so the expanded map can colour this photo's dot without decoding anything. Until something is
- * known the row shows the dash every other absent row uses.
- */
-@Composable
-private fun PaletteRow(asset: MediaAsset, indexed: List<PaletteSwatch>, onSearchLibrary: ((String) -> Unit)?) {
-    val context = LocalContext.current
-    var swatches by remember(asset.id, indexed) {
-        mutableStateOf(indexed.ifEmpty { PaletteMemo.get(asset.id).orEmpty() })
-    }
-    LaunchedEffect(asset.id, asset.contentUriString, indexed) {
-        if (indexed.isNotEmpty()) {
-            PaletteMemo.put(asset.id, indexed)
-        } else if (swatches.isEmpty()) {
-            val read = readImagePalette(context, asset)
-            PaletteMemo.put(asset.id, read)
-            swatches = read
-        }
-    }
-
-    Column(Modifier.fillMaxWidth()) {
-        Box(Modifier.fillMaxWidth().height(HAIRLINE_HEIGHT).background(HAIRLINE))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            // The label sits in the same band every other row's label does; the strip is centred
-            // on that band and its hex line hangs below it.
-            Box(Modifier.height(ROW_HEIGHT), contentAlignment = Alignment.CenterStart) {
-                Text(
-                    text = "Palette",
-                    color = ROW_LABEL,
-                    style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp),
-                )
-            }
-            if (swatches.isEmpty()) {
-                Box(Modifier.weight(1f).height(ROW_HEIGHT), contentAlignment = Alignment.CenterEnd) {
-                    Text(
-                        text = CameraCardFacts.DASH,
-                        color = ROW_LABEL,
-                        style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp, fontWeight = FontWeight.Medium),
-                        textAlign = TextAlign.End,
-                    )
-                }
-            } else {
-                PaletteSwatchRow(
-                    swatches = swatches,
-                    // Same path as the Search pill: the activity closes the viewer and seeds the
-                    // grid's search field. With no onSearchLibrary (no catalogue actions) the bar
-                    // stays visible and a tap goes nowhere.
-                    onSwatchTap = { argb -> onSearchLibrary?.invoke(ColourSearch.colourQuery(argb)) },
-                    modifier = Modifier.weight(1f).padding(top = PALETTE_STRIP_TOP, bottom = 6.dp),
-                    labelColor = ROW_LABEL,
-                )
-            }
-        }
-    }
-}
-
-/**
- * The photo's dominant colours, as a segmented-bar-ready list. Empty for a video, or when the
- * file cannot be decoded at all (corrupt, or a format `BitmapFactory` does not understand).
- *
- * The photo is decoded at a small fraction of its real size FIRST — see [decodeUpright] — and
- * only then handed to [PaletteExtractor]. The swatches a viewer perceives "from across the room"
- * do not change with resolution, so paying full-resolution cost for them is pure waste.
- */
-internal suspend fun readImagePalette(
-    context: Context,
-    asset: MediaAsset,
-    maxColors: Int = PaletteExtractor.DEFAULT_MAX_COLORS,
-): List<PaletteSwatch> {
-    if (asset.isVideo) return emptyList()
-    return withContext(Dispatchers.IO) {
-        runCatching {
-            val decoded = decodeUpright(context, asset.contentUri, PALETTE_DECODE_LIMITS)
-                ?: return@runCatching emptyList()
-            val bitmap = decoded.bitmap
-            try {
-                if (bitmap.width <= 0 || bitmap.height <= 0) return@runCatching emptyList()
-                val pixels = IntArray(bitmap.width * bitmap.height)
-                bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-                PaletteExtractor.extract(pixels, maxColors)
-            } finally {
-                bitmap.recycle()
-            }
-        }.getOrDefault(emptyList())
-    }
-}
-
-/**
- * The target longest edge for palette sampling. A segmented bar only ever shows up to
- * [PaletteExtractor.DEFAULT_MAX_COLORS] swatches, and 100px on the long edge is already tens of
- * thousands of sample pixels for the quantiser to work with.
- */
-private const val PALETTE_SAMPLE_DIMENSION = 100
-private val PALETTE_DECODE_LIMITS = DecodeLimits(
-    maxLongEdge = PALETTE_SAMPLE_DIMENSION,
-    maxPixels = PALETTE_SAMPLE_DIMENSION.toLong() * PALETTE_SAMPLE_DIMENSION,
-)
-
 /** `2.0 MP`, or null when the file never recorded its own size. */
 internal fun megapixels(width: Int, height: Int): String? {
     if (width <= 0 || height <= 0) return null
@@ -1565,6 +1448,7 @@ private val PANEL_TOP_PAD = 8.dp
 private val PANEL_BOTTOM_PAD = 8.dp
 private val DATE_TO_CARD = 13.dp
 private val PANEL_TO_PLATE = 10.dp
+private val CARD_TO_PALETTE = 8.dp
 private val PLATE_TO_CAPTION = 18.dp
 private val CAPTION_TO_INFO = 30.dp
 private val SECTION_TO_ROWS = 6.dp
@@ -1573,9 +1457,6 @@ private val TAGS_GAP = 7.dp
 /** 26.5 dp of row under a 1 dp hairline: the reference's 27.5 dp pitch. */
 private val ROW_HEIGHT = 26.5.dp
 private val HAIRLINE_HEIGHT = 1.dp
-
-/** Centres the swatch row's 14dp strip on the label band, like the value of every other row. */
-private val PALETTE_STRIP_TOP = (ROW_HEIGHT - 14.dp) / 2
 private val CARD_CORNER = 10.dp
 private val CARD_HEADER_HEIGHT = 36.dp
 private val CARD_PAD = 6.dp
