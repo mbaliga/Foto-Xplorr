@@ -90,7 +90,13 @@ import kotlin.math.roundToInt
  * @param onSelect fired when a row is tapped, when a turn hesitates on a new row, and when a turn
  *   ends on one that has not been committed yet.
  * @param onReselect fired when the ALREADY-selected row is tapped. Release no longer closes the
- *   room, so tapping the current word is how the user says "this one, close the menu".
+ *   room, so tapping the current word is how the user says "this one, close the menu". It is also
+ *   how a pane (Settings, a destination screen) is left from the word you came from: that word is
+ *   still the selected one, so it is never an `onSelect`.
+ * @param paneOpen whether a pane is open over the destination [selectedId] names. Then a scrub or
+ *   a fling that comes to rest on the selected word is a choice of it, not a no-op, and says so
+ *   through [onLeavePane] (and not [onReselect], which also closes the room under the finger).
+ * @param onLeavePane fired when the wheel rests on the selected word while [paneOpen].
  */
 @Composable
 fun DestinationWordRail(
@@ -99,6 +105,8 @@ fun DestinationWordRail(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
     onReselect: () -> Unit = {},
+    paneOpen: Boolean = false,
+    onLeavePane: () -> Unit = {},
 ) {
     if (items.isEmpty()) return
 
@@ -137,6 +145,8 @@ fun DestinationWordRail(
         val currentSelectedId by rememberUpdatedState(selectedId)
         val currentSelectedRaw by rememberUpdatedState(selectedRaw)
         val currentOnSelect by rememberUpdatedState(onSelect)
+        val currentPaneOpen by rememberUpdatedState(paneOpen)
+        val currentOnLeavePane by rememberUpdatedState(onLeavePane)
         val currentItems by rememberUpdatedState(items)
 
         var placed by remember { mutableStateOf(false) }
@@ -156,7 +166,9 @@ fun DestinationWordRail(
         // Whether a finger is on the wheel and moving it, and whether the wheel has been turned by
         // one since it last landed. The scroll state's own `isScrollInProgress` cannot say: it is
         // equally true for the rail's animations, whose interruption (a second tap, a finger
-        // grabbing the wheel) would otherwise read as a release.
+        // grabbing the wheel) would otherwise read as a release. A turn with no finger -- a mouse
+        // wheel, a trackpad, a screen reader's scroll action -- has no drag to see; it is told
+        // apart by starting while the rail is not moving the wheel itself (see below).
         var dragging by remember { mutableStateOf(false) }
         var turnedByUser by remember { mutableStateOf(false) }
         LaunchedEffect(scroll) {
@@ -213,11 +225,18 @@ fun DestinationWordRail(
                     focusIndex = railFocusIndex(scroll.value, pitchPx, currentItems.lastIndex),
                     selectedIndex = currentSelectedRaw,
                     dragging = dragging && scroll.isScrollInProgress && !settling,
+                    paneOpen = currentPaneOpen,
                 )
             }.collectLatest { hovered ->
                 if (hovered != null) {
                     delay(RAIL_COMMIT_DEBOUNCE_MS)
-                    currentItems.getOrNull(hovered)?.let { currentOnSelect(it.id) }
+                    if (hovered == currentSelectedRaw) {
+                        // Only reachable with a pane open: the scrub has come back to the word
+                        // the pane sits over, which is choosing it.
+                        currentOnLeavePane()
+                    } else {
+                        currentItems.getOrNull(hovered)?.let { currentOnSelect(it.id) }
+                    }
                 }
             }
         }
@@ -230,12 +249,20 @@ fun DestinationWordRail(
         LaunchedEffect(scroll, pitchPx) {
             var wasScrolling = false
             snapshotFlow { scroll.isScrollInProgress }.collect { scrolling ->
+                // A scroll that begins while the rail is not moving its own wheel is a user's whether
+                // or not a finger drags it (mouse wheel, trackpad, TalkBack): without this it
+                // neither committed nor settled, and left the wheel between words.
+                if (scrolling && !wasScrolling && !settling) turnedByUser = true
                 // Only a true->false edge is a landing; the initial false must not fire onSelect.
                 if (wasScrolling && !scrolling && turnedByUser) {
                     turnedByUser = false
                     val landing = currentItems
                     val nearest = railFocusIndex(scroll.value, pitchPx, landing.lastIndex)
-                    if (nearest != currentSelectedRaw) currentOnSelect(landing[nearest].id)
+                    when (railLanding(nearest, currentSelectedRaw, currentPaneOpen)) {
+                        RailLanding.SELECT -> currentOnSelect(landing[nearest].id)
+                        RailLanding.LEAVE_PANE -> currentOnLeavePane()
+                        RailLanding.NONE -> Unit
+                    }
                     // The settle is itself a scroll and comes back through this edge, but it is not
                     // a user turn, so it ends here. A child job, so a finger that grabs the wheel
                     // mid-settle cancels the settle alone rather than this collector.
@@ -395,10 +422,40 @@ internal fun railFocusIndex(scrollPx: Int, pitchPx: Float, lastIndex: Int): Int 
  * Which row the debounce should be waiting to commit, or null for none. Only a finger actually
  * dragging the wheel (not its fling after the lift, which commits once where it lands, and not the
  * rail's own settle or follow-the-selection animation, which pass through rows nobody chose) that
- * is resting on a row other than the selected one has anything pending. [selectedIndex] is -1 when the selected id is unknown, so any row is then a change.
+ * is resting on a row other than the selected one has anything pending -- or, with a [paneOpen]
+ * over the selected row, resting on that one too. [selectedIndex] is -1 when the selected id is
+ * unknown, so any row is then a change.
  */
-internal fun railPendingCommit(focusIndex: Int, selectedIndex: Int, dragging: Boolean): Int? =
-    if (dragging && focusIndex != selectedIndex) focusIndex else null
+internal fun railPendingCommit(
+    focusIndex: Int,
+    selectedIndex: Int,
+    dragging: Boolean,
+    paneOpen: Boolean = false,
+): Int? =
+    if (dragging && (focusIndex != selectedIndex || paneOpen)) focusIndex else null
+
+/** What a wheel that has come to rest on a row means. */
+internal enum class RailLanding {
+    /** A row other than the selected one: commit it. */
+    SELECT,
+
+    /** The selected row, with a pane open over it: the pane is what is being left. */
+    LEAVE_PANE,
+
+    /** The selected row and nothing over it: nothing to say. */
+    NONE,
+}
+
+/**
+ * The meaning of resting on [nearest]. With a pane open the selected row is not "no change": the
+ * rail's selection is the destination UNDER the pane, so the word you came from is the way back to
+ * it ([paneOpen]).
+ */
+internal fun railLanding(nearest: Int, selectedIndex: Int, paneOpen: Boolean): RailLanding = when {
+    nearest != selectedIndex -> RailLanding.SELECT
+    paneOpen -> RailLanding.LEAVE_PANE
+    else -> RailLanding.NONE
+}
 
 /**
  * How far through its journey the marker is, as 0 at rest at either end and 1 at the midpoint.

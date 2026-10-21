@@ -208,7 +208,7 @@ fun GalleryActionsRoom(
         RoomRow(
             label = if (selectionActive) "Selecting" else "Select photos",
             caption = if (selectionActive) {
-                "Tap photos to add them. The count is at the bottom of the screen."
+                "Tap photos to add them. The count is at the top right."
             } else {
                 "Then tap the ones you want."
             },

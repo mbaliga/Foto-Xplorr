@@ -66,6 +66,24 @@ object RoomGeography {
 class RoomSlots<T : Any>(val left: T?, val top: T?, val right: T?, val bottom: T?)
 
 /**
+ * The slots as they stand while a pane (Settings, a destination screen) has taken over the place
+ * the photos are: navigation stays, so the rail can still lead back out, and every other kind is
+ * dropped. Their rooms describe and act on the grid underneath, which nobody can see, and a null
+ * slot makes the shell refuse the drag from that edge instead of opening a room onto nothing.
+ * Which slot is navigation is [RoomGeography]'s to say, not this function's.
+ */
+fun <T : Any> RoomSlots<T>.navigationOnlyWhen(paneTakenOver: Boolean): RoomSlots<T> {
+    if (!paneTakenOver) return this
+    fun keep(edge: RoomEdge, room: T?): T? = if (RoomGeography.kindAt(edge) == RoomKind.NAVIGATION) room else null
+    return RoomSlots(
+        left = keep(RoomEdge.LEFT, left),
+        top = keep(RoomEdge.TOP, top),
+        right = keep(RoomEdge.RIGHT, right),
+        bottom = keep(RoomEdge.BOTTOM, bottom),
+    )
+}
+
+/**
  * Put each kind's room on the edge [RoomGeography] assigns it. Both screens pass the result to
  * the shell as `left = slots.left`, `top = slots.top` and so on, instead of choosing an edge for
  * each room themselves; a kind left null leaves its edge without a room (the shell then refuses
@@ -93,12 +111,30 @@ fun <T : Any> roomSlots(
 }
 
 /**
- * The system bar a room on [edge] has to clear: the status bar for a room that comes in from the
- * top or the side, the navigation bar for one that comes up from the bottom. The shell insets a
- * room by its own band on the side the parked card sits, so this is only ever the OTHER end, and
- * it follows the edge, not the room: move a room and its padding moves with it.
+ * The system bars a room on [edge] has to clear. A TOP room comes down from under the status bar
+ * and a BOTTOM room tilts up to the navigation bar, so each clears only the bar it touches. A LEFT
+ * or RIGHT room runs the full height of the window, so it touches both and clears both: the status
+ * bar at its head and the navigation bar at its foot. (A side room used to clear only the status
+ * bar, which left its last row under the gesture bar.)
+ *
+ * The shell insets a room by its own band on the side the parked card sits, so this is only ever
+ * the OTHER ends, and it follows the edge, not the room: move a room and its padding moves with
+ * it.
  */
-fun Modifier.clearSystemBarsFor(edge: RoomEdge): Modifier = when (edge) {
-    RoomEdge.BOTTOM -> navigationBarsPadding()
-    else -> statusBarsPadding()
+fun Modifier.clearSystemBarsFor(edge: RoomEdge): Modifier = when (systemBarsClearedBy(edge)) {
+    SystemBarsCleared.STATUS -> statusBarsPadding()
+    SystemBarsCleared.NAVIGATION -> navigationBarsPadding()
+    SystemBarsCleared.BOTH -> statusBarsPadding().navigationBarsPadding()
+}
+
+/** Which system bars a room clears; the choice [clearSystemBarsFor] makes, apart from the modifiers. */
+enum class SystemBarsCleared { STATUS, NAVIGATION, BOTH }
+
+/** The bars a room on [edge] clears -- see [clearSystemBarsFor]. */
+fun systemBarsClearedBy(edge: RoomEdge): SystemBarsCleared = when (edge) {
+    RoomEdge.TOP -> SystemBarsCleared.STATUS
+    RoomEdge.BOTTOM -> SystemBarsCleared.NAVIGATION
+    RoomEdge.LEFT, RoomEdge.RIGHT -> SystemBarsCleared.BOTH
+    // No room lives at HOME; the status bar is the safe default for whatever is drawn there.
+    else -> SystemBarsCleared.STATUS
 }

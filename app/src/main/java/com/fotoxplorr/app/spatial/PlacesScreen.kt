@@ -52,6 +52,7 @@ import com.fotoxplorr.app.experience.GalleryPreviewScreen
 import com.fotoxplorr.app.experience.PhotoWallScreen
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.ui.RoomStyle
 
 private enum class ExploreExperience(
     val title: String,
@@ -182,17 +183,25 @@ private fun ExploreHub(
     val alternateCover = assets.drop(8).firstOrNull { !it.isTrashed } ?: imageCover
 
     Column(modifier = Modifier.fillMaxSize()) {
+        // The pane's own colours, not the theme's: this sits on the pane's black ground, whose
+        // content colour is white whatever the theme. In light theme `colorScheme.surface` is
+        // near-white, which put white titles on it and made the header unreadable.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
+                .background(RoomStyle.Surface)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
             Column {
-                Text("Immersive and AI", style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    "Immersive and AI",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = RoomStyle.Ink,
+                )
                 Text(
                     "Optional ways to explore the same local library. The ordinary gallery continues to work with AI, network and location disabled.",
                     style = MaterialTheme.typography.bodySmall,
+                    color = RoomStyle.InkFaint,
                 )
             }
         }

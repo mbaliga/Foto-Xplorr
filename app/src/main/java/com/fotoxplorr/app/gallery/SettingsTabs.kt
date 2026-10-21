@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,7 +36,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -66,10 +66,10 @@ import com.fotoxplorr.app.ui.builtInThemeJson
 import com.fotoxplorr.app.ui.parseThemeJson
 
 /**
- * The settings room's tabs (owner, 2026-08-14: *"The settings are pathetically few. And 'more
+ * The Settings pane's tabs (owner, 2026-08-14: *"The settings are pathetically few. And 'more
  * settings' is strange as well. Those things should be in tabs."*).
  *
- * Both halves of that are the same defect. The room used to be **two depths** — a compact panel,
+ * Both halves of that are the same defect. Settings used to be a room of **two depths** — a compact panel,
  * and everything else behind an "All settings…" button — which is what made the second depth feel
  * strange: it was not a category, it was an overflow, and an overflow is what a surface grows
  * when it has no structure to put things in. Tabs give it that structure, so there is one depth
@@ -653,9 +653,10 @@ private fun SwitchRow(
             // The whole row is the one switch, so a screen reader finds one node per setting (the
             // row used to be clickable AND wrap a toggle that was clickable, which announced two).
             // The toggle at its end is drawn only; it carries the state, the row carries the tap.
-            // Dimmed rather than recoloured when off-limits: the toggle's own disabled greys are
-            // LIGHTER than its live ones, which on black reads as the live control.
-            .alpha(if (enabled) 1f else DISABLED_ROW_ALPHA)
+            // Off-limits is stated by the label's and the toggle's own disabled fades and by
+            // nothing else. A further alpha over the whole row used to stack on those: the caption
+            // fell to about 2.2:1 and the toggle's on and off states became indistinguishable,
+            // which is the one thing a disabled switch still has to say.
             .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange),
         trailing = {
             com.fotoxplorr.app.hyle.HyleToggle(
@@ -666,9 +667,6 @@ private fun SwitchRow(
         },
     )
 }
-
-/** How far a row that cannot be used is dimmed. */
-private const val DISABLED_ROW_ALPHA = 0.5f
 
 /**
  * One pill: a settings tab, an option of a [ChoiceRow], or an accent. Selected is the accent, so
@@ -688,6 +686,9 @@ private fun SettingsChip(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
+            // First, so the pill is drawn at its own size and only the touch target grows to 48dp:
+            // the chip is 33-37dp tall, under the minimum, and this does not change how it looks.
+            .minimumInteractiveComponentSize()
             .background(
                 if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.10f),
                 RoundedCornerShape(50),

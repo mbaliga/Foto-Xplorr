@@ -79,6 +79,7 @@ import androidx.compose.ui.res.painterResource
 import com.fotoxplorr.app.R
 import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.PaneScaffold
+import com.fotoxplorr.app.ui.navigationOnlyWhen
 import com.fotoxplorr.app.ui.roomSlots
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -87,7 +88,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
 import dev.aarso.cellshell.SpatialMotion
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -495,6 +500,12 @@ private fun GalleryBrowser(
     // with [legacyScreen]: opening either clears the other.
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     val paneTakenOver = paneTakenOver(settingsOpen, legacyScreen != null)
+    // The rail's own paths clear the selection as they open a pane, but Settings -> a destination
+    // screen and back, and anything added later, do not; a selection kept under a pane would
+    // re-appear on the grid (and its count bar with it) the moment the pane is left.
+    LaunchedEffect(paneTakenOver) {
+        if (paneTakenOver && selection.isActive) selection = selection.clear()
+    }
     // Hoisted because the shell must reserve the same strip the shade's pull gesture lives in
     // -- see topReserve below. One state, so the shade and the gesture zone cannot differ.
     var shadeState by remember { mutableStateOf(ShadeState.COLLAPSED) }
@@ -738,20 +749,18 @@ private fun GalleryBrowser(
         actions.onPendingSearchConsumed()
     }
 
-    BackHandler(
-        enabled = !shell.atHome || paneTakenOver ||
-            selection.isActive || searchVisible || route != BrowserRoute.Root,
-    ) {
-        when (
-            paneBackTarget(
-                roomOpen = !shell.atHome,
-                settingsOpen = settingsOpen,
-                legacyScreenOpen = legacyScreen != null,
-                selectionActive = selection.isActive,
-                searchVisible = searchVisible,
-                routeIsRoot = route == BrowserRoute.Root,
-            )
-        ) {
+    // What Back undoes next, and what Escape undoes while a pane is up: one list, so a hardware
+    // keyboard cannot leave a pane that the Back gesture would have closed.
+    fun currentBackTarget() = paneBackTarget(
+        roomOpen = !shell.atHome,
+        settingsOpen = settingsOpen,
+        legacyScreenOpen = legacyScreen != null,
+        selectionActive = selection.isActive,
+        searchVisible = searchVisible,
+        routeIsRoot = route == BrowserRoute.Root,
+    )
+    fun performBack(target: PaneBackTarget) {
+        when (target) {
             // A room is not a back-stack entry, but Back is still the gesture people reach for
             // to leave one, so it closes the room rather than the app.
             PaneBackTarget.CLOSE_ROOM -> shell.closeAll()
@@ -765,6 +774,12 @@ private fun GalleryBrowser(
             PaneBackTarget.LEAVE_ROUTE -> route = BrowserRoute.Root
             PaneBackTarget.NONE -> Unit
         }
+    }
+    BackHandler(
+        enabled = !shell.atHome || paneTakenOver ||
+            selection.isActive || searchVisible || route != BrowserRoute.Root,
+    ) {
+        performBack(currentBackTarget())
     }
 
     // Where the grid actually is, for the edge scrubber's resting marker. Derived so a scroll
@@ -885,6 +900,9 @@ private fun GalleryBrowser(
     // moves the cursor roughly up/down/across rather than leaving the keyboard unable to drive a
     // masonry grid at all.
     fun handleGalleryShortcut(shortcut: GalleryShortcut) {
+        // The grid is still composed under a pane but nobody can see it: Ctrl+A, Delete, Enter and
+        // the arrows would select, trash and open photos on a screen that is not showing them.
+        if (!shortcutActsOverPane(shortcut, paneTakenOver)) return
         when (shortcut) {
             is GalleryShortcut.MoveSelection -> {
                 // renderedAssets, not scrubberAssets: this is asset-index-space arithmetic (a
@@ -913,9 +931,11 @@ private fun GalleryBrowser(
                 val focused = ids.firstOrNull { it.id == chromeBridge.keyboardFocusedId } ?: ids.firstOrNull()
                 focused?.let { actions.onOpenAsset(it, ids) }
             }
-            // Same priority order as BackHandler above: a selection is the most specific thing to
-            // back out of, then search, then the keyboard's own cursor.
+            // Same priority order as BackHandler above: a pane (and a room over it) first, then a
+            // selection as the most specific thing to back out of, then search, then the
+            // keyboard's own cursor.
             GalleryShortcut.CloseOrClear -> when {
+                paneTakenOver -> performBack(currentBackTarget())
                 selection.isActive -> selection = selection.clear()
                 searchVisible -> {
                     searchVisible = false
@@ -946,6 +966,8 @@ private fun GalleryBrowser(
     // whole shell is what makes bridge.onZoom/onContextAction reach a tile regardless of which
     // of those two paths rendered it. See GridChromeBridge's own doc for the full reasoning.
     CompositionLocalProvider(LocalGridChromeBridge provides chromeBridge) {
+    // Over a pane the details, actions and view options rooms would act on the hidden grid, so
+    // only the navigation room stays (and the shell refuses a drag from an edge with no room).
     val rooms = roomSlots<@Composable () -> Unit>(
         navigation = {
             DestinationRailPanel(
@@ -964,7 +986,23 @@ private fun GalleryBrowser(
                     settingsOpen = false
                     gridScope.launch { gridState.scrollToItem(0) }
                 },
-                onReselect = { shell.closeAll() },
+                // The selected word is the destination UNDER an open pane, so tapping it is how
+                // the pane is left as well as how the room is closed.
+                onReselect = {
+                    val effect = railReselectEffect(inRoom = true, paneTakenOver = paneTakenOver)
+                    if (effect.leavePane) {
+                        legacyScreen = null
+                        settingsOpen = false
+                    }
+                    if (effect.closeRoom) shell.closeAll()
+                },
+                // A scrub that rests on that word leaves the pane too, but the finger is still on
+                // the wheel, so the room stays.
+                paneOpen = paneTakenOver,
+                onLeavePane = {
+                    legacyScreen = null
+                    settingsOpen = false
+                },
                 // The room swings closed and the card that comes back IS Settings.
                 onOpenSettings = {
                     settingsOpen = true
@@ -1017,7 +1055,7 @@ private fun GalleryBrowser(
         viewOptions = {
             GalleryViewOptionsRoom(state = state, actions = actions)
         },
-    )
+    ).navigationOnlyWhen(paneTakenOver)
     SpatialShell(
         controller = shell,
         accentColor = MaterialTheme.colorScheme.primary,
@@ -1117,6 +1155,9 @@ private fun GalleryBrowser(
                             } ?: return@onKeyEvent false
                             val shortcut = galleryShortcutFor(shortcutKey, event.isCtrlPressed)
                                 ?: return@onKeyEvent false
+                            // Not consumed over a pane, so a key the grid ignores there still
+                            // reaches whatever else wants it.
+                            if (!shortcutActsOverPane(shortcut, paneTakenOver)) return@onKeyEvent false
                             handleGalleryShortcut(shortcut)
                             true
                         },
@@ -1140,7 +1181,19 @@ private fun GalleryBrowser(
                                     settingsOpen = false
                                     gridScope.launch { gridState.scrollToItem(0) }
                                 },
-                                // No room is involved on a pinned rail, so there is nothing to close.
+                                // No room is involved on a pinned rail, so there is nothing to close -- but
+                                // the word you came from must still lead back out of a pane.
+                                onReselect = {
+                                    if (railReselectEffect(inRoom = false, paneTakenOver = paneTakenOver).leavePane) {
+                                        legacyScreen = null
+                                        settingsOpen = false
+                                    }
+                                },
+                                paneOpen = paneTakenOver,
+                                onLeavePane = {
+                                    legacyScreen = null
+                                    settingsOpen = false
+                                },
                                 onOpenSettings = {
                                     settingsOpen = true
                                     legacyScreen = null
@@ -1180,41 +1233,55 @@ private fun GalleryBrowser(
                         when {
                             // The two panes. Settings is checked first only for readability: they
                             // are mutually exclusive, because opening either clears the other.
-                            settingsOpen -> PaneScaffold(
-                                title = "Settings",
-                                onBack = { settingsOpen = false },
+                            settingsOpen -> ShadedPane(
+                                activities = activities,
+                                shadeState = shadeState,
+                                onShadeStateChange = { shadeState = it },
+                                reserve = notificationReserve,
                             ) {
-                                SettingsRoom(
+                                PaneScaffold(
+                                    title = "Settings",
+                                    onBack = { settingsOpen = false },
+                                ) {
+                                    SettingsRoom(
+                                        state = state,
+                                        actions = actions,
+                                        onOpenLegacyScreen = {
+                                            settingsOpen = false
+                                            legacyScreen = it
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                            }
+                            legacy != null -> ShadedPane(
+                                activities = activities,
+                                shadeState = shadeState,
+                                onShadeStateChange = { shadeState = it },
+                                reserve = notificationReserve,
+                            ) {
+                                LegacyScreenHost(
+                                    screen = legacy,
                                     state = state,
                                     actions = actions,
-                                    onOpenLegacyScreen = {
-                                        settingsOpen = false
-                                        legacyScreen = it
+                                    query = query,
+                                    onBack = { legacyScreen = null },
+                                    onOpenRoute = { route = it; legacyScreen = null },
+                                    onRequestUnlock = { key, name ->
+                                        passwordRequest = PasswordRequest(PasswordAction.UNLOCK, key, name)
                                     },
-                                    modifier = Modifier.weight(1f),
+                                    // How the Appearance > Accent picker is reached from these screens.
+                                    onOpenSettings = {
+                                        settingsOpen = true
+                                        legacyScreen = null
+                                    },
+                                    onOpenDestination = {
+                                        destination = it
+                                        route = BrowserRoute.Root
+                                        legacyScreen = null
+                                    },
                                 )
                             }
-                            legacy != null -> LegacyScreenHost(
-                                screen = legacy,
-                                state = state,
-                                actions = actions,
-                                query = query,
-                                onBack = { legacyScreen = null },
-                                onOpenRoute = { route = it; legacyScreen = null },
-                                onRequestUnlock = { key, name ->
-                                    passwordRequest = PasswordRequest(PasswordAction.UNLOCK, key, name)
-                                },
-                                // How the Appearance > Accent picker is reached from these screens.
-                                onOpenSettings = {
-                                    settingsOpen = true
-                                    legacyScreen = null
-                                },
-                                onOpenDestination = {
-                                    destination = it
-                                    route = BrowserRoute.Root
-                                    legacyScreen = null
-                                },
-                            )
                             // ---- the zoom ladder's sparse rungs (owner: "zoom out past the
                             // sparsest grid and you reach Calendar [-> Year -> Decade]; further
                             // out, Map") ----
@@ -1287,7 +1354,7 @@ private fun GalleryBrowser(
                             // top-room reveal, so no other gesture may claim it — and the
                             // static "PULL TO CREATE BACKUP" copy went with it. Refresh is
                             // now physical (ShakeToRefresh below); backup is an explicit,
-                            // named item in the settings room's Data tab instead of a gesture.
+                            // named item in Settings' Data tab instead of a gesture.
                             //
                             // The shade is drawn OVER this content and never displaces it, so
                             // the grid does not move as jobs start and finish -- see ActivityShade.
@@ -1382,7 +1449,7 @@ private fun GalleryBrowser(
                         )
                     }
 
-                    if (selection.isActive) {
+                    if (selection.isActive && !paneTakenOver) {
                         SelectionOverlay(
                             selection = selection,
                             selectedAssets = selectedAssets,
@@ -1704,6 +1771,36 @@ private fun GalleryViewModeButton(label: String, selected: Boolean, onClick: () 
 }
 
 /**
+ * A pane under the background-job shade.
+ *
+ * The shade is composed here, around the pane, because it used to be drawn only over the root
+ * grid while the shell kept reserving its strip for every screen: Settings > Data showed no
+ * progress for the jobs it starts, and the top-edge pull was blocked by a shade that was not there.
+ *
+ * Unlike the grid, which the shade deliberately covers rather than moves, a pane has a back
+ * chevron and a title in exactly the strip the shade would cover, so the pane is pushed down by
+ * the shade's own height ([reserve]) on the shade's own curve instead of being drawn under it.
+ */
+@Composable
+private fun ShadedPane(
+    activities: List<BackgroundActivity>,
+    shadeState: ShadeState,
+    onShadeStateChange: (ShadeState) -> Unit,
+    reserve: Dp,
+    content: @Composable () -> Unit,
+) {
+    // The shade's own settle curve (320 ms, 0.4/0/0.2/1), so the pane moves with its edge.
+    val top by animateDpAsState(
+        targetValue = reserve,
+        animationSpec = tween(durationMillis = 320, easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)),
+        label = "pane-shade-reserve",
+    )
+    ActivityShade(activities = activities, state = shadeState, onStateChange = onShadeStateChange) {
+        Box(Modifier.fillMaxSize().padding(top = top)) { content() }
+    }
+}
+
+/**
  * The nav rail's PERSISTENT presentation -- [NavRailPresentation.PINNED] or
  * [NavRailPresentation.COLLAPSED] -- rendered as an ordinary sibling beside the grid rather than
  * inside SpatialShell's pull-out room. [DestinationRailPanel] already fills whatever box it is
@@ -1731,6 +1828,9 @@ private fun PersistentNavRail(
     onOpenSettings: () -> Unit,
     onExpand: () -> Unit,
     onCollapse: () -> Unit,
+    onReselect: () -> Unit = {},
+    paneOpen: Boolean = false,
+    onLeavePane: () -> Unit = {},
 ) {
     if (presentation == NavRailPresentation.COLLAPSED) {
         Box(
@@ -1758,6 +1858,9 @@ private fun PersistentNavRail(
             selectedId = selectedId,
             onSelect = onSelect,
             onOpenSettings = onOpenSettings,
+            onReselect = onReselect,
+            paneOpen = paneOpen,
+            onLeavePane = onLeavePane,
         )
         // The collapse affordance: one tap back to NavRailPresentation.COLLAPSED. Pinned is a
         // standing choice, not a one-way door -- see navRailCollapsed's own doc in
@@ -1796,14 +1899,14 @@ private const val COLLAPSED_RAIL_WIDTH = 56
  *   soft shadow under it. Three 30dp white glyphs on a 46dp pitch, starting 44dp in — that leading
  *   run of bare black is in the mockup and is what makes the bar read as a cut-out rather than as
  *   a toolbar.
- * - **Bottom left**, a 44dp rounded pill from the screen edge across about three quarters of the
- *   width: the count at 28sp, `SELECTED` at 20sp uppercase and half opacity, then a long empty run
- *   of black, then the dismiss ✕ near its right end.
+ * - **Top right**, on the toolbar's line, a plain rounded bar sized to its content: the count at
+ *   28sp and `SELECTED` at 20sp uppercase and half opacity. It has no ✕; the bar itself clears the
+ *   selection. (It was a 44dp pill across the bottom left, with a dismiss ✕, in the first mockup.)
  * - **Bottom right**, the trash: black, **square-cornered**, flush into the corner, separated from
- *   the pill by a gap of bare photograph. The one destructive control, as far from everything else
+ *   the count bar by the height of the screen. The one destructive control, as far from everything else
  *   as the screen allows and shaped differently from everything else so the hand knows it.
  *
- * The shapes differ on purpose. The pill is rounded and the trash is not; that is the only
+ * The shapes differ on purpose. The count bar is rounded and the trash is not; that is the only
  * signal in the design that distinguishes "how many" from "destroy them", and it survives being
  * glanced at.
  */

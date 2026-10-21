@@ -73,7 +73,8 @@ fun ViewerSettingsRoom(
             .fillMaxHeight()
             .background(Color.Black)
             // The shell insets a right room by its band at the LEFT (that is where the parked
-            // card's sliver sits), so the system bar to clear here is the status bar at the top.
+            // card's sliver sits). The room runs the full height of the window, so it clears the
+            // status bar at its head and the navigation bar at its foot.
             .clearSystemBarsFor(RoomGeography.ViewOptions)
             // Scrollable because the room is taller than a short phone's screen. Without this the
             // last group would simply be unreachable, which is a worse failure than a scrollbar.
@@ -82,7 +83,9 @@ fun ViewerSettingsRoom(
                 start = RoomStyle.GutterStart,
                 end = RoomStyle.GutterEnd,
                 top = 28.dp,
-                bottom = 20.dp,
+                // The navigation bar is cleared above, outside the scroll; this is only the room's
+                // own breathing space under the last row, the same as the gallery's.
+                bottom = 28.dp,
             ),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {

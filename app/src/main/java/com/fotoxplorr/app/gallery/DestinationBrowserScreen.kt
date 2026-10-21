@@ -168,13 +168,17 @@ fun destinationEmptyMessage(
  * care of overflow itself. Wrapping it in a `verticalScroll` would hand it an infinite height to
  * measure against, which is the fastest way to make a distance-weighted list stop weighting.
  *
- * Below the wheel, not inside a separate room, sits Settings (owner, 2026-08-14, reference
- * screenshot of a rail with a dimmer "Settings / Help" pair under the primary nav: *"The
- * settings should come below the menu nav itself"*). It used to be reachable only by already
- * knowing to swipe in from the right edge -- true, but not discoverable, especially now that
- * removing the header (item 4, previous round) took away the last visible entry point.
- * [DestinationWordRail] is handed a bounded height via `Modifier.weight(1f)` so it keeps working
- * exactly as documented above; the settings row is the `Column`'s other, unweighted child.
+ * Below the wheel sits Settings (owner, 2026-08-14, reference screenshot of a rail with a dimmer
+ * "Settings / Help" pair under the primary nav: *"The settings should come below the menu nav
+ * itself"*). It was once a room reached by swiping in from an edge -- true, but not discoverable,
+ * especially once removing the header took away the last visible entry point -- and is now a pane
+ * that takes over the place the photos are, opened only from this row. [DestinationWordRail] is
+ * handed a bounded height via `Modifier.weight(1f)` so it keeps working exactly as documented
+ * above; the settings row is the `Column`'s other, unweighted child.
+ *
+ * [paneOpen] and [onLeavePane] are the rail's way back from that pane: the selected word is the
+ * destination under it, so tapping it is [onReselect], and a scrub that rests on it is
+ * [onLeavePane] (see [DestinationWordRail]).
  */
 @Composable
 fun DestinationRailPanel(
@@ -184,6 +188,8 @@ fun DestinationRailPanel(
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
     onReselect: () -> Unit = {},
+    paneOpen: Boolean = false,
+    onLeavePane: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -196,6 +202,8 @@ fun DestinationRailPanel(
             selectedId = selectedId,
             onSelect = onSelect,
             onReselect = onReselect,
+            paneOpen = paneOpen,
+            onLeavePane = onLeavePane,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
