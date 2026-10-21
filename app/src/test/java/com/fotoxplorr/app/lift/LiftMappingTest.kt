@@ -130,6 +130,7 @@ class LiftMappingTest {
     fun `every failure has a distinct, non-blank message and the unreadable one is the documented sentence`() {
         val messages = listOf(
             LiftFailure.NoSubject,
+            LiftFailure.TooMuch,
             LiftFailure.OutOfMemory,
             LiftFailure.Unreadable,
             LiftFailure.Failed(null),
@@ -137,6 +138,55 @@ class LiftMappingTest {
         assertTrue(messages.all { it.isNotBlank() })
         assertEquals(messages.size, messages.toSet().size)
         assertEquals("Couldn't open this photo for lifting", LiftFailure.Unreadable.userMessage())
+    }
+
+    // ---- what a finished solve says about itself ----
+
+    private val tap = SelectionOp.Hint(true, BrushStroke(listOf(NormPoint(0.5f, 0.5f)), 0.03f))
+    private val backgroundHint = SelectionOp.Hint(false, BrushStroke(listOf(NormPoint(0.1f, 0.1f)), 0.03f))
+    private val paint = SelectionOp.Paint(false, BrushStroke(listOf(NormPoint(0.1f, 0.1f)), 0.03f))
+
+    private fun session(vararg ops: SelectionOp): SelectionSession = ops.fold(SelectionSession()) { s, op -> s.apply(op) }
+
+    /** A 10x10 mask with the first [covered] pixels fully selected. */
+    private fun mask(covered: Int, alpha: Float = 1f) =
+        SubjectSegmentation.Mask(10, 10, FloatArray(100) { if (it < covered) alpha else 0f })
+
+    @Test
+    fun `nothing to say before there is a foreground mark`() {
+        assertNull(solveFailureFor(mask(100), SelectionSession()))
+        assertNull(solveFailureFor(mask(100), session(backgroundHint)))
+    }
+
+    @Test
+    fun `a foreground mark that selected nothing is no subject`() {
+        assertEquals(LiftFailure.NoSubject, solveFailureFor(mask(0), session(tap)))
+    }
+
+    @Test
+    fun `selecting nearly the whole frame with no background mark is too much`() {
+        assertEquals(LiftFailure.TooMuch, solveFailureFor(mask(100), session(tap)))
+        assertEquals(LiftFailure.TooMuch, solveFailureFor(mask(86), session(tap)))
+    }
+
+    @Test
+    fun `the too much line is above 85 percent, not at it`() {
+        assertNull(solveFailureFor(mask(85), session(tap)))
+        assertNull(solveFailureFor(mask(40), session(tap)))
+    }
+
+    @Test
+    fun `a background mark or a painted correction means the person is steering`() {
+        assertNull(solveFailureFor(mask(100), session(tap, backgroundHint)))
+        assertNull(solveFailureFor(mask(100), session(tap, paint)))
+    }
+
+    @Test
+    fun `faint feathered alpha does not count as covered`() {
+        assertNull(solveFailureFor(mask(100, alpha = 0.3f), session(tap)))
+        assertEquals(1f, coverage(mask(100)), 0f)
+        assertEquals(0.3f, coverage(mask(30)), 0.0001f)
+        assertEquals(0f, coverage(SubjectSegmentation.Mask(0, 0, FloatArray(0))), 0f)
     }
 
     @Test

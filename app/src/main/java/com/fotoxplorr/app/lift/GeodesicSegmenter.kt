@@ -85,7 +85,7 @@ object GeodesicSegmenter {
         for (i in 0 until n) if (fgSeeds[i]) bgSeeds[i] = false
 
         val fgHist = histogram(pixels, fgSeeds)
-        if (params.borderPrior) addBorderPrior(pixels, width, height, fgHist, bgSeeds)
+        if (params.borderPrior) addBorderPrior(pixels, width, height, fgHist, fgSeeds, bgSeeds)
         val bgHist = histogram(pixels, bgSeeds)
 
         val likelihood = FloatArray(n) { foregroundLikelihood(pixels[it], fgHist, bgHist) }
@@ -165,15 +165,88 @@ object GeodesicSegmenter {
      * moment makes the very first refinement WORSE: a small scribble then becomes the only thing
      * the whole unmarked background can be "closer to", and everything nearer the subject than the
      * scribble leaks into the cut. The scribbles add to the frame's vote, they do not replace it.
+     *
+     * It never leaves [bgSeeds] empty (unless every pixel is a [fgSeeds] pixel). A sloppy scribble
+     * that touches a colour the frame also has used to vote nobody, and with nothing to be closer
+     * to every pixel was "closer to the subject": the whole photo. So when the strict vote finds
+     * no one, the frame pixels the marks resemble LEAST ([lowestFrameResemblance]) vote instead,
+     * and as a last resort the least subject-like pixel anywhere. A weak background is a better
+     * answer than none: the colour model and the edges still decide where the two meet.
      */
-    private fun addBorderPrior(pixels: IntArray, width: Int, height: Int, fgHist: FloatArray, bgSeeds: BooleanArray) {
+    private fun addBorderPrior(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        fgHist: FloatArray,
+        fgSeeds: BooleanArray,
+        bgSeeds: BooleanArray,
+    ) {
         for (y in 0 until height) {
             for (x in 0 until width) {
-                if (x != 0 && y != 0 && x != width - 1 && y != height - 1) continue
+                if (!onFrame(x, y, width, height)) continue
                 val i = y * width + x
                 if (fgHist[binOf(pixels[i])] == 0f) bgSeeds[i] = true
             }
         }
+        if (bgSeeds.any { it }) return
+        if (!lowestFrameResemblance(pixels, width, height, fgHist, fgSeeds, bgSeeds)) {
+            // The marks cover the whole frame: take the single least subject-like pixel anywhere.
+            var best = -1
+            var bestScore = Float.MAX_VALUE
+            for (i in pixels.indices) {
+                if (fgSeeds[i]) continue
+                val score = fgHist[binOf(pixels[i])]
+                if (score < bestScore) {
+                    bestScore = score
+                    best = i
+                }
+            }
+            if (best >= 0) bgSeeds[best] = true
+        }
+    }
+
+    private fun onFrame(x: Int, y: Int, width: Int, height: Int): Boolean =
+        x == 0 || y == 0 || x == width - 1 || y == height - 1
+
+    /** The fraction of the frame's resemblance range (lowest to highest) that still counts as "least like the marks". */
+    private const val FALLBACK_RESEMBLANCE_BAND = 0.25f
+
+    /**
+     * Seed the frame pixels, not marked as subject, whose colour weight in the foreground
+     * histogram is within the lowest [FALLBACK_RESEMBLANCE_BAND] of the frame's own range. A frame
+     * of one uniform colour has no range and is seeded whole, which is the honest answer: nothing
+     * tells its pixels apart. False when the frame has no unmarked pixel to seed.
+     */
+    private fun lowestFrameResemblance(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        fgHist: FloatArray,
+        fgSeeds: BooleanArray,
+        bgSeeds: BooleanArray,
+    ): Boolean {
+        var low = Float.MAX_VALUE
+        var high = -Float.MAX_VALUE
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                if (!onFrame(x, y, width, height)) continue
+                val i = y * width + x
+                if (fgSeeds[i]) continue
+                val weight = fgHist[binOf(pixels[i])]
+                if (weight < low) low = weight
+                if (weight > high) high = weight
+            }
+        }
+        if (low == Float.MAX_VALUE) return false
+        val cutoff = low + (high - low) * FALLBACK_RESEMBLANCE_BAND
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                if (!onFrame(x, y, width, height)) continue
+                val i = y * width + x
+                if (!fgSeeds[i] && fgHist[binOf(pixels[i])] <= cutoff) bgSeeds[i] = true
+            }
+        }
+        return true
     }
 
     // ---- geodesic distance -----------------------------------------------------------------

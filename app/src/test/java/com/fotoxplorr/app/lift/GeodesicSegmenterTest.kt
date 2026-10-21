@@ -169,6 +169,83 @@ class GeodesicSegmenterTest {
         assertTrue(iou(fixed, s.truth) > iou(leaked, s.truth))
     }
 
+    // ---- never a flood ----
+
+    /** A red disc on a blue field with a blue "button" in it: marking the button teaches the model the frame's own colour. */
+    private fun discWithBlueButton(): Pair<Scene, BooleanArray> {
+        val button = disc(128, 96, 52, 48, 4)
+        val s = scene(
+            128, 96, noise = 3, seed = 5,
+            inside = { x, y -> (x - 64) * (x - 64) + (y - 48) * (y - 48) <= 28 * 28 },
+            fg = { x, y -> if (button[y * 128 + x]) argb(30, 40, 200) else argb(220, 30, 30) },
+            bg = { _, _ -> argb(30, 40, 200) },
+        )
+        return s to button
+    }
+
+    @Test
+    fun `a scribble that touches the frame's own colour does not select the whole photo`() {
+        val (s, button) = discWithBlueButton()
+        // Before the fix no frame pixel was a background mark here, so every pixel was "closer to
+        // the subject": 100% coverage.
+        val region = solve(s, union(disc(128, 96, 70, 48, 3), button), none(128, 96))
+        assertTrue("coverage=${region.count { it }}", region.count { it } < s.width * s.height / 2)
+        assertFalse("frame corner", region[0])
+        assertFalse("opposite frame corner", region[95 * 128 + 127])
+        assertTrue("iou=${iou(region, s.truth)}", iou(region, s.truth) > 0.9)
+    }
+
+    @Test
+    fun `a scribble over every frame colour still finds a background`() {
+        val s = redOnBlue
+        val everything = BooleanArray(s.width * s.height) { true }
+        val frame = BooleanArray(s.width * s.height) {
+            val x = it % s.width
+            val y = it / s.width
+            x == 0 || y == 0 || x == s.width - 1 || y == s.height - 1
+        }
+        val region = solve(s, union(disc(128, 96, 60, 45, 3), frame), none(128, 96))
+        assertTrue("marks stay in", frame.indices.all { !frame[it] || region[it] })
+        assertTrue("something inside the frame is left out", region.any { !it })
+        // Every pixel marked: nothing can be background, and nothing is invented.
+        assertTrue(solve(s, everything, none(128, 96)).all { it })
+    }
+
+    @Test
+    fun `a scribble that covers the frame's colour but not all of it keeps the least similar part as background`() {
+        // The left half of the frame is red like the subject's scribble; the right is blue and was
+        // marked only by one stray pixel. The blue part is the least like the marks, so it votes.
+        val s = scene(
+            128, 96, noise = 0,
+            inside = { x, y -> x in 30..60 && y in 30..66 },
+            fg = { _, _ -> argb(220, 30, 30) },
+            bg = { x, _ -> if (x < 64) argb(220, 30, 30) else argb(30, 40, 200) },
+        )
+        val stray = BooleanArray(128 * 96).also { it[10 * 128 + 100] = true } // one blue pixel in the scribble
+        val marks = union(disc(128, 96, 45, 48, 3), stray)
+        val region = solve(s, marks, none(128, 96))
+        assertFalse("the blue frame side is background", region[48 * 128 + 120])
+        assertTrue("the scribbled subject stays", region[48 * 128 + 45])
+    }
+
+    // ---- soft edges ----
+
+    @Test
+    fun `a soft edge is cut near the middle of its ramp`() {
+        // Red to blue over 10px centred on x=64: no pixel pair differs much, but the colour model
+        // and the accumulated edge cost together still put the cut in the ramp, not past it.
+        val ramp = 10
+        val colour = { x: Int, _: Int ->
+            val t = ((x - 59f) / ramp).coerceIn(0f, 1f)
+            argb((220 - 190 * t).toInt(), (30 + 10 * t).toInt(), (30 + 170 * t).toInt())
+        }
+        val s = scene(128, 96, noise = 4, seed = 8, inside = { x, _ -> x < 64 }, fg = colour, bg = colour)
+        val region = solve(s, disc(128, 96, 20, 48, 3), none(128, 96))
+        var cut = 0
+        while (cut < s.width && region[48 * 128 + cut]) cut++
+        assertTrue("cut at x=$cut", cut in 60..68)
+    }
+
     // ---- guarantees ----
 
     @Test
@@ -185,10 +262,14 @@ class GeodesicSegmenterTest {
     }
 
     @Test
-    fun `a uniform image selects everything from any mark`() {
+    fun `a uniform image gives the frame a vote too, so it is never simply everything`() {
+        // Nothing tells subject from background here, so there is no right answer; the contract is
+        // that the marks stay in and the frame is not silently declared subject.
         val s = scene(40, 30, 0, inside = { _, _ -> true }, fg = { _, _ -> argb(9, 9, 9) }, bg = { _, _ -> argb(9, 9, 9) })
-        val region = solve(s, disc(40, 30, 20, 15, 2), none(40, 30))
-        assertTrue(region.all { it })
+        val marks = disc(40, 30, 20, 15, 2)
+        val region = solve(s, marks, none(40, 30))
+        for (i in marks.indices) if (marks[i]) assertTrue(region[i])
+        assertFalse("the frame corner is not the subject", region[0])
     }
 
     @Test

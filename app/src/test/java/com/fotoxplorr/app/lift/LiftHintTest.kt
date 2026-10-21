@@ -42,6 +42,14 @@ class LiftHintTest {
     }
 
     @Test
+    fun `selecting nearly everything says how to pull it back and still lets the person finish`() {
+        val editor = LiftEditorState()
+        editor.apply(stroke())
+        editor.solveFailure = LiftFailure.TooMuch
+        assertEquals("That selected nearly everything. Scribble the background to pull it back", hintFor(editor))
+    }
+
+    @Test
     fun `working wins over everything`() {
         val editor = LiftEditorState()
         editor.solving = true

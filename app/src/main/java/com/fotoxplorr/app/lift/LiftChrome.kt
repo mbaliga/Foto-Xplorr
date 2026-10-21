@@ -98,6 +98,7 @@ internal fun BoxScope.LiftFailureChrome(message: String, onClose: () -> Unit) {
 internal fun hintFor(editor: LiftEditorState): String = when {
     editor.solving -> "Working…"
     editor.solveFailure == LiftFailure.NoSubject -> "Couldn't find a clear subject there. Scribble over more of it"
+    editor.solveFailure == LiftFailure.TooMuch -> "That selected nearly everything. Scribble the background to pull it back"
     editor.solveFailure != null -> editor.solveFailure!!.userMessage() + ". Undo or start over to continue"
     // Before the preview line: an empty selection has nothing to preview, whatever the flag says.
     editor.session.isEmpty -> "Tap or scribble over the subject"
@@ -110,7 +111,9 @@ internal fun hintFor(editor: LiftEditorState): String = when {
 @Composable
 internal fun BoxScope.LiftEditorChrome(editor: LiftEditorState, onCancel: () -> Unit, onDone: () -> Unit) {
     // A failed solve leaves the previous mask in `visuals`, which no longer matches the session.
-    val canFinish = editor.visuals?.hasSelection == true && !editor.solving && editor.solveFailure == null
+    // TooMuch is only a warning: the mask is current and a close-up can really fill the frame.
+    val canFinish = editor.visuals?.hasSelection == true && !editor.solving &&
+        (editor.solveFailure == null || editor.solveFailure == LiftFailure.TooMuch)
 
     // Top: leave, what to do next, finish.
     Row(

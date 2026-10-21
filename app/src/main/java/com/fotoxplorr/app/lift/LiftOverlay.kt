@@ -159,6 +159,7 @@ fun LiftOverlay(
                     mask = mask,
                     overlay = LiftRenderer.selectionOverlay(mask, SELECTION_RGB, SELECTION_MAX_ALPHA).asImageBitmap(),
                     hasSelection = SubjectSegmentation.boundingBox(mask) != null,
+                    failure = solveFailureFor(mask, session),
                 )
             }
         }
@@ -166,7 +167,7 @@ fun LiftOverlay(
         outcome.fold(
             onSuccess = {
                 editor.visuals = it
-                editor.solveFailure = if (!it.hasSelection && session.hasForeground) LiftFailure.NoSubject else null
+                editor.solveFailure = it.failure
             },
             onFailure = { editor.solveFailure = classifyLiftFailure(it) },
         )
@@ -343,6 +344,8 @@ internal class MaskVisuals(
     val mask: SubjectSegmentation.Mask,
     val overlay: ImageBitmap,
     val hasSelection: Boolean,
+    /** Why this selection deserves a word to the person, or null; see [solveFailureFor]. */
+    val failure: LiftFailure? = null,
 )
 
 private fun buildWorkspace(display: Bitmap): Workspace {

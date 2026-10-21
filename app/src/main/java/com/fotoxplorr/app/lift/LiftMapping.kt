@@ -79,6 +79,12 @@ sealed interface LiftFailure {
     /** The solve ran but selected nothing: the marks sat on no region the solver could grow. */
     data object NoSubject : LiftFailure
 
+    /**
+     * The solve selected nearly the whole frame and nothing told it where the subject ends: a
+     * warning, not a dead end (a close-up can really fill the frame), so the cut-out stays usable.
+     */
+    data object TooMuch : LiftFailure
+
     /** The photo (or its working copies) did not fit in memory. */
     data object OutOfMemory : LiftFailure
 
@@ -87,6 +93,31 @@ sealed interface LiftFailure {
 
     /** Anything else; [detail] is the exception message when there was one. */
     data class Failed(val detail: String?) : LiftFailure
+}
+
+/** A selection covering more than this fraction of the frame, with no background mark, is suspect. */
+const val TOO_MUCH_COVERAGE = 0.85f
+
+/**
+ * Whether a finished solve is a failure worth telling the person about: [LiftFailure.NoSubject]
+ * when there is a foreground mark but nothing was selected, [LiftFailure.TooMuch] when [mask]
+ * covers more than [TOO_MUCH_COVERAGE] of the frame and the person has said nothing about what the
+ * subject is NOT; null otherwise. "Said something" is a background hint or any painted correction:
+ * past that point the person is steering and a large selection is their call.
+ */
+fun solveFailureFor(mask: SubjectSegmentation.Mask, session: SelectionSession): LiftFailure? {
+    if (!session.hasForeground) return null
+    if (SubjectSegmentation.boundingBox(mask) == null) return LiftFailure.NoSubject
+    val steered = session.ops.any { (it is SelectionOp.Hint && !it.foreground) || it is SelectionOp.Paint }
+    return if (!steered && coverage(mask) > TOO_MUCH_COVERAGE) LiftFailure.TooMuch else null
+}
+
+/** The fraction (0..1) of [mask]'s pixels that are more selected than not. */
+fun coverage(mask: SubjectSegmentation.Mask): Float {
+    if (mask.alpha.isEmpty()) return 0f
+    var covered = 0
+    for (a in mask.alpha) if (a >= 0.5f) covered++
+    return covered.toFloat() / mask.alpha.size
 }
 
 /**
@@ -106,6 +137,7 @@ fun classifyLiftFailure(throwable: Throwable): LiftFailure {
 /** The sentence shown for [this] failure. */
 fun LiftFailure.userMessage(): String = when (this) {
     LiftFailure.NoSubject -> "Couldn't find a clear subject there"
+    LiftFailure.TooMuch -> "That selected nearly everything"
     LiftFailure.OutOfMemory -> "This photo is too large to lift on this device"
     LiftFailure.Unreadable -> "Couldn't open this photo for lifting"
     is LiftFailure.Failed -> "Something went wrong while lifting this photo"
