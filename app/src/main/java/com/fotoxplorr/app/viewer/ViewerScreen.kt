@@ -21,12 +21,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.adaptive.PINCH_STEP_THRESHOLD
 import com.fotoxplorr.app.gallery.ViewerPinchMode
 import com.fotoxplorr.app.lift.LiftOverlay
+import com.fotoxplorr.app.lift.canLiftSubject
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.palette.PaletteMemo
@@ -288,15 +291,32 @@ fun ViewerScreen(
     var offsetY by remember(asset.id) { mutableFloatStateOf(0f) }
     var rotation by remember(asset.id) { mutableFloatStateOf(0f) }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
-    // Long-press-to-lift. Keyed on asset.id like every other per-photo gesture state here, so
-    // paging to the next photo cannot leave a stale "picking a subject" overlay armed over a
-    // photo the user never long-pressed.
+    // Lifting a subject: long-press the photo, or "Lift subject" in the actions room. Keyed on
+    // asset.id like every other per-photo gesture state here, so paging to the next photo cannot
+    // leave a stale "picking a subject" overlay armed over a photo the user never long-pressed.
     var liftActive by remember(asset.id) { mutableStateOf(false) }
+    // Whether a subject can be lifted from THIS asset at all (not a video, SVG, RAW or an
+    // animated image): gates both the long press and the actions-room row, so neither offers an
+    // editor that could only report that it cannot open the photo.
+    val animatedImage = ViewerChromePolicy.isAnimatedImage(animated, asset.mimeType)
+    val canLift = remember(asset, animatedImage) { canLiftSubject(asset, animatedImage) }
+    // The tap detector below is keyed on the asset alone and captures what it reads when it
+    // starts, so anything that can change under it without the asset changing -- the animated flag
+    // once the sniff lands, the recognised text once OCR finishes -- is read through these.
+    val liftable by rememberUpdatedState(canLift)
+    val recognisedBlockCount by rememberUpdatedState(liveTextBlocks.size)
     val shell = rememberSpatialController()
     // Picture-in-picture shrinks the whole window to a small video: nothing drawn over the photo
     // (the position chip, the filmstrip) belongs in it. VideoPlayer hides its own transport the
     // same way; the host's chrome has to ask for itself because it is not inside that composition.
     val isInPip by rememberIsInPictureInPicture()
+    // While a lift owns the screen the rooms are withdrawn (null slots): the editor consumes every
+    // touch that lands on it, but the shell claims edge drags on an earlier pass than any child
+    // sees, so without this an edge pull would open a room under the editor. Held until the shell
+    // is home so a room that was just closed to start the lift slides away instead of vanishing.
+    val roomsWithdrawn by remember(shell, asset.id) {
+        derivedStateOf { ViewerChromePolicy.roomsWithdrawn(lifting = liftActive, atHome = shell.atHome) }
+    }
     // True while the user is moving the filmstrip (a finger on it, or its fling). Pauses a playing
     // video and keeps the next one from starting until the strip settles -- see VideoPlayer's
     // scrubSuspended. Reset by the strip itself when it leaves composition mid-gesture.
@@ -398,7 +418,7 @@ fun ViewerScreen(
         parkStyle = ParkStyle.SWIVEL,
         // TOP = what this photo is, pulled DOWN over it (owner's reference, 6.png). See this
         // screen's KDoc for the deviation from the gallery's geography this is.
-        top = {
+        top = roomSlot(!roomsWithdrawn) {
             PhotoDetailRoom(
                 asset = asset,
                 exif = exif,
@@ -438,7 +458,7 @@ fun ViewerScreen(
                 reveal = { shell.vProgress },
             )
         },
-        right = {
+        right = roomSlot(!roomsWithdrawn) {
             ViewerActionsRoom(
                 isFavorite = isFavorite,
                 isSensitive = isSensitive,
@@ -461,11 +481,15 @@ fun ViewerScreen(
                 onConvertToMp4 = onConvertToMp4?.let { convert -> { shell.closeAll(); convert() } },
                 catalogueActions = catalogueActions,
                 isExternal = isExternal,
+                // Not behind catalogueActions: lifting reads only the photo's URI and writes a
+                // sticker file only when asked, so it is as valid on a photo opened from another
+                // app. Closing the room first hands the screen to the editor cleanly.
+                onLiftSubject = if (canLift) ({ shell.closeAll(); liftActive = true }) else null,
             )
         },
         // BOTTOM = settings, pulled UP from the bottom edge. It was the top room until the
         // details took that edge -- see this screen's KDoc.
-        bottom = {
+        bottom = roomSlot(!roomsWithdrawn) {
             ViewerSettingsRoom(
                 slideshowIntervalSeconds = slideshowIntervalSeconds,
                 blurSensitive = blurSensitive,
@@ -579,18 +603,21 @@ fun ViewerScreen(
                         //
                         // Guarded off whenever LiveTextOverlay is up (chrome visible AND this
                         // photo has recognised text): that layer is a later sibling inside the
-                        // same photo Box below, so it is hit-tested first and would already be
-                        // consuming every tap and long-press within its bounds -- including ones
-                        // on bare photo, per its own "a tap on bare photo clears [selection]"
-                        // behaviour. Without this guard a long press over live text would not
-                        // reliably do EITHER thing (not select text, since LiveTextOverlay's own
-                        // onLongPress only acts when the point is actually on a text block; not
-                        // lift, since the down was already consumed) -- a dead zone rather than a
-                        // conflict, and worse than either. So: lift is simply unavailable while
-                        // the Live Text layer is showing for this photo. Toggling chrome off (or
-                        // moving to a photo with no recognised text) reaches it again.
+                        // same photo Box below, so it is hit-tested first and already consumes
+                        // every tap and long-press within its bounds -- bare photo included, per
+                        // its own "a tap on bare photo clears [selection]" behaviour. Without
+                        // this guard a long press over live text would not reliably do EITHER
+                        // thing, a dead zone rather than a conflict. The guard now sits behind
+                        // ViewerChromePolicy.longPressStartsLift, which also refuses anything
+                        // that cannot be lifted (video, SVG, RAW, animated). Lift stays reachable
+                        // for a photo with text through the actions room's "Lift subject" row,
+                        // which is why the dead zone is acceptable rather than a loss of the
+                        // feature; hiding the chrome brings the long press back as well.
                         onLongPress = {
-                            if (!asset.isVideo && !(chromeVisible && liveTextBlocks.isNotEmpty())) {
+                            if (ViewerChromePolicy.longPressStartsLift(
+                                    liftable, chromeVisible, recognisedBlockCount,
+                                )
+                            ) {
                                 liftActive = true
                             }
                         },
@@ -626,7 +653,10 @@ fun ViewerScreen(
                 // inside the same graphicsLayer is what keeps the OCR boxes glued to the words
                 // under pinch, drag and rotate without the overlay knowing anything about the
                 // current gesture state -- the only arrangement that cannot drift out of
-                // alignment as the gesture code changes.
+                // alignment as the gesture code changes. The lift editor is NOT in this box: it
+                // draws its own stage and the decoded photo with its own viewport, so living
+                // under the pinch/rotate transform would show it zoomed and turned for no
+                // reason; it sits beside this box, below.
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -646,7 +676,7 @@ fun ViewerScreen(
                         // stated fallback) -- almost every real GIF a user has IS animated, and a
                         // static one costs nothing extra through the animated decode path when
                         // only one image is ever on screen at a time, unlike a grid tile.
-                        animate = animated || asset.mimeType.equals("image/gif", ignoreCase = true),
+                        animate = animatedImage,
                     )
 
                     // Text found by the offline recognition pass, selectable in place. Only while
@@ -660,23 +690,22 @@ fun ViewerScreen(
                             imageHeight = asset.height,
                         )
                     }
-
-                    // Same transform box as MediaImage and LiveTextOverlay, for the same reason
-                    // LiveTextOverlay is here: a tap has to land on the right pixel of the
-                    // SOURCE photo regardless of the current pinch/pan/rotate state, and putting
-                    // this inside the shared graphicsLayer is what keeps that true without this
-                    // composable knowing anything about scale, offset or rotation itself.
-                    // Renders nothing at all while `liftActive` is false -- see LiftOverlay's own
-                    // KDoc for why that, not an internal armed/disarmed flag, is the mechanism
-                    // that keeps this from ever contending with the gestures above.
-                    LiftOverlay(
-                        asset = asset,
-                        active = liftActive,
-                        onDismiss = { liftActive = false },
-                        modifier = Modifier.fillMaxSize(),
-                    )
                 }
             }
+
+            // The lift editor, over the whole content area and OUTSIDE the zoom transform above. It
+            // paints an opaque stage and the decoded photo itself, maps touches against that
+            // bitmap's own size, and consumes every touch that lands on it, so the gestures on
+            // this Box never see them. Renders nothing at all while `liftActive` is false -- see
+            // LiftOverlay's own KDoc for why that, not an internal armed/disarmed flag, is what
+            // keeps it from contending with them. Its Back handler registers after the shell's
+            // (it composes inside the shell's content), and the most recent enabled one wins.
+            LiftOverlay(
+                asset = asset,
+                active = liftActive,
+                onDismiss = { liftActive = false },
+                modifier = Modifier.fillMaxSize(),
+            )
 
             // All that is left over the photo, and only when asked for: where you are in the
             // run. The nine actions are the right room, the facts are the top room, and the
@@ -695,7 +724,7 @@ fun ViewerScreen(
             // navigator that only appears when the chrome does is a navigator nobody finds while
             // zoomed, and the owner's reference shows it over the bare photo. It is the one
             // thing drawn over the photo without asking, and only while the photo is zoomed.
-            if (!asset.isVideo && scale > MINIMAP_SCALE_THRESHOLD) {
+            if (!asset.isVideo && !liftActive && scale > MINIMAP_SCALE_THRESHOLD) {
                 ZoomMinimap(
                     asset = asset,
                     scale = { scale },
@@ -792,6 +821,13 @@ fun ViewerScreen(
     }
     }
 }
+
+/**
+ * A room's slot for the shell: [content] while [available], otherwise null -- which the shell reads
+ * as "this edge has no room", so it composes nothing for it and refuses drags from that edge.
+ */
+private fun roomSlot(available: Boolean, content: @Composable () -> Unit): (@Composable () -> Unit)? =
+    if (available) content else null
 
 /**
  * Zoom, rotate, pan and page, arbitrated in one pass -- or, whenever [pinchMode] is

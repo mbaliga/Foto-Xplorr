@@ -125,4 +125,36 @@ class ViewerChromePolicyTest {
         assertFalse(advances(video = true))
         assertTrue(advances(video = false))
     }
+
+    // ── lifting a subject (#12) ────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `a gif counts as animated even before the sniff has said so`() {
+        assertTrue(ViewerChromePolicy.isAnimatedImage(animated = false, mimeType = "image/gif"))
+        assertTrue(ViewerChromePolicy.isAnimatedImage(animated = false, mimeType = "IMAGE/GIF"))
+        assertTrue(ViewerChromePolicy.isAnimatedImage(animated = true, mimeType = "image/webp"))
+        assertFalse(ViewerChromePolicy.isAnimatedImage(animated = false, mimeType = "image/jpeg"))
+        assertFalse(ViewerChromePolicy.isAnimatedImage(animated = false, mimeType = ""))
+    }
+
+    @Test
+    fun `a long press lifts only what can be lifted and only where no text layer is eating it`() {
+        assertTrue(ViewerChromePolicy.longPressStartsLift(canLift = true, chromeVisible = false, recognisedBlocks = 0))
+        assertTrue(ViewerChromePolicy.longPressStartsLift(canLift = true, chromeVisible = true, recognisedBlocks = 0))
+        // Text recognised but chrome down: the Live Text layer is not composed, so lift is free.
+        assertTrue(ViewerChromePolicy.longPressStartsLift(canLift = true, chromeVisible = false, recognisedBlocks = 4))
+        // The dead zone: chrome up AND text on the photo.
+        assertFalse(ViewerChromePolicy.longPressStartsLift(canLift = true, chromeVisible = true, recognisedBlocks = 4))
+        // Never for a video, SVG, RAW or animated image.
+        assertFalse(ViewerChromePolicy.longPressStartsLift(canLift = false, chromeVisible = false, recognisedBlocks = 0))
+    }
+
+    @Test
+    fun `the rooms are withdrawn only once a lift is up and the shell is home`() {
+        assertTrue(ViewerChromePolicy.roomsWithdrawn(lifting = true, atHome = true))
+        // A room just closed to start the lift is still sliding away: leave it be until it lands.
+        assertFalse(ViewerChromePolicy.roomsWithdrawn(lifting = true, atHome = false))
+        assertFalse(ViewerChromePolicy.roomsWithdrawn(lifting = false, atHome = true))
+        assertFalse(ViewerChromePolicy.roomsWithdrawn(lifting = false, atHome = false))
+    }
 }

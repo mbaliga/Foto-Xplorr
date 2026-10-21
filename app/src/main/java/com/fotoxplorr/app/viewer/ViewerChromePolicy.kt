@@ -93,4 +93,73 @@ internal object ViewerChromePolicy {
         videoPlaybackActive: Boolean,
         lifting: Boolean,
     ): Boolean = slideshowActive && total > 1 && !anyRoomVisible && !videoPlaybackActive && !lifting
+
+    // ── lifting a subject ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Whether the image should be treated as animated: the recognition pass says so, or it is a
+     * GIF (almost every real GIF is animated, and a still one costs nothing extra through the
+     * animated decode path with one image on screen). The same answer drives the image view's
+     * `animate` flag and whether a subject can be lifted, so a photo that plays is never offered
+     * for lifting as if it were a single frame.
+     */
+    fun isAnimatedImage(animated: Boolean, mimeType: String): Boolean =
+        animated || mimeType.equals("image/gif", ignoreCase = true)
+
+    /**
+     * Whether a long press on the photo starts a lift.
+     *
+     * Off for anything [canLift] says cannot be lifted, and off while the Live Text layer is up
+     * ([chromeVisible] with [recognisedBlocks] > 0): that layer is a full-size sibling that takes
+     * every tap and long press within its bounds, bare photo included, so a long press there would
+     * reach neither it nor this detector reliably. Lift is not lost for such a photo -- the actions
+     * room's "Lift subject" row is always available, and hiding the chrome brings the long press
+     * back -- but a gesture that sometimes silently does nothing is worse than one that is
+     * consistently absent while the text layer is showing.
+     */
+    fun longPressStartsLift(canLift: Boolean, chromeVisible: Boolean, recognisedBlocks: Int): Boolean =
+        canLift && !(chromeVisible && recognisedBlocks > 0)
+
+    /**
+     * Whether the rooms should be withdrawn (their slots passed as null, so the shell neither
+     * composes them nor lets an edge drag open one) because a lift owns the screen.
+     *
+     * Waits for the shell to be [atHome]: a lift started from the actions room first closes that
+     * room, and removing its slot on the spot would make the room vanish while the card is still
+     * sliding back over it.
+     */
+    fun roomsWithdrawn(lifting: Boolean, atHome: Boolean): Boolean = lifting && atHome
+
+    // ── the shrink-to-map flight ──────────────────────────────────────────────────────────────
+
+    /**
+     * Whether the photo-to-pin flier is composed, and with it whether the details room's pin waits
+     * beneath it (`PhotoDetailRoom.flightActive`). One decision for both so they cannot disagree:
+     * a room waiting for a flier that is not there leaves its pin invisible.
+     *
+     * - [topPulling]: the details room (the TOP room) is at least slightly open.
+     * - [photoAtRest]: the photo is neither zoomed nor rotated. The flier starts from the photo's
+     *   resting rectangle, so a zoomed or turned photo has nowhere honest to lift off from; it
+     *   falls back to the in-plate shrink the room plays on its own.
+     * - [viewportWidth] / [viewportHeight]: the shell's measured size, zero before first layout.
+     */
+    fun flightActive(topPulling: Boolean, photoAtRest: Boolean, viewportWidth: Int, viewportHeight: Int): Boolean =
+        topPulling && photoAtRest && viewportWidth > 0 && viewportHeight > 0
+
+    /** Whether the photo is at rest: not zoomed in, not turned. [scale] is the pinch scale. */
+    fun photoAtRest(scale: Float, rotationDegrees: Float): Boolean = scale <= 1.001f && rotationDegrees == 0f
+
+    /**
+     * Whether the photo has a place, as the details room's place block decides it: a real
+     * embedded fix wins, otherwise a hand-placed one. The flier lands in the state the pin is
+     * drawn in (a located photo as itself, a placeless one dimmed on the ghost pin), so it must
+     * agree with the room about which of the two this is.
+     */
+    fun placeKnown(
+        exifLatitude: Double?,
+        exifLongitude: Double?,
+        manualLatitude: Double?,
+        manualLongitude: Double?,
+    ): Boolean = PlaceMorph.isDrawable(exifLatitude, exifLongitude) ||
+        PlaceMorph.isDrawable(manualLatitude, manualLongitude)
 }
