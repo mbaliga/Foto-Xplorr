@@ -19,7 +19,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Text
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -61,8 +67,8 @@ import kotlinx.coroutines.launch
  * [GalleryViewOptionsRoom] at the right: you want to see the effect of those, whereas an action
  * does not need the grid in view, so tilting the grid up out of the way suits this room.
  *
- * It is the two-stage room: a short pull stops on a strip of the three actions people reach for most
- * ([galleryQuickActions]) and a longer one carries on to everything below it. The strip is the
+ * It is the two-stage room: a short pull stops on a strip of the few actions people reach for most
+ * ([galleryQuickActions]; with a selection, the selection's) and a longer one carries on to everything below it. The strip is the
  * room's head, which is the part of a bottom room that arrives first.
  *
  * This room also carries the way into selection mode. Long press used to start a selection and now
@@ -165,18 +171,53 @@ fun GalleryActionsRoom(
         }
     }
 
+    // Rescanning closes the room, like every other action that finishes the job: its result lands
+    // behind the panel that triggered it. The strip's Refresh and the full list's "Rescan the
+    // library" are one handler, so they cannot disagree about that.
+    val refreshLibrary = { onCloseRoom(); actions.onRefresh() }
+
     // The strip is the room's first inch (it is what a short pull stops on, see RoomGeography), so
-    // it is built from the same handlers the rows below use. Each of them already closes the
-    // room except Refresh, which closes it here.
-    val quickActions = galleryQuickActions(selectionActive).map { action ->
+    // it is built from the same handlers the rows below use: browsing, the room's own entry
+    // points; with a selection, the selection's actions through the same finish{} the rows use.
+    val selectedCount = selection.count
+    val markFavourite = bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK
+    val quickActions = galleryQuickActions(selectionActive, inTrash).map { action ->
         QuickActionItem(
             label = action.label,
             icon = action.icon,
             onClick = when (action) {
                 GalleryQuickAction.SELECT -> onStartSelection
                 GalleryQuickAction.NEW_COLLECTION -> onNewCollection
-                GalleryQuickAction.REFRESH -> ({ onCloseRoom(); actions.onRefresh() })
+                GalleryQuickAction.REFRESH -> refreshLibrary
+                GalleryQuickAction.SHARE -> ({
+                    finishSelectionAction(selection, onSelectionChange, onCloseRoom) { actions.onShare(selectedAssets) }
+                })
+                GalleryQuickAction.ADD_TO_COLLECTION -> ({
+                    onCloseRoom()
+                    onAddToCollection(selection.selectedIds)
+                })
+                GalleryQuickAction.FAVOURITE -> ({
+                    finishSelectionAction(selection, onSelectionChange, onCloseRoom) {
+                        actions.onSetFavorite(selection.selectedIds, markFavourite)
+                    }
+                })
+                GalleryQuickAction.MOVE_TO_TRASH -> ({
+                    finishSelectionAction(selection, onSelectionChange, onCloseRoom) {
+                        actions.onMoveToTrash(selectedAssets)
+                    }
+                })
+                GalleryQuickAction.RESTORE -> ({
+                    finishSelectionAction(selection, onSelectionChange, onCloseRoom) { actions.onRestore(selectedAssets) }
+                })
+                GalleryQuickAction.DELETE_PERMANENTLY -> ({
+                    finishSelectionAction(selection, onSelectionChange, onCloseRoom) {
+                        actions.onDeletePermanently(selectedAssets)
+                    }
+                })
             },
+            enabled = galleryQuickActionEnabled(action, selectedCount, Build.VERSION.SDK_INT),
+            // Favourite reads as "on" when every chosen photo already is one: tapping removes.
+            highlighted = action == GalleryQuickAction.FAVOURITE && selectedCount > 0 && !markFavourite,
         )
     }
 
@@ -240,7 +281,7 @@ fun GalleryActionsRoom(
         RoomRow(
             label = "Rescan the library",
             caption = "Look for photos added or removed outside Fotoz.",
-            onClick = actions.onRefresh,
+            onClick = refreshLibrary,
         )
     }
 
@@ -321,11 +362,7 @@ private fun SelectionActions(
     // Every action that finishes the job clears the selection and closes the room, because the
     // result of an action landing behind the panel that triggered it is the classic way to make a
     // control feel like it did nothing.
-    fun finish(block: () -> Unit) {
-        block()
-        onSelectionChange(selection.clear())
-        onCloseRoom()
-    }
+    fun finish(block: () -> Unit) = finishSelectionAction(selection, onSelectionChange, onCloseRoom, block)
 
     RoomRow(
         label = "Select all",
@@ -433,20 +470,72 @@ private fun SelectionActions(
 }
 
 /**
- * The gallery's quick actions: the three most used, in the order they sit in the strip.
- * [label] is the short word under the glyph; the full row for the same action, further up the
- * room, keeps its explanatory caption.
+ * Finish a selection action: run it, clear the selection, close the room. The rows of the full
+ * list and the cells of the quick-action strip both go through this, so a strip cell and its row
+ * cannot leave the room in different states.
+ */
+private fun finishSelectionAction(
+    selection: GallerySelection,
+    onSelectionChange: (GallerySelection) -> Unit,
+    onCloseRoom: () -> Unit,
+    block: () -> Unit,
+) {
+    block()
+    onSelectionChange(selection.clear())
+    onCloseRoom()
+}
+
+/**
+ * The gallery's quick actions, in the order they sit in the strip. [label] is the short word under
+ * the glyph; the full row for the same action, further down the room, keeps its explanatory caption.
+ *
+ * The strip is context-aware, as the rows are: with nothing chosen it is the room's own entry points
+ * (SELECT, NEW_COLLECTION, REFRESH); once a selection is under way it is the selection's most used
+ * actions (SHARE, ADD_TO_COLLECTION, FAVOURITE, MOVE_TO_TRASH), or RESTORE and DELETE_PERMANENTLY in
+ * the trash, where the list offers no more than those.
  */
 enum class GalleryQuickAction(val label: String, val icon: ImageVector) {
     SELECT("Select", Icons.Outlined.CheckCircleOutline),
     NEW_COLLECTION("New collection", Icons.Outlined.CreateNewFolder),
     REFRESH("Refresh", Icons.Outlined.Refresh),
+    SHARE("Share", Icons.Outlined.Share),
+    ADD_TO_COLLECTION("Add to collection", Icons.Outlined.Folder),
+    FAVOURITE("Favourite", Icons.Outlined.FavoriteBorder),
+    MOVE_TO_TRASH("Move to trash", Icons.Outlined.DeleteOutline),
+    RESTORE("Restore", Icons.Outlined.Restore),
+    DELETE_PERMANENTLY("Delete forever", Icons.Outlined.DeleteForever),
 }
 
 /**
  * The quick actions allowed right now. Once a selection is under way, starting one is not an
- * action any more (the full room's row reads "Selecting" and does nothing), so it is left out
- * rather than shown dead. An empty answer means no strip and no peek stop.
+ * action any more, and New collection and Refresh do not act on the chosen photos (reaching the
+ * real selection actions would need the longer pull), so the strip becomes the selection's own.
+ * An empty answer would mean no strip and no peek stop; no state currently gives one.
  */
-fun galleryQuickActions(selectionActive: Boolean): List<GalleryQuickAction> =
-    GalleryQuickAction.entries.filter { it != GalleryQuickAction.SELECT || !selectionActive }
+fun galleryQuickActions(selectionActive: Boolean, inTrash: Boolean = false): List<GalleryQuickAction> = when {
+    !selectionActive -> listOf(
+        GalleryQuickAction.SELECT,
+        GalleryQuickAction.NEW_COLLECTION,
+        GalleryQuickAction.REFRESH,
+    )
+    inTrash -> listOf(GalleryQuickAction.RESTORE, GalleryQuickAction.DELETE_PERMANENTLY)
+    else -> listOf(
+        GalleryQuickAction.SHARE,
+        GalleryQuickAction.ADD_TO_COLLECTION,
+        GalleryQuickAction.FAVOURITE,
+        GalleryQuickAction.MOVE_TO_TRASH,
+    )
+}
+
+/**
+ * Whether [action]'s cell answers. A selection action needs a photo chosen (a selection that has
+ * just begun is empty), and trash, restore and permanent delete need Android 11's batched system
+ * request, exactly as the rows' own `enabled` says. Browsing actions always answer.
+ */
+fun galleryQuickActionEnabled(action: GalleryQuickAction, selectionCount: Int, sdkInt: Int): Boolean = when (action) {
+    GalleryQuickAction.SELECT, GalleryQuickAction.NEW_COLLECTION, GalleryQuickAction.REFRESH -> true
+    GalleryQuickAction.SHARE, GalleryQuickAction.ADD_TO_COLLECTION, GalleryQuickAction.FAVOURITE ->
+        selectionCount > 0
+    GalleryQuickAction.MOVE_TO_TRASH, GalleryQuickAction.RESTORE, GalleryQuickAction.DELETE_PERMANENTLY ->
+        selectionCount > 0 && sdkInt >= Build.VERSION_CODES.R
+}

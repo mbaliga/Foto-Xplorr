@@ -116,7 +116,9 @@ import kotlinx.coroutines.launch
  * The bottom edge is shared with the filmstrip and the video transport, which scrub HORIZONTALLY.
  * That works because the shell claims a gesture by whichever axis crosses touch slop first and
  * lets a horizontal one through untouched, so a pull UP from the bottom opens the actions and a
- * sideways drag on the strip still scrubs. A diagonal that starts mostly upward is the shell's.
+ * sideways drag on the strip still scrubs. A diagonal that starts mostly upward is the shell's, so
+ * the pull zone is lifted above the strip and the transport ([ViewerBottomReserve]): a vertical-first
+ * start on either is not the actions room's.
  * The pull is two-stage: let go early and the actions room stops on its quick-action strip
  * (Favourite, Share, Edit, Move to trash); carry on and every action opens.
  *
@@ -597,6 +599,13 @@ fun ViewerScreen(
         // A short pull from the bottom stops on the actions room's quick-action strip, a longer
         // one opens every action (RoomGeography holds how tall the strip is).
         bottomPeek = RoomGeography.peekFor(RoomKind.ACTIONS),
+        // The filmstrip and the video transport scrub sideways along this edge, so the pull zone
+        // that opens the actions room starts above them: a vertical-first start on either is not
+        // the shell's.
+        bottomReserve = ViewerBottomReserve.reserveDp(
+            filmstripShown = filmstripShown,
+            videoTransportShown = asset.isVideo && ViewerChromePolicy.chromeShown(chromeVisible, isInPip, liftActive),
+        ).dp,
     ) {
         Box(
             modifier = Modifier

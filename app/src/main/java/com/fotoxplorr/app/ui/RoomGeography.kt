@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import dev.aarso.cellshell.RoomEdge
 
 /** What a room is FOR. The edge a kind lives on is [RoomGeography]'s to say, nobody else's. */
@@ -58,24 +57,17 @@ object RoomGeography {
     val ViewOptions: RoomEdge = RoomEdge.RIGHT
 
     /**
-     * The band the shell holds back at the head of a bottom room, for the parked card's edge to
-     * show in. This is cell-shell's own `BAND_DP`, which is private to it, so it is mirrored here;
-     * `ActionsPeekTest` measures the real shell and fails if the two ever disagree.
-     */
-    val CardBand: Dp = 72.dp
-
-    /**
      * How much room the shell is told to show on a short pull of the actions room: the quick-action
-     * strip, plus [CardBand].
+     * strip and nothing else.
      *
-     * The band is added because the shell counts the peek from the parked card's lower edge, but
-     * insets the room's content by the band beneath that edge (so the card, once fully parked,
-     * does not sit on the first row). At the peek the first [CardBand] of what is revealed is
-     * therefore the room's empty inset, and the strip begins after it. The shell adds the
-     * navigation bar's height itself. The few dp the card's scaling leaves over show as the
-     * strip's own bottom margin.
+     * The shell counts this as the usable height BELOW the head band it holds back at the top of
+     * a bottom room (`SpatialMotion.BAND_DP`, 72dp), and adds that band itself, as well as the
+     * navigation bar's height. So the number is the strip's own height, with no band of ours
+     * mirrored beside it. The strip is anchored to the top of the room's content, which is what
+     * arrives first. The navigation bar's share of the peek is filled by [ActionsRoomFrame] with
+     * black, so the first rows of the list do not show under the strip.
      */
-    val ActionsPeek: Dp = QuickActionStripHeight + CardBand
+    val ActionsPeek: Dp = QuickActionStripHeight
 
     /**
      * The peek for the room of [kind], or null when that room is single-stage. Only the actions

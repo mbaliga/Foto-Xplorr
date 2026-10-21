@@ -74,8 +74,10 @@ class RoomGeographyTest {
     }
 
     @Test
-    fun `the actions room is the staged one and its peek is the strip plus the shell band`() {
-        assertEquals(QuickActionStripHeight + RoomGeography.CardBand, RoomGeography.ActionsPeek)
+    fun `the actions room is the staged one and its peek is exactly the strip`() {
+        // The shell adds its own 72dp head band and the navigation bar; the peek is the usable
+        // height below the band, so a second copy of the band here would show 72dp too much.
+        assertEquals(QuickActionStripHeight, RoomGeography.ActionsPeek)
         assertEquals(RoomGeography.ActionsPeek, RoomGeography.peekFor(RoomKind.ACTIONS))
         // A strip whose targets are at least 48dp, and not so tall the peek is a third of a phone.
         assertTrue(QuickActionStripHeight >= QuickActionMinTarget)

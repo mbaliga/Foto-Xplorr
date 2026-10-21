@@ -5,6 +5,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,13 +40,16 @@ import androidx.compose.ui.unit.sp
 /**
  * How tall the quick-action strip is, hairline and padding included. [RoomGeography.ActionsPeek]
  * is built from it: the shell is told to stop the pull where this much of the room is on screen
- * above the navigation bar, so it must be the strip's own measure and not a second number kept
+ * below its head band, so it must be the strip's own measure and not a second number kept
  * beside it.
  */
 val QuickActionStripHeight: Dp = 72.dp
 
 /** The strip's test tag, for the tests that measure or look for it. */
 const val QUICK_ACTION_STRIP_TAG = "quick-action-strip"
+
+/** The test tag of the black slice under the strip that stands in for the navigation bar's share of the peek. */
+const val ACTIONS_PEEK_NAV_SPACER_TAG = "actions-peek-nav-spacer"
 
 /** The smallest a quick action's touch target may be, either way. */
 val QuickActionMinTarget: Dp = 48.dp
@@ -139,11 +146,14 @@ private fun QuickActionCell(item: QuickActionItem, modifier: Modifier) {
  * beneath it.
  *
  * Head, because the bottom room arrives from below like a sheet: its TOP is the first part of it
- * on screen, so a short pull shows the strip and a longer one brings in the list under it. (The
- * shell's own note on `bottomPeek` says to anchor to the bottom of the room; that is the part which
- * arrives last, so a strip put there is off screen at the peek. See [RoomGeography.CardBand] for
- * the rest of the arithmetic.) The strip does not scroll away: it is the room's first inch at
- * every stage. [clearSystemBarsFor] keeps the list's last row above the navigation bar.
+ * on screen, so a short pull shows the strip and a longer one brings in the list under it. A strip
+ * at the bottom of the room arrives last and is off screen at the peek. The strip does not scroll
+ * away: it is the room's first inch at every stage. [clearSystemBarsFor] keeps the list's last
+ * row above the navigation bar.
+ *
+ * The shell adds the navigation bar's height to the peek, so at the peek that much more of the
+ * room than the strip is on screen. A black spacer of exactly that height sits under the strip, so
+ * the slice shows nothing of the list. (At the full stage it is a margin between the two.)
  *
  * @param quickActions the strip's cells; empty means no strip.
  * @param contentPadding the list's own padding, inside the scroll.
@@ -157,19 +167,28 @@ fun ActionsRoomFrame(
     horizontalAlignment: Alignment.Horizontal = Alignment.Start,
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            // The shell insets a bottom room by its band at the TOP (where the parked card's
-            // bottom edge sits), so the system bar to clear here is the navigation bar.
-            .clearSystemBarsFor(RoomGeography.Actions),
-    ) {
+    Column(modifier = modifier.fillMaxSize().background(Color.Black)) {
         QuickActionStrip(quickActions)
+        // The peek's navigation-bar slice: see above. Only when there is a strip, because with none
+        // the shell's peek is not used and the list begins at the head. It is measured OUTSIDE the
+        // list's column below: that column's navigation-bar padding consumes the inset for
+        // everything inside it, and a slice measured in there would be zero tall.
+        if (quickActions.isNotEmpty()) {
+            Spacer(
+                Modifier
+                    .fillMaxWidth()
+                    .windowInsetsBottomHeight(WindowInsets.navigationBars)
+                    .background(Color.Black)
+                    .testTag(ACTIONS_PEEK_NAV_SPACER_TAG),
+            )
+        }
         Column(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                // The shell insets a bottom room by its band at the TOP (where the parked card's
+                // bottom edge sits), so the system bar to clear here is the navigation bar.
+                .clearSystemBarsFor(RoomGeography.Actions)
                 .verticalScroll(rememberScrollState())
                 .padding(contentPadding),
             verticalArrangement = verticalArrangement,

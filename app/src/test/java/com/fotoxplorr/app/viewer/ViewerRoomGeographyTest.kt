@@ -212,7 +212,7 @@ class ViewerRoomGeographyTest {
     }
 
     @Test
-    fun `a pull up that starts on the filmstrip still opens the actions`() {
+    fun `a pull up that starts on the filmstrip does not open the actions`() {
         val items = roll(videoAt = 4)
         compose.setContent { themed { Viewer(items[4], items) } }
         compose.waitForIdle()
@@ -221,10 +221,32 @@ class ViewerRoomGeographyTest {
             "the strip should be up",
             compose.onAllNodesWithContentDescription(items[3].displayName).fetchSemanticsNodes().isNotEmpty(),
         )
-        // Start inside the strip's resting band, well inside the shell's bottom edge zone.
+        // Start inside the strip's resting band. The pull zone was lifted above the strip and the
+        // video transport (the viewer's bottomReserve), so this vertical-first start is not the
+        // actions room's.
         compose.onRoot().performTouchInput {
             swipe(
                 start = Offset(centerX, bottom - 60f),
+                end = Offset(centerX, centerY - 100f),
+                durationMillis = 300,
+            )
+        }
+        compose.waitForIdle()
+        assertTrue("the actions opened from the filmstrip", !actionsShown())
+    }
+
+    @Test
+    fun `a pull up that starts above the filmstrip and the transport opens the actions`() {
+        val items = roll(videoAt = 4)
+        compose.setContent { themed { Viewer(items[4], items) } }
+        compose.waitForIdle()
+        // xhdpi is 2px per dp. The zone is the 56dp above the reserve (the strip's resting band
+        // plus the transport's), so its middle sits that far up from the foot.
+        val reserveDp = ViewerBottomReserve.reserveDp(filmstripShown = true, videoTransportShown = true)
+        val zoneMiddlePx = (reserveDp + 28) * 2f
+        compose.onRoot().performTouchInput {
+            swipe(
+                start = Offset(centerX, bottom - zoneMiddlePx),
                 end = Offset(centerX, centerY - 100f),
                 durationMillis = 300,
             )

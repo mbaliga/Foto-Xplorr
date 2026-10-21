@@ -256,13 +256,16 @@ class ViewerIntegrationTest {
 
     /**
      * Actions are the BOTTOM room (RoomGeography.Actions): tilt the photo up from the bottom edge.
-     * The pull starts on the filmstrip's band on purpose, so every test that uses it also proves
-     * a vertical pull from there still reaches the shell.
+     * A photo's chrome is hidden at first, so its pull starts at the foot. Over a video the
+     * filmstrip and the transport are up, and the pull zone is lifted above both
+     * ([ViewerBottomReserve]), so a pull must start in the zone: [reserveDp] is how far up it is
+     * (xhdpi is 2px per dp; the zone is the 56dp above the reserve, and this aims at its middle).
      */
-    private fun openActionsRoom() {
+    private fun openActionsRoom(reserveDp: Int = 0) {
+        val startFromFoot = if (reserveDp == 0) 20f else (reserveDp + 28) * 2f
         compose.onRoot().performTouchInput {
             swipe(
-                start = Offset(centerX, bottom - 20f),
+                start = Offset(centerX, bottom - startFromFoot),
                 end = Offset(centerX, centerY - 100f),
                 durationMillis = 300,
             )
@@ -284,7 +287,7 @@ class ViewerIntegrationTest {
         val items = roll(videoAt = 4)
         compose.setContent { themed { Viewer(items[4], items) } }
         compose.waitForIdle()
-        openActionsRoom()
+        openActionsRoom(ViewerBottomReserve.reserveDp(filmstripShown = true, videoTransportShown = true))
         // The room is open (a row every asset has is there)...
         compose.onNodeWithText("Open with").assertExists()
         // ...and the row for lifting is not.

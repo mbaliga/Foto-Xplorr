@@ -28,9 +28,40 @@ internal fun railReselectEffect(inRoom: Boolean, paneTakenOver: Boolean): RailRe
 
 /**
  * Whether a keystroke may act on the grid. While a pane has taken over the place the photos are,
- * the grid is still composed underneath it but hidden, so Ctrl+A, Delete, Enter, arrows and `/`
- * would select, trash, open and search photos nobody can see. Only Escape keeps its meaning,
- * because it is how the pane is left.
+ * or a room is open over them, the grid is still composed underneath but out of reach, so Ctrl+A,
+ * Delete, Enter, arrows and `/` would select, trash, open and search photos nobody can see or
+ * touch. Only Escape keeps its meaning, because it is how the pane or the room is left.
+ *
+ * @param roomOpen a room is open or mid-drag (the shell is not at home).
  */
-internal fun shortcutActsOverPane(shortcut: GalleryShortcut, paneTakenOver: Boolean): Boolean =
-    !paneTakenOver || shortcut == GalleryShortcut.CloseOrClear
+internal fun shortcutActsOverPane(
+    shortcut: GalleryShortcut,
+    paneTakenOver: Boolean,
+    roomOpen: Boolean = false,
+): Boolean = !(paneTakenOver || roomOpen) || shortcut == GalleryShortcut.CloseOrClear
+
+/**
+ * Whether Escape hands its work to the Back order ([paneBackTarget]) instead of undoing the grid's
+ * own state. A room or a pane is something Back leaves first, so the hardware key must too:
+ * otherwise Escape would clear a selection or a search while the room sat open over it.
+ */
+internal fun escapeFollowsBackOrder(paneTakenOver: Boolean, roomOpen: Boolean): Boolean =
+    paneTakenOver || roomOpen
+
+/**
+ * Whether the notification shade is drawn over what is showing, and so whether its height is
+ * reserved at the top for the shade's own pull. It is drawn on the two panes (Settings, a
+ * destination screen) and on the root grid, and nowhere else: not inside an album, collection or
+ * tag, not on the timeline's headered grid, not on the zoom ladder's sparse rungs. Reserving its
+ * height elsewhere would hand the top 56dp-and-more of a screen with no shade to a dead zone
+ * where the top room cannot be pulled down.
+ *
+ * Mirrors the branches of the browsing `when` in `GalleryScreen`; a screen that gains a shade must
+ * be added here too.
+ */
+internal fun shadeIsDrawn(
+    paneTakenOver: Boolean,
+    zoomIsGrid: Boolean,
+    timelineHeadersOn: Boolean,
+    routeIsRoot: Boolean,
+): Boolean = paneTakenOver || (zoomIsGrid && !timelineHeadersOn && routeIsRoot)

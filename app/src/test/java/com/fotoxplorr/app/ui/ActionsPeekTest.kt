@@ -43,13 +43,13 @@ import org.robolectric.annotation.GraphicsMode
  * the quick-action strip and nothing else of the room, a longer pull opens all of it, and a quick
  * action performs and closes.
  *
- * "Nothing else" is measured, not assumed. The peek is counted by the shell from the parked card's
- * lower edge while the room is inset by the shell's own band beneath that edge, so a peek that was
- * only as tall as the strip would reveal an empty inset ([RoomGeography.CardBand] is the number
- * that fixes it). These tests look at where the strip and the first full row actually land, which
- * is what fails if the band, the strip's height or the shell's geometry drift apart.
+ * "Nothing else" is measured, not assumed. The peek is the usable height below the shell's own
+ * 72dp head band, which the shell adds itself, so [RoomGeography.ActionsPeek] is just the strip's
+ * height. These tests look at where the strip and the first full row actually land, which is what
+ * fails if the strip's height or the shell's geometry drift apart. The strip is flush with the
+ * foot of the screen to within a couple of dp (the old few dp of slack are gone).
  *
- * Insets are zero under Robolectric, so the navigation bar's share of the peek is a device check.
+ * Insets are zero here; `ActionsPeekInsetsTest` repeats the measurement with a navigation bar.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -141,8 +141,8 @@ class ActionsPeekTest {
         val screen = rootHeightPx().toFloat()
         val strip = stripBounds()
         assertTrue("the strip is cut off: bottom ${strip.bottom} of $screen", strip.bottom <= screen + 1f)
-        // Flush with the foot of the screen, give or take the few dp the card's scaling leaves.
-        val slack = with(compose.density) { 16.dp.toPx() }
+        // Flush with the foot of the screen: the peek is exact now, not a few dp over.
+        val slack = with(compose.density) { 2.dp.toPx() }
         assertTrue("the strip floats ${screen - strip.bottom}px above the foot", screen - strip.bottom <= slack)
         val row = compose.onNodeWithText(firstFullRow).fetchSemanticsNode().boundsInRoot
         assertTrue("$firstFullRow is on screen at the peek (top ${row.top} of $screen)", row.top >= screen)

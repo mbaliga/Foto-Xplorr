@@ -119,10 +119,25 @@ class QuickActionStripTest {
     }
 
     @Test
-    fun `during a selection the gallery no longer offers to start one`() {
+    fun `during a selection the strip becomes the selection's own actions`() {
+        // Starting a selection is no longer an action, and New collection and Refresh do not act
+        // on the chosen photos, so none of the three is on offer.
         assertEquals(
-            listOf(GalleryQuickAction.NEW_COLLECTION, GalleryQuickAction.REFRESH),
+            listOf(
+                GalleryQuickAction.SHARE,
+                GalleryQuickAction.ADD_TO_COLLECTION,
+                GalleryQuickAction.FAVOURITE,
+                GalleryQuickAction.MOVE_TO_TRASH,
+            ),
             galleryQuickActions(selectionActive = true),
+        )
+    }
+
+    @Test
+    fun `during a selection in the trash the strip is restore and delete`() {
+        assertEquals(
+            listOf(GalleryQuickAction.RESTORE, GalleryQuickAction.DELETE_PERMANENTLY),
+            galleryQuickActions(selectionActive = true, inTrash = true),
         )
     }
 
@@ -130,7 +145,11 @@ class QuickActionStripTest {
     fun `the gallery labels are short and in the order the strip lays them`() {
         assertEquals(
             listOf("Select", "New collection", "Refresh"),
-            GalleryQuickAction.entries.map { it.label },
+            galleryQuickActions(selectionActive = false).map { it.label },
+        )
+        assertEquals(
+            listOf("Share", "Add to collection", "Favourite", "Move to trash"),
+            galleryQuickActions(selectionActive = true).map { it.label },
         )
     }
 }

@@ -597,7 +597,17 @@ private fun GalleryBrowser(
     // The same number the shade draws itself at, handed to the spatial shell so its top-edge
     // gesture starts below the shade. Two sources for this would mean either the shade cannot be
     // pulled or the top room cannot be opened.
-    val notificationReserve = shadeHeight(shadeState, activities.size).dp
+    //
+    // Only where the shade is drawn (the panes and the root grid), and 0 elsewhere: in an album, on
+    // the timeline or on a zoom rung there is no shade, and its reserve would be a dead strip at
+    // the top where the top room could not be pulled down.
+    val shadeDrawn = shadeIsDrawn(
+        paneTakenOver = paneTakenOver,
+        zoomIsGrid = zoomLevel is GalleryZoomLevel.Grid,
+        timelineHeadersOn = timelineHeadersOn,
+        routeIsRoot = route == BrowserRoute.Root,
+    )
+    val notificationReserve = if (shadeDrawn) shadeHeight(shadeState, activities.size).dp else 0.dp
 
     val gridState = rememberLazyGridState()
     val gridScope = rememberCoroutineScope()
@@ -904,7 +914,8 @@ private fun GalleryBrowser(
     fun handleGalleryShortcut(shortcut: GalleryShortcut) {
         // The grid is still composed under a pane but nobody can see it: Ctrl+A, Delete, Enter and
         // the arrows would select, trash and open photos on a screen that is not showing them.
-        if (!shortcutActsOverPane(shortcut, paneTakenOver)) return
+        // The same goes for a room over it: Delete, Ctrl+A and Enter would act on the grid behind.
+        if (!shortcutActsOverPane(shortcut, paneTakenOver, roomOpen = !shell.atHome)) return
         when (shortcut) {
             is GalleryShortcut.MoveSelection -> {
                 // renderedAssets, not scrubberAssets: this is asset-index-space arithmetic (a
@@ -933,11 +944,11 @@ private fun GalleryBrowser(
                 val focused = ids.firstOrNull { it.id == chromeBridge.keyboardFocusedId } ?: ids.firstOrNull()
                 focused?.let { actions.onOpenAsset(it, ids) }
             }
-            // Same priority order as BackHandler above: a pane (and a room over it) first, then a
+            // Same priority order as BackHandler above: a room first, then a pane, then a
             // selection as the most specific thing to back out of, then search, then the
             // keyboard's own cursor.
             GalleryShortcut.CloseOrClear -> when {
-                paneTakenOver -> performBack(currentBackTarget())
+                escapeFollowsBackOrder(paneTakenOver, roomOpen = !shell.atHome) -> performBack(currentBackTarget())
                 selection.isActive -> selection = selection.clear()
                 searchVisible -> {
                     searchVisible = false
@@ -1099,10 +1110,11 @@ private fun GalleryBrowser(
         right = rooms.right,
         bottom = rooms.bottom,
         // A short pull from the bottom stops on the actions room's quick-action strip and a longer
-        // one opens the lot (RoomGeography holds how tall the strip is). None when no action is
-        // allowed right now, so the pull stays single-stage rather than stopping on nothing.
+        // one opens the lot (RoomGeography holds how tall the strip is). The strip follows the
+        // selection (see galleryQuickActions). None when no action is allowed right now, so the
+        // pull stays single-stage rather than stopping on nothing.
         bottomPeek = RoomGeography.peekFor(RoomKind.ACTIONS)
-            ?.takeIf { galleryQuickActions(selection.isActive).isNotEmpty() },
+            ?.takeIf { galleryQuickActions(selection.isActive, inTrash).isNotEmpty() },
     ) {
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
@@ -1162,9 +1174,11 @@ private fun GalleryBrowser(
                             } ?: return@onKeyEvent false
                             val shortcut = galleryShortcutFor(shortcutKey, event.isCtrlPressed)
                                 ?: return@onKeyEvent false
-                            // Not consumed over a pane, so a key the grid ignores there still
+                            // Not consumed over a pane or a room, so a key the grid ignores there still
                             // reaches whatever else wants it.
-                            if (!shortcutActsOverPane(shortcut, paneTakenOver)) return@onKeyEvent false
+                            if (!shortcutActsOverPane(shortcut, paneTakenOver, roomOpen = !shell.atHome)) {
+                                return@onKeyEvent false
+                            }
                             handleGalleryShortcut(shortcut)
                             true
                         },

@@ -239,10 +239,18 @@ private fun ExploreHub(
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Privacy boundaries", style = MaterialTheme.typography.titleMedium)
+                    // The pane's ink, set here: on the root-destination path this is not under a
+                    // PaneScaffold, so nothing above provides a content colour and the theme's
+                    // onSurface (dark, in light theme) would land on the pane's black ground.
+                    Text(
+                        "Privacy boundaries",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = RoomStyle.Ink,
+                    )
                     Text(
                         "Similarity indexing is local. Photo map draws only the coordinates already inside your photos, so it needs no network at all. Street-map tiles are requested only while that map is open, and only in the Connect build. Current location is requested only inside Spatial compass. Remote AI stays disabled until a user adds and enables a provider key.",
                         style = MaterialTheme.typography.bodySmall,
+                        color = RoomStyle.InkFaint,
                     )
                     Spacer(Modifier.size(72.dp))
                 }
