@@ -63,6 +63,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.adaptive.PINCH_STEP_THRESHOLD
@@ -333,6 +335,45 @@ fun ViewerScreen(
         lifting = liftActive,
     )
 
+    // ── The shrink-to-map flight (owner, #19) ─────────────────────────────────────────────────
+    //
+    // Pulling the details room down shrinks the photo and lands it as the pin on the map in the
+    // room's place block -- a shrink-to-appear, explicitly not a tilt of the pane. Three parts:
+    //
+    // 1. The TOP room parks the home card with a flat SLIDE; every other room keeps the SWIVEL.
+    //    Chosen here, app-side, from the shell's own progress: ParkStyle is an ordinary parameter
+    //    the shell reads each composition, and the swivel angle is multiplied by `lift`, which is
+    //    ~0 at the instant this flips, so there is no visible pop. A derived flag, so this screen
+    //    recomposes when the room starts and stops being pulled, not on every drag frame. The
+    //    flier follows the card's rectangle and a tilted card has none.
+    // 2. One PhotoToPinFlight above the shell, a pure function of the shell's vertical progress,
+    //    aimed at the pin tile's rectangle that the room reports (held in a plain holder).
+    // 3. While the flier is up the room's pin waits beneath it instead of playing its own
+    //    in-plate shrink. A zoomed or turned photo has no honest resting rectangle to lift off
+    //    from, so it keeps the in-plate shrink (flightActive false) -- see ViewerChromePolicy.
+    //
+    // No map tile is fetched or warmed by any of this: the map behind the pin is still the
+    // one-shot snapshot that SETTLE_DEBOUNCE_MILLIS gates, below.
+    val topPulling by remember(shell) { derivedStateOf { shell.vProgress > 0.001f } }
+    val photoAtRest by remember(asset.id) { derivedStateOf { ViewerChromePolicy.photoAtRest(scale, rotation) } }
+    val flightActive = ViewerChromePolicy.flightActive(topPulling, photoAtRest, containerSize.width, containerSize.height)
+    // Where the pin tile sits in the room, as the room reports it. A snapshot-backed holder read
+    // only from draw/layer lambdas, so a late report repaints the flier without recomposing; a
+    // fresh one per photo so one photo's position is never used for the next.
+    val pinHolder = remember(asset.id) { PinRectHolder() }
+    // Where the photo is drawn at rest, in the shell's coordinates. The home box fills the shell,
+    // so this is the photo's Fit rectangle in that box. From the stored dimensions, like the
+    // minimap and the text layer: an EXIF-rotated file whose stored size is the unrotated one
+    // starts the flight from a rectangle of the wrong shape (a device check).
+    val photoRect = remember(asset.width, asset.height, containerSize) {
+        PlaceMorph.fitRect(
+            containerSize.width.toFloat(), containerSize.height.toFloat(),
+            asset.width.toFloat(), asset.height.toFloat(),
+        )
+    }
+    val onPinPositioned = remember(pinHolder) { { rect: Rect -> pinHolder.rect = rect } }
+    val density = LocalDensity.current
+
     // Read here rather than inside the room: the shell only composes a room once it is slightly
     // open, so reading it there would start the EXIF load on the first pixel of the pull and
     // leave the card empty for the rest of the gesture.
@@ -414,8 +455,10 @@ fun ViewerScreen(
         // Shrink AND swivel (owner, 2026-08-14). The card turns about the hinge edge that
         // stays on screen, so opening a room reads as a panel swinging away rather than a
         // rectangle sliding off -- the Magic Portal shape. The shrink is kept; the swivel is
-        // added to it.
-        parkStyle = ParkStyle.SWIVEL,
+        // added to it. EXCEPT for the top room (owner, #19: "not a pane tilt, rather a
+        // shrink-to-appear-on-the-map effect"): there the card slides flat and the photo's
+        // copy flies to the map pin. See the flight notes above.
+        parkStyle = if (topPulling) ParkStyle.SLIDE else ParkStyle.SWIVEL,
         // TOP = what this photo is, pulled DOWN over it (owner's reference, 6.png). See this
         // screen's KDoc for the deviation from the gallery's geography this is.
         top = roomSlot(!roomsWithdrawn) {
@@ -447,6 +490,8 @@ fun ViewerScreen(
                 onSetCopyright = onSetCopyright,
                 onEmbedKeywords = onEmbedKeywords,
                 settled = detailsSettled,
+                flightActive = flightActive,
+                onPinPositioned = onPinPositioned,
                 onExpandMap = { from -> mapOrigin = from },
                 plateMapBackdrop = plateMapBackdrop,
                 // POSITIVE, and this is not cosmetic. A TOP room opens with vProgress running
@@ -767,6 +812,26 @@ fun ViewerScreen(
         }
     }
 
+    // The photo, flying to the pin. Above the shell (it leaves the parked card and lands in the
+    // room), beneath the map (which grows over everything once the pin is tapped). Pointer-free,
+    // so the shell's return drag on the parked card still receives every touch. A video flies as
+    // its poster frame: the flier draws the asset's thumbnail, never the live player surface,
+    // which a layer cannot move reliably.
+    if (flightActive) {
+        PhotoToPinFlight(
+            asset = asset,
+            progress = { shell.vProgress },
+            photoRect = photoRect,
+            pinRect = { pinHolder.rect },
+            viewportSize = containerSize,
+            bandPx = PlaceMorph.SHELL_BAND_DP * density.density,
+            modifier = Modifier.testTag(PHOTO_TO_PIN_FLIGHT_TAG),
+            landedDim = PlaceMorph.landedDim(
+                ViewerChromePolicy.placeKnown(exif.latitude, exif.longitude, manualLatitude, manualLongitude),
+            ),
+        )
+    }
+
     // The map, grown out of the plate. Above the shell, so it can fill the screen the room's
     // bottom band would otherwise cut off; drawn only while there is an origin to grow from.
     mapOrigin?.let { from ->
@@ -820,6 +885,18 @@ fun ViewerScreen(
         }
     }
     }
+}
+
+/** Id of the photo-to-pin flier, for tests: present exactly while the flight is composed. */
+internal const val PHOTO_TO_PIN_FLIGHT_TAG = "photoToPinFlight"
+
+/**
+ * The details room's pin tile rectangle in room coordinates, as last reported by the room.
+ * Snapshot state so a late report repaints the flier (which reads it inside draw and layer
+ * lambdas only), and never read during composition.
+ */
+private class PinRectHolder {
+    var rect: Rect? by mutableStateOf(null)
 }
 
 /**

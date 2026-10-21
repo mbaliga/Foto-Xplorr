@@ -157,4 +157,43 @@ class ViewerChromePolicyTest {
         assertFalse(ViewerChromePolicy.roomsWithdrawn(lifting = false, atHome = true))
         assertFalse(ViewerChromePolicy.roomsWithdrawn(lifting = false, atHome = false))
     }
+
+    // ── the shrink-to-map flight (#19) ─────────────────────────────────────────────────────────
+
+    @Test
+    fun `the flier is up only while the top room is pulled, the photo is at rest and the shell is measured`() {
+        fun active(
+            pulling: Boolean = true,
+            atRest: Boolean = true,
+            width: Int = 880,
+            height: Int = 1912,
+        ) = ViewerChromePolicy.flightActive(pulling, atRest, width, height)
+
+        assertTrue(active())
+        assertFalse("no pull, no flier", active(pulling = false))
+        assertFalse("a zoomed or turned photo keeps the in-plate shrink", active(atRest = false))
+        assertFalse("before first layout", active(width = 0))
+        assertFalse("before first layout", active(height = 0))
+    }
+
+    @Test
+    fun `a photo is at rest only when neither zoomed nor turned`() {
+        assertTrue(ViewerChromePolicy.photoAtRest(scale = 1f, rotationDegrees = 0f))
+        assertTrue("float noise from a settling pinch", ViewerChromePolicy.photoAtRest(scale = 1.0005f, rotationDegrees = 0f))
+        assertFalse(ViewerChromePolicy.photoAtRest(scale = 2.5f, rotationDegrees = 0f))
+        assertFalse(ViewerChromePolicy.photoAtRest(scale = 1f, rotationDegrees = 90f))
+    }
+
+    @Test
+    fun `a place is known by an embedded fix first, a hand-placed one second`() {
+        assertTrue(ViewerChromePolicy.placeKnown(17.4, 78.4, null, null))
+        assertTrue(ViewerChromePolicy.placeKnown(null, null, 17.4, 78.4))
+        assertTrue(ViewerChromePolicy.placeKnown(17.4, 78.4, 1.0, 2.0))
+        assertFalse(ViewerChromePolicy.placeKnown(null, null, null, null))
+        // Garbage in either source is no place: the plate would not draw it either.
+        assertFalse(ViewerChromePolicy.placeKnown(Double.NaN, 78.4, null, null))
+        assertFalse(ViewerChromePolicy.placeKnown(null, null, 200.0, 400.0))
+        // A bad embedded fix does not hide a good hand-placed one, matching the room.
+        assertTrue(ViewerChromePolicy.placeKnown(Double.NaN, 78.4, 17.4, 78.4))
+    }
 }

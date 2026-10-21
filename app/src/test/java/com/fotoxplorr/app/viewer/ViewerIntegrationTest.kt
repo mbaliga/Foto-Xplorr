@@ -13,7 +13,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.doubleClick
+import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -333,5 +336,90 @@ class ViewerIntegrationTest {
         compose.onRoot().performTouchInput { swipeDown(startY = 20f, endY = centerY + 300f, durationMillis = 300) }
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Where this photo was taken").assertExists()
+    }
+
+    // ── (d) the shrink-to-map flight ───────────────────────────────────────────────────────────
+
+    private fun flightExists(): Boolean =
+        compose.onAllNodesWithTag(PHOTO_TO_PIN_FLIGHT_TAG).fetchSemanticsNodes().isNotEmpty()
+
+    private fun pullDetails() {
+        compose.onRoot().performTouchInput { swipeDown(startY = 20f, endY = centerY + 300f, durationMillis = 300) }
+        compose.waitForIdle()
+    }
+
+    private fun pressBack() {
+        val activity = (compose as AndroidComposeTestRule<*, *>).activity
+        compose.runOnUiThread { activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
+    }
+
+    @Test
+    fun `the photo flier exists while the details room is pulled and is gone at rest`() {
+        val photos = roll()
+        compose.setContent {
+            themed { Viewer(photos[4], photos, manualLatitude = 17.4835, manualLongitude = 78.37) }
+        }
+        compose.waitForIdle()
+        assertTrue("no flier at rest -- it holds a decoded image", !flightExists())
+        pullDetails()
+        assertTrue("pulling the details room should fly the photo", flightExists())
+        compose.onNodeWithContentDescription("Where this photo was taken").assertExists()
+        pressBack()
+        assertTrue("the flier should leave with the room", !flightExists())
+    }
+
+    @Test
+    fun `a photo without a place flies to the ghost pin without throwing`() {
+        val photos = roll()
+        compose.setContent { themed { Viewer(photos[4], photos) } }
+        compose.waitForIdle()
+        pullDetails()
+        assertTrue(flightExists())
+        pressBack()
+        assertTrue(!flightExists())
+    }
+
+    @Test
+    fun `a zoomed photo falls back to the in-plate shrink instead of flying from nowhere`() {
+        val photos = roll()
+        compose.setContent {
+            themed { Viewer(photos[4], photos, manualLatitude = 17.4835, manualLongitude = 78.37) }
+        }
+        compose.waitForIdle()
+        // Double tap is the viewer's own zoom-in.
+        compose.onRoot().performTouchInput { doubleClick(center) }
+        compose.mainClock.advanceTimeBy(500L)
+        compose.waitForIdle()
+        pullDetails()
+        assertTrue("a zoomed photo has no resting rectangle to fly from", !flightExists())
+        // The room still opens and still shows the place.
+        compose.onNodeWithContentDescription("Where this photo was taken").assertExists()
+    }
+
+    @Test
+    fun `a video flies as its poster and the pull survives the live player underneath`() {
+        val items = roll(videoAt = 4)
+        compose.setContent { themed { Viewer(items[4], items) } }
+        compose.waitForIdle()
+        pullDetails()
+        assertTrue(flightExists())
+        pressBack()
+        assertTrue(!flightExists())
+    }
+
+    @Test
+    fun `pulling and closing the room over and over leaves no flier behind`() {
+        val photos = roll()
+        compose.setContent {
+            themed { Viewer(photos[4], photos, manualLatitude = 17.4835, manualLongitude = 78.37) }
+        }
+        compose.waitForIdle()
+        repeat(3) {
+            pullDetails()
+            assertTrue(flightExists())
+            pressBack()
+            assertTrue(!flightExists())
+        }
     }
 }
