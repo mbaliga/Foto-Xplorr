@@ -76,8 +76,12 @@ data class GalleryPreferencesState(
     val keepScreenOn: Boolean = false,
     /** Play a slideshow in a random order rather than in the current sort order. */
     val slideshowShuffle: Boolean = false,
-    /** Start a video as soon as it is opened, rather than waiting for a tap on play. */
-    val autoplayVideos: Boolean = false,
+    /**
+     * Start a video as soon as it is opened, rather than waiting for a tap on play. On by default:
+     * with it off, a freshly opened video was a still frame with no visible way to start it, which
+     * read as "videos do not play". Anyone who turned it off keeps their choice.
+     */
+    val autoplayVideos: Boolean = true,
     /**
      * Show the filmstrip of neighbouring photos along the bottom of an open photo. On by default,
      * which is the behaviour the viewer already had.
@@ -305,9 +309,11 @@ class GalleryPreferences(context: Context) {
         // stylistic choice: CatalogueCharacterisationTest pins the projections by fingerprint,
         // so a new preference whose default changed what a destination contains would move a
         // golden -- and a golden that needs editing means the refactor changed behaviour.
+        // (autoplayVideos is the one deliberate exception: it touches no projection, only whether
+        // an opened video starts by itself.)
         keepScreenOn = preferences.getBoolean(KEY_KEEP_SCREEN_ON, false),
         slideshowShuffle = preferences.getBoolean(KEY_SLIDESHOW_SHUFFLE, false),
-        autoplayVideos = preferences.getBoolean(KEY_AUTOPLAY_VIDEOS, false),
+        autoplayVideos = preferences.getBoolean(KEY_AUTOPLAY_VIDEOS, true),
         showFilmstrip = preferences.getBoolean(KEY_SHOW_FILMSTRIP, true),
         longPressPreview = preferences.getBoolean(KEY_LONG_PRESS_PREVIEW, true),
         loopAnimations = preferences.getBoolean(KEY_LOOP_ANIMATIONS, false),

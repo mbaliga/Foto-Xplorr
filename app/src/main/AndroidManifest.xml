@@ -228,11 +228,14 @@
           FotoXplorrActivity, since it needs no gallery, no permission grant beyond what the
           incoming content:// URI already carries, and never touches this app's own catalogue.
           Same configChanges as FotoXplorrActivity, per P0-09, and for the identical reason: every
-          value here is one Compose already reacts to on its own.
+          value here is one Compose already reacts to on its own. supportsPictureInPicture because
+          the video player offers PiP wherever it is hosted (and arms auto-enter while playing);
+          without it the button did nothing here and auto-enter was silently ignored.
         -->
         <activity
             android:name=".viewer.ExternalViewerActivity"
             android:exported="true"
+            android:supportsPictureInPicture="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

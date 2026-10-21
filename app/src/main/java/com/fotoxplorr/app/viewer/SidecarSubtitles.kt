@@ -37,6 +37,17 @@ fun findSidecarSubtitles(
         candidate.relativePath == videoRelativePath
 }
 
+/**
+ * Drops the candidates [canOpen] cannot open, keeping the order of the rest. Pure so the policy is
+ * testable on the JVM: a candidate whose probe throws counts as unreadable rather than failing the
+ * whole lookup. A non-media `Files` row the app cannot read (or a row whose file was deleted) would
+ * otherwise become a fatal load error on the merged media source -- see [VideoPlayer].
+ */
+fun filterReadableSidecars(
+    candidates: List<SidecarCandidate>,
+    canOpen: (SidecarCandidate) -> Boolean,
+): List<SidecarCandidate> = candidates.filter { candidate -> runCatching { canOpen(candidate) }.getOrDefault(false) }
+
 /** The file-name stem (no extension) [findSidecarSubtitles] matches sidecars against. */
 fun fileStem(displayName: String): String {
     val dot = displayName.lastIndexOf('.')
@@ -89,3 +100,12 @@ fun subtitleMimeTypeFor(displayName: String): String? = when (displayName.substr
     "ass", "ssa" -> androidx.media3.common.MimeTypes.TEXT_SSA
     else -> null
 }
+
+/**
+ * [querySidecarSubtitlesFor], narrowed to sidecars this app can actually open right now. The probe
+ * is a single open-and-close per candidate (a handful at most), so call it off the main thread.
+ */
+fun readableSidecarSubtitlesFor(context: Context, asset: MediaAsset): List<SidecarCandidate> =
+    filterReadableSidecars(querySidecarSubtitlesFor(context, asset)) { candidate ->
+        context.contentResolver.openInputStream(candidate.contentUri)?.use { true } ?: false
+    }

@@ -42,6 +42,16 @@ class ExternalViewerActivityManifestTest {
         )
     }
 
+    @Test
+    fun `ExternalViewerActivity supports picture-in-picture`() {
+        // VideoPlayer offers a PiP button and arms auto-enter wherever it is hosted. Without this
+        // attribute the button silently did nothing here and auto-enter was ignored.
+        assertTrue(
+            "ExternalViewerActivity must declare android:supportsPictureInPicture=\"true\"",
+            SUPPORTS_PIP.containsMatchIn(declaredActivityBlock()),
+        )
+    }
+
     private fun declaredActivityBlock(): String {
         val xml = manifestXml().readText()
         return EXTERNAL_VIEWER_ACTIVITY_BLOCK.find(xml)?.value
@@ -67,6 +77,7 @@ class ExternalViewerActivityManifestTest {
             """<activity[^>]*android:name\s*=\s*"\.viewer\.ExternalViewerActivity"[^>]*>.*?</activity>""",
             RegexOption.DOT_MATCHES_ALL,
         )
+        val SUPPORTS_PIP = Regex("""android:supportsPictureInPicture\s*=\s*"true"""")
         val EXPORTED_TRUE = Regex("""android:exported\s*=\s*"true"""")
         val ACTION_VIEW = Regex("""<action\s+android:name\s*=\s*"android\.intent\.action\.VIEW"\s*/>""")
         val CATEGORY_DEFAULT = Regex(

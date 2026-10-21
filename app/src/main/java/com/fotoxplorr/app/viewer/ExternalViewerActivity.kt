@@ -29,6 +29,7 @@ import com.fotoxplorr.app.FotoXplorrActivity
 import com.fotoxplorr.app.LibraryRuntime
 import com.fotoxplorr.app.gallery.GalleryPreferences
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.openwith.syntheticNegativeMediaId
 import com.fotoxplorr.app.share.PreparedItem
 import com.fotoxplorr.app.share.ShareFrame
 import com.fotoxplorr.app.share.ShareOptions
@@ -274,7 +275,10 @@ internal fun buildExternalAsset(context: Context, uri: Uri, intentMimeType: Stri
     }.getOrNull()?.let(::parseExifDateTimeOriginal) ?: System.currentTimeMillis()
 
     return MediaAsset(
-        id = MediaId.EXTERNAL,
+        // A per-URI id, not MediaId.EXTERNAL: every external asset sharing one id made every
+        // external video share one resume-position key, so a clip resumed at another clip's
+        // position. Negative by construction, so it can never collide with a catalogue row.
+        id = syntheticNegativeMediaId(uri.toString()),
         contentUriString = uri.toString(),
         displayName = identity.displayName,
         mimeType = identity.mimeType,
@@ -289,6 +293,9 @@ internal fun buildExternalAsset(context: Context, uri: Uri, intentMimeType: Stri
         relativePath = null,
         isFavorite = false,
         isTrashed = false,
+        // Handed to this app, not owned by it: see MediaAsset.isExternal. VideoPlayer keys its
+        // "no catalogue writes" rule (key moments, resume positions) off this flag.
+        isExternal = true,
     )
 }
 
