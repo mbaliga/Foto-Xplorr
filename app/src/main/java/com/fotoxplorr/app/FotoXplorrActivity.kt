@@ -71,6 +71,7 @@ import com.fotoxplorr.app.gallery.rememberGeoRepository
 import com.fotoxplorr.app.hyle.ActivityKind
 import com.fotoxplorr.app.jobs.JobForegroundService
 import com.fotoxplorr.app.jobs.humanMessage
+import com.fotoxplorr.app.jobs.shouldAskForJobNotifications
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.metadata.GpsCoordinate
 import com.fotoxplorr.app.metadata.MetadataEdit
@@ -393,8 +394,26 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // progress tick the same list of jobs produces.
     val runningJobs by viewModel.jobRunner.jobs.collectAsStateWithLifecycle()
     val anyJobRunning = runningJobs.isNotEmpty()
+    // The progress notification needs POST_NOTIFICATIONS on Android 13+, and this is the only place
+    // that asks for it: once, the first time a job actually runs (see shouldAskForJobNotifications).
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { }
     LaunchedEffect(anyJobRunning) {
-        if (anyJobRunning) JobForegroundService.start(applicationContext) else JobForegroundService.stop(applicationContext)
+        if (anyJobRunning) {
+            val prefs = applicationContext.getSharedPreferences("job_notifications", android.content.Context.MODE_PRIVATE)
+            val granted = ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (shouldAskForJobNotifications(Build.VERSION.SDK_INT, granted, prefs.getBoolean("asked", false))) {
+                prefs.edit().putBoolean("asked", true).apply()
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            JobForegroundService.start(applicationContext)
+        } else {
+            JobForegroundService.stop(applicationContext)
+        }
     }
 
     val selectedIndex = selectedAssetId?.let { id -> viewerAssets.indexOfFirst { it.id == id } } ?: -1
