@@ -141,6 +141,10 @@ Current phase: **Phase 1 — Foundation**. Branch: `claude/fotoz-p1-foundation`.
   manual pin present) pinned at the top and marked MUST PASS BEFORE MERGE. PR #14's own description
   was rewritten as the Phase 1 gate report, summarising every WP and pointing back to this file's
   entries above for the full reasoning behind each deferral. Phase 2 has not started.
+- **Batch 1 (21 Oct 2026)**: `docs/device-test/batch-1-checklist.md` -- every device-only item from the
+  owner-feedback batch below (video playback, the filmstrip over a video, subject lift, the curves
+  editor, the shrink-to-map transition and the unknown-location plate), grouped by the owner's report
+  number, same shape as `phase-0-checklist.md`.
 
 ## Post-Phase-1 feature work (30 Sep 2026)
 
@@ -404,3 +408,148 @@ colour, and for APK links for both.
 Gate: `./scripts/verify.sh` is green on both flavours (1017 unit tests each, lint, both debug
 assemblies, the offline enforcement gates). Nothing under `core/` changed, so
 `scripts/verify-native.sh` was not needed.
+
+## Batch 1: bugs and regressions from the owner's feedback (21 Oct 2026)
+
+The owner tried the consolidated build and reported five things (several are quoted in the KDoc of
+the code that answers them): **#1** *"Fotoz is not playing videos"*; **#28** *"When I
+scrub through the filmstrip and stop on a video, the video player progress bar etc. replaces the
+filmstrip so scrubbing through is no longer possible"*; **#12** *"Tap the subject to lift it is not
+working. Needs to be richer: tap to select, draw to select, refine selection, etc."*; **#15** *"Edit
+doesn't work great - pro tools toggle etc. Curves doesn't show me the curves at all, like Snapseed
+does - I want that, not just the presets"*; **#19** *"The transition effect of the photo becoming
+smaller and appearing on the map ... is not happening ... not a pane tilt, rather a shrink-to-appear-
+on-the-map effect. And the map bg when the location is unknown is weird, and not comforting at all."*
+
+Method: a read-only diagnosis of each report, a critic pass that corrected it (and flagged what stayed
+a guess), then one code unit per report on disjoint files, then two wiring units that owned
+`ViewerScreen` (video and filmstrip; lift and flight), then this docs unit. Each code unit was
+required to compile for both flavours and pass its own tests before committing (the full
+`./scripts/verify.sh` gate is the orchestrator's final step and is not recorded here); **no device
+or emulator was available, so nothing below has run on a phone.** The device-only items are in
+`docs/device-test/batch-1-checklist.md`, and the lessons that bind later work are `docs/TRAPS.md`
+#39 to #56.
+
+Commits (oldest first): `8d13ccb` editor (curves, no tiers); `0424f87` video engine; `4c657ab` lift
+dead-tap fixes and the actions-room row; `a421009` lift scribble editor; `58133f4` flight and
+unknown-location plate; `e058630` filmstrip is roll-level; `2ef7c8c` video wiring; `496defc` lift
+wiring; `fa82327` flight wiring.
+
+### Owner decisions applied (not re-asked)
+
+- Video autoplay defaults to **ON** (opening a video starts it; the user's toggle persists), and the
+  chrome is shown the first time a video opens.
+- The editor's **Simple/Pro tier is removed**: one scrollable tool strip with Curves reachable.
+- The shrink flight must not fetch map tiles during a gesture or pre-warm (privacy): the existing
+  160 ms settle debounce stays.
+- `shared-libraries/` is another repo's submodule and was **not edited**; `ParkStyle` is chosen
+  app-side.
+- The rooms were **not moved** in this batch. (Later batch.)
+- Lift Phase B (a bundled learned model) is **not** in scope.
+- Sticker export is a 2048 px PNG with alpha to `Pictures/Fotoz/Stickers`, on a user action only.
+- Audio is slated for removal later and was not touched.
+
+### What was built, per report
+
+- **#1 Videos.** The old player had no start affordance with the chrome hidden (autoplay off, chrome
+  down, a tap only toggled chrome) and **no error handling at all**, so any failure was a black frame
+  with a Play glyph that did nothing; the transport keyed on `isPlaying` (false while buffering, so
+  Pause was unreachable), the resume position was never saved (the save after the poll loop was
+  unreachable, and dispose does not run on process death), `ON_STOP` did not pause, and an external
+  clip shared one resume key. Now (`VideoPlayer`, `PlaybackLogic`, `ViewerPlayerFactory`): autoplay on
+  and chrome up on the first video; transport from `playWhenReady` and state; an error panel with
+  Retry / Open with and plain-language copy; a player built only after 250 ms on screen; decoder
+  fallback; audio focus and pause-on-noisy; sidecar subtitles resolved and probed before the first
+  prepare, with one silent retry without them; resume saved on pause / `ON_STOP` / loop end / release,
+  gated on having played or seeked; key-moment indexing 1.5 s after first ready; PiP armed only while
+  playing; `ExternalViewerActivity` declares PiP and gives each external video its own negative id.
+  See PRODUCT-AND-ARCHITECTURE §4 "The viewer's moving parts".
+- **#28 Filmstrip.** `ViewerChromePolicy.filmstripShown` has no asset: the strip is up over a video;
+  `FilmstripScrubber.onScrubbingChanged` (false on dispose) pauses a playing video on touch and holds
+  the next one back until the strip settles; the transport lifts by the strip's 74 dp band and its
+  second row folds behind "More" on a short window. The slideshow waits for a playing video, and
+  Lift being active holds it too.
+- **#12 Lift.** Two dead-ends fixed first: taps were mapped through `MediaAsset.width/height` rather
+  than the decoded bitmap, and `decodeUpright` could throw uncaught on an unreadable URI (a crash,
+  not a no-op). Then the richer editor: select by tap or scribble (with a Background polarity), a
+  refine brush, undo/redo by replaying a history, a checkerboard preview, Copy / Share / Save sticker.
+  Reachable from an always-present "Lift subject" row in the actions room as well as by long press.
+  The overlay now draws its own stage, sits outside the zoom layer, and withdraws the rooms.
+- **#15 Editor.** Curves was unreachable because a weightless `LazyRow` starved the "Pro tools" chip
+  to zero width in both tiers (TRAPS #44). The tier is gone. Curves is a drawn graph with a histogram
+  backdrop, per-channel (RGB, Luma, R, G, B) draggable points (add by touching the curve, drag; remove
+  by long-press, double-tap, or dragging off the graph), Reset / Reset all and the named presets as
+  chips. A real luma curve was added. Undo/Redo moved into the top bar.
+- **#19 Flight and plate.** The flight is an overlay driven by the shell's progress; the unknown
+  plate is calm (graticule, ghost pin, "No location yet", "Add a place"); the picker lost its spin and
+  gained fixes. See `DESIGN-FIDELITY-VIEWER.md` "Revisions in batch 1" and TRAPS #40, #41.
+
+### What deviated and why
+
+- **Armed start, not a mount gate.** The filmstrip plan wanted the player unmounted while scrubbing;
+  the critic showed a page swipe and the details room build players the same way, so the guard moved
+  inside `VideoPlayer` (250 ms armed delay; `scrubSuspended` only pauses and holds arming back).
+- **Key-moment indexing waits for the first ready state plus 1.5 s**, not just the armed delay, to keep
+  retriever decodes off the player's critical path. The "Key moment" pill therefore appears a few
+  seconds later than before.
+- **Autoplay with a remembered position resumes silently** and hides the "Resume from" chip (with
+  autoplay off the chip shows); otherwise default-on autoplay would flash the chip and restart at 0:00.
+- **The centre play glyph shows whenever the transport would offer Play** (paused, ended), not only
+  before the first play, and is hidden while an idle player is about to autoplay and while the error
+  panel is up.
+- **Manual Retry after a decoder error keeps subtitles** unless the silent retry already dropped them.
+- **`ResumePositionStore` also refuses every negative id**, a defensive guard on top of `VideoPlayer`'s.
+- **`ViewerScreen.autoplayVideos` default flipped to true**, so `ExternalViewerActivity` (which does not
+  pass it) autoplays too.
+- **The position chip uses the shared chrome rule**, not the filmstrip flag (see the viewer design doc).
+- **Room withdrawal while lifting waits for the shell to be home**, so a room closed to start the lift
+  slides away rather than vanishing; a long press at home withdraws immediately.
+- **Flight timing.** It runs over the whole pull, not the critic's geometry-derived late window (the
+  flier stays on screen at every progress, tested); the hand-off keeps the real pin opaque under a
+  fading flier rather than the critic's complementary alphas (which would dim the plate).
+- **The flier is composed only when the photo is at rest** (not zoomed or turned); otherwise the
+  room's own in-plate shrink plays. `PlacePlate` reports ROOT bounds while `PhotoDetailRoom` reports
+  ROOM-local, de-duplicated bounds (deliberately different semantics, documented on both).
+- **Lift: Tap and Draw are one Select tool** (a tap is a one-point scribble) with a Subject/Background
+  chip; Refine is the separate add/erase brush. The tap seed is a robust mean of a small disc around
+  the tapped pixel (a thin line keeps the line's colour; a hot pixel is ignored). A tap on the
+  letterbox is swallowed in the editor instead of dismissing it, to avoid losing work to a stray tap.
+  The brush type is `BrushStroke` (not `Stroke`, which clashes with the Compose drawing type).
+- **Editor.** `AdjustmentRenderer` was **not** edited: the luma table rides inside `ChannelLuts.luma`.
+  `CurveChannel` moved into `ToneCurve.kt` (pure) with its colour as an extension in `CurvesEditor.kt`.
+  A tap on empty space far from the curve inserts the point under the finger (bending the curve);
+  near the line it inserts on the line. Drag-off removal is armed (red, haptic) and happens on release,
+  and can be cancelled by dragging back in. `insertAt` is not bit-identical (neighbouring tangents are
+  recomputed; the tests allow up to 8 levels). The autofix offer row is hidden on the Curves tab.
+- **Tests.** Every unit added NEW test files; the three shared viewer test files were left alone. No
+  Compose/Robolectric test exists for the lift overlay or the whole `EditorScreen` (the former needs
+  decode plumbing, the latter `MediaAsset` plumbing): gesture flow, chrome and layout budgets are
+  compile-verified and reasoned only.
+- **Verification environment.** `captureToImage()` times out under Robolectric here (TRAPS #56);
+  the offline source scan is line-based and includes comments (TRAPS #43); a Gradle build needs the
+  shared lock when several agents work in one tree.
+
+### Found, not fixed (outside the units that found them)
+
+- `ViewerActionsRoom.ActionRow` makes only the 22 dp icon clickable; the label beside it is dead.
+  Relevant to #12's discoverability: tapping the words "Lift subject" does nothing. The fix is one
+  `Modifier.clickable` on the row.
+- `LiveTextOverlay` consumes every tap and long press on a photo with recognised text while the chrome
+  is up, so long-press-to-lift and tap-to-toggle-chrome do nothing there (TRAPS #50).
+- `MediaAsset.width/height` may be the un-rotated sensor grid for an EXIF-rotated photo; Lift now uses
+  the decoded bitmap, but `LiveTextOverlay`, the minimap and the flight's start rectangle still trust
+  the stored size (TRAPS #48). Unverified until logged on a device.
+- The rooms' positions in the viewer (details top, actions right, settings bottom) differ from the
+  layout in the original brief for #12 (details top, actions bottom, view options right). Not moved in
+  this batch by decision; the owner should say which is intended before the rooms batch.
+
+### Residual, for the owner
+
+- Whether to schedule lift Phase B (a bundled learned segmentation model) once the licence and size
+  trade-off is decided; until then hair, fur, glass and low-contrast edges will be rough.
+- The classical solver's honest limits (multi-coloured subject needs a second scribble; a same-colour
+  neighbour needs a Background scribble) are in PRODUCT-AND-ARCHITECTURE §5.
+- Audio focus is a visible change: starting a video now pauses the app's own music.
+- `proguard-rules.pro` has no Media3 section; the release build relies on the library's consumer
+  rules (a device smoke test, listed in the checklist).
+

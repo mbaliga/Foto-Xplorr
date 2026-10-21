@@ -5,6 +5,9 @@
 **Updated:** 2026-09-16 — full-resolution export, drag crop, per-channel curves, HSL, presets,
 undo/redo, persisted recipes, spot heal and export controls landed; see "Where this stands now"
 below. The decision and the licence/dependency analysis are unchanged from the original text.
+**Updated:** 2026-10-21 — the Simple/Pro tier split described below was removed (one scrollable
+tool strip, Curves reachable) and the curves editor became a drawn graph with a histogram backdrop
+and a luma curve; see "Where this stands now" and `docs/TRAPS.md` #44, #52 to #54.
 **Owner request:** *"I think some basic photo editing is required. I know Snapseed is free, is it
 open-source as well? If yes, get me their features. If not, build in editing features from some
 open-source repo."*
@@ -88,10 +91,11 @@ arises.
   `filesDir/presets/`, one file per preset).
 - `EditHistory` — an in-session undo/redo stack over `EditRecipe` snapshots, committed on a
   settle-debounce so a slider drag produces one entry, not one per frame.
-- `EditorScreen` — the UI, split into a Simple tier (fewer, coarser sliders, plus Crop/Rotate/
-  Presets) and an on-demand Pro tier (the rest, plus Curves, HSL, Detail's full slider set, and
-  Heal) — see `EditorTier`. A press-and-hold on the preview shows the untouched original for
-  comparison.
+- `EditorScreen` — the UI: one scrollable strip of tools (Light, Colour, Curves, Presets, Detail,
+  HSL, Crop, Rotate, Heal), all always offered. *(It was originally split into a Simple tier and an
+  on-demand Pro tier, `EditorTier`; the tier switch was removed on 2026-10-21 because its layout
+  starved the Pro toggle to zero width, which hid Curves entirely — `docs/TRAPS.md` #44.)* A
+  press-and-hold on the preview shows the untouched original for comparison.
 
 ### Where this stands now
 
@@ -103,9 +107,12 @@ arises.
 - **The crop tool is a real drag box**: 8 handles, drag-to-move, aspect lock (the same presets as
   before, now also constraining the drag), a rule-of-thirds grid while dragging. Straighten still
   applies before the crop, unchanged.
-- **Curves are draggable**, per RGB/R/G/B channel, on top of the original named-shape presets —
-  `CurvesEditor` reads and writes `ToneCurve.withPoint`/`withoutPointAt`, the same monotone-Hermite
-  curve `ToneCurveTest` already covered before any UI could set the per-channel fields at all.
+- **Curves are a drawn, draggable graph**, per RGB/Luma/R/G/B channel, over a histogram of the
+  photo, with the original named-shape presets kept as chips and Reset / Reset all. `CurvesEditor`
+  edits the same monotone-Hermite `ToneCurve` `ToneCurveTest` already covered, through the
+  index-based `moveTo`/`insertAt`/`removeAt` (not `withPoint`, which merges by x — `docs/TRAPS.md`
+  #53). The luma curve is applied per pixel after the three channel tables, scaling RGB to keep hue
+  (`ChannelLuts.luma`), so the export path picks it up with no renderer change.
 - **HSL, presets, undo/redo, persisted recipes and spot healing** are implemented as described
   above under Shape.
 - **Denoise** (`Adjustments.denoise`) is implemented as a simple blend between the original and a

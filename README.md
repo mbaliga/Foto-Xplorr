@@ -12,7 +12,7 @@ Fotoz was previously called Foto Xplorr; the repository name, the `com.fotoxplor
 - Day, month or ungrouped chronological timeline with a scrubber.
 - A query language over filename, folder, media type, tag, date range, camera and boolean/field operators, plus tuning chips.
 - Sort by newest, oldest, name or size; adjustable grid density with aspect-ratio tiles and a zoom ladder.
-- Full-screen image viewer (EXIF/XMP details, Live Text selection, subject lift/stickers) and a full-screen video/audio player built on ExoPlayer/Media3: variable speed with pitch preservation, embedded and sidecar subtitle tracks, audio-track selection, gestures (double-tap seek, edge-swipe brightness/volume, A-B loop), resume position, and Picture-in-Picture.
+- Full-screen image viewer (EXIF/XMP details, Live Text selection, subject lift with tap-or-draw selection, a refine brush, undo/redo and sticker export, and a photo that shrinks into its map pin as the details pull down) and a full-screen video/audio player built on ExoPlayer/Media3: videos start by themselves (a setting), the filmstrip stays available over a video, variable speed with pitch preservation, embedded and sidecar subtitle tracks, audio-track selection, gestures (double-tap seek, edge-swipe brightness/volume, A-B loop), resume position, a clear error panel with Retry and Open with when a video cannot be played, and Picture-in-Picture.
 - SVG support, and real animated playback for GIF, animated WebP and animated AVIF/HEIF — detected
   by inspecting each file's own container (GIF frame count, WebP's `VP8X` flag, PNG's `acTL`/`IDAT`
   ordering, HEIF/AVIF's `ftyp` brand family), not guessed from MIME type alone, so a static
@@ -25,7 +25,7 @@ Fotoz was previously called Foto Xplorr; the repository name, the `com.fotoxplor
 
 ### Edit
 
-- A Snapseed-style photo editor (Simple and Pro tiers): exposure/contrast/highlights/shadows/white balance, HSL by hue band, per-channel draggable curves, drag-handle crop with aspect lock, straighten, spot heal, vignette/sharpen, built-in and user-saved presets, undo/redo with a persisted non-destructive edit history, and auto-fix suggestions.
+- A Snapseed-style photo editor with one scrollable tool strip: exposure/contrast/highlights/shadows/white balance, HSL by hue band, a drawn curves editor (a histogram behind a curve with draggable points, for RGB, luma and each colour channel), drag-handle crop with aspect lock, straighten, spot heal, vignette/sharpen, built-in and user-saved presets, undo/redo with a persisted non-destructive edit history, and auto-fix suggestions.
 - Save a copy, Save As (JPEG/PNG/WebP/HEIC where the device has an HEVC encoder) to a chosen destination, or Replace the original — each behind the Android consent Fotoz's own writes require, with EXIF/XMP (including orientation) preserved into the result.
 - A video editor (trim, speed, rotate, mirror, mute, aspect crop, colour filters) built on Media3 Transformer, with a live trimmed-range preview and a real export progress/cancel.
 - Photographer-grade metadata: read and write EXIF and XMP (rating, creator, copyright, keywords, GPS) with the same consent flow, and batch edits across a selection.

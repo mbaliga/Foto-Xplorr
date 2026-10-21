@@ -169,6 +169,8 @@ mutation `@Synchronized`. The constructor is `internal` for tests only.
 new view per video and attached none of them after the first: the factory lambda is called once
 for the node's lifetime and later changes to it are ignored. Swiping between videos showed the
 old, stopped view. Wrap the composable in `key(asset.id) { … }` so a new video is a new node.
+(Still true after the move to Media3: `VideoPlayer` hosts a `PlayerView` in an `AndroidView`, and
+`ViewerScreen` still wraps it in `key(asset.id)`; see also #39 and #42 for the rest of its lifecycle.)
 
 ## 28. ML Kit Translate wants "en", not "en-US"
 
@@ -274,4 +276,270 @@ compiler tries to parse, surfacing as a wall of unrelated syntax errors far from
 same shape bites over a glob path (`*/*.jpg`) just as easily. Reword around the literal instead of
 trying to escape it — a backslash has no escape meaning inside a Kotlin comment and only makes the
 rendered doc uglier for no safety.
+
+*Entries 39 onward were earned in the 21 Oct 2026 owner-feedback batch (videos not playing, the
+filmstrip over a video, subject lift, the curves editor, the shrink-to-map transition). Each names
+the report it grew out of. None of it has run on a phone: the claims are checked against the code
+and the JVM/Robolectric tests, and what only a device can settle is in
+`docs/device-test/batch-1-checklist.md`.*
+
+## 39. The filmstrip is roll-level navigation — never gate it on the current asset
+
+Owner #28: *"When I scrub through the filmstrip and stop on a video, the video player progress bar
+etc. replaces the filmstrip so scrubbing through is no longer possible."* The strip drives the
+viewer **live** — `onSelect` fires mid-drag, the moment a different thumbnail is nearest the centre
+— and it was drawn under `!asset.isVideo && …`. So the instant the drag landed on a video the strip
+left composition from under the finger, the gesture was cancelled, and the video's own transport
+took the space. A control whose input changes the very thing its visibility depends on will always
+do this. `ViewerChromePolicy.filmstripShown` therefore takes no asset and no `isVideo` (chrome up,
+not in picture-in-picture, the preference, a roll larger than one, not lifting), and
+`ViewerChromePolicyTest` pins that shape. The video transport makes room instead:
+`VideoPlayer.bottomInset = FilmstripGeometry.REST_BAND_DP`.
+
+Two companions. `FilmstripScrubber.onScrubbingChanged` must report `false` from `onDispose`: the
+strip is chrome, so toggling the chrome or opening the lift editor removes it mid-fling, and a host
+left believing someone is still scrubbing keeps its video paused and un-armed
+(`VideoPlayer.scrubSuspended`) for good. And do not unmount the player while scrubbing: `VideoPlayer`
+builds nothing until it has been on screen `ARMED_START_DELAY_MS` (250 ms) with no finger on the
+strip, so a scrub past ten videos creates no ExoPlayer, no sidecar query and no indexer run. That
+placement also covers a page swipe and the details room, which a scrub-only gate in `ViewerScreen`
+would not.
+
+## 40. The shrink-to-map flight is a pure function of `vProgress`; the room slides 1:1, so time an animation to when its target is on screen
+
+Owner #19: *"The transition effect of the photo becoming smaller and appearing on the map ... is not
+happening."* It was happening — somewhere nobody could see. The details room is the TOP room and
+the shell places it at `y = -viewportHeight × (1 − v)`, a rigid slide that follows the finger 1:1.
+The old morph lived inside the plate and was staged over a window of the drag in which the plate was
+still mostly above the top of the screen, so the shrink played off-stage. Whenever something animates
+inside a room that is itself still arriving, ask at which `v` its target is actually on screen, and
+either stage it there or give it a surface of its own.
+
+The fix is `PhotoToPinFlight`: one copy of the photo, an overlay above the shell, timed over the
+**whole** pull (`PlaceMorph.flightT`, a smoothstep over 0..1). It has no state and no animation of
+its own; every pixel is derived from the shell's `vProgress` inside `graphicsLayer`/draw lambdas, so
+it reverses on close, holds perfectly still under a stationary finger and never recomposes during a
+drag. Because the slide is rigid the pin's screen position is analytic (`PlaceMorph.pinRectAt`,
+`restY − H × (1 − v)`) and is measured once, in room-local coordinates. What bit while building it:
+
+- The hand-off is the real pin **opaque underneath a fading flier** (`realPinVisible(v)` steps to 1
+  at `v ≥ 0.96`), not a cross-fade of two copies whose alphas sum to 1 — that dims the plate for a
+  few frames.
+- Measure the pin tile with `onGloballyPositioned` **before** the hero `graphicsLayer`, or you
+  measure the hero-scaled tile instead of where it lands.
+- Never stretch a layer into the pin's square: it squashes the photo on the way. The flier scales
+  uniformly and narrows a crop window (`PlaceMorph.cropPlacement`), with no relayout or re-decode.
+- The flier and `PhotoDetailRoom(flightActive)` must be driven by ONE flag
+  (`ViewerChromePolicy.flightActive`). A room waiting for a flier that was never composed leaves its
+  pin invisible.
+- The pin rectangle is snapshot state read only in draw/layer lambdas, so a report that lands after
+  the last progress change still repaints the flier.
+- No map tile is fetched or pre-warmed by any of it. The connect flavour's one-shot snapshot still
+  waits for the room to settle (`SETTLE_DEBOUNCE_MILLIS`, 160 ms). That is a privacy rule, not a
+  performance one: nothing leaves the phone because a finger moved.
+
+The old `LocationPicker` spinning world (owner, 2026-08-18) is gone on purpose: the owner called the
+unknown-location map *"weird, and not comforting at all"*, and the picker's KDoc says not to restore
+it. The unknown-location plate is a still graticule with a dimmed ghost pin, and it has to look right
+on the graticule alone because the offline flavour never has a map behind it.
+
+## 41. `ParkStyle` for the top room is chosen app-side, because `cell-shell` is another repo's submodule
+
+The flier follows the parked card's *rectangle*, and a swivelling card is not a rectangle, so the
+details room needs the shell's flat `ParkStyle.SLIDE` while every other room keeps `SWIVEL`. The
+first plan added a `topParkStyle` parameter to `SpatialShell`. But `shared-libraries/` is a git
+submodule of a different repository (`.gitmodules`: `Shared-Libraries-asoc`), consumed through
+`includeBuild`; no change there can be part of a PR on this repo, and `cell-shell` is a contract
+shared with other apps. `parkStyle` is an ordinary parameter the shell reads every composition, and
+its swivel angle is multiplied by `lift`, which is ≈ 0 at the instant `vProgress` leaves 0 — so
+`ViewerScreen` passes `parkStyle = if (topPulling) SLIDE else SWIVEL` itself, with `topPulling` a
+`derivedStateOf { shell.vProgress > 0.001f }` so the screen recomposes when the flag flips, not on
+every drag frame. No pop at the flip. `ParkStyle.entries.size == 2` is pinned by the submodule's
+`SwivelParkTest`; do not plan on a third style.
+
+The general rule: when a fix seems to need a change under `shared-libraries/` or
+`hyle-design-system/`, first look for a parameter the shared code already reads. The one thing this
+app cannot read from the shell is its private `BAND_DP`; `PlaceMorph.SHELL_BAND_DP` (72) mirrors it
+by hand, so a change to the shell's grab band has to be echoed there or the flier drifts off the
+parked card.
+
+## 42. Resume is saved at `ON_STOP`, not in `onDispose` — dispose never runs on process death
+
+A backgrounded viewer is exactly what Android kills, and when it does nothing is disposed and no
+`finally` runs. `VideoPlayer` used to save the resume position only in dispose and after its polling
+loop, so "Resume from" never appeared. It now writes on pause, on `ON_STOP` (the load-bearing one),
+when the poll loop is cancelled, and just before release. Anything else that must survive a killed,
+backgrounded screen follows the same rule: persist at `ON_STOP` or on the state change, not on
+teardown.
+
+Corollary: `while (isActive) { …; delay(…) }` followed by a save is unreachable, because cancellation
+is delivered by throwing out of `delay()`. Put the save in a `finally`. (`VideoPlayer`'s
+`LaunchedEffect(asset.id, isPlaying)` has the comment at the exact spot.)
+
+## 43. The offline source scan is line-based and reads comments
+
+`verifyOfflineSourceReferences` (`app/build.gradle.kts`, `VerifyOfflineSourcesTask`) reads every
+`*.kt` under `app/src/main/java` and `app/src/offline/java` **line by line** and fails on any line
+that merely contains one of: `okhttp3.`, `io.ktor.client`, `java.net.Socket`, `java.net.ServerSocket`,
+`java.net.HttpURLConnection`, `javax.net.ssl.`, `android.net.ConnectivityManager`,
+`android.net.NetworkRequest`, `.openConnection(`, `.openStream(`. It has no idea what a comment or
+KDoc is, so a sentence explaining *why* the code avoids `ConnectivityManager` fails the offline build
+exactly as an import would. Write around the token ("the platform connectivity service", "the HTTP
+client library") — in comments, KDoc and string literals alike. Tests under `src/test` are not
+scanned; docs are not scanned. This is the *targeted denylist* tier of TRAPS #12, and it comes last
+in that list's order of authority: the manifest and runtime-classpath gates are what actually keep
+the offline flavour offline. Run `:app:verifyOfflineSourceReferences` after writing any comment that
+names a network or connectivity API, even to say the code avoids it.
+
+## 44. A `LazyRow` beside a sibling in a `Row` starves the sibling
+
+A lazy list with no width modifier takes **all** the width its parent offers, and a `Row` measures
+its children in order, so whatever is placed after it is measured at roughly zero. The editor's "Pro
+tools" chip sat after the tool strip in a `Row(SpaceBetween)`: it was measured at nothing, the
+Simple/Pro switch was unreachable, and Curves — a Pro-only tool — went with it (owner #15, *"Curves
+doesn't show me the curves at all"*). Chip-width arithmetic had suggested the chip was merely
+clipped; the real cause is Compose measure semantics, independent of any chip's width. Give the
+lazy list its own full-width row, or `weight(1f)`, and put its siblings in an explicit slot. The
+Simple/Pro tier is gone (one scrollable strip, Curves third); the rule is not.
+
+## 45. ExoPlayer errors must be handled and surfaced — a swallowed `PlaybackException` is a black frame forever
+
+Owner #1, *"Fotoz is not playing videos"*. The old `VideoPlayer` registered no `onPlayerError`:
+a decoder, format, I/O or permission failure left a black or first-frame view with a Play glyph that
+did nothing, because `play()` on an idle player sets `playWhenReady` and never re-prepares, and
+`PlayerView`'s built-in error text is off unless an `ErrorMessageProvider` is set. Every player now
+maps `PlaybackException.errorCode` through `playbackFailureFor` to plain-language copy, shows a panel,
+and offers Retry only where trying again can help and Open with where another app might succeed.
+Never log a display name or URI with the error (the code name only).
+
+The sidecar-subtitle path is the same hazard in disguise. A `.srt`/`.vtt` that cannot be opened is a
+load error on the *merged* media source, and a bad subtitle must never cost the owner a good video.
+`VideoPlayer` resolves sidecars before the first prepare (bounded by `SIDECAR_QUERY_TIMEOUT_MS`),
+probes each with one open/close (`filterReadableSidecars`), and on an I/O or parse-family error with
+sidecars attached silently reloads **once** without them (`shouldRetryWithoutSubtitles`). That the
+error is fatal rather than ignored is inferred from Media3's behaviour, not observed on a device —
+the retry is cheap insurance either way. Any new `Player` you build goes through `buildViewerPlayer`
+and needs a listener with an `onPlayerError`; there is no acceptable listener without one.
+
+## 46. Transport state is intent, not `isPlaying`
+
+`Player.isPlaying` is false while the player is buffering, which is the whole stretch between pressing
+Play and the first frame. A transport keyed on it shows "paused" while `playWhenReady` is true, makes
+Pause unpressable until the first frame, and — after an error or `STATE_ENDED` — a Play button that
+only sets a flag. The rule is Media3's own `Util.shouldShowPlayButton`: show Play when
+`!playWhenReady`, or the state is `IDLE` or `ENDED`. `transportShowsPlay` mirrors it as a pure
+function for the recomposition-driving display state; the click itself goes through
+`Util.handlePlayPauseButtonAction`, which re-prepares an idle player and replays an ended one with
+no duration needed. One hole: that helper does nothing while the timeline is **empty** (before the
+first `setMediaItem`), so `VideoPlayer` toggles `playWhenReady` directly in that window, and ignores
+`seekTo` on an empty timeline (the later `setMediaItem` would discard it).
+
+## 47. Resume writes are gated on "engaged", and an external video must not share a resume key
+
+Two ways the resume store was made to lie. First: saving on an open-and-leave writes 0:00, which
+`ResumePositionStore` treats as "not worth keeping" and **clears** — erasing the very position the
+person came back to resume. `resumeWriteFor` saves only once the viewer has played or seeked this
+video in this session. Second: `ExternalViewerActivity` built every asset with the shared
+`MediaId.EXTERNAL` and without `isExternal`, so all open-with videos shared one resume key
+(`resume_-9223372036854775808`) and the manual key-moment button wrote catalogue rows for files this
+app does not own. It now uses `syntheticNegativeMediaId(uri)` with `isExternal = true`;
+`ResumePositionStore` refuses every negative id as a second line; and `VideoPlayer` derives
+`catalogued = catalogueActions && !asset.isExternal` — the VideoPlayer-side gate is load-bearing,
+because `FotoXplorrActivity` never passes `catalogueActions = false` for an external asset.
+
+## 48. Lift maps taps through the decoded bitmap, never `MediaAsset.width`/`height`
+
+Owner #12, *"Tap the subject to lift it is not working."* One cause: the overlay fitted the image
+rectangle from `asset.width`/`asset.height`, which are whatever MediaStore reported — possibly the
+sensor's un-rotated grid for an EXIF-rotated portrait — while the segmenter works on the upright
+decoded bitmap. Fitting the wrong aspect shifts the rectangle, so a tap on the photo reads as a tap
+on the letterbox (which used to dismiss the overlay) or seeds the wrong pixel. `LiftMapping` takes the
+bitmap's own width and height. The same `asset.width/height` pair is still handed to
+`LiveTextOverlay` and to the flight's `photoRect`, so Live Text and the shrink-to-map start rectangle
+may misalign for a rotated-EXIF photo — **unverified, not fixed**, and listed in the device checklist.
+
+## 49. `runCatching` around suspend work swallows cancellation; and `decodeUpright` can throw before its own `runCatching`
+
+`runCatching { suspendCall() }` catches `CancellationException`, so a cancelled coroutine keeps running
+as if the call had merely failed. Lift cancels a solve on every new stroke, so it uses
+`catchingResult` (`LiftMapping.kt`), which rethrows cancellation. And `decodeUpright` calls
+`readOrientation(...)` **outside** the `runCatching` that protects the decoder: `openInputStream` can
+throw `FileNotFoundException` or `SecurityException` for an unreadable or permission-revoked URI, and
+from inside a `LaunchedEffect` that crashes the composition scope instead of showing a dead overlay.
+Any caller of `decodeUpright` on a URI it does not control guards the call (lift now shows
+"Couldn't open this photo for lifting" with Close).
+
+## 50. A `pointerInput` keyed only on the asset captures its closure once
+
+`detectTapGestures` consumes the down event and the lambda you passed is captured when the
+`pointerInput` block starts, so a block keyed on `asset.id` sees whatever the surrounding state was
+at that moment, forever. The Live Text long-press guard read a stale `liveTextBlocks` list that way.
+Anything that can change without the asset changing — the animated sniff result, recognised text
+arriving after OCR — must be read through `rememberUpdatedState`, as `ViewerScreen` now does for
+`canLift` and the recognised-block count.
+
+Related, **not fixed**: `LiveTextOverlay` is a full-size sibling whose `detectTapGestures` consumes
+every tap and long press on the photo while the chrome is up, bare photo included. A long press to
+lift therefore does nothing on a photo with recognised text; the actions room's "Lift subject" row is
+the way in, and the same layer means a tap on bare photo cannot toggle the chrome there either.
+
+## 51. An overlay that draws its own stage belongs outside the viewer's zoom layer
+
+`LiftOverlay` paints an opaque near-black stage and the decoded bitmap itself, so it must sit outside
+the pinch/rotate `graphicsLayer`: inside it, a zoomed or turned photo would give the editor chrome
+the same zoom and rotation. It also consumes every touch on itself, so the gestures beneath never
+see them; and `ViewerScreen` withdraws the rooms (null slots) while it is up — but only once the shell
+is back home (`ViewerChromePolicy.roomsWithdrawn`), because a room closed to start the lift should
+slide away rather than vanish. Its back handler registers after the shell's, so the most recent
+enabled one wins and Back closes Lift before the viewer.
+
+## 52. `ToneCurve.isIdentity` and `toLut()` must never call each other
+
+`toLut()` returns the shared identity table when the curve is the identity, and `isIdentity` is
+"the table equals the identity table" (a collinear three-point curve counts, which a point-count check
+cannot see). Written naively that is `isIdentity → toLut() → isIdentity` forever. Both read one private
+cached table (`computed`, a `lazy`), and the table is **rounded**, not truncated: truncation put a
+collinear three-point curve one level low, so a curve that was visually the identity was not
+recognised as one and read as an edit.
+
+## 53. Never drag a curve point through `withPoint` — use the index-based edits
+
+`ToneCurve.withPoint` merges by x: it never moves the grabbed point, it leaves stray points behind a
+fast horizontal drag, and the list re-sorts under any index you saved at touch-down. The editor uses
+`moveTo` / `insertAt` / `removeAt`, which never reorder, so an index taken at touch-down is valid for
+the whole gesture. Inside one `awaitEachGesture`, the event that crosses touch slop while waiting out
+the long-press timeout must also be **applied** as the first move; throwing it away dropped the first
+leg of every drag on an existing point (found by `CurvesEditorGestureTest`).
+
+## 54. Curve editor state and layout: read the latest recipe, hoist what a tab switch resets, keep the graph out of a scroller
+
+- When one gesture fires several edits between recompositions (insert, then move), the callback must
+  build on the latest recipe, not the value captured at composition: `EditorScreen`'s `set { }`
+  reads `recipe.adjustments` afresh, and the gesture keeps its own working curve.
+- State kept inside a composable that leaves composition on a tab switch resets with it. The curve
+  channel is hoisted to `EditorScreen` and, with the selected tool, is `rememberSaveable`, so a
+  process kill returns the person to Curves on the channel they were using.
+- Do not put the graph in a `verticalScroll`: a vertical drag on a control point is contested by the
+  scroll container and the panel moves instead of the point. The graph sits outside; every other
+  tool's controls scroll inside a cap of 40% of the screen height.
+- The luma curve is applied per pixel in `applyColour`, after the three channel tables and before
+  saturation, scaling RGB by Y′/Y so hue is kept. It is deliberately not folded into the channel
+  tables (that would be an RGB curve in disguise). Bright saturated pixels can clip at 255 when
+  scaled, which shifts their hue slightly — accepted, listed in the device checklist.
+
+## 55. A morphological opening can erase a small region entirely
+
+The lift segmenter tidies a flood-filled mask with open-then-close. Opening removes anything thinner
+than its 3 × 3 kernel, so a tap on a thin branch, or a textured patch that filled only a few pixels
+wide, produced an **empty** mask — reported to the person as "Couldn't find a clear subject", which
+was the most common way a tap "did nothing". `SubjectSegmentation` now keeps the un-opened fill when
+opening would leave nothing. A clean-up step may tidy a region; it must never be able to veto one.
+
+## 56. Robolectric: `captureToImage()` times out — capture through Roborazzi
+
+On this setup androidx's `captureToImage()` waits on a redraw (`forceRedraw`) that never completes
+under Robolectric. Use Roborazzi's `captureRoboImage(path)` to write a PNG and read it back with
+`BitmapFactory`; `javax.imageio` is not available on the unit-test compile classpath. See
+`PhotoToPinFlightTest` for the pattern, which doubles as a picture of the frame under
+`app/build/renders/`.
 
