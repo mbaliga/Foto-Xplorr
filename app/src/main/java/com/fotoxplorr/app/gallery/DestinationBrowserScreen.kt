@@ -47,6 +47,7 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
 import com.fotoxplorr.app.spatial.PlacesScreen
+import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.core.model.MediaId
 
 /**
@@ -154,7 +155,7 @@ fun destinationEmptyMessage(
  *
  * The rail is [DestinationWordRail], an app-local re-cut of `dev.aarso:cell-shell`'s word wheel.
  * The falloff maths came *from* this app originally and the shared wheel is still the behaviour
- * (the run turns, release snaps and selects, the marker travels), but its type, fade and marker
+ * (the run turns, the hovered word is committed as the wheel hesitates, release only settles), but its type, fade and marker
  * are private constants that cannot be set from outside and none of them is the reference's --
  * see that composable's own doc for the exact gap. The shared library is untouched.
  *
@@ -163,8 +164,8 @@ fun destinationEmptyMessage(
  * enough... I would rather have them on the left and for them to do the movement dance"*). The
  * 2026-10 reference draws the bullet and no covers, and a reference is a later decision than a
  * direction, so this follows it: the covers are gone, and so is the gallery state the panel only
- * ever took to fetch them. The dance survives -- the square still travels across the rows on a
- * selection change, stretching along its path as it goes.
+ * ever took to fetch them. The dance survives -- the square hops across the rows with the wheel,
+ * stretching along its path as it goes.
  *
  * No scroll wrapper: the wheel measures its own rows against the height it is given and takes
  * care of overflow itself. Wrapping it in a `verticalScroll` would hand it an infinite height to
@@ -185,6 +186,7 @@ fun DestinationRailPanel(
     onSelect: (String) -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    onReselect: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -196,6 +198,7 @@ fun DestinationRailPanel(
             items = items,
             selectedId = selectedId,
             onSelect = onSelect,
+            onReselect = onReselect,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
@@ -221,14 +224,21 @@ private fun RailSettingsRow(onClick: () -> Unit) {
     Text(
         text = "Settings",
         color = Color.White.copy(alpha = 0.55f),
-        style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Normal, letterSpacing = (-0.3).sp),
+        // The rail's own face, not the platform default, and set on the same optical edge as the
+        // words above it (the marker's inset plus the rail's gutter), not at the marker's edge.
+        style = TextStyle(
+            fontFamily = HyleGrotesk,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Normal,
+            letterSpacing = (-0.3).sp,
+        ),
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             // This is now the panel's bottom-most element, so it -- not a hardcoded inset --
             // is what has to clear the gesture-navigation bar.
             .navigationBarsPadding()
-            .padding(start = RAIL_INSET.dp, end = 16.dp, top = 14.dp, bottom = 28.dp),
+            .padding(start = (RAIL_INSET + RAIL_GUTTER_DP).dp, end = 16.dp, top = 14.dp, bottom = 28.dp),
     )
 }
 

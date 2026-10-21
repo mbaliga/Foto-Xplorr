@@ -964,12 +964,19 @@ private fun GalleryBrowser(
             DestinationRailPanel(
                 items = railItems,
                 selectedId = destination.name,
+                // Selecting does NOT close the room: the rail commits the hovered word while the
+                // wheel is still turning, so the room stays put and the pane behind it follows.
+                // The user closes it by tapping the selected word, the parked card, or Back.
+                // Every select drops a destination screen sitting on top (the `legacy != null`
+                // branch below wins over `destination`), or picking Photos from Albums would
+                // close the room and change nothing.
                 onSelect = { id ->
                     destination = HyleDestination.valueOf(id)
                     route = BrowserRoute.Root
-                    shell.closeAll()
+                    legacyScreen = null
                     gridScope.launch { gridState.scrollToItem(0) }
                 },
+                onReselect = { shell.closeAll() },
                 onOpenSettings = { shell.open(RoomEdge.TOP) },
             )
         },
@@ -1098,6 +1105,7 @@ private fun GalleryBrowser(
                                 onSelect = { id ->
                                     destination = HyleDestination.valueOf(id)
                                     route = BrowserRoute.Root
+                                    legacyScreen = null
                                     gridScope.launch { gridState.scrollToItem(0) }
                                 },
                                 onOpenSettings = { shell.open(RoomEdge.TOP) },
