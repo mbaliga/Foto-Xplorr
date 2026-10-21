@@ -543,6 +543,10 @@ private fun GalleryBrowser(
     // triggers knows to leave the seeded query alone this once. Consumed by that reset and by
     // nothing else.
     var seededRouteChange by remember { mutableStateOf(false) }
+    // False until the destination/route reset effect below has run once, so that effect can tell
+    // the browser's first composition (state restored, leave it alone) from a real change.
+    // Plain `remember`: a browser composed anew after a restore is a first composition again.
+    var browserSettled by remember { mutableStateOf(false) }
 
     // One bridge instance for the grid's mouse/touch chrome; see [GridChromeBridge]'s own doc for
     // why this is a `remember`ed instance whose FIELDS are mutated every recomposition rather than
@@ -718,6 +722,13 @@ private fun GalleryBrowser(
         if (selection.isActive) selection = selection.retainAvailable(currentIds)
     }
     LaunchedEffect(destination, route) {
+        // Not on the first composition: there, destination and route were not CHANGED, they were
+        // restored (from the viewer round trip, see GALLERY_STATE_KEY, or from process death),
+        // and the query and selection that came back with them are the point of restoring.
+        if (!browserSettled) {
+            browserSettled = true
+            return@LaunchedEffect
+        }
         selection = selection.clear()
         // A route change the seeding effect below made on purpose carries a search with it;
         // wiping that search here would make the Search pill in the photo details room close

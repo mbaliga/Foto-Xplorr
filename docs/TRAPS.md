@@ -750,3 +750,19 @@ source through `openInputStream` + `ExifInterface(InputStream)` so that path is 
 the overwrite and recovery paths use it; do not write another shadow. `MetadataWriter` itself still
 opens a descriptor on fabricated media Uris, which is why its write test's KDoc still describes a
 sandbox limitation.
+
+## 68. The gallery is a sibling of the viewer, so its `rememberSaveable` state dies with each round trip
+
+`FotoXplorrApp` composes the editor, the viewer and `GalleryScreen` as `if / else if / else`
+branches of one slot. A branch that leaves composition takes everything the browser kept in
+`rememberSaveable` with it (a registry only saves at `onSaveInstanceState`, not on leaving
+composition), so Back from a photo landed on the default destination, Root route, no search, top of
+the grid. The gallery's branch is wrapped in `rememberSaveableStateHolder().SaveableStateProvider(GALLERY_STATE_KEY)`
+and the holder is remembered above the branches. Anything new that must survive opening a photo has
+to be `rememberSaveable` (or a preference) inside `GalleryBrowser`; plain `remember` is rebuilt, which
+is right for `mapOpen` and other session-only modes. The `LaunchedEffect(destination, route)` reset in
+`GalleryBrowser` used to run on the first composition and clear the restored `query`, `searchVisible`
+and `selection`; it now skips that first run (`browserSettled`), so do not add a reset to it, or any
+effect keyed on restored state, that is not guarded the same way. `GalleryViewerRoundTripTest` holds
+the pair: with the holder the search survives, without it it does not. Rotation is not a loss path
+(`configChanges` in the manifest), process death and this round trip are.

@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -197,6 +198,12 @@ class FotoXplorrActivity : ComponentActivity() {
  * saved across process death by [AppStateViewModel]'s SavedStateHandle, not here.)
  */
 private const val NO_MEDIA_ID = -1L
+
+/**
+ * The key the gallery's saveable state is held under while the viewer or the editor replaces it
+ * (see `galleryStateHolder` in [FotoXplorrApp]). One key: there is one browser.
+ */
+internal const val GALLERY_STATE_KEY = "gallery"
 
 /** Shown when another app asks to edit a photo while a replace is in flight or its failure is being held. */
 private const val FINISH_EDIT_FIRST_MESSAGE = "Finish saving your edit first"
@@ -1427,6 +1434,14 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         )
     }
 
+    // The gallery shares this slot with the editor and the viewer, so it is composed out whenever
+    // either is up and everything it kept in `rememberSaveable` (destination, route, search,
+    // selection, Settings, the grid's scroll position) would be dropped with it: Back from a photo
+    // landed on the default destination at the top. The holder keeps that state while the gallery
+    // is out of composition and hands it back when it returns. Remembered here, above the
+    // branches, because it has to outlive each of them.
+    val galleryStateHolder = rememberSaveableStateHolder()
+
     val editing = editingAsset
     if (editing != null && editing.isVideo) {
         // A separate screen, not a branch inside EditorScreen: trim/speed share almost nothing
@@ -1673,116 +1688,120 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             },
         )
     } else {
-        GalleryScreen(
-            geoRepository = geoRepository,
-            state = GalleryUiState(
-                assets = assets,
-                favoriteIds = favoriteIds,
-                sensitiveIds = sensitiveIds,
-                lockedFolders = lockedFolders,
-                unlockedFolders = unlockedFolders,
-                library = library,
-                permissionGranted = permissionGranted,
-                partialMediaAccess = partialMediaAccess,
-                mediaPermissionPermanentlyDenied = mediaPermissionPermanentlyDenied,
-                scanState = scanState,
-                preferences = preferences,
-                recognition = recognition,
-                recognitionProgress = recognitionProgress,
-                animatedIds = animatedIds,
-                pendingSearch = pendingSearch,
-            ),
-            actions = GalleryActions(
-                onRequestPermission = ::requestMediaPermissionOrOpenSettings,
-                onRefresh = { runtime.requestScan(true) },
-                onSetSort = galleryPreferences::setSort,
-                onSetGridColumns = galleryPreferences::setGridColumns,
-                onSetBlurSensitive = galleryPreferences::setBlurSensitive,
-                onSetHideSensitive = galleryPreferences::setHideSensitive,
-                onSetShowVideos = galleryPreferences::setShowVideos,
-                onSetTimelineGrouping = galleryPreferences::setTimelineGrouping,
-                onSetThemeMode = galleryPreferences::setThemeMode,
-                onSetAccentPalette = galleryPreferences::setAccentPalette,
-                onSetCustomTheme = galleryPreferences::setCustomTheme,
-                onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
-                onSetDefaultDestination = galleryPreferences::setDefaultDestination,
-                onSetKeepScreenOn = galleryPreferences::setKeepScreenOn,
-                onSetSlideshowShuffle = galleryPreferences::setSlideshowShuffle,
-                onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
-                onSetFitToTile = galleryPreferences::setFitToTile,
-                onSetLoopAnimations = galleryPreferences::setLoopAnimations,
-                onSetLongPressPreview = galleryPreferences::setLongPressPreview,
-                onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
-                onSetEditorSaveMode = galleryPreferences::setEditorSaveMode,
-                onIndexRecognition = { recognitionGeneration += 1 },
-                onProtectFolder = privateFolderStore::protect,
-                onUnlockFolder = privateFolderStore::unlock,
-                onLockFolder = privateFolderStore::lock,
-                onRemoveFolderProtection = privateFolderStore::removeProtection,
-                onSetFavorite = favoriteStore::setFavorite,
-                onSetSensitive = sensitiveStore::setSensitive,
-                onSetArchived = libraryStore::setArchived,
-                onShare = ::share,
-                onShareClean = ::shareAdvanced,
-                onCopyToFolder = { items ->
-                    pendingTreeOperation = PendingTreeOperation.COPY
-                    pendingTreeItems = items
-                    treeLauncher.launch(null)
-                },
-                onMoveToFolder = { items ->
-                    pendingTreeOperation = PendingTreeOperation.MOVE
-                    pendingTreeItems = items
-                    treeLauncher.launch(null)
-                },
-                onRenameAsset = ::requestRename,
-                onMoveToTrash = { requestMediaOperation(it, PendingMediaOperation.TRASH) },
-                onRestore = { requestMediaOperation(it, PendingMediaOperation.RESTORE) },
-                onDeletePermanently = { requestMediaOperation(it, PendingMediaOperation.DELETE) },
-                onCreateCollection = { libraryStore.createCollection(it)?.id },
-                onRenameCollection = { id, name -> libraryStore.renameCollection(id, name) },
-                onDeleteCollection = libraryStore::deleteCollection,
-                onAddToCollection = libraryStore::addToCollection,
-                onRemoveFromCollection = libraryStore::removeFromCollection,
-                onAddTag = libraryStore::addTag,
-                onRemoveTag = libraryStore::removeTag,
-                onExportZip = { items ->
-                    viewModel.jobRunner.launch(
-                        title = "Building a zip of ${items.size} item${if (items.size == 1) "" else "s"}",
-                        kind = ActivityKind.EXPORTING,
-                    ) { onProgress ->
-                        zipExporter.export(items, preferences.toShareOptions().stripMetadata) { done, total ->
-                            onProgress(if (total > 0) done.toFloat() / total else null)
-                        }.map { export ->
-                            unpreparedShareItemsMessage(export.failed)?.let { userMessage = it }
-                            val intent = Intent(Intent.ACTION_SEND).apply {
-                                type = "application/zip"
-                                putExtra(Intent.EXTRA_STREAM, export.uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        // Held under its own key so that opening a photo and coming Back finds the browser as it was
+        // left (see [GALLERY_STATE_KEY]); the editor and the viewer are siblings of this branch.
+        galleryStateHolder.SaveableStateProvider(GALLERY_STATE_KEY) {
+            GalleryScreen(
+                geoRepository = geoRepository,
+                state = GalleryUiState(
+                    assets = assets,
+                    favoriteIds = favoriteIds,
+                    sensitiveIds = sensitiveIds,
+                    lockedFolders = lockedFolders,
+                    unlockedFolders = unlockedFolders,
+                    library = library,
+                    permissionGranted = permissionGranted,
+                    partialMediaAccess = partialMediaAccess,
+                    mediaPermissionPermanentlyDenied = mediaPermissionPermanentlyDenied,
+                    scanState = scanState,
+                    preferences = preferences,
+                    recognition = recognition,
+                    recognitionProgress = recognitionProgress,
+                    animatedIds = animatedIds,
+                    pendingSearch = pendingSearch,
+                ),
+                actions = GalleryActions(
+                    onRequestPermission = ::requestMediaPermissionOrOpenSettings,
+                    onRefresh = { runtime.requestScan(true) },
+                    onSetSort = galleryPreferences::setSort,
+                    onSetGridColumns = galleryPreferences::setGridColumns,
+                    onSetBlurSensitive = galleryPreferences::setBlurSensitive,
+                    onSetHideSensitive = galleryPreferences::setHideSensitive,
+                    onSetShowVideos = galleryPreferences::setShowVideos,
+                    onSetTimelineGrouping = galleryPreferences::setTimelineGrouping,
+                    onSetThemeMode = galleryPreferences::setThemeMode,
+                    onSetAccentPalette = galleryPreferences::setAccentPalette,
+                    onSetCustomTheme = galleryPreferences::setCustomTheme,
+                    onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
+                    onSetDefaultDestination = galleryPreferences::setDefaultDestination,
+                    onSetKeepScreenOn = galleryPreferences::setKeepScreenOn,
+                    onSetSlideshowShuffle = galleryPreferences::setSlideshowShuffle,
+                    onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
+                    onSetFitToTile = galleryPreferences::setFitToTile,
+                    onSetLoopAnimations = galleryPreferences::setLoopAnimations,
+                    onSetLongPressPreview = galleryPreferences::setLongPressPreview,
+                    onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
+                    onSetEditorSaveMode = galleryPreferences::setEditorSaveMode,
+                    onIndexRecognition = { recognitionGeneration += 1 },
+                    onProtectFolder = privateFolderStore::protect,
+                    onUnlockFolder = privateFolderStore::unlock,
+                    onLockFolder = privateFolderStore::lock,
+                    onRemoveFolderProtection = privateFolderStore::removeProtection,
+                    onSetFavorite = favoriteStore::setFavorite,
+                    onSetSensitive = sensitiveStore::setSensitive,
+                    onSetArchived = libraryStore::setArchived,
+                    onShare = ::share,
+                    onShareClean = ::shareAdvanced,
+                    onCopyToFolder = { items ->
+                        pendingTreeOperation = PendingTreeOperation.COPY
+                        pendingTreeItems = items
+                        treeLauncher.launch(null)
+                    },
+                    onMoveToFolder = { items ->
+                        pendingTreeOperation = PendingTreeOperation.MOVE
+                        pendingTreeItems = items
+                        treeLauncher.launch(null)
+                    },
+                    onRenameAsset = ::requestRename,
+                    onMoveToTrash = { requestMediaOperation(it, PendingMediaOperation.TRASH) },
+                    onRestore = { requestMediaOperation(it, PendingMediaOperation.RESTORE) },
+                    onDeletePermanently = { requestMediaOperation(it, PendingMediaOperation.DELETE) },
+                    onCreateCollection = { libraryStore.createCollection(it)?.id },
+                    onRenameCollection = { id, name -> libraryStore.renameCollection(id, name) },
+                    onDeleteCollection = libraryStore::deleteCollection,
+                    onAddToCollection = libraryStore::addToCollection,
+                    onRemoveFromCollection = libraryStore::removeFromCollection,
+                    onAddTag = libraryStore::addTag,
+                    onRemoveTag = libraryStore::removeTag,
+                    onExportZip = { items ->
+                        viewModel.jobRunner.launch(
+                            title = "Building a zip of ${items.size} item${if (items.size == 1) "" else "s"}",
+                            kind = ActivityKind.EXPORTING,
+                        ) { onProgress ->
+                            zipExporter.export(items, preferences.toShareOptions().stripMetadata) { done, total ->
+                                onProgress(if (total > 0) done.toFloat() / total else null)
+                            }.map { export ->
+                                unpreparedShareItemsMessage(export.failed)?.let { userMessage = it }
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "application/zip"
+                                    putExtra(Intent.EXTRA_STREAM, export.uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                startActivity(Intent.createChooser(intent, null))
+                                ""
                             }
-                            startActivity(Intent.createChooser(intent, null))
-                            ""
                         }
-                    }
-                },
-                onExportMetadata = { exportMetadataLauncher.launch("fotoz-metadata.json") },
-                onImportMetadata = { importMetadataLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
-                onOpenAsset = { asset, visible ->
-                    setViewerAssets(visible)
-                    selectedAssetId = asset.id
-                    slideshowActive = false
-                },
-                onStartSlideshow = { visible ->
-                    if (visible.isNotEmpty()) {
+                    },
+                    onExportMetadata = { exportMetadataLauncher.launch("fotoz-metadata.json") },
+                    onImportMetadata = { importMetadataLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
+                    onOpenAsset = { asset, visible ->
                         setViewerAssets(visible)
-                        selectedAssetId = visible.first().id
-                        slideshowActive = true
-                    }
-                },
-                onPendingSearchConsumed = { pendingSearch = null },
-                onRejectArchiveSuggestions = libraryStore::rejectArchiveSuggestions,
-                onManageSelectedMedia = { permissionLauncher.launch(requiredMediaPermissions()) },
-            ),
-        )
+                        selectedAssetId = asset.id
+                        slideshowActive = false
+                    },
+                    onStartSlideshow = { visible ->
+                        if (visible.isNotEmpty()) {
+                            setViewerAssets(visible)
+                            selectedAssetId = visible.first().id
+                            slideshowActive = true
+                        }
+                    },
+                    onPendingSearchConsumed = { pendingSearch = null },
+                    onRejectArchiveSuggestions = libraryStore::rejectArchiveSuggestions,
+                    onManageSelectedMedia = { permissionLauncher.launch(requiredMediaPermissions()) },
+                ),
+            )
+        }
     }
 }
 
