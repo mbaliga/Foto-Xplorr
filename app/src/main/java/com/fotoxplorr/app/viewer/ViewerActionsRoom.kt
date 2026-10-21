@@ -4,11 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -38,9 +37,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.ui.RoomGeography
+import com.fotoxplorr.app.ui.clearSystemBarsFor
 
 /**
- * The viewer's RIGHT room: what you can do to this photo, as icons.
+ * The viewer's BOTTOM room: what you can do to this photo, as icons, tilted up from under it.
+ *
+ * Actions live at the bottom in the gallery too ([RoomGeography]). They were the right room here
+ * until the owner asked for one geography: view options sit at the side, where you can watch their
+ * effect, while an action does not need the photo in view, so tilting the photo up out of the way
+ * suits it better.
  *
  * These nine actions used to be a 78%-opaque black plate of **text buttons** pinned over the top
  * of the photo, up by default and back up again on every swipe (owner, 2026-08-14: *"Why do I see
@@ -112,12 +118,15 @@ fun ViewerActionsRoom(
 ) {
     Column(
         modifier = modifier
-            .fillMaxHeight()
+            .fillMaxWidth()
             .background(Color.Black)
-            .statusBarsPadding()
+            // The shell insets a bottom room by its band at the TOP (where the parked card's
+            // bottom edge sits), so the system bar to clear here is the navigation bar. Scrolls
+            // for a short phone: twelve rows can outgrow what the band leaves.
+            .clearSystemBarsFor(RoomGeography.Actions)
             .verticalScroll(rememberScrollState())
-            .padding(vertical = 24.dp, horizontal = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
+            .padding(vertical = 20.dp, horizontal = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
         horizontalAlignment = Alignment.Start,
     ) {
         ActionRow(
@@ -203,13 +212,6 @@ private fun ActionRow(
         )
     }
 }
-
-/**
- * The width the actions room wants. The shell insets a right room by its own band, so this is
- * what remains for content; exported so the host can keep the room from stretching to the full
- * screen on a tablet, where a column of seven rows across 900dp would be mostly empty.
- */
-val ViewerActionsRoomWidth = 260.dp
 
 /** A hairline spacer used where the room needs to separate destructive actions from safe ones. */
 @Composable

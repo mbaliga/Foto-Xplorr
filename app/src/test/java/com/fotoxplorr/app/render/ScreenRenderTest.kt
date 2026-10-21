@@ -209,7 +209,7 @@ class SurfaceRenderTest {
 
     @Test
     fun `gallery actions room`() {
-        render("room-1-actions") {
+        render("room-1-gallery-actions-bottom") {
             com.fotoxplorr.app.gallery.GalleryActionsRoom(
                 state = emptyState(),
                 actions = noOpActions(),
@@ -236,7 +236,7 @@ class SurfaceRenderTest {
 
     @Test
     fun `gallery info room`() {
-        render("room-2-info") {
+        render("room-2-gallery-details-top") {
             com.fotoxplorr.app.gallery.GalleryInfoRoom(
                 title = "Photos",
                 assets = emptyList(),
@@ -246,8 +246,8 @@ class SurfaceRenderTest {
     }
 
     @Test
-    fun `viewer settings room`() {
-        render("room-3-viewer-settings") {
+    fun `viewer view options room`() {
+        render("room-3-viewer-view-options-right") {
             com.fotoxplorr.app.viewer.ViewerSettingsRoom(
                 slideshowIntervalSeconds = 5,
                 blurSensitive = true,
@@ -263,6 +263,38 @@ class SurfaceRenderTest {
                 onSetSlideshowShuffle = {},
                 onSetLoopAnimations = {},
                 onSetAutoplayVideos = {},
+            )
+        }
+    }
+
+    @Test
+    fun `gallery view options room`() {
+        render("room-4-gallery-view-options-right") {
+            com.fotoxplorr.app.gallery.GalleryViewOptionsRoom(
+                state = emptyState(),
+                actions = noOpActions(),
+            )
+        }
+    }
+
+    @Test
+    fun `viewer actions room`() {
+        render("room-5-viewer-actions-bottom") {
+            com.fotoxplorr.app.viewer.ViewerActionsRoom(
+                isFavorite = true,
+                isSensitive = false,
+                canMoveToTrash = true,
+                slideshowActive = false,
+                onToggleSlideshow = {},
+                onToggleFavorite = {},
+                onToggleSensitive = {},
+                onShare = {},
+                onEdit = {},
+                onOpenWith = {},
+                onMoveToTrash = {},
+                onShareClean = {},
+                onRename = {},
+                onLiftSubject = {},
             )
         }
     }

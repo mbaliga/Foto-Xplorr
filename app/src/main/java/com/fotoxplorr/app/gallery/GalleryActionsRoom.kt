@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -29,33 +28,37 @@ import com.fotoxplorr.app.fileops.BulkRenameOutcome
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.ui.RoomEyebrow
+import com.fotoxplorr.app.ui.RoomGeography
 import com.fotoxplorr.app.ui.RoomRow
 import com.fotoxplorr.app.ui.RoomRule
-import com.fotoxplorr.app.ui.RoomStepper
 import com.fotoxplorr.app.ui.RoomStyle
-import com.fotoxplorr.app.ui.RoomToggle
+import com.fotoxplorr.app.ui.clearSystemBarsFor
 import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.launch
 
 /**
- * The gallery's RIGHT room: what you can do with the view you are looking at.
+ * The gallery's BOTTOM room: what you can do with the view you are looking at.
  *
  * The counterpart of the viewer's actions room, and the point of it is that they are the same
  * room in the same place (owner, 2026-08-18: *"the info and actions views are applicable to the
  * gallery views just as much as the single photo view -- the info would be different as well as
  * actions, but the model needs to remain the same"*).
  *
- * So the whole app now reads one way round, whatever is on screen:
+ * So the whole app reads one way round, whatever is on screen ([RoomGeography] holds the table):
  *
- * | edge   | holds                                          |
- * |--------|------------------------------------------------|
- * | LEFT   | where you can go — the destination rail        |
- * | RIGHT  | what you can do here — this room               |
- * | TOP    | settings                                       |
- * | BOTTOM | what this is — counts here, EXIF in the viewer |
+ * | edge   | holds                                                            |
+ * |--------|------------------------------------------------------------------|
+ * | LEFT   | where you can go — the destination rail                          |
+ * | TOP    | details — counts here (GalleryInfoRoom), the photo's facts there |
+ * | BOTTOM | actions — this room                                              |
+ * | RIGHT  | view options — columns and sort here, the filmstrip there        |
  *
  * The contents differ because a grid of 22,000 photos and one open photo can be *done* different
  * things to. The geography does not, which is the part a user actually memorises.
+ *
+ * The view options that used to share this room (ARRANGE and SHOW) moved to
+ * [GalleryViewOptionsRoom] at the right: you want to see the effect of those, whereas an action
+ * does not need the grid in view, so tilting the grid up out of the way suits this room.
  *
  * This room also carries the way into selection mode. Long press used to start a selection and now
  * holds a preview instead (owner: *"the quick preview must disappear when the long press is
@@ -82,7 +85,6 @@ fun GalleryActionsRoom(
     onCloseRoom: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val preferences = state.preferences
     val selectionActive = selection.isActive
 
     // Bulk rename lives entirely in this room rather than going through `onRenameAsset` (which
@@ -162,7 +164,9 @@ fun GalleryActionsRoom(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
-            .statusBarsPadding()
+            // The shell insets a bottom room by its band at the TOP (where the parked card's
+            // bottom edge sits), so the system bar to clear here is the navigation bar.
+            .clearSystemBarsFor(RoomGeography.Actions)
             .verticalScroll(rememberScrollState())
             .padding(
                 start = RoomStyle.GutterStart,
@@ -198,7 +202,8 @@ fun GalleryActionsRoom(
             RoomRule(Modifier.padding(vertical = 14.dp))
         }
 
-        RoomEyebrow("THIS VIEW")
+        // Not "THIS VIEW": that is the details room's own eyebrow, from the top edge.
+        RoomEyebrow("ORGANISE")
 
         RoomRow(
             label = if (selectionActive) "Selecting" else "Select photos",
@@ -222,51 +227,6 @@ fun GalleryActionsRoom(
             caption = "Look for photos added or removed outside Fotoz.",
             onClick = actions.onRefresh,
         )
-
-        RoomRule(Modifier.padding(vertical = 14.dp))
-        RoomEyebrow("ARRANGE")
-
-        RoomRow(label = "Columns") {
-            RoomStepper(
-                value = "${preferences.gridColumns}",
-                onDecrease = { actions.onSetGridColumns(preferences.gridColumns - 1) },
-                onIncrease = { actions.onSetGridColumns(preferences.gridColumns + 1) },
-                canDecrease = preferences.gridColumns > MIN_GRID_COLUMNS,
-                canIncrease = preferences.gridColumns < MAX_GRID_COLUMNS,
-            )
-        }
-
-        // Stated rather than ticked: a checkmark column would be the only iconography in a room
-        // that has none, and the selected row stays full-strength while the alternatives mute --
-        // the same way the destination rail marks the destination you are in.
-        GallerySort.entries.forEach { sort ->
-            val current = preferences.sort == sort
-            RoomRow(
-                label = sortLabel(sort),
-                onClick = { actions.onSetSort(sort) },
-            ) { if (current) RoomValue("now") }
-        }
-
-        RoomRule(Modifier.padding(vertical = 14.dp))
-        RoomEyebrow("SHOW")
-
-        RoomRow(
-            label = "Videos",
-            caption = "Include videos alongside photos.",
-            onClick = { actions.onSetShowVideos(!preferences.showVideos) },
-        ) { RoomToggle(preferences.showVideos, actions.onSetShowVideos) }
-
-        RoomRow(
-            label = "Blur sensitive",
-            caption = "Photos you have marked sensitive are blurred in the grid.",
-            onClick = { actions.onSetBlurSensitive(!preferences.blurSensitive) },
-        ) { RoomToggle(preferences.blurSensitive, actions.onSetBlurSensitive) }
-
-        RoomRow(
-            label = "Hide sensitive entirely",
-            caption = "They are left out of the grid rather than blurred in it.",
-            onClick = { actions.onSetHideSensitive(!preferences.hideSensitive) },
-        ) { RoomToggle(preferences.hideSensitive, actions.onSetHideSensitive) }
     }
 
     // Rendered outside the scrolling Column deliberately -- an AlertDialog is its own window
@@ -312,32 +272,18 @@ private data class BulkRenameRequest(
     val startAt: Int,
 )
 
-/** A stated value at the end of a row, in the room's own muted ink. */
-@Composable
-private fun RoomValue(text: String) {
-    Text(text = text, color = RoomStyle.InkFaint, style = RoomStyle.Caption)
-}
-
-/** Sort orders in the words a reader uses, not the enum's. */
-private fun sortLabel(sort: GallerySort): String = when (sort) {
-    GallerySort.NEWEST -> "Newest first"
-    GallerySort.OLDEST -> "Oldest first"
-    GallerySort.NAME -> "By name"
-    GallerySort.SIZE -> "Largest first"
-}
-
 /**
  * What can be done to the photos currently chosen.
  *
  * Every one of these was a `DropdownMenuItem` hanging off the selection bar's overflow glyph. The
  * owner's mockup gives that bar exactly three glyphs and no fourth, so the menu had nowhere to
  * hang — and rows in a room are a better home for them regardless: they carry a line of
- * explanation, they are reachable one-handed from the right edge, and they do not vanish the
+ * explanation, they are reachable one-handed from the bottom edge, and they do not vanish the
  * moment a finger slips.
  *
  * Ordered by how much they change: marks first, then filing, then the destructive end. `Move to
- * trash` stays here as well as on the bottom-right block because the two are reached from opposite
- * corners and someone deep in this room should not have to leave it to finish.
+ * trash` stays here as well as on the bottom-right block because the two are reached from different
+ * places and someone deep in this room should not have to leave it to finish.
  */
 @Composable
 private fun SelectionActions(

@@ -254,11 +254,16 @@ class ViewerIntegrationTest {
 
     // ── (c) lifting a subject ──────────────────────────────────────────────────────────────────
 
+    /**
+     * Actions are the BOTTOM room (RoomGeography.Actions): tilt the photo up from the bottom edge.
+     * The pull starts on the filmstrip's band on purpose, so every test that uses it also proves
+     * a vertical pull from there still reaches the shell.
+     */
     private fun openActionsRoom() {
         compose.onRoot().performTouchInput {
             swipe(
-                start = Offset(right - 20f, centerY),
-                end = Offset(centerX - 100f, centerY),
+                start = Offset(centerX, bottom - 20f),
+                end = Offset(centerX, centerY - 100f),
                 durationMillis = 300,
             )
         }

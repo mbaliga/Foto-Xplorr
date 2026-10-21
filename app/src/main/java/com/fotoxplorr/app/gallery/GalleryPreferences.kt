@@ -45,9 +45,10 @@ enum class AccentPalette {
  * never touches this setting: pinch zooms the photo, exactly as it always has.
  *
  * [PANEL_SHORTCUTS] is the owner's alternate ask (*"pinch in (details/info) and pinch out
- * (edit/actions)"*): pinch-in opens the photo's details room, pinch-out opens its actions room,
- * and neither also moves the photo -- the two meanings are mutually exclusive within one gesture,
- * which is the entire point of making this selectable rather than additive.
+ * (edit/actions)"*): pinch-in opens the photo's details room (the top one), pinch-out opens its
+ * actions room (the bottom one), and neither also moves the photo -- the two meanings are mutually
+ * exclusive within one gesture, which is the entire point of making this selectable rather than
+ * additive.
  */
 enum class ViewerPinchMode {
     OPTICAL_ZOOM,

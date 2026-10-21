@@ -79,6 +79,7 @@ import androidx.compose.ui.res.painterResource
 import com.fotoxplorr.app.R
 import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.PaneScaffold
+import com.fotoxplorr.app.ui.roomSlots
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.text.TextStyle
@@ -438,9 +439,10 @@ private data class PasswordRequest(
  *
  * The primary IA is the nine-category rail (Pets / People / Identity / Screenshots / Photos /
  * Videos / Favourites / Places / Protected), and it is a **room**: a surface parked off the
- * left edge that the grid lifts and parts to reveal. Settings is the same thing off the right.
- * Neither is a screen — switching to one pushes no back-stack entry, the grid stays alive and
- * visible behind it, and dragging it back is the way out. The motion comes from
+ * left edge that the grid lifts and parts to reveal. The other three edges are rooms too, by
+ * [com.fotoxplorr.app.ui.RoomGeography]: the view's details at the top, its actions at the bottom, its view options at
+ * the right. None of them is a screen — opening one pushes no back-stack entry, the grid stays
+ * alive and visible behind it, and dragging it back is the way out. The motion comes from
  * `dev.aarso:cell-shell`, which every app in the constellation now shares, because the owner
  * asked for one navigation feel everywhere and the only way to guarantee that is one
  * implementation.
@@ -452,12 +454,12 @@ private data class PasswordRequest(
  *  - The hamburger and the `CenterAlignedTopAppBar` behind it. With the rail an edge away, a
  *    button whose only job was to open it is chrome earning nothing; the header shrinks to the
  *    title and the two actions that are genuinely per-view.
- *  - The Material settings `AlertDialog`. Settings live in the right room now, in the app's own
- *    theme — a modal window floating over a room is two contradictory ideas of where you are,
- *    and it was also the light-themed screen inside a black app the owner reported.
+ *  - The Material settings `AlertDialog`. Settings take over the pane the photos are in now, in
+ *    the app's own theme — a modal window floating over a room is two contradictory ideas of
+ *    where you are, and it was also the light-themed screen inside a black app the owner reported.
  *
- * The top edge is deliberately left empty. It is reserved, and no other gesture may claim the
- * pull-down space — which is why refresh is [ShakeToRefresh] and not a pull.
+ * The pull-down belongs to the details room, so no other gesture may claim it — which is why
+ * refresh is [ShakeToRefresh] and not a pull.
  */
 @Composable
 private fun GalleryBrowser(
@@ -944,43 +946,8 @@ private fun GalleryBrowser(
     // whole shell is what makes bridge.onZoom/onContextAction reach a tile regardless of which
     // of those two paths rendered it. See GridChromeBridge's own doc for the full reasoning.
     CompositionLocalProvider(LocalGridChromeBridge provides chromeBridge) {
-    SpatialShell(
-        controller = shell,
-        accentColor = MaterialTheme.colorScheme.primary,
-        // The rooms sit on the same black the grid does, so opening one reads as the surface
-        // moving rather than as a different app appearing behind it.
-        scrimColor = Color.Black,
-        cardColor = Color.Black,
-        modifier = Modifier.fillMaxSize(),
-        // Shrink AND swivel while a room is being PEEKED -- pulled in as a temporary reveal, on
-        // any input method -- so it reads as a panel swinging away rather than a rectangle
-        // sliding off (owner, 2026-08-14: the Magic Portal shape). Shrink ONLY once the rail is a
-        // standing, pinned choice rather than a gesture in progress (owner, 2026-08-20: "if nav
-        // is turned on, the central pane just shrinks, doesn't pivot") -- see chromeMotionFor's
-        // own doc for the full distinction. SpatialShell's parkStyle is one setting for every
-        // room it owns, not a per-room one, so pinning the rail also swaps Settings/Actions/Info's
-        // own motion to plain-shrink for as long as it stays pinned, which matches the owner's own
-        // framing: peeking vs. pinned is a property of how this WINDOW is being used right now,
-        // not of which particular room happens to be opening.
-        parkStyle = when (chromeMotion) {
-            ChromeMotion.SHRINK_ONLY -> ParkStyle.SLIDE
-            ChromeMotion.SHRINK_AND_PIVOT -> ParkStyle.SWIVEL
-        },
-        // Hand the notification's own strip back to it. Without this the shell claims the top
-        // 56dp on the Initial pass and every pull on the status line opens the top room (when
-        // there is one) instead of expanding the line -- the two gestures live in the same
-        // pixels. Kept although the top edge is unclaimed for now: the details room goes there.
-        topReserve = notificationReserve,
-        // One geography for the whole app (owner, 2026-08-18: *"the model needs to remain the
-        // same"*). Wherever you are, the same edge holds the same KIND of thing:
-        //
-        //   LEFT   where you can go        RIGHT   what you can do here
-        //   TOP    (unclaimed)             BOTTOM  what this is
-        //
-        // Settings is no longer a room at all: it is a pane that takes over the place the photos
-        // are (see settingsOpen), reached from the rail, so the top edge is free until the
-        // details room is moved onto it.
-        left = {
+    val rooms = roomSlots<@Composable () -> Unit>(
+        navigation = {
             DestinationRailPanel(
                 items = railItems,
                 selectedId = destination.name,
@@ -1007,7 +974,16 @@ private fun GalleryBrowser(
                 },
             )
         },
-        right = {
+        // TOP = what this view is, pulled down over it.
+        details = {
+            GalleryInfoRoom(
+                title = route.title(destination),
+                assets = currentAssets,
+                state = state,
+            )
+        },
+        // BOTTOM = what you can do here, tilted up from under the grid.
+        actions = {
             GalleryActionsRoom(
                 state = state,
                 actions = actions,
@@ -1037,13 +1013,51 @@ private fun GalleryBrowser(
                 },
             )
         },
-        bottom = {
-            GalleryInfoRoom(
-                title = route.title(destination),
-                assets = currentAssets,
-                state = state,
-            )
+        // RIGHT = how the view is shown, in from the side so its effect can be watched.
+        viewOptions = {
+            GalleryViewOptionsRoom(state = state, actions = actions)
         },
+    )
+    SpatialShell(
+        controller = shell,
+        accentColor = MaterialTheme.colorScheme.primary,
+        // The rooms sit on the same black the grid does, so opening one reads as the surface
+        // moving rather than as a different app appearing behind it.
+        scrimColor = Color.Black,
+        cardColor = Color.Black,
+        modifier = Modifier.fillMaxSize(),
+        // Shrink AND swivel while a room is being PEEKED -- pulled in as a temporary reveal, on
+        // any input method -- so it reads as a panel swinging away rather than a rectangle
+        // sliding off (owner, 2026-08-14: the Magic Portal shape). Shrink ONLY once the rail is a
+        // standing, pinned choice rather than a gesture in progress (owner, 2026-08-20: "if nav
+        // is turned on, the central pane just shrinks, doesn't pivot") -- see chromeMotionFor's
+        // own doc for the full distinction. SpatialShell's parkStyle is one setting for every
+        // room it owns, not a per-room one, so pinning the rail also swaps the details, actions
+        // and view options rooms' own motion to plain-shrink for as long as it stays pinned,
+        // which matches the owner's own framing: peeking vs. pinned is a property of how this
+        // WINDOW is being used right now, not of which particular room happens to be opening.
+        parkStyle = when (chromeMotion) {
+            ChromeMotion.SHRINK_ONLY -> ParkStyle.SLIDE
+            ChromeMotion.SHRINK_AND_PIVOT -> ParkStyle.SWIVEL
+        },
+        // Hand the notification's own strip back to it. Without this the shell claims the top
+        // 56dp on the Initial pass and every pull on the status line opens the top room (when
+        // there is one) instead of expanding the line -- the two gestures live in the same
+        // pixels. Still needed now the details room is there.
+        topReserve = notificationReserve,
+        // One geography for the whole app (owner, 2026-08-18: *"the model needs to remain the
+        // same"*). Wherever you are, the same edge holds the same KIND of thing, and RoomGeography
+        // holds the table the viewer reads too:
+        //
+        //   LEFT   where you can go        RIGHT   how it is shown (view options)
+        //   TOP    what this is (details)  BOTTOM  what you can do (actions)
+        //
+        // Settings is not a room: it is a pane that takes over the place the photos are (see
+        // settingsOpen), reached from the rail.
+        left = rooms.left,
+        top = rooms.top,
+        right = rooms.right,
+        bottom = rooms.bottom,
     ) {
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
@@ -1817,7 +1831,7 @@ internal fun BoxScope.SelectionOverlay(
         if (!inTrash) {
             // Exactly the three glyphs the owner supplied — zip, move, copy — in the mockup's own
             // slot order, on its 46dp pitch. Everything else a selection can do lives in the
-            // actions room on the right edge.
+            // actions room at the bottom edge.
             Row(
                 modifier = Modifier
                     .fillMaxSize()
@@ -2275,7 +2289,7 @@ private fun pillCaption(assets: List<MediaAsset>, firstVisibleIndex: Int): Strin
  * It draws OVER the mosaic rather than living in the Scaffold's `topBar` slot, so it costs the
  * grid no height, and it carries only what is genuinely scoped to the route it is showing. The
  * items that were merely global (refresh, backup, settings) did not move here: refresh is the
- * shake, backup is in the Library screen, settings is the right-hand room.
+ * shake, backup is in the Library screen, settings is a pane reached from the rail.
  */
 @Composable
 private fun RouteOverlayBar(

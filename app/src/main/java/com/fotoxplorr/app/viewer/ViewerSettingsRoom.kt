@@ -3,8 +3,7 @@ package com.fotoxplorr.app.viewer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -17,18 +16,21 @@ import com.fotoxplorr.app.gallery.MAX_SLIDESHOW_INTERVAL_SECONDS
 import com.fotoxplorr.app.gallery.MIN_SLIDESHOW_INTERVAL_SECONDS
 import com.fotoxplorr.app.gallery.ViewerPinchMode
 import com.fotoxplorr.app.ui.RoomEyebrow
+import com.fotoxplorr.app.ui.RoomGeography
 import com.fotoxplorr.app.ui.RoomRow
 import com.fotoxplorr.app.ui.RoomRule
 import com.fotoxplorr.app.ui.RoomStepper
 import com.fotoxplorr.app.ui.RoomStyle
 import com.fotoxplorr.app.ui.RoomToggle
+import com.fotoxplorr.app.ui.clearSystemBarsFor
 
 /**
- * The viewer's BOTTOM room: everything about *looking at a photo*, put where you are while looking
- * at one. It was the top room (owner, 2026-08-14: *"make the settings room at the top"*) until the
- * owner's design-fidelity reference put the photo's DETAILS at the top, pulled down over the photo;
- * settings moved to the bottom edge to make room. The gallery keeps TOP settings -- the viewer is
- * the one screen that deviates, and ViewerScreen's own KDoc records why.
+ * The viewer's RIGHT room, the view options: everything about *looking at a photo*, put where you
+ * are while looking at one. The right edge is where [RoomGeography] puts how a thing is shown, in
+ * the gallery (columns, sort, what to include) as much as here, because the effect of a view option
+ * is what you want to watch. It was the top room (owner, 2026-08-14: *"make the settings room at
+ * the top"*), then the bottom one while the viewer's geography differed from the gallery's; the
+ * owner has since asked for one geography, and app-wide Settings is now a pane, not a room.
  *
  * Grouped into what is on screen, how a slideshow runs, and what plays by itself, because the room
  * now carries enough to need grouping (owner, 2026-08-18: the top and bottom rooms should carry
@@ -37,8 +39,8 @@ import com.fotoxplorr.app.ui.RoomToggle
  * all stored and honoured but had no control anywhere in the app.
  *
  * Deliberately still not the app's whole settings surface. Everything here changes what the screen
- * the user is on does; anything that does not belong to the act of viewing lives in the gallery's
- * settings room, and duplicating a preference in two places is how two settings screens end up
+ * the user is on does; anything that does not belong to the act of viewing lives in the Settings
+ * pane, and duplicating a preference in two places is how two settings screens end up
  * disagreeing about it.
  *
  * Styled from [RoomStyle], the left rail's language, rather than Material's — same type, same
@@ -68,15 +70,13 @@ fun ViewerSettingsRoom(
 ) {
     Column(
         modifier = modifier
-            .fillMaxWidth()
+            .fillMaxHeight()
             .background(Color.Black)
-            // The shell insets a bottom room by its band at the TOP (that is where the parked
-            // card's bottom edge sits), so the system bar to clear here is the navigation bar at
-            // the foot of this room.
-            .navigationBarsPadding()
-            // Scrollable because the room is now taller than the 70% of screen height the shell
-            // gives a vertical room on a short phone. Without this the last group would simply be
-            // unreachable, which is a worse failure than a scrollbar.
+            // The shell insets a right room by its band at the LEFT (that is where the parked
+            // card's sliver sits), so the system bar to clear here is the status bar at the top.
+            .clearSystemBarsFor(RoomGeography.ViewOptions)
+            // Scrollable because the room is taller than a short phone's screen. Without this the
+            // last group would simply be unreachable, which is a worse failure than a scrollbar.
             .verticalScroll(rememberScrollState())
             .padding(
                 start = RoomStyle.GutterStart,
@@ -169,18 +169,17 @@ fun ViewerSettingsRoom(
             )
         }
 
-        // The viewer's geography (owner, design-fidelity round): details are the PULL-DOWN room,
-        // settings the pull-up one -- the opposite of the gallery's TOP settings / BOTTOM
-        // what-this-is, and deliberately so for this one screen. See ViewerScreen's own KDoc.
+        // The one geography ([RoomGeography]): details are the PULL-DOWN room, actions the
+        // pull-UP one, and view options (this room) come in from the right.
         Text(
             text = if (pinchMode == ViewerPinchMode.PANEL_SHORTCUTS) {
                 "Two fingers to turn. Swipe to move between photos. Drag the photo down for " +
-                    "its details, in from the right for what you can do with it, up from the " +
-                    "bottom for settings -- and pinch in or out does the first two as well."
+                    "its details, up from the bottom for what you can do with it, in from the " +
+                    "right for these view options -- and pinch in or out does the first two as well."
             } else {
                 "Pinch to zoom. Two fingers to turn. Swipe to move between photos. " +
-                    "Drag the photo down for its details, in from the right for what you can " +
-                    "do with it, up from the bottom for settings."
+                    "Drag the photo down for its details, up from the bottom for what you can " +
+                    "do with it, in from the right for these view options."
             },
             color = RoomStyle.InkFaint,
             style = RoomStyle.Caption,

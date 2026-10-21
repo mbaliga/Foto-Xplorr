@@ -81,9 +81,10 @@ import com.fotoxplorr.app.palette.PaletteSwatch
 import com.fotoxplorr.app.spatial.ExpandedPhotoMap
 import com.fotoxplorr.app.spatial.GeoIndexState
 import com.fotoxplorr.app.spatial.MapFocus
+import com.fotoxplorr.app.ui.RoomGeography
+import com.fotoxplorr.app.ui.roomSlots
 import com.fotoxplorr.core.model.MediaId
 import dev.aarso.cellshell.ParkStyle
-import dev.aarso.cellshell.RoomEdge
 import dev.aarso.cellshell.SpatialShell
 import dev.aarso.cellshell.rememberSpatialController
 import kotlin.math.ln
@@ -95,21 +96,26 @@ import kotlinx.coroutines.launch
 
 /**
  * The full-screen viewer, as a spatial shell with three rooms around it: what this photo is (and
- * where it was taken) at the TOP, in [PhotoDetailRoom], pulled DOWN over the photo; the nine photo
- * actions at the right; and settings at the bottom -- with the photo itself still alive on the
- * parked card behind whichever one is open. The details room replaces two separate surfaces that
+ * where it was taken) at the TOP, in [PhotoDetailRoom], pulled DOWN over the photo; what you can
+ * do with it at the BOTTOM, in [ViewerActionsRoom], tilted UP from under it; and how it is shown
+ * at the RIGHT, in [ViewerSettingsRoom] -- with the photo itself still alive on the parked card
+ * behind whichever one is open. The details room replaces two separate surfaces that
  * used to say overlapping things about the same file: a bottom `MetadataPanel` behind an "Info"
  * button, and a full-screen Material details screen behind a "Details" button. Two buttons, two
  * layouts and two half-answers about one photo is exactly the drift `docs/fonebrew-navigation.md`
  * describes; the room is the single answer.
  *
- * **This screen deviates from the app's one geography, on purpose.** The gallery's rule is TOP =
- * settings, BOTTOM = what-this-is (owner, 2026-08-18: *"the model needs to remain the same"*, see
- * `GalleryScreen`), and the viewer followed it until the owner's design-fidelity reference put the
- * photo's details at the top: *pull the photo down* for what it is. The viewer now does that, and
- * settings take the bottom edge; the gallery's rooms are untouched. Recorded in
- * `docs/handoff/DESIGN-FIDELITY-VIEWER.md` as a documented deviation rather than quietly left to
- * drift.
+ * **This is the app's one geography, not a variation on it.** [RoomGeography] holds the table and
+ * the gallery reads the same one: TOP = details, BOTTOM = actions, RIGHT = view options (owner,
+ * batch 2: the rooms were not consistent between the gallery and the open photo). Details are the
+ * photo's facts here and the grid's counts there; view options are the filmstrip and slideshow
+ * here and columns and sort there. The edge is the part a user memorises. The viewer used to hold
+ * actions at the right and settings at the bottom, the reverse of this.
+ *
+ * The bottom edge is shared with the filmstrip and the video transport, which scrub HORIZONTALLY.
+ * That works because the shell claims a gesture by whichever axis crosses touch slop first and
+ * lets a horizontal one through untouched, so a pull UP from the bottom opens the actions and a
+ * sideways drag on the strip still scrubs. A diagonal that starts mostly upward is the shell's.
  *
  * The left edge has no room, so the shell refuses drags from it and draws no peek there.
  */
@@ -146,7 +152,7 @@ fun ViewerScreen(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onClose: () -> Unit,
-    /** Blur-sensitive preference, surfaced in the top room so it is adjustable where it bites. */
+    /** Blur-sensitive preference, surfaced in the view options room so it is adjustable where it bites. */
     blurSensitive: Boolean = true,
     /** Hold the screen awake while this screen is up. */
     keepScreenOn: Boolean = false,
@@ -157,7 +163,7 @@ fun ViewerScreen(
      * screen's original behaviour) zooms the photo, unchanged for anyone who never opens this
      * setting. [ViewerPinchMode.PANEL_SHORTCUTS] repurposes the SAME gesture entirely: pinch-in
      * opens [PhotoDetailRoom] (the TOP room, pulled down), pinch-out opens [ViewerActionsRoom]
-     * (the right room), and neither also zooms -- see [ViewerPinchMode]'s own doc for why the two
+     * (the BOTTOM room, tilted up), and neither also zooms -- see [ViewerPinchMode]'s own doc for why the two
      * are mutually exclusive within one gesture.
      */
     pinchMode: ViewerPinchMode = ViewerPinchMode.OPTICAL_ZOOM,
@@ -240,7 +246,7 @@ fun ViewerScreen(
     onSetLoopAnimations: (Boolean) -> Unit = {},
     onSetAutoplayVideos: (Boolean) -> Unit = {},
     /**
-     * The assets being paged through, feeding the filmstrip in the bottom room. Empty is a safe
+     * The assets being paged through, feeding the filmstrip along the bottom of the photo. Empty is a safe
      * fallback -- the strip hides itself below two items.
      */
     relatedAssets: List<MediaAsset> = emptyList(),
@@ -433,7 +439,7 @@ fun ViewerScreen(
     // whether a finger is down, so this waits a beat after the room reports open: a finger that
     // pulled the room to its stop and is still holding it will move again (and un-settle it)
     // long before the debounce lands, and a release that settles at full open lands just after.
-    val detailsOpen = shell.openRoom == RoomEdge.TOP
+    val detailsOpen = shell.openRoom == RoomGeography.Details
     var detailsSettled by remember { mutableStateOf(false) }
     LaunchedEffect(detailsOpen) {
         detailsSettled = false
@@ -466,24 +472,9 @@ fun ViewerScreen(
             .fillMaxSize()
             .onGloballyPositioned { overlayOrigin = it.positionInRoot() },
     ) {
-    SpatialShell(
-        controller = shell,
-        accentColor = MaterialTheme.colorScheme.primary,
-        // The rooms sit on the same black the photo does, so opening one reads as the surface
-        // moving rather than as a different screen appearing behind it.
-        scrimColor = Color.Black,
-        cardColor = Color.Black,
-        modifier = Modifier.fillMaxSize(),
-        // Shrink AND swivel (owner, 2026-08-14). The card turns about the hinge edge that
-        // stays on screen, so opening a room reads as a panel swinging away rather than a
-        // rectangle sliding off -- the Magic Portal shape. The shrink is kept; the swivel is
-        // added to it. EXCEPT for the top room (owner, #19: "not a pane tilt, rather a
-        // shrink-to-appear-on-the-map effect"): there the card slides flat and the photo's
-        // copy flies to the map pin. See the flight notes above.
-        parkStyle = if (topPulling) ParkStyle.SLIDE else ParkStyle.SWIVEL,
-        // TOP = what this photo is, pulled DOWN over it (owner's reference, 6.png). See this
-        // screen's KDoc for the deviation from the gallery's geography this is.
-        top = roomSlot(!roomsWithdrawn) {
+    val rooms = roomSlots(
+        // TOP = what this photo is, pulled DOWN over it (owner's reference, 6.png).
+        details = roomSlot(!roomsWithdrawn) {
             PhotoDetailRoom(
                 asset = asset,
                 exif = exif,
@@ -526,7 +517,8 @@ fun ViewerScreen(
                 reveal = { shell.vProgress },
             )
         },
-        right = roomSlot(!roomsWithdrawn) {
+        // BOTTOM = what you can do with this photo, tilted up from under it.
+        actions = roomSlot(!roomsWithdrawn) {
             ViewerActionsRoom(
                 isFavorite = isFavorite,
                 isSensitive = isSensitive,
@@ -555,9 +547,8 @@ fun ViewerScreen(
                 onLiftSubject = if (canLift) ({ shell.closeAll(); liftActive = true }) else null,
             )
         },
-        // BOTTOM = settings, pulled UP from the bottom edge. It was the top room until the
-        // details took that edge -- see this screen's KDoc.
-        bottom = roomSlot(!roomsWithdrawn) {
+        // RIGHT = how the photo is shown: the viewing options, in from the side.
+        viewOptions = roomSlot(!roomsWithdrawn) {
             ViewerSettingsRoom(
                 slideshowIntervalSeconds = slideshowIntervalSeconds,
                 blurSensitive = blurSensitive,
@@ -577,6 +568,28 @@ fun ViewerScreen(
                 onSetPinchMode = onSetPinchMode,
             )
         },
+    )
+    SpatialShell(
+        controller = shell,
+        accentColor = MaterialTheme.colorScheme.primary,
+        // The rooms sit on the same black the photo does, so opening one reads as the surface
+        // moving rather than as a different screen appearing behind it.
+        scrimColor = Color.Black,
+        cardColor = Color.Black,
+        modifier = Modifier.fillMaxSize(),
+        // Shrink AND swivel (owner, 2026-08-14). The card turns about the hinge edge that
+        // stays on screen, so opening a room reads as a panel swinging away rather than a
+        // rectangle sliding off -- the Magic Portal shape. The shrink is kept; the swivel is
+        // added to it. EXCEPT for the top room (owner, #19: "not a pane tilt, rather a
+        // shrink-to-appear-on-the-map effect"): there the card slides flat and the photo's
+        // copy flies to the map pin. See the flight notes above.
+        parkStyle = if (topPulling) ParkStyle.SLIDE else ParkStyle.SWIVEL,
+        // Which edge holds which room is RoomGeography's to say, not this screen's: the gallery
+        // reads the same table, so the two cannot drift apart again.
+        left = rooms.left,
+        top = rooms.top,
+        right = rooms.right,
+        bottom = rooms.bottom,
     ) {
         Box(
             modifier = Modifier
@@ -622,14 +635,14 @@ fun ViewerScreen(
                         },
                         // PANEL_SHORTCUTS only -- see ViewerPinchMode's own doc. Reuses the SAME
                         // rooms the shell's own edge-drag gestures already open (ViewerSettingsRoom's
-                        // own "GESTURES" caption: "Drag the photo down for its details, in from
-                        // the right for what you can do with it"), so this is a second way IN to
+                        // own "GESTURES" caption: "Drag the photo down for its details, up from
+                        // the bottom for what you can do with it"), so this is a second way IN to
                         // a surface that already exists, not a new one. Pinch IN = the details,
-                        // which are the TOP room now.
+                        // pinch OUT = the actions.
                         onPinch = { direction ->
                             when (direction) {
-                                PinchDirection.IN -> shell.open(RoomEdge.TOP)
-                                PinchDirection.OUT -> shell.open(RoomEdge.RIGHT)
+                                PinchDirection.IN -> shell.open(RoomGeography.Details)
+                                PinchDirection.OUT -> shell.open(RoomGeography.Actions)
                             }
                         },
                         onGestureEnd = {
@@ -776,8 +789,8 @@ fun ViewerScreen(
             )
 
             // All that is left over the photo, and only when asked for: where you are in the
-            // run. The nine actions are the right room, the facts are the top room, and the
-            // settings are the bottom room -- none of them costs the photo a pixel until pulled.
+            // run. The actions are the bottom room, the facts are the top room, and the view
+            // options are the right room -- none of them costs the photo a pixel until pulled.
             if (ViewerChromePolicy.chromeShown(chromeVisible, isInPip, liftActive)) {
                 ViewerPositionChip(
                     asset = asset,
