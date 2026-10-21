@@ -30,18 +30,28 @@ object ExifCopier {
      * [com.fotoxplorr.app.share.SharePreparer]'s own kept-metadata share path uses), and copies
      * XMP across via [copiedXmpValue]. Does not call [ExifInterface.saveAttributes] -- that is the
      * caller's job, once every field it wants on [target] is set.
+     *
+     * With [keepLocation] false (the default for a file that leaves the device's own library, see
+     * [com.fotoxplorr.app.editor.EditedCopyWriter.saveTo]) no `GPS*` EXIF tag is copied and the
+     * XMP side has its location properties cleared, or is skipped when it cannot be parsed and so
+     * cannot be cleaned.
      */
-    fun copy(source: ExifInterface, target: ExifInterface) {
+    fun copy(source: ExifInterface, target: ExifInterface, keepLocation: Boolean = true) {
         COPIED_TAGS.forEach { tag ->
+            if (!keepLocation && tag in GPS_TAGS) return@forEach
             source.getAttribute(tag)?.let { target.setAttribute(tag, it) }
         }
         target.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
         // xmpAttributeUtf8(), not getAttribute(TAG_XMP) -- see that function's own doc (P0-08):
         // getAttribute decodes an XMP packet's bytes with the wrong charset.
-        copiedXmpValue(source.xmpAttributeUtf8())?.let {
+        copiedXmpValue(source.xmpAttributeUtf8(), keepLocation)?.let {
             target.setAttribute(ExifInterface.TAG_XMP, it)
         }
     }
+
+    /** Every EXIF GPS tag ([ExifInterface.TAG_GPS_LATITUDE] and the rest of the `GPS*` group,
+     *  including capture direction and the processing-method strings). */
+    val GPS_TAGS: Set<String> = COPIED_TAGS.filterTo(mutableSetOf()) { it.startsWith("GPS") }
 }
 
 /** Every `public static final String` field on [ExifInterface] whose name starts with `TAG_` --
@@ -139,7 +149,8 @@ fun resetXmpOrientationForCopy(packet: XmpPacket): XmpPacket {
  * `ExifInterface.getAttribute(TAG_XMP)` returned it.
  *  - No source XMP ([rawXmp] null or blank): null -- an edited copy with nothing to copy gets no
  *    XMP packet invented for it.
- *  - Parses: [resetXmpOrientationForCopy]'s adjusted packet, re-serialized.
+ *  - Parses: [resetXmpOrientationForCopy]'s adjusted packet, re-serialized, with its location
+ *    properties cleared first when [keepLocation] is false.
  *  - Does not parse at all: [rawXmp] itself, untouched, but ONLY when every character is 7-bit
  *    ASCII, otherwise null (the packet is skipped). This app cannot safely edit a packet it
  *    cannot parse -- see [XmpPacket.parse]'s own doc on why a failed parse must not become a fresh
@@ -150,11 +161,14 @@ fun resetXmpOrientationForCopy(packet: XmpPacket): XmpPacket {
  *    U+007F as `?`: the parsed path escapes those as numeric references in
  *    [XmpPacket.serialize], but this verbatim path has no such step, so a non-ASCII packet would
  *    be silently corrupted rather than copied. Skipping it drops the packet; corrupting it would
- *    drop the same data and leave a broken one behind.
+ *    drop the same data and leave a broken one behind. With [keepLocation] false it is skipped
+ *    outright: a packet this app cannot parse cannot be cleaned of its location either.
  */
-internal fun copiedXmpValue(rawXmp: String?): String? {
+internal fun copiedXmpValue(rawXmp: String?, keepLocation: Boolean = true): String? {
     if (rawXmp.isNullOrBlank()) return null
-    val packet = XmpPacket.parse(rawXmp) ?: return rawXmp.takeIf { raw -> raw.all { it.code <= MAX_ASCII } }
+    val packet = XmpPacket.parse(rawXmp)
+        ?: return rawXmp.takeIf { raw -> keepLocation && raw.all { it.code <= MAX_ASCII } }
+    if (!keepLocation) applyToXmp(packet, MetadataEdit(clearLocation = true))
     return resetXmpOrientationForCopy(packet).serialize()
 }
 

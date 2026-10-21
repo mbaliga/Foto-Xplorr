@@ -18,6 +18,7 @@ import com.fotoxplorr.app.media.mediaStoreRelativePath
 import com.fotoxplorr.app.media.openForLocationRead
 import com.fotoxplorr.app.media.uriForLocationRead
 import com.fotoxplorr.app.metadata.ExifCopier
+import com.fotoxplorr.app.metadata.xmpAttributeUtf8
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -144,6 +145,12 @@ class EditedCopyWriter(context: Context) {
      * scan pipeline. Source EXIF/XMP is still preserved [format] permitting, the same as [save],
      * and the bytes still reach [destination] only after they have been fully encoded and had
      * their metadata applied in the staging file.
+     *
+     * **Location is stripped.** [destination] can be a cloud-backed provider or a tree some other
+     * app reads, so unlike [save] (a row in this device's own library) it is an export: no `GPS*`
+     * EXIF tag and no XMP location property reaches it, whatever the source carried, and the
+     * staged file is re-read to prove it before a single byte is written out (docs/TRAPS.md #31).
+     * If the proof fails the save fails rather than leaking the location.
      */
     suspend fun saveTo(
         destination: Uri,
@@ -155,7 +162,10 @@ class EditedCopyWriter(context: Context) {
         runCatching {
             val tempFile = encodeToStagingFile(bitmap, format, quality)
             try {
-                applySourceMetadata(source, tempFile, format)
+                applySourceMetadata(source, tempFile, format, keepLocation = false)
+                check(format == OutputFormat.HEIC || !carriesLocation(tempFile)) {
+                    "Could not remove the photo's location from the copy, so nothing was saved"
+                }
                 // "wt" (write + truncate), not the default "w": a SAF provider is allowed to
                 // leave the tail of a previous, longer document in place under plain "w", and a
                 // picker can hand back an existing file the user chose to replace.
@@ -248,25 +258,44 @@ class EditedCopyWriter(context: Context) {
     /**
      * Copies [source]'s own EXIF and XMP onto [tempFile] via [ExifCopier.copy] — through
      * [uriForLocationRead] (P0-02) so the user's own edited copy keeps its GPS instead of reading
-     * back whatever Android redacted. The unredacted read only ever feeds the app-private staging
-     * file; it is never a share or export path (docs/TRAPS.md #31), and the write into the
-     * original never goes through it (#35). Any failure (source unreadable, [tempFile]'s format
-     * cannot hold EXIF) is swallowed: see the class doc's "metadata copying is best-effort" note.
-     * [OutputFormat.HEIC] is skipped outright — [ExifInterface] cannot save attributes into it.
+     * back whatever Android redacted. The unredacted read only feeds the app-private staging file
+     * and, from there, a copy that stays in this device's own library ([save]) or replaces the
+     * original ([overwrite]); an export to a location the user picked ([saveTo]) passes
+     * `keepLocation = false` and never carries the location out (docs/TRAPS.md #31), and the
+     * write into the original never goes through the unredacted read (#35). Any failure (source
+     * unreadable, [tempFile]'s format cannot hold EXIF) is swallowed and reported as the returned
+     * [MetadataCopy] instead of thrown: see the class doc's "metadata copying is best-effort"
+     * note. [OutputFormat.HEIC] is skipped outright — [ExifInterface] cannot save attributes into
+     * it.
+     *
+     * The source is read through a stream, not a file descriptor: [ExifInterface] buffers what it
+     * needs either way, and a stream does not need a seekable descriptor from the provider.
      */
-    private fun applySourceMetadata(source: MediaAsset, tempFile: File, format: OutputFormat) {
-        if (format == OutputFormat.HEIC) return
-        runCatching {
+    private fun applySourceMetadata(
+        source: MediaAsset,
+        tempFile: File,
+        format: OutputFormat,
+        keepLocation: Boolean = true,
+    ): MetadataCopy {
+        if (format == OutputFormat.HEIC) return MetadataCopy.SKIPPED_HEIC
+        return try {
             val requested = appContext.uriForLocationRead(source.contentUri)
             val opened = openForLocationRead(requested, source.contentUri) { uri ->
-                appContext.contentResolver.openFileDescriptor(uri, "r")
-            } ?: return
-            opened.first.use { descriptor ->
-                val sourceExif = ExifInterface(descriptor.fileDescriptor)
+                appContext.contentResolver.openInputStream(uri)
+            } ?: return MetadataCopy.SOURCE_UNREADABLE
+            opened.first.use { stream ->
+                val sourceExif = ExifInterface(stream)
                 val targetExif = ExifInterface(tempFile.absolutePath)
-                ExifCopier.copy(sourceExif, targetExif)
+                ExifCopier.copy(sourceExif, targetExif, keepLocation)
                 targetExif.saveAttributes()
             }
+            if (isRedactedView(Build.VERSION.SDK_INT, source.contentUri, readUnredacted = opened.second)) {
+                MetadataCopy.REDACTED
+            } else {
+                MetadataCopy.COPIED
+            }
+        } catch (e: Exception) {
+            MetadataCopy.FAILED
         }
     }
 
@@ -391,6 +420,53 @@ internal fun compositeOntoWhiteIfNeeded(bitmap: Bitmap, format: OutputFormat): B
     }
     return flattened
 }
+
+/** What [EditedCopyWriter.applySourceMetadata] managed to carry from the source onto the staged
+ *  file. Only [COPIED] means the staged file holds everything the source's metadata did. */
+internal enum class MetadataCopy {
+    /** Source read in full, target written. */
+    COPIED,
+
+    /** HEIC output: [ExifInterface] cannot write into that container, nothing was attempted. */
+    SKIPPED_HEIC,
+
+    /** The source could not be opened at all. */
+    SOURCE_UNREADABLE,
+
+    /** Copied, but from a view Android had stripped location (and possibly more) from: see
+     *  [isRedactedView]. The staged file is missing whatever was redacted. */
+    REDACTED,
+
+    /** Reading or writing the EXIF threw. */
+    FAILED,
+}
+
+/**
+ * Whether a read of [uri] saw Android's redacted view of the file rather than its real metadata.
+ * True on API 29+ for a MediaStore uri that was NOT read with `MediaStore.setRequireOriginal`
+ * ([readUnredacted] false: no `ACCESS_MEDIA_LOCATION`, or the platform refused the original and
+ * the plain-uri retry took over). Any other uri (a file the app owns, a document provider) and any
+ * earlier platform is never redacted. The same condition [com.fotoxplorr.app.metadata.MetadataWriter.write]
+ * refuses on.
+ */
+internal fun isRedactedView(sdkInt: Int, uri: Uri, readUnredacted: Boolean): Boolean =
+    sdkInt >= Build.VERSION_CODES.Q && uri.authority == MediaStore.AUTHORITY && !readUnredacted
+
+/**
+ * Whether [file] still carries a location a reader could use: a decodable GPS coordinate, any
+ * `GPS*` EXIF tag, or an XMP location property (`exif:GPS*`, or the structured IPTC
+ * `LocationCreated` / `LocationShown`). The proof [EditedCopyWriter.saveTo] demands of its staged
+ * file; a fresh [ExifInterface], not the one that did the writing, so it checks what reached disk.
+ */
+internal fun carriesLocation(file: File): Boolean {
+    val exif = ExifInterface(file.absolutePath)
+    if (exif.latLong != null) return true
+    if (ExifCopier.GPS_TAGS.any { exif.getAttribute(it) != null }) return true
+    val xmp = exif.xmpAttributeUtf8() ?: return false
+    return XMP_LOCATION_MARKER.containsMatchIn(xmp)
+}
+
+private val XMP_LOCATION_MARKER = Regex("[A-Za-z]+:GPS[A-Z]|LocationCreated|LocationShown")
 
 /**
  * The name an edited copy is saved under: the original's stem, then a marker, then [format]'s own
