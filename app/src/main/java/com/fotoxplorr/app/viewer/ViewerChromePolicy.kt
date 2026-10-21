@@ -53,4 +53,44 @@ internal object ViewerChromePolicy {
      */
     fun videoBottomInsetDp(filmstripShown: Boolean): Int =
         if (filmstripShown) FilmstripGeometry.REST_BAND_DP else 0
+
+    // ── chrome the first time a video opens (owner decision) ──────────────────────────────────
+
+    /**
+     * Whether the chrome is already up when the viewer first composes for an asset. Up for a
+     * video, down for a photo: immersive stays the default for stills (owner, 2026-08-14:
+     * "Immersive! Immersive! Immersive!"), but a video opened into a bare black screen with no
+     * visible way to start, pause or seek it is what read as "Fotoz is not playing videos"
+     * (owner, #1). Showing the transport the first time a video opens is the owner's decision;
+     * after that it is theirs to hide with a tap.
+     */
+    fun initialChromeVisible(isVideo: Boolean): Boolean = revealChromeForVideo(isVideo, alreadyRevealed = false)
+
+    /**
+     * Whether landing on this asset should bring the chrome up: a video, and only the FIRST one
+     * this viewer session shows. [alreadyRevealed] is remembered by the screen for its lifetime, so
+     * a person who hides the chrome and pages to the next clip is not shown it again against their
+     * wishes, while one who opened on a photo still meets the transport the first time a video
+     * turns up.
+     */
+    fun revealChromeForVideo(isVideo: Boolean, alreadyRevealed: Boolean): Boolean = isVideo && !alreadyRevealed
+
+    // ── the slideshow waits for a video ───────────────────────────────────────────────────────
+
+    /**
+     * Whether the slideshow's countdown to the next photo should be running.
+     *
+     * Stopped while any room is open (the person is reading something), while the lift editor owns
+     * the screen (an advance would throw a half-made selection away), and while a video is playing
+     * or about to (an advance after the interval would cut it off mid-scene). When the video ends,
+     * or is paused, the countdown starts afresh, so a clip plays out and then gets its normal
+     * interval before the slideshow moves on.
+     */
+    fun slideshowMayAdvance(
+        slideshowActive: Boolean,
+        total: Int,
+        anyRoomVisible: Boolean,
+        videoPlaybackActive: Boolean,
+        lifting: Boolean,
+    ): Boolean = slideshowActive && total > 1 && !anyRoomVisible && !videoPlaybackActive && !lifting
 }

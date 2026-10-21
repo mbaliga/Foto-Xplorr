@@ -78,4 +78,51 @@ class ViewerChromePolicyTest {
         // leave a 42 dp gap above a resting strip for the sake of a moment it is not at rest.
         assertTrue(ViewerChromePolicy.videoBottomInsetDp(true) < FilmstripGeometry.BULGE_BAND_DP)
     }
+
+    // ── chrome the first time a video opens (#1) ───────────────────────────────────────────────
+
+    @Test
+    fun `a video opens with the chrome up and a photo opens immersive`() {
+        assertTrue(ViewerChromePolicy.initialChromeVisible(isVideo = true))
+        assertFalse(ViewerChromePolicy.initialChromeVisible(isVideo = false))
+    }
+
+    @Test
+    fun `only the first video of a session brings the chrome up`() {
+        // Opened on a photo, then paged onto the first video: reveal.
+        assertTrue(ViewerChromePolicy.revealChromeForVideo(isVideo = true, alreadyRevealed = false))
+        // Hid the chrome and paged to the next clip: respect that.
+        assertFalse(ViewerChromePolicy.revealChromeForVideo(isVideo = true, alreadyRevealed = true))
+        // A photo never reveals it.
+        assertFalse(ViewerChromePolicy.revealChromeForVideo(isVideo = false, alreadyRevealed = false))
+        assertFalse(ViewerChromePolicy.revealChromeForVideo(isVideo = false, alreadyRevealed = true))
+    }
+
+    // ── the slideshow waits for a video ────────────────────────────────────────────────────────
+
+    private fun advances(
+        active: Boolean = true,
+        total: Int = 9,
+        room: Boolean = false,
+        video: Boolean = false,
+        lifting: Boolean = false,
+    ) = ViewerChromePolicy.slideshowMayAdvance(active, total, room, video, lifting)
+
+    @Test
+    fun `the slideshow advances only when nothing is holding it`() {
+        assertTrue(advances())
+        assertFalse("not started", advances(active = false))
+        assertFalse("one photo", advances(total = 1))
+        assertFalse("a room is open", advances(room = true))
+        assertFalse("a video is playing", advances(video = true))
+        assertFalse("a selection is being made", advances(lifting = true))
+    }
+
+    @Test
+    fun `a finished or paused video lets the countdown start again`() {
+        // VideoPlayer reports playback inactive on pause and on end; the screen's effect is keyed
+        // on that value, so the false -> countdown restart is the whole mechanism.
+        assertFalse(advances(video = true))
+        assertTrue(advances(video = false))
+    }
 }

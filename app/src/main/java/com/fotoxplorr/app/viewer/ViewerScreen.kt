@@ -221,8 +221,9 @@ fun ViewerScreen(
      * plays regardless of that setting, the same way opening a GIF in most photo viewers does.
      */
     animated: Boolean = false,
-    /** Start videos without waiting for a tap on play. */
-    autoplayVideos: Boolean = false,
+    /** Start videos without waiting for a tap on play. On by default (owner, #1): a video that
+     *  opens and waits is indistinguishable from one that is broken. */
+    autoplayVideos: Boolean = true,
     onSetSlideshowInterval: (Int) -> Unit = {},
     onSetBlurSensitive: (Boolean) -> Unit = {},
     onSetShowFilmstrip: (Boolean) -> Unit = {},
@@ -258,13 +259,29 @@ fun ViewerScreen(
     /** Test seam for the plate's map backdrop; null is the flavour's own. See [PhotoDetailRoom]. */
     plateMapBackdrop: (@Composable BoxScope.(settled: Boolean) -> Unit)? = null,
 ) {
-    // Chrome starts HIDDEN and stays hidden across a swipe.
+    // Chrome starts HIDDEN for a photo and stays hidden across a swipe -- and starts SHOWN the
+    // first time a video opens.
     //
     // It used to default to visible AND be keyed on asset.id, so it reset to visible on every
     // photo change -- immersive was unreachable for more than one photo at a time. Not keyed on
     // the asset any more: a preference to see the position counter is a preference about the
     // viewer, not about a file (owner, 2026-08-14: "Immersive! Immersive! Immersive!").
-    var chromeVisible by remember { mutableStateOf(false) }
+    //
+    // The exception is the first video (owner, #1, "Fotoz is not playing videos"): a video that
+    // opens into bare black with no visible transport gave no sign that it could be played, so
+    // the first one this viewer shows brings the chrome up. After that it is the person's to hide.
+    var chromeVisible by remember { mutableStateOf(ViewerChromePolicy.initialChromeVisible(asset.isVideo)) }
+    var videoChromeRevealed by remember { mutableStateOf(asset.isVideo) }
+    LaunchedEffect(asset.id) {
+        if (ViewerChromePolicy.revealChromeForVideo(asset.isVideo, videoChromeRevealed)) {
+            chromeVisible = true
+            videoChromeRevealed = true
+        }
+    }
+    // True while THIS asset is a video that is playing or about to, as reported by VideoPlayer
+    // (which always reports false again when it leaves). Keyed on the asset so a value from the
+    // clip just paged away from can never hold the slideshow on a photo.
+    var videoPlaying by remember(asset.id) { mutableStateOf(false) }
 
     var scale by remember(asset.id) { mutableFloatStateOf(1f) }
     var offsetX by remember(asset.id) { mutableFloatStateOf(0f) }
@@ -317,8 +334,12 @@ fun ViewerScreen(
         onDispose { view.keepScreenOn = false }
     }
 
-    LaunchedEffect(asset.id, slideshowActive, slideshowIntervalSeconds, shell.anyRoomVisible) {
-        if (slideshowActive && total > 1 && !shell.anyRoomVisible) {
+    // The countdown restarts whenever any of its inputs changes, which is what lets a video play to
+    // its end and THEN get a normal interval, rather than being cut off by a timer that started
+    // when the clip did. See ViewerChromePolicy.slideshowMayAdvance.
+    val roomOpen = shell.anyRoomVisible
+    LaunchedEffect(asset.id, slideshowActive, slideshowIntervalSeconds, roomOpen, videoPlaying, liftActive) {
+        if (ViewerChromePolicy.slideshowMayAdvance(slideshowActive, total, roomOpen, videoPlaying, liftActive)) {
             delay(slideshowIntervalSeconds.coerceAtLeast(2) * 1_000L)
             onNext()
         }
@@ -591,6 +612,10 @@ fun ViewerScreen(
                         chromeVisible = chromeVisible,
                         autoplayVideos = autoplayVideos,
                         catalogueActions = catalogueActions,
+                        // Offered next to Retry when playback fails; the same action the actions
+                        // room's "Open with" row runs.
+                        onOpenWith = onOpenWith,
+                        onPlaybackActive = { videoPlaying = it },
                         // Sits the transport above the filmstrip band instead of under it.
                         bottomInset = ViewerChromePolicy.videoBottomInsetDp(filmstripShown).dp,
                         scrubSuspended = scrubbing,
