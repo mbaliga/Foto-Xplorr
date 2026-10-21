@@ -1,7 +1,6 @@
 package com.fotoxplorr.app.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,9 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.Icon
@@ -81,7 +78,7 @@ object RoomStyle {
     )
 
     // Fixed on purpose (reference design): the black-ground, white-ink room language, the on state
-    // is a filled block and not a hue.
+    // is a position and not a hue.
     /** Full-strength ink. */
     val Ink = Color.White
 
@@ -208,36 +205,31 @@ fun RoomRow(
 }
 
 /**
- * A toggle, drawn rather than imported.
+ * A room's switch. It is [HyleToggle][com.fotoxplorr.app.hyle.HyleToggle] -- the same control as
+ * the Settings pane, the share sheet and the AI settings, so one preference does not look like two
+ * different switches depending on which room you flip it in.
  *
- * Material's `Switch` carries its own elevation, ripple, thumb shadow and rounded track — a piece
- * of a different design system sitting in the middle of a black brutalist room. This is the same
- * information as a rectangle and a block that moves to one end of it.
+ * It used to be a drawn outlined box with a block in it (owner, 2026-08: *restyle to match the
+ * rail*), written before the owner's later *use Hyle, do not invent buttons*. The box also had no
+ * switch semantics at all and a ~26dp touch area; the Hyle toggle carries `Role.Switch`, an
+ * on/off state description and a 48dp target. The name and signature stay so the rooms that call
+ * it do not change.
+ *
+ * @param description read out by a screen reader when the toggle is not inside a labelled row.
  */
 @Composable
-fun RoomToggle(checked: Boolean, onCheckedChange: (Boolean) -> Unit, enabled: Boolean = true) {
-    val ink = when {
-        !enabled -> RoomStyle.InkFaint
-        checked -> RoomStyle.Ink
-        else -> RoomStyle.InkMuted
-    }
-    Box(
-        modifier = Modifier
-            .width(TOGGLE_WIDTH)
-            .border(1.dp, ink)
-            .then(if (enabled) Modifier.clickable { onCheckedChange(!checked) } else Modifier)
-            .padding(2.dp),
-        // The block sits at the end it means: right for on, left for off. No animation, no
-        // thumb — the state is legible from across the room and reads as a switch, not a chip.
-        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
-    ) {
-        Box(
-            Modifier
-                .size(width = TOGGLE_BLOCK, height = TOGGLE_HEIGHT)
-                .background(if (checked) ink else Color.Transparent)
-                .then(if (checked) Modifier else Modifier.border(1.dp, ink)),
-        )
-    }
+fun RoomToggle(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
+    description: String? = null,
+) {
+    com.fotoxplorr.app.hyle.HyleToggle(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        enabled = enabled,
+        description = description,
+    )
 }
 
 /**
@@ -299,6 +291,3 @@ fun RoomRule(modifier: Modifier = Modifier) {
     )
 }
 
-private val TOGGLE_WIDTH = 52.dp
-private val TOGGLE_HEIGHT = 22.dp
-private val TOGGLE_BLOCK = 22.dp

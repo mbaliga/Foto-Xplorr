@@ -298,6 +298,46 @@ class SurfaceRenderTest {
         compose.onRoot().captureRoboImage("build/renders/hyle-toggle.png")
     }
 
+    /**
+     * The same switch where it actually lives: on the black room, live on and off beside disabled
+     * on and off, once as the Hyle toggle and once through [com.fotoxplorr.app.ui.RoomToggle] in a
+     * room row. The disabled pair must read dimmer than the live pair here; on the light card
+     * above they used to read lighter, which is the wrong way round on black.
+     */
+    @Test
+    fun `hyle toggle on black`() {
+        render("hyle-toggle-on-black") {
+            androidx.compose.foundation.layout.Column(
+                modifier = Modifier
+                    .align(androidx.compose.ui.Alignment.Center)
+                    .padding(24.dp),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(20.dp),
+            ) {
+                androidx.compose.foundation.layout.Row(
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(20.dp),
+                ) {
+                    com.fotoxplorr.app.hyle.HyleToggle(checked = true, onCheckedChange = {})
+                    com.fotoxplorr.app.hyle.HyleToggle(checked = false, onCheckedChange = {})
+                }
+                androidx.compose.foundation.layout.Row(
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(20.dp),
+                ) {
+                    com.fotoxplorr.app.hyle.HyleToggle(checked = true, onCheckedChange = {}, enabled = false)
+                    com.fotoxplorr.app.hyle.HyleToggle(checked = false, onCheckedChange = {}, enabled = false)
+                }
+                com.fotoxplorr.app.ui.RoomRow(
+                    label = "Filmstrip",
+                    caption = "The strip of neighbouring photos along the bottom.",
+                ) { com.fotoxplorr.app.ui.RoomToggle(checked = true, onCheckedChange = {}) }
+                com.fotoxplorr.app.ui.RoomRow(
+                    label = "Only on Wi-Fi",
+                    caption = "Not applicable in this build.",
+                    enabled = false,
+                ) { com.fotoxplorr.app.ui.RoomToggle(checked = false, onCheckedChange = {}, enabled = false) }
+            }
+        }
+    }
+
     /** The Hyle field states, the way the owner's control-sheet lays them out. */
     @Test
     fun `hyle field gallery`() {
