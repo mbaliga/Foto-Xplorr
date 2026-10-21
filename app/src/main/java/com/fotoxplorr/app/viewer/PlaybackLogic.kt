@@ -30,11 +30,38 @@ internal const val SIDECAR_QUERY_TIMEOUT_MS = 1_500L
 internal const val INDEXER_DELAY_AFTER_READY_MS = 1_500L
 
 /**
- * True while a [VideoPlayer] that is not armed yet should arm: not already armed, and the user's
- * finger is not on the filmstrip. Holding the arming back while the strip is touched is what stops
- * a slow scrub that happens to rest on a video for 300 ms from starting its audio under the finger.
+ * True while a [VideoPlayer] that is not armed yet should arm: not already armed, the user's finger
+ * is not on the filmstrip, and the host is [started] (see [playbackMayStart]). Holding the arming
+ * back while the strip is touched is what stops a slow scrub that happens to rest on a video for
+ * 300 ms from starting its audio under the finger. Holding it back while stopped is what stops a
+ * video that comes up after Home or the screen locking (a slideshow advancing, a finger released
+ * late) from building a player nothing would ever pause, with audio focus taken behind the home
+ * screen: the ON_STOP pause only acts on a player that already exists.
  */
-internal fun mayArm(armed: Boolean, scrubSuspended: Boolean): Boolean = !armed && !scrubSuspended
+internal fun mayArm(armed: Boolean, scrubSuspended: Boolean, started: Boolean): Boolean =
+    !armed && !scrubSuspended && started
+
+/**
+ * Whether a video may begin playing now. The lifecycle being at least STARTED is the rule; a
+ * picture-in-picture window counts as started too, because it is the one state where the activity
+ * is paused (and on some devices stopped) while playback is wanted -- the same exception
+ * [VideoPlayer]'s ON_STOP pause makes.
+ */
+internal fun playbackMayStart(lifecycleStarted: Boolean, inPictureInPicture: Boolean): Boolean =
+    lifecycleStarted || inPictureInPicture
+
+/** The `playWhenReady` a freshly built player starts with: autoplay, but never while [started] is
+ *  false, so a late-built player waits (poster plus play glyph) instead of playing unseen. */
+internal fun initialPlayWhenReady(autoplay: Boolean, started: Boolean): Boolean = autoplay && started
+
+/**
+ * The position a seek request is clamped to. The upper bound is the duration only when it is known:
+ * an unknown one (0 from a MediaStore row the scanner never probed, before the player has a
+ * timeline) used to make the range 0..0, so every seek -- double-tap +10 s, "Resume from 1:23" --
+ * went to 0:00. With no known end the player clamps a too-large seek itself.
+ */
+internal fun clampSeekMs(ms: Long, durationMs: Long): Long =
+    ms.coerceIn(0L, if (durationMs > 0L) durationMs else Long.MAX_VALUE)
 
 /**
  * Whether the transport should offer "play" rather than "pause". The same rule as

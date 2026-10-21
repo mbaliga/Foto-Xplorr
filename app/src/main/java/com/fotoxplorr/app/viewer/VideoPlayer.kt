@@ -119,7 +119,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * ## Starting: armed, not mounted
  * A filmstrip scrub or a quick page swipe composes (and discards) a player for every video the
  * finger passes. So [VideoPlayer] itself is only a poster until it has been on screen for
- * [ARMED_START_DELAY_MS] without the finger on the filmstrip ([mayArm]); only then does
+ * [ARMED_START_DELAY_MS] without the finger on the filmstrip and with the host started ([mayArm],
+ * [playbackMayStart]: a video that comes up after Home or the screen locking must not play unseen,
+ * and the ON_STOP pause only reaches a player that already exists); only then does
  * [ArmedVideoPlayer] build an ExoPlayer, look up sidecar subtitles, prepare, and (later still)
  * index key moments. The poster stays up until ExoPlayer reports its first rendered frame, so the
  * hand-over from the still thumbnail to live video does not flash black.
@@ -202,9 +204,23 @@ fun VideoPlayer(
      *  off. Always reports false again when this composable leaves. */
     onPlaybackActive: (Boolean) -> Unit = {},
 ) {
+    // Whether playback may begin at all: the lifecycle is STARTED, or the window is in PiP. Seeded
+    // from the current state because the lifecycle events below only report CHANGES, and a player
+    // composed into an already-stopped activity gets none.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var lifecycleStarted by remember {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_START) { lifecycleStarted = true }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { lifecycleStarted = false }
+    val inPip by rememberIsInPictureInPicture()
+    val started = playbackMayStart(lifecycleStarted, inPip)
+
     var armed by remember(asset.id) { mutableStateOf(false) }
-    LaunchedEffect(asset.id, armed, scrubSuspended) {
-        if (!mayArm(armed, scrubSuspended)) return@LaunchedEffect
+    // Keyed on `started` so Home pressed inside the arming delay cancels it, and coming back
+    // restarts it.
+    LaunchedEffect(asset.id, armed, scrubSuspended, started) {
+        if (!mayArm(armed, scrubSuspended, started)) return@LaunchedEffect
         delay(ARMED_START_DELAY_MS)
         armed = true
     }
@@ -215,6 +231,7 @@ fun VideoPlayer(
             modifier = modifier,
             chromeVisible = chromeVisible,
             autoplayVideos = autoplayVideos,
+            started = started,
             onSnapshotChanged = onSnapshotChanged,
             onTrackInfoChanged = onTrackInfoChanged,
             catalogueActions = catalogueActions,
@@ -244,6 +261,7 @@ private fun ArmedVideoPlayer(
     modifier: Modifier,
     chromeVisible: Boolean,
     autoplayVideos: Boolean,
+    started: Boolean,
     onSnapshotChanged: (PlaybackSnapshot) -> Unit,
     onTrackInfoChanged: (VideoTrackInfo) -> Unit,
     catalogueActions: Boolean,
@@ -262,7 +280,11 @@ private fun ArmedVideoPlayer(
     val resumeAllowed = resumeEligible(catalogued, asset.id.value)
 
     var isPlaying by remember(asset.id) { mutableStateOf(false) }
-    var playWhenReady by remember(asset.id) { mutableStateOf(autoplayVideos) }
+    // Autoplay only if the activity is started right now: the arming delay and the ON_STOP pause
+    // both miss a player built after the stop, which would otherwise play (and hold audio focus)
+    // behind the home screen. Read once, at build time; a later stop is the ON_STOP pause's job.
+    val startPlaying = remember(asset.id) { initialPlayWhenReady(autoplayVideos, started) }
+    var playWhenReady by remember(asset.id) { mutableStateOf(startPlaying) }
     var playbackState by remember(asset.id) { mutableStateOf(Player.STATE_IDLE) }
     var positionMs by remember(asset.id) { mutableStateOf(0L) }
     // Seeded from the MediaStore-reported duration so the scrubber has SOMETHING to draw before
@@ -307,7 +329,7 @@ private fun ArmedVideoPlayer(
     val isInPip by rememberIsInPictureInPicture()
 
     val holder = remember(asset.id) {
-        ViewerPlayerHolder(context).also { it.player.playWhenReady = autoplayVideos }
+        ViewerPlayerHolder(context).also { it.player.playWhenReady = startPlaying }
     }
     val player = holder.player
 
@@ -580,7 +602,7 @@ private fun ArmedVideoPlayer(
         // Nothing to seek in until the first media item is set; a seek on the empty timeline would
         // be thrown away by the setMediaItem that follows.
         if (player.currentTimeline.isEmpty) return
-        val clamped = ms.coerceIn(0L, durationMs.coerceAtLeast(0L))
+        val clamped = clampSeekMs(ms, durationMs)
         positionMs = clamped
         engaged = true
         runCatching { player.seekTo(clamped) }

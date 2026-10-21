@@ -312,18 +312,18 @@ class PlaybackLogicTest {
 
     @Test
     fun `a player arms once it has settled and the strip is not being touched`() {
-        assertTrue(mayArm(armed = false, scrubSuspended = false))
+        assertTrue(mayArm(armed = false, scrubSuspended = false, started = true))
     }
 
     @Test
     fun `a finger on the filmstrip holds the start back`() {
-        assertFalse(mayArm(armed = false, scrubSuspended = true))
+        assertFalse(mayArm(armed = false, scrubSuspended = true, started = true))
     }
 
     @Test
     fun `an armed player does not re-arm`() {
-        assertFalse(mayArm(armed = true, scrubSuspended = false))
-        assertFalse(mayArm(armed = true, scrubSuspended = true))
+        assertFalse(mayArm(armed = true, scrubSuspended = false, started = true))
+        assertFalse(mayArm(armed = true, scrubSuspended = true, started = true))
     }
 
     @Test

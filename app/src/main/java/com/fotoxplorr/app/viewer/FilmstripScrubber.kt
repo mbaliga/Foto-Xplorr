@@ -153,6 +153,14 @@ fun FilmstripScrubber(
         // strip that scrolls in from item 0 every time the viewer opens is motion nobody asked
         // for. Skips the echo of our own report, and never fights a finger that is still down.
         var centredOnce by remember { mutableIntStateOf(0) }
+        // The echo guard only covers the host following US. When the host moves on its own (a page
+        // swipe, the slideshow) the remembered report is stale, and scrubbing back to that index
+        // would be mistaken for an echo and never select. Declared before the centring effect so
+        // the reset has happened by the time that one compares against it.
+        LaunchedEffect(currentIndex, assets.size) {
+            val target = currentIndex.coerceIn(0, assets.lastIndex)
+            if (target != selfReported && !listState.isScrollInProgress) selfReported = -1
+        }
         LaunchedEffect(currentIndex, assets.size) {
             val target = currentIndex.coerceIn(0, assets.lastIndex)
             if (target == selfReported || listState.isScrollInProgress) return@LaunchedEffect

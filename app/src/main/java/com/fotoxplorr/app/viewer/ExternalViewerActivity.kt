@@ -134,6 +134,9 @@ class ExternalViewerActivity : ComponentActivity() {
                             onNext = {},
                             onClose = { finish() },
                             catalogueActions = false,
+                            // ViewerScreen's default is "autoplay on": without this an externally
+                            // opened video would ignore the user turning autoplay off in settings.
+                            autoplayVideos = preferences.autoplayVideos,
                         )
                     }
                 }
