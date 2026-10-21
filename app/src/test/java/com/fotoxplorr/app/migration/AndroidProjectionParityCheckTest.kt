@@ -114,7 +114,7 @@ class AndroidProjectionParityCheckTest {
         val new = check.newFingerprints()
 
         assertEquals(old, new)
-        assertEquals(26 * 2, old.size)
+        assertEquals(25 * 2, old.size)
         assertTrue(old.keys.containsAll(listOf("destination:PHOTOS", "smart:UNTAGGED", "sort:SIZE", "timeline:stops")))
         // The fixture exercises what it claims to. The locked view hides asset 2, and FAVORITES
         // counts 4, the MediaStore-only favourite.
