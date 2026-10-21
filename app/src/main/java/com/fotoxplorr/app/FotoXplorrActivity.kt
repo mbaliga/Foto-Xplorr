@@ -68,6 +68,7 @@ import com.fotoxplorr.app.gallery.GalleryPreferences
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.GalleryScreen
 import com.fotoxplorr.app.gallery.GalleryUiState
+import com.fotoxplorr.app.gallery.browsableAssets
 import com.fotoxplorr.app.gallery.folderIdentity
 import com.fotoxplorr.app.gallery.rememberGeoRepository
 import com.fotoxplorr.app.hyle.ActivityKind
@@ -80,7 +81,11 @@ import com.fotoxplorr.app.metadata.MetadataWriter
 import com.fotoxplorr.app.metadata.isMetadataWritable
 import com.fotoxplorr.app.openwith.ExternalAssetLoader
 import com.fotoxplorr.app.openwith.IncomingIntentRoute
+import com.fotoxplorr.app.openwith.OpenRequestLookup
 import com.fotoxplorr.app.openwith.classifyIncomingIntent
+import com.fotoxplorr.app.openwith.lookupOpenRequest
+import com.fotoxplorr.app.openwith.mediaStoreRowId
+import com.fotoxplorr.app.openwith.restoreViewerRun
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
@@ -283,6 +288,32 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         savedViewerAssetIds = list.filterNot { it.isExternal }.map { it.id.value }.toLongArray()
     }
 
+    // A short-lived, non-modal notice for a result that does not need a decision (a rename that
+    // landed, a copy that finished): shown briefly and dismissed on its own, or on a tap if
+    // `onOpen` is set. Cleared by the LaunchedEffect below three seconds after it is set.
+    var transientNotice by remember { mutableStateOf<TransientNotice?>(null) }
+    LaunchedEffect(transientNotice) {
+        if (transientNotice != null) {
+            delay(TRANSIENT_NOTICE_MILLIS)
+            transientNotice = null
+        }
+    }
+
+    // [assets] narrowed to what the person may see right now (not trashed, archived, in a locked
+    // folder or sensitive-hidden), read from the stores' own StateFlows at CALL time. The values
+    // collected into locals above start as empty sets for the first composition, which would let a
+    // locked photo through; the stores themselves are loaded synchronously and never lag. Every
+    // path that opens a photo on someone else's say-so (a redirect, an open-with / share Uri, a
+    // restore after process death) goes through this, so none is a side door around the lock.
+    fun browsableNow(list: List<MediaAsset>): List<MediaAsset> = browsableAssets(
+        list,
+        libraryStore.observe().value.archivedIds,
+        sensitiveStore.observe().value,
+        privateFolderStore.observeLockedFolders().value,
+        privateFolderStore.observeUnlockedFolders().value,
+        galleryPreferences.observe().value.hideSensitive,
+    )
+
     // P0-18: ExternalViewerActivity redirects here, rather than reimplementing the catalogue
     // actions itself, when an incoming "Open with" URI turns out to already be a photo this app
     // has scanned. `assets` is empty on the very first composition and fills in asynchronously
@@ -307,9 +338,16 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             consumedOpenMediaIdExtra = true
             return@LaunchedEffect
         }
-        val match = assets.firstOrNull { it.id.value == requestedId } ?: return@LaunchedEffect
-        setViewerAssets(listOf(match))
-        selectedAssetId = match.id
+        // Any app can send this extra, so it is held to the same rule as every gallery surface:
+        // a hidden photo is NOT opened (nor shown as an "external" file), the person is told why.
+        when (val found = lookupOpenRequest(assets, browsableNow(assets), requestedId)) {
+            is OpenRequestLookup.Found -> {
+                setViewerAssets(listOf(found.asset))
+                selectedAssetId = found.asset.id
+            }
+            OpenRequestLookup.Hidden -> transientNotice = TransientNotice(OPEN_REQUEST_HIDDEN_MESSAGE)
+            OpenRequestLookup.Unknown -> return@LaunchedEffect
+        }
         consumedOpenMediaIdExtra = true
     }
 
@@ -323,16 +361,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // AlertDialog is now reserved for a failure that needs a decision -- see `transientNotice`
     // just below for the non-modal "it worked" case this used to also carry.
     var userMessage by viewModel::userMessage
-    // A short-lived, non-modal notice for a result that does not need a decision (a rename that
-    // landed, a copy that finished): shown briefly and dismissed on its own, or on a tap if
-    // `onOpen` is set. Cleared by the LaunchedEffect below three seconds after it is set.
-    var transientNotice by remember { mutableStateOf<TransientNotice?>(null) }
-    LaunchedEffect(transientNotice) {
-        if (transientNotice != null) {
-            delay(TRANSIENT_NOTICE_MILLIS)
-            transientNotice = null
-        }
-    }
     // Collects every job's outcome once, wherever it lands -- a rotation loses and regains this
     // LaunchedEffect, but jobRunner.outcomes is a buffered SharedFlow (see its own doc), so an
     // outcome delivered mid-rotation is not lost, only delayed until the new instance subscribes.
@@ -396,23 +424,24 @@ private fun FotoXplorrActivity.FotoXplorrApp(
 
     // Open-with / share-to: classifies whatever this Activity was started or re-delivered with
     // (see onNewIntent's own doc on incomingIntentGeneration) and routes it straight to the
-    // viewer, the editor, or the audio player. Keyed on the generation counter, not on `intent`
+    // viewer or the editor. Keyed on the generation counter, not on `intent`
     // itself -- `Intent` is not stable equality for a Compose key across the SAME intent being
     // re-read after `setIntent`, and the counter is exactly "a new intent arrived" as a value.
     LaunchedEffect(incomingIntentGeneration) {
         processIncomingIntent(
             intent = intent,
             loader = externalAssetLoader,
+            lookupCatalogued = { rowId ->
+                val all = repository.awaitLoaded()
+                lookupOpenRequest(all, browsableNow(all), rowId)
+            },
             onViewMedia = { loaded ->
                 setViewerAssets(loaded)
                 selectedAssetId = loaded.first().id
                 slideshowActive = false
             },
-            onViewAudio = { audio ->
-                audioQueue = listOf(audio)
-                selectedAudioAssetId = audio.id
-            },
             onEditImage = { asset -> viewModel.setEditingAsset(asset) },
+            onHidden = { transientNotice = TransientNotice(OPEN_REQUEST_HIDDEN_MESSAGE) },
         )
     }
 
@@ -421,27 +450,31 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // `editingAsset`/`audioQueue` did not -- a fresh ViewModel instance starts those empty.
     // Rebuilds each one, by id, the FIRST time the relevant repository has something to look the
     // id up in; a no-op on an ordinary configuration change, where they were never emptied.
+    // Restored through browsableNow: the unlocked folders live in memory, so after process death a
+    // locked folder is locked again, and a photo trashed / archived / hidden in the meantime is
+    // simply not reopened.
     LaunchedEffect(assets) {
         if (assets.isEmpty()) return@LaunchedEffect
+        val browsable = browsableNow(assets)
         viewModel.selectedAssetId?.let { id ->
             if (viewerAssets.isEmpty()) {
-                val assetsById = assets.associateBy { it.id.value }
                 // The whole run that was being paged through; just the open photo if that list
                 // did not survive.
-                val restored = savedViewerAssetIds.asList().mapNotNull { assetsById[it] }
-                    .ifEmpty { listOfNotNull(assetsById[id.value]) }
-                if (restored.any { it.id == id }) {
+                val restored = restoreViewerRun(browsable, savedViewerAssetIds.asList(), id.value)
+                if (restored != null) {
                     viewerAssets = restored
                 } else {
-                    // The photo that was open no longer exists (or was an external one, which the
-                    // re-delivered intent reloads on its own): nothing to reopen.
+                    // The photo that was open no longer exists, is now hidden (or was an external
+                    // one, which the re-delivered intent reloads on its own): nothing to reopen.
                     selectedAssetId = null
                 }
             }
         }
         viewModel.editingAssetId?.let { id ->
             if (viewModel.editingAsset == null) {
-                assets.firstOrNull { it.id == id }?.let { restored -> viewModel.setEditingAsset(restored) }
+                val restored = browsable.firstOrNull { it.id == id }
+                // Dropping the id too, so it cannot resurface on a later rescan once unlocked.
+                viewModel.setEditingAsset(restored)
             }
         }
     }
@@ -1126,9 +1159,10 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // picker that answers nothing: the person is already looking at this photo, in this
             // app, right now.
             //
-            // FotoXplorrActivity is excluded too: the manifest now gives it its own VIEW/EDIT
-            // open-with filters (media3 viewer work), so it would otherwise appear in this very
-            // chooser and re-open the photo that is already on screen as an "external" asset.
+            // FotoXplorrActivity is excluded too: its EDIT filter (it also receives SEND) would
+            // otherwise list this app in "Edit with" and re-open the photo that is already on
+            // screen as an "external" asset. It has no VIEW filter any more; the entry is harmless
+            // for ACTION_VIEW and still needed for ACTION_EDIT.
             putExtra(
                 Intent.EXTRA_EXCLUDE_COMPONENTS,
                 arrayOf(
@@ -1385,6 +1419,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // Favourite/sensitive/trash/collections are library concepts; an asset opened from
             // another app's share sheet has no library row for any of them to act on.
             isExternal = activeAsset.isExternal,
+            // The catalogue rows (tags, caption, location, rating) belong to library photos: an
+            // external asset has none, and writing them would key rows to a synthetic id.
+            catalogueActions = !activeAsset.isExternal,
             isConvertingToMp4 = convertingVideoId == activeAsset.id,
             onConvertToMp4 = if (activeAsset.isVideo) {
                 { requestVideoConversion(activeAsset) }
@@ -1685,15 +1722,20 @@ private fun mediaReadPermissions(): Array<String> = when {
  *
  * Kept apart from [classifyIncomingIntent] deliberately: that function is pure and tested with no
  * Android runtime at all, and this is the Android-glue half -- turning its result into real
- * [MediaAsset]/[com.fotoxplorr.app.audio.AudioAsset] objects via [ExternalAssetLoader] -- that a
- * pure unit test has no way to exercise.
+ * [MediaAsset] objects via [ExternalAssetLoader] -- that a pure unit test has no way to exercise.
+ *
+ * A Uri that names a row this app has catalogued (a `content://media/...` photo) is never loaded
+ * as an "external" file: [lookupCatalogued] decides, so a photo the library is hiding (locked,
+ * archived, trashed, sensitive-hidden) cannot be put on screen just because another app handed
+ * over its Uri. A hidden one is skipped and reported through [onHidden].
  */
 private suspend fun FotoXplorrActivity.processIncomingIntent(
     intent: Intent,
     loader: ExternalAssetLoader,
+    lookupCatalogued: suspend (rowId: Long) -> OpenRequestLookup,
     onViewMedia: suspend (List<MediaAsset>) -> Unit,
-    onViewAudio: suspend (AudioAsset) -> Unit,
     onEditImage: suspend (MediaAsset) -> Unit,
+    onHidden: () -> Unit,
 ) {
     val mimeType = intent.type ?: intent.data?.let { runCatching { contentResolver.getType(it) }.getOrNull() }
     val streamUris = when (intent.action) {
@@ -1711,24 +1753,33 @@ private suspend fun FotoXplorrActivity.processIncomingIntent(
         mimeType = mimeType,
         streamUris = streamUris,
     )
+    var anyHidden = false
+    suspend fun load(uriString: String, isVideo: Boolean): MediaAsset? {
+        mediaStoreRowId(uriString)?.let { rowId ->
+            when (val found = lookupCatalogued(rowId)) {
+                is OpenRequestLookup.Found -> return found.asset
+                OpenRequestLookup.Hidden -> {
+                    anyHidden = true
+                    return null
+                }
+                // Not scanned (yet): an ordinary external file, read through its own grant.
+                OpenRequestLookup.Unknown -> Unit
+            }
+        }
+        return runCatching {
+            val uri = Uri.parse(uriString)
+            if (isVideo) loader.loadVideo(uri) else loader.loadImage(uri)
+        }.getOrNull()
+    }
     when (route) {
         is IncomingIntentRoute.ViewMedia -> {
-            val assets = route.uris.mapNotNull { uriString ->
-                runCatching {
-                    val uri = Uri.parse(uriString)
-                    if (route.isVideo) loader.loadVideo(uri) else loader.loadImage(uri)
-                }.getOrNull()
-            }
+            val assets = route.uris.mapNotNull { load(it, route.isVideo) }
             if (assets.isNotEmpty()) onViewMedia(assets)
         }
-        is IncomingIntentRoute.ViewAudio -> {
-            runCatching { loader.loadAudio(Uri.parse(route.uri)) }.getOrNull()?.let { onViewAudio(it) }
-        }
-        is IncomingIntentRoute.EditImage -> {
-            runCatching { loader.loadImage(Uri.parse(route.uri)) }.getOrNull()?.let { onEditImage(it) }
-        }
+        is IncomingIntentRoute.EditImage -> load(route.uri, isVideo = false)?.let { onEditImage(it) }
         IncomingIntentRoute.Unhandled -> Unit
     }
+    if (anyHidden) onHidden()
 }
 
 internal fun commonShareType(mimeTypes: List<String>): String = when {
@@ -1780,6 +1831,11 @@ private data class TransientNotice(val message: String, val onOpen: (() -> Unit)
 
 /** How long a [TransientNotice] stays up before dismissing itself. */
 private const val TRANSIENT_NOTICE_MILLIS = 3_000L
+
+/** Shown when another app asks to open a catalogued photo the library is hiding right now
+ *  (locked folder, archived, in the trash, sensitive-hidden). It does not name the photo or the
+ *  reason, and it is the whole answer: nothing is opened. */
+private const val OPEN_REQUEST_HIDDEN_MESSAGE = "That photo is hidden or locked in Fotoz, so it was not opened."
 
 /** How long [FotoXplorrActivity.openViewerForSavedUri] waits for the row it just inserted to
  *  reach the repository's own `observeAll()` before giving up quietly. */

@@ -13,7 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Whatever could be read off an external `content://`/`file://` Uri without owning a MediaStore
+ * Whatever could be read off an external `content://` Uri without owning a MediaStore
  * row for it. Pure data -- [ExternalAssetLoader] is the only thing that populates one, by
  * querying [OpenableColumns], decoding [BitmapFactory.Options] bounds and (for video/audio)
  * reading [MediaMetadataRetriever] -- kept apart from that I/O so the mapping into
@@ -101,7 +101,7 @@ private fun fallbackName(uri: String, isVideo: Boolean): String =
         ?: if (isVideo) "Video" else "Photo"
 
 /**
- * Reads [ExternalMediaMetadata] off a `content://`/`file://` Uri this app was handed rather than
+ * Reads [ExternalMediaMetadata] off a `content://` Uri this app was handed rather than
  * one it scanned itself, and turns it into a [MediaAsset] or [AudioAsset].
  *
  * `MediaMetadataRetriever` is released with `.release()`, not `.close()` -- `AutoCloseable` on
@@ -111,12 +111,14 @@ class ExternalAssetLoader(context: Context) {
     private val appContext = context.applicationContext
 
     suspend fun loadImage(uri: Uri): MediaAsset = withContext(Dispatchers.IO) {
+        requireContentUri(uri)
         val bounds = imageBounds(uri)
         val metadata = readOpenableMetadata(uri).copy(widthPx = bounds?.first, heightPx = bounds?.second)
         externalMediaAsset(uri.toString(), metadata, isVideo = false)
     }
 
     suspend fun loadVideo(uri: Uri): MediaAsset = withContext(Dispatchers.IO) {
+        requireContentUri(uri)
         val retrieverMetadata = readVideoMetadata(uri)
         val metadata = readOpenableMetadata(uri).let {
             it.copy(
@@ -132,6 +134,12 @@ class ExternalAssetLoader(context: Context) {
         val retrieverMetadata = readVideoMetadata(uri)
         val metadata = readOpenableMetadata(uri).copy(durationMillis = retrieverMetadata.durationMillis)
         externalAudioAsset(uri.toString(), metadata)
+    }
+
+    /** Backstop for [classifyIncomingIntent]'s content-only rule: nothing else may reach the
+     *  readers below, which would open whatever path the Uri names with this app's permissions. */
+    private fun requireContentUri(uri: Uri) {
+        require(uri.scheme.equals("content", ignoreCase = true)) { "Only content:// Uris can be opened" }
     }
 
     private fun readOpenableMetadata(uri: Uri): ExternalMediaMetadata {

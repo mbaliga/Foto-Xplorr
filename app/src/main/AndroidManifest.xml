@@ -194,20 +194,13 @@
             </intent-filter>
 
             <!--
-              Open-with target: viewing/editing/receiving media handed over by another app.
-              android:mimeType alone (with no scheme/host) matches BOTH content:// and file://
-              Uris carrying that type, which is what lets this filter answer ACTION_VIEW and
-              ACTION_SEND from a file manager (file://) as well as from a modern share sheet
-              (content://) with one <data> element rather than two nearly-identical ones.
+              Receive-only targets: media handed over for editing (EDIT) or shared in (SEND).
+              There is deliberately NO VIEW filter here: ExternalViewerActivity is the single
+              VIEW target (content:// only), so another app's chooser lists this app once, not
+              twice, and nothing reaches the viewer by a path that skips its checks. The SEND
+              filter carries no scheme because a share names its Uri in EXTRA_STREAM, not in the
+              intent data; classifyIncomingIntent therefore enforces content:// itself.
             -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:mimeType="image/*" />
-                <data android:mimeType="video/*" />
-                <data android:mimeType="audio/*" />
-            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.EDIT" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -218,15 +211,15 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="image/*" />
                 <data android:mimeType="video/*" />
-                <data android:mimeType="audio/*" />
             </intent-filter>
         </activity>
 
         <!--
-          "Open with" (P0-18): the only entry point besides the launcher. A photo or video tapped
-          in another app — the Files app, including on a USB drive — reaches this instead of
-          FotoXplorrActivity, since it needs no gallery, no permission grant beyond what the
-          incoming content:// URI already carries, and never touches this app's own catalogue.
+          "Open with" (P0-18): the single VIEW target (FotoXplorrActivity only receives EDIT and
+          SEND). A photo or video tapped in another app — the Files app, including on a USB drive —
+          reaches this, since it needs no gallery, no permission grant beyond what the incoming
+          content:// URI already carries, and never touches this app's own catalogue. Every <data>
+          here names scheme="content": a file:// Uri would have this app read any path it can.
           Same configChanges as FotoXplorrActivity, per P0-09, and for the identical reason: every
           value here is one Compose already reacts to on its own. supportsPictureInPicture because
           the video player offers PiP wherever it is hosted (and arms auto-enter while playing);

@@ -1,7 +1,6 @@
 package com.fotoxplorr.app.viewer
 
 import android.content.ComponentName
-import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
@@ -29,6 +28,7 @@ import com.fotoxplorr.app.FotoXplorrActivity
 import com.fotoxplorr.app.LibraryRuntime
 import com.fotoxplorr.app.gallery.GalleryPreferences
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.openwith.mediaStoreRowId
 import com.fotoxplorr.app.openwith.syntheticNegativeMediaId
 import com.fotoxplorr.app.share.PreparedItem
 import com.fotoxplorr.app.share.ShareFrame
@@ -46,10 +46,11 @@ import java.util.Locale
 import kotlinx.coroutines.withContext
 
 /**
- * "Open with Fotoz" (P0-18): the only entry point besides the launcher. A photo or video
- * tapped in another app -- the Files app, including on a USB drive -- lands here, never in
- * [FotoXplorrActivity], since this activity needs no gallery and must never touch this app's own
- * catalogue for a file that catalogue has never scanned.
+ * "Open with Fotoz" (P0-18): the single VIEW target (FotoXplorrActivity only receives EDIT and
+ * SEND). A photo or video tapped in another app -- the Files app, including on a USB drive --
+ * lands here, never in [FotoXplorrActivity], since this activity needs no gallery and must never
+ * touch this app's own catalogue for a file that catalogue has never scanned. The manifest filter
+ * is `content://` only, and [onCreate] re-checks the scheme for an explicit intent.
  *
  * Two outcomes, decided once, up front, from the incoming URI alone:
  *  - it is a `content://media/...` row this app's own catalogue already has (someone opened a
@@ -58,7 +59,10 @@ import kotlinx.coroutines.withContext
  *    activity's own, already-correct favourite/sensitive/trash/tags/caption/location wiring is
  *    what "open that asset with all its normal actions instead" (the brief's own words) actually
  *    means -- a second, hand-rolled copy of that wiring here would drift from the real one the
- *    moment either changed, and would double the surface a real bug could hide in.
+ *    moment either changed, and would double the surface a real bug could hide in. That activity
+ *    also owns the privacy rule: a photo the library is hiding (locked, archived, trashed,
+ *    sensitive-hidden) is NOT opened there, only a short notice is shown. This activity must
+ *    never fall back to showing a catalogued row itself -- that would be the side door.
  *  - anything else -- an ad-hoc [MediaAsset] is built from the URI alone (via [buildExternalAsset],
  *    never written to any store) and shown in [ViewerScreen] with `catalogueActions = false`.
  */
@@ -69,7 +73,9 @@ class ExternalViewerActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         val uri = intent?.data
-        if (uri == null) {
+        // The manifest only routes content:// here, but this activity is exported and an explicit
+        // intent can carry any Uri; a file:// one would be read with this app's own permissions.
+        if (uri == null || !uri.scheme.equals("content", ignoreCase = true)) {
             finish()
             return
         }
@@ -201,8 +207,7 @@ class ExternalViewerActivity : ComponentActivity() {
  * this is a fast, fully offline lookup, never a network or MediaStore round trip.
  */
 private suspend fun catalogedMediaId(context: Context, uri: Uri): Long? {
-    if (uri.authority != "media") return null
-    val id = runCatching { ContentUris.parseId(uri) }.getOrNull() ?: return null
+    val id = mediaStoreRowId(uri.toString()) ?: return null
     val repository = LibraryRuntime.get(context).repository
     val isCataloged = repository.awaitLoaded().any { it.id == MediaId(id) }
     return id.takeIf { isCataloged }
