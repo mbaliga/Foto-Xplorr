@@ -53,6 +53,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.withResumed
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fotoxplorr.app.curate.AutoCurationPass
@@ -80,16 +81,21 @@ import com.fotoxplorr.app.metadata.isMetadataWritable
 import com.fotoxplorr.app.openwith.ExternalAssetLoader
 import com.fotoxplorr.app.openwith.IncomingIntentRoute
 import com.fotoxplorr.app.openwith.OpenRequestLookup
+import com.fotoxplorr.app.openwith.MediaStoreUri
 import com.fotoxplorr.app.openwith.classifyIncomingIntent
+import com.fotoxplorr.app.openwith.classifyMediaStoreUri
 import com.fotoxplorr.app.openwith.lookupOpenRequest
-import com.fotoxplorr.app.openwith.mediaStoreRowId
+import com.fotoxplorr.app.openwith.lookupUncataloguedRow
 import com.fotoxplorr.app.openwith.restoreViewerRun
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.shell.AppStateViewModel
+import com.fotoxplorr.app.shell.OVERWRITE_NOT_ALLOWED_MESSAGE
+import com.fotoxplorr.app.shell.OverwriteFailure
 import com.fotoxplorr.app.shell.PendingMediaOperation
 import com.fotoxplorr.app.shell.PendingTreeOperation
+import com.fotoxplorr.app.shell.overwriteFailureOf
 import com.fotoxplorr.app.video.VideoExportOptions
 import com.fotoxplorr.app.recognition.RecognitionIndexer
 import com.fotoxplorr.app.recognition.RecognitionStore
@@ -262,6 +268,15 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // editor (still open -- see `editingAsset` below) can offer "Save a copy instead" using the
     // very bitmap already rendered, instead of the edit simply being lost.
     var overwriteDeclined by viewModel::overwriteDeclined
+    var overwriteFailureMessage by viewModel::overwriteFailureMessage
+    var overwriteOriginalAtRisk by viewModel::overwriteOriginalAtRisk
+    // The one place a failed overwrite is recorded, so the banner's wording and its "original may
+    // be damaged" state are always set together with the flag that shows it.
+    fun declineOverwrite(failure: OverwriteFailure) {
+        overwriteFailureMessage = failure.message
+        overwriteOriginalAtRisk = failure.originalAtRisk
+        overwriteDeclined = true
+    }
 
     // P0-09 item 6 (process death): the ViewModel above keeps `viewerAssets` across an Activity
     // recreation, but a dead process takes the ViewModel with it, and MediaAsset is not
@@ -316,7 +331,11 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // rescan from reopening the viewer for the SAME, already-handled intent. Plain `remember`, not
     // saveable: a recreated Activity starts at generation 0 again, and that must NOT re-arm.
     var armedForIntentGeneration by remember { mutableIntStateOf(0) }
-    LaunchedEffect(assets, incomingIntentGeneration) {
+    // Unknown is only "not scanned yet" until the first scan has settled; after that a request for a
+    // photo the catalogue does not hold is simply dropped, so it cannot pop the viewer open later,
+    // when some other photo with that id is scanned in.
+    val scanSettled = scanState is ScanState.Complete || scanState is ScanState.Error
+    LaunchedEffect(assets, incomingIntentGeneration, scanSettled) {
         if (incomingIntentGeneration > armedForIntentGeneration) {
             armedForIntentGeneration = incomingIntentGeneration
             consumedOpenMediaIdExtra = false
@@ -329,13 +348,21 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
         // Any app can send this extra, so it is held to the same rule as every gallery surface:
         // a hidden photo is NOT opened (nor shown as an "external" file), the person is told why.
-        when (val found = lookupOpenRequest(assets, browsableNow(assets), requestedId)) {
+        var lookup = lookupOpenRequest(assets, browsableNow(assets), requestedId)
+        if (lookup == OpenRequestLookup.Unknown && scanSettled) {
+            // The composable's `assets` can trail the repository by a frame; ask the repository
+            // itself before deciding the id is not ours.
+            val live = repository.awaitLoaded()
+            lookup = lookupOpenRequest(live, browsableNow(live), requestedId)
+        }
+        when (val found = lookup) {
             is OpenRequestLookup.Found -> {
                 setViewerAssets(listOf(found.asset))
                 selectedAssetId = found.asset.id
             }
             OpenRequestLookup.Hidden -> transientNotice = TransientNotice(OPEN_REQUEST_HIDDEN_MESSAGE)
-            OpenRequestLookup.Unknown -> return@LaunchedEffect
+            OpenRequestLookup.Unknown -> if (!scanSettled) return@LaunchedEffect
+            OpenRequestLookup.Unverified -> Unit
         }
         consumedOpenMediaIdExtra = true
     }
@@ -396,9 +423,16 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val anyJobRunning = runningJobs.isNotEmpty()
     // The progress notification needs POST_NOTIFICATIONS on Android 13+, and this is the only place
     // that asks for it: once, the first time a job actually runs (see shouldAskForJobNotifications).
+    // "Asked" is recorded when the system dialog has been ANSWERED, not when it was launched: a
+    // launch the system drops (the activity was not in front) must be tried again next time.
+    var notificationAskInFlight by remember { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
-    ) { }
+    ) {
+        notificationAskInFlight = false
+        applicationContext.getSharedPreferences("job_notifications", android.content.Context.MODE_PRIVATE)
+            .edit().putBoolean("asked", true).apply()
+    }
     LaunchedEffect(anyJobRunning) {
         if (anyJobRunning) {
             val prefs = applicationContext.getSharedPreferences("job_notifications", android.content.Context.MODE_PRIVATE)
@@ -406,9 +440,15 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 applicationContext,
                 Manifest.permission.POST_NOTIFICATIONS,
             ) == PackageManager.PERMISSION_GRANTED
-            if (shouldAskForJobNotifications(Build.VERSION.SDK_INT, granted, prefs.getBoolean("asked", false))) {
-                prefs.edit().putBoolean("asked", true).apply()
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            if (!notificationAskInFlight &&
+                shouldAskForJobNotifications(Build.VERSION.SDK_INT, granted, prefs.getBoolean("asked", false))
+            ) {
+                // Only while the activity is in front (RESUMED); waits for that, and gives up with
+                // this effect if the jobs finish first, leaving the question for the next job.
+                lifecycle.withResumed {
+                    notificationAskInFlight = true
+                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
             }
             JobForegroundService.start(applicationContext)
         } else {
@@ -439,7 +479,15 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             loader = externalAssetLoader,
             lookupCatalogued = { rowId ->
                 val all = repository.awaitLoaded()
-                lookupOpenRequest(all, browsableNow(all), rowId)
+                when (val known = lookupOpenRequest(all, browsableNow(all), rowId)) {
+                    // Not scanned yet (a photo written a moment ago): ask MediaStore which folder
+                    // the row is in, so a locked folder stays locked inside the scan debounce.
+                    OpenRequestLookup.Unknown -> lookupUncataloguedRow(
+                        externalAssetLoader.readMediaStoreRow(rowId),
+                        ::browsableNow,
+                    ).also { if (it == OpenRequestLookup.Unknown) runtime.requestScan(false) }
+                    else -> known
+                }
             },
             onViewMedia = { loaded ->
                 setViewerAssets(loaded)
@@ -448,6 +496,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             },
             onEditImage = { asset -> viewModel.setEditingAsset(asset) },
             onHidden = { transientNotice = TransientNotice(OPEN_REQUEST_HIDDEN_MESSAGE) },
+            onUnverified = { transientNotice = TransientNotice(OPEN_REQUEST_UNVERIFIED_MESSAGE) },
         )
     }
 
@@ -742,13 +791,15 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 pendingOverwriteAsset = null
                 pendingOverwriteBitmap = null
                 overwriteDeclined = false
+                overwriteFailureMessage = null
+                overwriteOriginalAtRisk = false
                 viewModel.setEditingAsset(null)
                 transientNotice = TransientNotice("Replaced the original.")
                 // The bytes at this Uri changed size and content; the library's cached
                 // size/date-modified (and any thumbnail) are stale until MediaStore looks again.
                 runtime.requestScan(false)
             },
-            onFailure = { overwriteDeclined = true },
+            onFailure = { error -> declineOverwrite(overwriteFailureOf(error)) },
         )
     }
 
@@ -766,7 +817,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // Declined, not merely cancelled -- see finishOverwrite's own doc for why this is
             // NOT treated the way a trash/rename cancellation is (nulling the pending state and
             // reporting failure): the edit itself must survive this.
-            overwriteDeclined = true
+            declineOverwrite(OverwriteFailure(OVERWRITE_NOT_ALLOWED_MESSAGE, originalAtRisk = false))
         }
     }
 
@@ -778,6 +829,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         pendingOverwriteAsset = asset
         pendingOverwriteBitmap = bitmap
         overwriteDeclined = false
+        overwriteFailureMessage = null
+        overwriteOriginalAtRisk = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             runCatching {
                 MediaStore.createWriteRequest(contentResolver, listOf(asset.contentUri))
@@ -785,7 +838,10 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 overwritePermissionLauncher.launch(
                     IntentSenderRequest.Builder(request.intentSender).build(),
                 )
-            }.onFailure { overwriteDeclined = true }
+            }.onFailure {
+                // The system would not even offer the consent sheet: Android said no.
+                declineOverwrite(OverwriteFailure(OVERWRITE_NOT_ALLOWED_MESSAGE, originalAtRisk = false))
+            }
         } else {
             scope.launch {
                 val outcome = editedCopyWriter.overwrite(asset, bitmap)
@@ -838,6 +894,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             pendingOverwriteAsset = null
             pendingOverwriteBitmap = null
             overwriteDeclined = false
+            overwriteFailureMessage = null
+            overwriteOriginalAtRisk = false
             outcome.fold(
                 onSuccess = { uri ->
                     viewModel.setEditingAsset(null)
@@ -1272,9 +1330,13 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // AppStateViewModel.overwriteDeclined's own doc.
             if (overwriteDeclined) {
                 OverwriteDeclinedBanner(
+                    message = overwriteFailureMessage ?: OVERWRITE_NOT_ALLOWED_MESSAGE,
+                    originalAtRisk = overwriteOriginalAtRisk,
                     onSaveCopy = ::saveDeclinedOverwriteAsCopy,
                     onDismiss = {
                         overwriteDeclined = false
+                        overwriteFailureMessage = null
+                        overwriteOriginalAtRisk = false
                         pendingOverwriteAsset = null
                         pendingOverwriteBitmap = null
                     },
@@ -1630,7 +1692,9 @@ private fun mediaReadPermissions(): Array<String> = when {
  * A Uri that names a row this app has catalogued (a `content://media/...` photo) is never loaded
  * as an "external" file: [lookupCatalogued] decides, so a photo the library is hiding (locked,
  * archived, trashed, sensitive-hidden) cannot be put on screen just because another app handed
- * over its Uri. A hidden one is skipped and reported through [onHidden].
+ * over its Uri. A hidden one is skipped and reported through [onHidden]. A `content://media` Uri
+ * that cannot be read as a row, or whose row MediaStore will not describe, is refused the same way
+ * ([onUnverified]): it is never read as an ordinary file, since that would skip the lock.
  */
 private suspend fun FotoXplorrActivity.processIncomingIntent(
     intent: Intent,
@@ -1639,17 +1703,22 @@ private suspend fun FotoXplorrActivity.processIncomingIntent(
     onViewMedia: suspend (List<MediaAsset>) -> Unit,
     onEditImage: suspend (MediaAsset) -> Unit,
     onHidden: () -> Unit,
+    onUnverified: () -> Unit,
 ) {
     val mimeType = intent.type ?: intent.data?.let { runCatching { contentResolver.getType(it) }.getOrNull() }
-    val streamUris = when (intent.action) {
-        Intent.ACTION_SEND ->
-            IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
-                ?.let { listOf(it.toString()) } ?: emptyList()
-        Intent.ACTION_SEND_MULTIPLE ->
-            IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
-                ?.map { it.toString() } ?: emptyList()
-        else -> emptyList()
-    }
+    // A hostile EXTRA_STREAM can throw BadParcelableException on extraction; that must read as
+    // "no stream", not crash the activity every time it is relaunched from Recents.
+    val streamUris = runCatching {
+        when (intent.action) {
+            Intent.ACTION_SEND ->
+                IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                    ?.let { listOf(it.toString()) } ?: emptyList()
+            Intent.ACTION_SEND_MULTIPLE ->
+                IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                    ?.map { it.toString() } ?: emptyList()
+            else -> emptyList()
+        }
+    }.getOrDefault(emptyList())
     val route = classifyIncomingIntent(
         action = intent.action,
         dataUri = intent.data?.toString(),
@@ -1657,15 +1726,26 @@ private suspend fun FotoXplorrActivity.processIncomingIntent(
         streamUris = streamUris,
     )
     var anyHidden = false
+    var anyUnverified = false
     suspend fun load(uriString: String, isVideo: Boolean): MediaAsset? {
-        mediaStoreRowId(uriString)?.let { rowId ->
-            when (val found = lookupCatalogued(rowId)) {
+        when (val ref = classifyMediaStoreUri(uriString)) {
+            MediaStoreUri.NotMediaStore -> Unit
+            MediaStoreUri.Unreadable -> {
+                anyUnverified = true
+                return null
+            }
+            is MediaStoreUri.Row -> when (val found = lookupCatalogued(ref.id)) {
                 is OpenRequestLookup.Found -> return found.asset
                 OpenRequestLookup.Hidden -> {
                     anyHidden = true
                     return null
                 }
-                // Not scanned (yet): an ordinary external file, read through its own grant.
+                OpenRequestLookup.Unverified -> {
+                    anyUnverified = true
+                    return null
+                }
+                // Not scanned yet, and MediaStore says nothing hides it: an ordinary external file,
+                // read through its own grant.
                 OpenRequestLookup.Unknown -> Unit
             }
         }
@@ -1682,7 +1762,7 @@ private suspend fun FotoXplorrActivity.processIncomingIntent(
         is IncomingIntentRoute.EditImage -> load(route.uri, isVideo = false)?.let { onEditImage(it) }
         IncomingIntentRoute.Unhandled -> Unit
     }
-    if (anyHidden) onHidden()
+    if (anyHidden) onHidden() else if (anyUnverified) onUnverified()
 }
 
 internal fun commonShareType(mimeTypes: List<String>): String = when {
@@ -1738,7 +1818,12 @@ private const val TRANSIENT_NOTICE_MILLIS = 3_000L
 /** Shown when another app asks to open a catalogued photo the library is hiding right now
  *  (locked folder, archived, in the trash, sensitive-hidden). It does not name the photo or the
  *  reason, and it is the whole answer: nothing is opened. */
-private const val OPEN_REQUEST_HIDDEN_MESSAGE = "That photo is hidden or locked in Fotoz, so it was not opened."
+internal const val OPEN_REQUEST_HIDDEN_MESSAGE = "That photo is hidden or locked in Fotoz, so it was not opened."
+
+/** Shown when a `content://media` Uri cannot be checked against the library's privacy rules (it
+ *  names no readable row, or MediaStore will not describe the row), so it is not opened. */
+internal const val OPEN_REQUEST_UNVERIFIED_MESSAGE =
+    "That photo could not be checked against your library, so it was not opened. Try again in a moment."
 
 /** How long [FotoXplorrActivity.openViewerForSavedUri] waits for the row it just inserted to
  *  reach the repository's own `observeAll()` before giving up quietly. */
@@ -1773,12 +1858,20 @@ private fun TransientNoticeBar(notice: TransientNotice, onDismiss: () -> Unit) {
 }
 
 /**
- * "Android would not let this app replace the original -- save a copy instead?" Rendered over
- * the still-open editor rather than as a dialog that would hide it, because the whole point is
- * that the edit the person just made is still right there, unlost, waiting on this one decision.
+ * "The original could not be replaced -- save a copy instead?" Rendered over the still-open
+ * editor rather than as a dialog that would hide it, because the whole point is that the edit the
+ * person just made is still right there, unlost, waiting on this one decision.
+ *
+ * [message] says why, as it is (see `overwriteFailureOf`). When [originalAtRisk] the original may
+ * be damaged and the edit is the only good version, so Discard is off and the copy is the way out.
  */
 @Composable
-private fun OverwriteDeclinedBanner(onSaveCopy: () -> Unit, onDismiss: () -> Unit) {
+private fun OverwriteDeclinedBanner(
+    message: String,
+    originalAtRisk: Boolean,
+    onSaveCopy: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     Box(Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -1789,17 +1882,20 @@ private fun OverwriteDeclinedBanner(onSaveCopy: () -> Unit, onDismiss: () -> Uni
                 .background(Color(0xFF232329), RoundedCornerShape(10.dp))
                 .padding(16.dp),
         ) {
+            Text(message, color = Color.White)
             Text(
-                "Android did not allow replacing the original photo.",
-                color = Color.White,
-            )
-            Text(
-                "Your edit is not lost -- save it as a new photo instead.",
+                if (originalAtRisk) {
+                    "The original may be damaged. Your edit is still here: save it as a new photo now."
+                } else {
+                    "Your edit is not lost -- save it as a new photo instead."
+                },
                 color = Color.White.copy(alpha = 0.7f),
                 modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
             )
             Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                TextButton(onClick = onDismiss) { Text("Discard", color = Color.White.copy(alpha = 0.7f)) }
+                TextButton(onClick = onDismiss, enabled = !originalAtRisk) {
+                    Text("Discard", color = Color.White.copy(alpha = if (originalAtRisk) 0.3f else 0.7f))
+                }
                 TextButton(onClick = onSaveCopy) { Text("Save a copy") }
             }
         }

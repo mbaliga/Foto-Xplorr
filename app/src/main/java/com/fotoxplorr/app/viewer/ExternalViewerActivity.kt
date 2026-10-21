@@ -28,7 +28,17 @@ import com.fotoxplorr.app.FotoXplorrActivity
 import com.fotoxplorr.app.LibraryRuntime
 import com.fotoxplorr.app.gallery.GalleryPreferences
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.openwith.mediaStoreRowId
+import com.fotoxplorr.app.OPEN_REQUEST_HIDDEN_MESSAGE
+import com.fotoxplorr.app.OPEN_REQUEST_UNVERIFIED_MESSAGE
+import com.fotoxplorr.app.gallery.browsableAssets
+import com.fotoxplorr.app.openwith.ExternalAssetLoader
+import com.fotoxplorr.app.openwith.MediaStoreUri
+import com.fotoxplorr.app.openwith.OpenRequestLookup
+import com.fotoxplorr.app.openwith.classifyMediaStoreUri
+import com.fotoxplorr.app.openwith.lookupUncataloguedRow
+import com.fotoxplorr.app.organize.LibraryStore
+import com.fotoxplorr.app.privacy.PrivateFolderStore
+import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.openwith.syntheticNegativeMediaId
 import com.fotoxplorr.app.share.PreparedItem
 import com.fotoxplorr.app.share.ShareFrame
@@ -89,15 +99,22 @@ class ExternalViewerActivity : ComponentActivity() {
             val preferences by galleryPreferences.observe().collectAsStateWithLifecycle()
 
             LaunchedEffect(uri) {
-                val catalogedId = withContext(Dispatchers.IO) { catalogedMediaId(context, uri) }
-                if (catalogedId != null) {
-                    startActivity(
-                        Intent(context, FotoXplorrActivity::class.java).apply {
-                            putExtra(FotoXplorrActivity.EXTRA_OPEN_MEDIA_ID, catalogedId)
-                        },
-                    )
-                    finish()
-                    return@LaunchedEffect
+                when (val decision = withContext(Dispatchers.IO) { decideOpen(context, uri) }) {
+                    is ExternalOpenDecision.Redirect -> {
+                        startActivity(
+                            Intent(context, FotoXplorrActivity::class.java).apply {
+                                putExtra(FotoXplorrActivity.EXTRA_OPEN_MEDIA_ID, decision.mediaId)
+                            },
+                        )
+                        finish()
+                        return@LaunchedEffect
+                    }
+                    is ExternalOpenDecision.Refuse -> {
+                        Toast.makeText(context, decision.message, Toast.LENGTH_LONG).show()
+                        finish()
+                        return@LaunchedEffect
+                    }
+                    ExternalOpenDecision.OpenExternally -> Unit
                 }
                 asset = runCatching {
                     withContext(Dispatchers.IO) { buildExternalAsset(context, uri, intentMimeType) }
@@ -200,17 +217,70 @@ class ExternalViewerActivity : ComponentActivity() {
     }
 }
 
+/** What [ExternalViewerActivity] does with an incoming Uri; see [decideOpen]. */
+private sealed interface ExternalOpenDecision {
+    /** A catalogued photo: hand over to [FotoXplorrActivity], which owns the privacy rules. */
+    data class Redirect(val mediaId: Long) : ExternalOpenDecision
+
+    /** Not a library photo at all: read it as the external file it is. */
+    data object OpenExternally : ExternalOpenDecision
+
+    /** A library photo that must not be shown, or one that cannot be checked: say so, open nothing. */
+    data class Refuse(val message: String) : ExternalOpenDecision
+}
+
 /**
- * Null unless [uri] is a `content://media/...` row this app's own catalogue has already scanned --
- * see [ExternalViewerActivity]'s own KDoc for what the caller does with either answer.
- * [LibraryRuntime.repository] is a local SQLite cache of MediaStore, not MediaStore itself, so
- * this is a fast, fully offline lookup, never a network or MediaStore round trip.
+ * Decides, once, what to do with [uri] -- see [ExternalViewerActivity]'s own KDoc.
+ * [LibraryRuntime.repository] is a local SQLite cache of MediaStore, not MediaStore itself, so the
+ * catalogue lookup is a fast, fully offline read.
+ *
+ * A `content://media` Uri is never simply opened as an external file: that would read the photo
+ * with this app's own media grant and skip the lock. One the catalogue holds is redirected (the
+ * other activity applies the rules). One it does not hold yet -- a photo written a moment ago,
+ * inside the scan debounce -- is looked up in MediaStore itself and held to the same rules by its
+ * folder identity; a locked folder here stays locked, because this activity's own
+ * [PrivateFolderStore] has nothing unlocked (the unlocked set lives in memory in the main
+ * activity), which errs on the side of refusing. A media Uri with no readable row, or a row
+ * MediaStore will not describe, is refused.
  */
-private suspend fun catalogedMediaId(context: Context, uri: Uri): Long? {
-    val id = mediaStoreRowId(uri.toString()) ?: return null
-    val repository = LibraryRuntime.get(context).repository
-    val isCataloged = repository.awaitLoaded().any { it.id == MediaId(id) }
-    return id.takeIf { isCataloged }
+private suspend fun decideOpen(context: Context, uri: Uri): ExternalOpenDecision =
+    when (val ref = classifyMediaStoreUri(uri.toString())) {
+        MediaStoreUri.NotMediaStore -> ExternalOpenDecision.OpenExternally
+        MediaStoreUri.Unreadable -> ExternalOpenDecision.Refuse(OPEN_REQUEST_UNVERIFIED_MESSAGE)
+        is MediaStoreUri.Row -> {
+            val runtime = LibraryRuntime.get(context)
+            if (runtime.repository.awaitLoaded().any { it.id == MediaId(ref.id) }) {
+                ExternalOpenDecision.Redirect(ref.id)
+            } else {
+                val stores = OpenGuardStores(context)
+                when (lookupUncataloguedRow(ExternalAssetLoader(context).readMediaStoreRow(ref.id), stores::browsable)) {
+                    OpenRequestLookup.Unknown -> {
+                        runtime.requestScan(false)
+                        ExternalOpenDecision.OpenExternally
+                    }
+                    OpenRequestLookup.Hidden -> ExternalOpenDecision.Refuse(OPEN_REQUEST_HIDDEN_MESSAGE)
+                    is OpenRequestLookup.Found, OpenRequestLookup.Unverified ->
+                        ExternalOpenDecision.Refuse(OPEN_REQUEST_UNVERIFIED_MESSAGE)
+                }
+            }
+        }
+    }
+
+/** The stores `browsableAssets` reads, opened fresh for the one check [decideOpen] makes. */
+private class OpenGuardStores(context: Context) {
+    private val library = LibraryStore.get(context)
+    private val sensitive = SensitiveStore(context)
+    private val privateFolders = PrivateFolderStore(context)
+    private val preferences = GalleryPreferences(context)
+
+    fun browsable(list: List<MediaAsset>): List<MediaAsset> = browsableAssets(
+        list,
+        library.observe().value.archivedIds,
+        sensitive.observe().value,
+        privateFolders.observeLockedFolders().value,
+        privateFolders.observeUnlockedFolders().value,
+        preferences.observe().value.hideSensitive,
+    )
 }
 
 /**

@@ -1,9 +1,13 @@
 package com.fotoxplorr.app.openwith
 
+import android.content.ContentResolver
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.core.model.MediaId
@@ -108,6 +112,57 @@ class ExternalAssetLoader(context: Context) {
             )
         }
         externalMediaAsset(uri.toString(), metadata, isVideo = true)
+    }
+
+    /**
+     * The stand-in for MediaStore row [rowId], read straight from MediaStore with the same
+     * folder columns the library scan reads, or null when MediaStore will not describe it.
+     *
+     * Used only for a `content://media` Uri the catalogue has not scanned yet, to decide whether
+     * the row sits in a locked folder (see [lookupUncataloguedRow]); the result is never shown.
+     */
+    suspend fun readMediaStoreRow(rowId: Long): MediaAsset? = withContext(Dispatchers.IO) {
+        runCatching {
+            val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
+            val projection = buildList {
+                add(MediaStore.MediaColumns._ID)
+                add(MediaStore.MediaColumns.DISPLAY_NAME)
+                add(MediaStore.MediaColumns.MIME_TYPE)
+                add(MediaStore.Images.ImageColumns.BUCKET_ID)
+                add(MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.RELATIVE_PATH)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) add(MediaStore.MediaColumns.IS_TRASHED)
+            }.toTypedArray()
+            val selection = "${MediaStore.MediaColumns._ID}=?"
+            val args = arrayOf(rowId.toString())
+            val cursor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val queryArgs = Bundle().apply {
+                    putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, args)
+                    // A trashed row is hidden, not absent: it must come back so it can be refused.
+                    putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE)
+                }
+                appContext.contentResolver.query(collection, projection, queryArgs, null)
+            } else {
+                appContext.contentResolver.query(collection, projection, selection, args, null)
+            }
+            cursor?.use {
+                if (!it.moveToFirst()) return@use null
+                fun text(column: String) = it.getColumnIndex(column).takeIf { index -> index >= 0 }?.let(it::getString)
+                fun number(column: String) = it.getColumnIndex(column).takeIf { index -> index >= 0 && !it.isNull(index) }
+                    ?.let(it::getLong)
+                mediaStoreRowAsset(
+                    rowId = rowId,
+                    contentUri = android.content.ContentUris.withAppendedId(collection, rowId).toString(),
+                    displayName = text(MediaStore.MediaColumns.DISPLAY_NAME).orEmpty(),
+                    mimeType = text(MediaStore.MediaColumns.MIME_TYPE).orEmpty(),
+                    bucketId = number(MediaStore.Images.ImageColumns.BUCKET_ID),
+                    bucketName = text(MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME),
+                    relativePath = text(MediaStore.MediaColumns.RELATIVE_PATH),
+                    isTrashed = number(MediaStore.MediaColumns.IS_TRASHED) == 1L,
+                )
+            }
+        }.getOrNull()
     }
 
     /** Backstop for [classifyIncomingIntent]'s content-only rule: nothing else may reach the

@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.fotoxplorr.app.editor.OverwriteException
 import com.fotoxplorr.app.jobs.JobRunner
 import com.fotoxplorr.app.jobs.JobRunnerRegistry
 import com.fotoxplorr.app.media.MediaAsset
@@ -100,6 +101,19 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
      */
     var overwriteDeclined: Boolean by mutableStateOf(false)
 
+    /**
+     * Why the last attempt to replace the original failed, in words to show as they are; non-null
+     * only while [overwriteDeclined] is. See [overwriteFailureOf] for the wording per cause.
+     */
+    var overwriteFailureMessage: String? by mutableStateOf(null)
+
+    /**
+     * True when the failed write may have left the original damaged (it was opened, the write
+     * failed, and putting the old bytes back failed too). The editor then keeps the edited bitmap
+     * and offers only "Save a copy": a discard would throw away the only good version.
+     */
+    var overwriteOriginalAtRisk: Boolean by mutableStateOf(false)
+
     // ---- video ----
 
     var convertingVideoId: MediaId? by mutableStateOf(null)
@@ -161,3 +175,33 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
         const val KEY_EDITING_ASSET_ID = "shell.editingAssetId"
     }
 }
+
+/** What to tell the person when replacing the original failed; see [overwriteFailureOf]. */
+data class OverwriteFailure(val message: String, val originalAtRisk: Boolean)
+
+/** Shown when Android itself refused write access to the original (a declined consent sheet, or a
+ *  [SecurityException]); the only cause this wording is true for. */
+const val OVERWRITE_NOT_ALLOWED_MESSAGE = "Android did not allow replacing the original photo."
+
+/**
+ * Maps the failure of [com.fotoxplorr.app.editor.EditedCopyWriter.overwrite] to what the editor's
+ * banner says, rather than blaming Android for every cause.
+ *
+ *  - [OverwriteException.Refused]: the original was never touched; its message names the reason
+ *    (any reason, so a newly added one needs no change here).
+ *  - [OverwriteException.FailedAfterWrite] with `restored`: the message already says the original
+ *    was put back.
+ *  - [OverwriteException.FailedAfterWrite] without it: the message is kept and the original is
+ *    flagged at risk, so the banner steers to "Save a copy" and drops "Discard".
+ *  - [SecurityException] (which includes the Android 10 recoverable kind): Android said no.
+ *  - anything else failed before the original was opened for writing.
+ */
+fun overwriteFailureOf(error: Throwable?): OverwriteFailure = when (error) {
+    is OverwriteException.Refused -> OverwriteFailure(error.message.orEmpty().ifBlank { GENERIC_OVERWRITE_FAILURE }, false)
+    is OverwriteException.FailedAfterWrite ->
+        OverwriteFailure(error.message.orEmpty().ifBlank { GENERIC_OVERWRITE_FAILURE }, originalAtRisk = !error.restored)
+    is SecurityException -> OverwriteFailure(OVERWRITE_NOT_ALLOWED_MESSAGE, false)
+    else -> OverwriteFailure(GENERIC_OVERWRITE_FAILURE, false)
+}
+
+private const val GENERIC_OVERWRITE_FAILURE = "Could not replace the original photo, so it was left as it is."
