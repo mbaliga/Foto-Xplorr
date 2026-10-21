@@ -88,6 +88,44 @@ data class ImageExifDetails(
      */
     val displayWidth: Int = 0,
     val displayHeight: Int = 0,
+    /**
+     * The facts below feed [MetadataSections], not the camera card. Raw codes stay raw (the EXIF
+     * integer, not a label) so the wording lives in [DetailFormatting] and an unknown code can
+     * map to "nothing to say" there. Serial numbers (body, lens) and the camera owner's name
+     * are deliberately NOT read at all: they identify a person or a device, and the room has no
+     * business showing them.
+     *
+     * EXIF MeteringMode code (1 average ... 6 partial); null when absent.
+     */
+    val meteringMode: Int? = null,
+    /** EXIF ExposureProgram code (1 manual ... 8 landscape); null when absent. */
+    val exposureProgram: Int? = null,
+    /** EXIF WhiteBalance code (0 auto, 1 manual); null when absent. */
+    val whiteBalance: Int? = null,
+    /** The EXIF Software tag: the camera firmware or the editor that last wrote the file. */
+    val software: String? = null,
+    /**
+     * EXIF DateTimeOriginal exactly as stored ("2026:08:01 22:33:00", local wall-clock time of the
+     * place the photo was taken, no zone) and OffsetTimeOriginal ("+05:30"). The offset is what
+     * tells a reader which zone that wall-clock was in; most files written before 2016 lack it, and
+     * then the time can only be read as the device's own (see [DetailFormatting.takenLine]).
+     */
+    val dateTimeOriginal: String? = null,
+    val offsetTimeOriginal: String? = null,
+    /** Metres above (positive) or below (negative) sea level from the embedded GPS fix. */
+    val gpsAltitudeMeters: Double? = null,
+    /** The compass direction the camera faced, degrees clockwise from north (0..360). */
+    val gpsBearingDegrees: Double? = null,
+    /** True when [gpsBearingDegrees] is measured against magnetic north rather than true north. */
+    val gpsBearingMagnetic: Boolean = false,
+    /** The speed at capture, normalised to km/h from whichever unit the file named. */
+    val gpsSpeedKmh: Double? = null,
+    /** Google's Motion Photo / micro-video flag in the file's XMP. See [XmpPacket.isMotionPhoto]. */
+    val isMotionPhoto: Boolean = false,
+    /** Whether the file's XMP carries a Google depth map. */
+    val hasDepthMap: Boolean = false,
+    /** Whether the file's XMP carries panorama / Photo Sphere metadata. */
+    val isPanorama: Boolean = false,
 ) {
     companion object {
         /** The state before the first read finishes. See [pending]. */
@@ -172,6 +210,7 @@ internal fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
     // Parsed once and reused below for both the professional-metadata card and the P0-16 HDR
     // gain-map check, rather than parsing the same packet twice.
     val xmp = exif.xmpAttributeUtf8()?.let { XmpPacket.parse(it) }
+    val bearing = exif.getAttributeDouble(ExifInterface.TAG_GPS_IMG_DIRECTION, Double.NaN).takeIf(::plausibleBearing)
     return ImageExifDetails(
         make = exif.getAttribute(ExifInterface.TAG_MAKE)?.trim()?.takeIf(String::isNotEmpty),
         model = exif.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf(String::isNotEmpty),
@@ -197,7 +236,50 @@ internal fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
             exifCopyright = exif.getAttribute(ExifInterface.TAG_COPYRIGHT),
         ),
         hasHdrGainMap = xmp?.hasNamespace(XmpPacket.HDR_GAIN_MAP_NS) == true,
+        meteringMode = exif.getAttributeInt(ExifInterface.TAG_METERING_MODE, -1).takeIf { it >= 0 },
+        exposureProgram = exif.getAttributeInt(ExifInterface.TAG_EXPOSURE_PROGRAM, -1).takeIf { it >= 0 },
+        whiteBalance = exif.getAttributeInt(ExifInterface.TAG_WHITE_BALANCE, -1).takeIf { it >= 0 },
+        software = exif.getAttribute(ExifInterface.TAG_SOFTWARE)?.trim()?.takeIf(String::isNotEmpty),
+        dateTimeOriginal = exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL)?.trim()?.takeIf(String::isNotEmpty),
+        offsetTimeOriginal = exif.getAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL)?.trim()?.takeIf(String::isNotEmpty),
+        gpsAltitudeMeters = exif.getAltitude(Double.NaN).takeIf(::plausibleAltitude),
+        gpsBearingDegrees = bearing,
+        gpsBearingMagnetic = bearing != null &&
+            exif.getAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION_REF)?.trim().equals("M", ignoreCase = true),
+        gpsSpeedKmh = gpsSpeedKmh(
+            exif.getAttributeDouble(ExifInterface.TAG_GPS_SPEED, Double.NaN),
+            exif.getAttribute(ExifInterface.TAG_GPS_SPEED_REF),
+        ),
+        isMotionPhoto = xmp?.isMotionPhoto() == true,
+        hasDepthMap = xmp?.hasDepthMap() == true,
+        isPanorama = xmp?.isPanorama() == true,
     )
+}
+
+/** An altitude worth showing: finite and between the Dead Sea's shore and a high-altitude flight. */
+internal fun plausibleAltitude(meters: Double): Boolean = meters.isFinite() && meters in -1_000.0..20_000.0
+
+/**
+ * A compass bearing worth showing: finite and in 0..360. EXIF stores it as an unsigned rational,
+ * so a negative or huge value is a corrupt tag, and is dropped rather than wrapped into a plausible
+ * but invented direction.
+ */
+internal fun plausibleBearing(degrees: Double): Boolean = degrees.isFinite() && degrees in 0.0..360.0
+
+/**
+ * The GPS speed in km/h. EXIF names the unit in a separate ref tag: "K" km/h, "M" miles per hour,
+ * "N" knots. A missing ref is read as km/h (the EXIF default); a ref that is none of the three
+ * means the number cannot be interpreted, so there is no speed rather than a guessed one.
+ */
+internal fun gpsSpeedKmh(value: Double, ref: String?): Double? {
+    if (!value.isFinite() || value < 0.0) return null
+    val factor = when (ref?.trim()?.uppercase(java.util.Locale.ROOT)) {
+        null, "", "K" -> 1.0
+        "M" -> 1.609344
+        "N" -> 1.852
+        else -> return null
+    }
+    return (value * factor).takeIf { it <= 5_000.0 }
 }
 
 /**

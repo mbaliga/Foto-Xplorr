@@ -214,6 +214,31 @@ class XmpPacket private constructor(private val document: Document) {
     }
 
     // ---------------------------------------------------------------------
+    // Camera-vendor flags: Motion Photo, depth map, panorama
+    // ---------------------------------------------------------------------
+
+    /**
+     * Whether the packet declares a Motion Photo: a still with a short video appended. Google's
+     * current form is `GCamera:MotionPhoto="1"`; the older "micro video" form is
+     * `GCamera:MicroVideo="1"`. A value of 0 is the writer saying "not a motion photo", so the
+     * property merely being present is not enough -- [intValue] reads both attribute and element
+     * shapes. Only Google's own flags are looked for (the container-directory form a few other
+     * makers write is not), so false means "this packet does not say so", not "it is not one".
+     */
+    fun isMotionPhoto(): Boolean =
+        intValue(GCAMERA_NS, "MotionPhoto") == 1 || intValue(GCAMERA_NS, "MicroVideo") == 1
+
+    /** Whether the packet carries a Google depth map (`GDepth:Format` and its siblings). */
+    fun hasDepthMap(): Boolean = hasNamespace(GDEPTH_NS)
+
+    /**
+     * Whether the packet carries Photo Sphere / panorama metadata: a projection type or the full
+     * panorama width, either of which a real `GPano` block always has.
+     */
+    fun isPanorama(): Boolean =
+        hasProperty(GPANO_NS, "ProjectionType") || hasProperty(GPANO_NS, "FullPanoWidthPixels")
+
+    // ---------------------------------------------------------------------
     // Serialization
     // ---------------------------------------------------------------------
 
@@ -387,6 +412,12 @@ class XmpPacket private constructor(private val document: Document) {
         const val IPTC4XMPCORE_NS = "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/"
         /** Ultra HDR's gain-map metadata namespace (P0-16). See the Ultra HDR guide. */
         const val HDR_GAIN_MAP_NS = "http://ns.adobe.com/hdr-gain-map/1.0/"
+        /** Google camera namespace: `GCamera:MotionPhoto`, `GCamera:MicroVideo`. */
+        const val GCAMERA_NS = "http://ns.google.com/photos/1.0/camera/"
+        /** Google depth-map namespace (`GDepth:Format`, `GDepth:Near`, ...). */
+        const val GDEPTH_NS = "http://ns.google.com/photos/1.0/depthmap/"
+        /** Photo Sphere / panorama namespace (`GPano:ProjectionType`, ...). */
+        const val GPANO_NS = "http://ns.google.com/photos/1.0/panorama/"
         private const val XML_NS = "http://www.w3.org/XML/1998/namespace"
         private const val XMLNS_NS = "http://www.w3.org/2000/xmlns/"
         private const val DEFAULT_LANG = "x-default"
