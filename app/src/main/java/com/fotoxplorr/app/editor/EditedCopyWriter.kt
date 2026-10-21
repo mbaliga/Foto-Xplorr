@@ -28,9 +28,10 @@ import java.io.FileOutputStream
  * user picked, or in place when the caller has already secured permission to replace it. Every
  * path keeps the source's own EXIF, XMP and capture date (P0-07): an edit is a version of the
  * photo, not a blank slate that resets to "just taken now" the moment it is saved. Orientation is
- * reset to upright because the edited pixels already have it baked in — see `ExifOrientation.kt`'s
- * own doc for why a naive re-encode would otherwise both lose that metadata and, for a
- * sideways-shot photo, save the wrong pixels.
+ * reset to upright because the edited pixels already have it baked in ([ExifCopier] does the reset;
+ * [com.fotoxplorr.app.media.decodeUpright] bakes the rotation into the pixels), since a naive
+ * re-encode would otherwise both lose that metadata and, for a sideways-shot photo, save the wrong
+ * pixels.
  *
  * The two kinds of destination are asymmetric on purpose. [save] and [saveTo] can create a fresh
  * file for ANY [OutputFormat] with no special permission, because inserting a new file this app

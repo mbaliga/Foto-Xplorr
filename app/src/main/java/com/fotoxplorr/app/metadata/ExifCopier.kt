@@ -140,14 +140,22 @@ fun resetXmpOrientationForCopy(packet: XmpPacket): XmpPacket {
  *  - No source XMP ([rawXmp] null or blank): null -- an edited copy with nothing to copy gets no
  *    XMP packet invented for it.
  *  - Parses: [resetXmpOrientationForCopy]'s adjusted packet, re-serialized.
- *  - Does not parse at all: [rawXmp] itself, untouched. This app cannot safely edit a packet it
+ *  - Does not parse at all: [rawXmp] itself, untouched, but ONLY when every character is 7-bit
+ *    ASCII, otherwise null (the packet is skipped). This app cannot safely edit a packet it
  *    cannot parse -- see [XmpPacket.parse]'s own doc on why a failed parse must not become a fresh
  *    empty packet -- but a copy, unlike an edit, has nothing to merge in; passing the original
  *    bytes through unchanged loses nothing a tool that could read them originally still can, at
- *    the cost of only the `tiff:Orientation` reset for this one case.
+ *    the cost of only the `tiff:Orientation` reset for this one case. The ASCII condition exists
+ *    because the string reaches [ExifInterface.setAttribute], which writes any character above
+ *    U+007F as `?`: the parsed path escapes those as numeric references in
+ *    [XmpPacket.serialize], but this verbatim path has no such step, so a non-ASCII packet would
+ *    be silently corrupted rather than copied. Skipping it drops the packet; corrupting it would
+ *    drop the same data and leave a broken one behind.
  */
 internal fun copiedXmpValue(rawXmp: String?): String? {
     if (rawXmp.isNullOrBlank()) return null
-    val packet = XmpPacket.parse(rawXmp) ?: return rawXmp
+    val packet = XmpPacket.parse(rawXmp) ?: return rawXmp.takeIf { raw -> raw.all { it.code <= MAX_ASCII } }
     return resetXmpOrientationForCopy(packet).serialize()
 }
+
+private const val MAX_ASCII = 127
