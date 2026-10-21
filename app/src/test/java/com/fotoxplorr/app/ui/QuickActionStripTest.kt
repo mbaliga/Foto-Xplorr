@@ -11,6 +11,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -20,6 +22,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.GalleryQuickAction
+import com.fotoxplorr.app.gallery.galleryFavouriteStripOn
+import com.fotoxplorr.app.gallery.galleryQuickActionLabel
 import com.fotoxplorr.app.gallery.galleryQuickActions
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -148,8 +152,49 @@ class QuickActionStripTest {
             galleryQuickActions(selectionActive = false).map { it.label },
         )
         assertEquals(
-            listOf("Share", "Add to collection", "Favourite", "Move to trash"),
+            listOf("Share", "Collection", "Favourite", "Trash"),
             galleryQuickActions(selectionActive = true).map { it.label },
         )
+    }
+
+    @Test
+    fun `the selection strip's labels are single short words that fit four across a 360dp phone`() {
+        // Four cells share 360dp less the strip's padding and gaps; at 12sp a one-line label has
+        // to fit about 75dp, so none may be a phrase.
+        galleryQuickActions(selectionActive = true).forEach { action ->
+            assertTrue("${action.label} is a phrase", !action.label.contains(' '))
+        }
+    }
+
+    @Test
+    fun `favourite says unfavourite when it would remove`() {
+        assertEquals("Favourite", galleryQuickActionLabel(GalleryQuickAction.FAVOURITE, favouriteOn = false))
+        assertEquals("Unfavourite", galleryQuickActionLabel(GalleryQuickAction.FAVOURITE, favouriteOn = true))
+        // No other cell is renamed by the flag.
+        GalleryQuickAction.entries.filter { it != GalleryQuickAction.FAVOURITE }.forEach {
+            assertEquals(it.label, galleryQuickActionLabel(it, favouriteOn = true))
+        }
+    }
+
+    @Test
+    fun `the favourite cell is on only for a non-empty selection of favourites`() {
+        // markFavourite false is the bulk rule's answer when everything chosen is already one.
+        assertTrue(galleryFavouriteStripOn(selectedCount = 3, markFavourite = false))
+        assertTrue(!galleryFavouriteStripOn(selectedCount = 3, markFavourite = true))
+        assertTrue(!galleryFavouriteStripOn(selectedCount = 0, markFavourite = false))
+    }
+
+    @Test
+    fun `a cell with a state description exposes it to a screen reader`() {
+        show(
+            listOf(
+                QuickActionItem("Unfavourite", Icons.Outlined.Share, {}, highlighted = true, stateDescription = "Favourited"),
+                item("Share"),
+            ),
+        )
+        val on = compose.onNodeWithText("Unfavourite").fetchSemanticsNode()
+        assertEquals("Favourited", on.config.getOrNull(SemanticsProperties.StateDescription))
+        val plain = compose.onNodeWithText("Share").fetchSemanticsNode()
+        assertEquals(null, plain.config.getOrNull(SemanticsProperties.StateDescription))
     }
 }

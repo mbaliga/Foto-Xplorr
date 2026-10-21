@@ -64,6 +64,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -535,6 +536,7 @@ fun ViewerScreen(
                 onToggleSlideshow = { shell.closeAll(); onToggleSlideshow() },
                 onToggleFavorite = onToggleFavorite,
                 onCloseRoom = { shell.closeAll() },
+                hasBottomPeek = shell.hasBottomPeek,
                 onToggleSensitive = onToggleSensitive,
                 onShare = { shell.closeAll(); onShare() },
                 onShareClean = onShareClean?.let { clean -> { shell.closeAll(); clean() } },
@@ -605,6 +607,10 @@ fun ViewerScreen(
         bottomReserve = ViewerBottomReserve.reserveDp(
             filmstripShown = filmstripShown,
             videoTransportShown = asset.isVideo && ViewerChromePolicy.chromeShown(chromeVisible, isInPip, liftActive),
+            secondRowCollapsed = ViewerBottomReserve.secondRowCollapsed(
+                filmstripShown = filmstripShown,
+                screenHeightDp = LocalConfiguration.current.screenHeightDp,
+            ),
         ).dp,
     ) {
         Box(

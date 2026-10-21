@@ -1,10 +1,12 @@
 package com.fotoxplorr.app.gallery
 
 import android.os.Build
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -12,6 +14,7 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.render.emptyState
 import com.fotoxplorr.app.render.noOpActions
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.app.ui.ACTIONS_PEEK_NAV_SPACER_TAG
 import com.fotoxplorr.app.ui.QUICK_ACTION_STRIP_TAG
 import com.fotoxplorr.core.model.MediaId
 import org.junit.Assert.assertEquals
@@ -86,11 +89,17 @@ class GalleryQuickStripSelectionTest {
         var selection: GallerySelection? = null
     }
 
-    private fun show(selection: GallerySelection, tally: Tally, assets: List<MediaAsset> = emptyList()) {
+    private fun show(
+        selection: GallerySelection,
+        tally: Tally,
+        assets: List<MediaAsset> = emptyList(),
+        state: GalleryUiState = emptyState(),
+        hasBottomPeek: Boolean = true,
+    ) {
         compose.setContent {
             FotoXplorrTheme(GalleryPreferencesState()) {
                 GalleryActionsRoom(
-                    state = emptyState(),
+                    state = state,
                     actions = noOpActions().copy(
                         onShare = { tally.shared = it },
                         onMoveToTrash = { tally.trashed = it },
@@ -111,6 +120,7 @@ class GalleryQuickStripSelectionTest {
                     onStartSelection = {},
                     onNewCollection = {},
                     onCloseRoom = { tally.roomsClosed++ },
+                    hasBottomPeek = hasBottomPeek,
                 )
             }
         }
@@ -123,7 +133,7 @@ class GalleryQuickStripSelectionTest {
     @Test
     fun `with photos chosen the strip shows the selection actions and not refresh`() {
         show(GallerySelection(selectedIds = setOf(id), selecting = true), Tally())
-        listOf("Share", "Add to collection", "Favourite", "Move to trash").forEach { strip(it).assertExists() }
+        listOf("Share", "Collection", "Favourite", "Trash").forEach { strip(it).assertExists() }
         listOf("Select", "New collection", "Refresh").forEach { strip(it).assertDoesNotExist() }
     }
 
@@ -142,9 +152,30 @@ class GalleryQuickStripSelectionTest {
     fun `the add to collection cell hands over the chosen photos and closes the room`() {
         val tally = Tally()
         show(GallerySelection(selectedIds = setOf(id), selecting = true), tally)
-        strip("Add to collection").performClick()
+        strip("Collection").performClick()
         assertEquals(setOf(id), tally.collectionFor)
         assertEquals(1, tally.roomsClosed)
+    }
+
+    @Test
+    fun `when everything chosen is already a favourite the cell says unfavourite and removes them`() {
+        val tally = Tally()
+        show(
+            GallerySelection(selectedIds = setOf(id), selecting = true),
+            tally,
+            state = emptyState().copy(favoriteIds = setOf(id)),
+        )
+        strip("Favourite").assertDoesNotExist()
+        strip("Unfavourite").performClick()
+        assertEquals(setOf(id) to false, tally.favourite)
+    }
+
+    @Test
+    fun `without a bottom peek the room draws no strip but still lists its actions`() {
+        show(GallerySelection(selectedIds = setOf(id), selecting = true), Tally(), hasBottomPeek = false)
+        compose.onAllNodesWithTag(QUICK_ACTION_STRIP_TAG).assertCountEquals(0)
+        compose.onAllNodesWithTag(ACTIONS_PEEK_NAV_SPACER_TAG).assertCountEquals(0)
+        compose.onNodeWithText("Select all").assertExists()
     }
 
     @Test

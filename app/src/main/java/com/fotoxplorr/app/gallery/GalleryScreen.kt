@@ -1058,6 +1058,7 @@ private fun GalleryBrowser(
                     selection = selection.beginSelecting()
                 },
                 onCloseRoom = { shell.closeAll() },
+                hasBottomPeek = shell.hasBottomPeek,
                 onNewCollection = {
                     shell.closeAll()
                     createCollectionVisible = true

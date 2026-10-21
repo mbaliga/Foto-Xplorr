@@ -31,9 +31,11 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -121,54 +123,60 @@ fun PlacesScreen(
         }
     }
 
-    when (experience) {
-        ExploreExperience.SIMILARITY -> SimilarityExplorerScreen(
-            assets = assets,
-            indexInput = indexInput,
-            onOpenAsset = onOpenAsset,
-            onClose = { experience = null },
-        )
-        ExploreExperience.PHOTO_WALL -> PhotoWallScreen(
-            assets = assets,
-            onOpenAsset = onOpenAsset,
-            onClose = { experience = null },
-        )
-        ExploreExperience.GALLERY_PREVIEW -> GalleryPreviewScreen(
-            assets = assets,
-            onOpenAsset = onOpenAsset,
-            onClose = { experience = null },
-        )
-        // The stylized map: pure arithmetic on the coordinates already in the photos, so it is
-        // the same screen in both flavors and needs nothing from the network.
-        ExploreExperience.STAMP_MAP -> StampMapScreen(
-            assets = assets,
-            geoState = geoState,
-            onIndexLocations = onIndexLocations,
-            onOpenAsset = onOpenAsset,
-            onClose = { experience = null },
-        )
-        // Flavor seam: connect renders the MapLibre map, offline an honest absence.
-        ExploreExperience.PHOTO_MAP -> PhotoMapExperience(
-            assets = assets,
-            geoState = geoState,
-            onIndexLocations = onIndexLocations,
-            onOpenAsset = onOpenAsset,
-            onClose = { experience = null },
-        )
-        ExploreExperience.SPATIAL_COMPASS -> SpatialPhotoSceneScreen(
-            assets = assets,
-            geoState = geoState,
-            onIndexLocations = onIndexLocations,
-            onOpenAsset = onOpenAsset,
-            onClose = { experience = null },
-        )
-        ExploreExperience.AI_SETTINGS -> AiSettingsScreen(onClose = { experience = null })
-        null -> ExploreHub(
-            assets = assets,
-            locatedCount = geoState.locatedCount,
-            locationIndexing = geoState.isIndexing,
-            onOpen = { experience = it },
-        )
+    // The pane's ink for everything below, the hub and every experience it opens. On the
+    // root-destination path this is not under a PaneScaffold, so nothing above provides a content
+    // colour and the theme's onSurface (dark, in light theme) would land on the pane's black
+    // ground: set once here, a sub-screen that names no colour of its own is right on every path.
+    CompositionLocalProvider(LocalContentColor provides RoomStyle.Ink) {
+        when (experience) {
+            ExploreExperience.SIMILARITY -> SimilarityExplorerScreen(
+                assets = assets,
+                indexInput = indexInput,
+                onOpenAsset = onOpenAsset,
+                onClose = { experience = null },
+            )
+            ExploreExperience.PHOTO_WALL -> PhotoWallScreen(
+                assets = assets,
+                onOpenAsset = onOpenAsset,
+                onClose = { experience = null },
+            )
+            ExploreExperience.GALLERY_PREVIEW -> GalleryPreviewScreen(
+                assets = assets,
+                onOpenAsset = onOpenAsset,
+                onClose = { experience = null },
+            )
+            // The stylized map: pure arithmetic on the coordinates already in the photos, so it is
+            // the same screen in both flavors and needs nothing from the network.
+            ExploreExperience.STAMP_MAP -> StampMapScreen(
+                assets = assets,
+                geoState = geoState,
+                onIndexLocations = onIndexLocations,
+                onOpenAsset = onOpenAsset,
+                onClose = { experience = null },
+            )
+            // Flavor seam: connect renders the MapLibre map, offline an honest absence.
+            ExploreExperience.PHOTO_MAP -> PhotoMapExperience(
+                assets = assets,
+                geoState = geoState,
+                onIndexLocations = onIndexLocations,
+                onOpenAsset = onOpenAsset,
+                onClose = { experience = null },
+            )
+            ExploreExperience.SPATIAL_COMPASS -> SpatialPhotoSceneScreen(
+                assets = assets,
+                geoState = geoState,
+                onIndexLocations = onIndexLocations,
+                onOpenAsset = onOpenAsset,
+                onClose = { experience = null },
+            )
+            ExploreExperience.AI_SETTINGS -> AiSettingsScreen(onClose = { experience = null })
+            null -> ExploreHub(
+                assets = assets,
+                locatedCount = geoState.locatedCount,
+                locationIndexing = geoState.isIndexing,
+                onOpen = { experience = it },
+            )
+        }
     }
 }
 
@@ -184,8 +192,9 @@ private fun ExploreHub(
 
     Column(modifier = Modifier.fillMaxSize()) {
         // The pane's own colours, not the theme's: this sits on the pane's black ground, whose
-        // content colour is white whatever the theme. In light theme `colorScheme.surface` is
-        // near-white, which put white titles on it and made the header unreadable.
+        // content colour is white whatever the theme (PlacesScreen provides it). In light theme
+        // `colorScheme.surface` is near-white, which put white titles on it and made the header
+        // unreadable.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -196,7 +205,6 @@ private fun ExploreHub(
                 Text(
                     "Immersive and AI",
                     style = MaterialTheme.typography.headlineSmall,
-                    color = RoomStyle.Ink,
                 )
                 Text(
                     "Optional ways to explore the same local library. The ordinary gallery continues to work with AI, network and location disabled.",
@@ -239,14 +247,7 @@ private fun ExploreHub(
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    // The pane's ink, set here: on the root-destination path this is not under a
-                    // PaneScaffold, so nothing above provides a content colour and the theme's
-                    // onSurface (dark, in light theme) would land on the pane's black ground.
-                    Text(
-                        "Privacy boundaries",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = RoomStyle.Ink,
-                    )
+                    Text("Privacy boundaries", style = MaterialTheme.typography.titleMedium)
                     Text(
                         "Similarity indexing is local. Photo map draws only the coordinates already inside your photos, so it needs no network at all. Street-map tiles are requested only while that map is open, and only in the Connect build. Current location is requested only inside Spatial compass. Remote AI stays disabled until a user adds and enables a provider key.",
                         style = MaterialTheme.typography.bodySmall,

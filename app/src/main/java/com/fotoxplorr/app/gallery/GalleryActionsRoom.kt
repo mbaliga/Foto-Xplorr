@@ -94,6 +94,9 @@ fun GalleryActionsRoom(
     onStartSelection: () -> Unit,
     onNewCollection: () -> Unit,
     onCloseRoom: () -> Unit,
+    /** [dev.aarso.cellshell.SpatialController.hasBottomPeek]: false on a window too short for the
+     *  peek, where the room is single-stage and the strip would only repeat the rows below it. */
+    hasBottomPeek: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val selectionActive = selection.isActive
@@ -181,9 +184,11 @@ fun GalleryActionsRoom(
     // points; with a selection, the selection's actions through the same finish{} the rows use.
     val selectedCount = selection.count
     val markFavourite = bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK
+    val favouritesOn = galleryFavouriteStripOn(selectedCount, markFavourite)
     val quickActions = galleryQuickActions(selectionActive, inTrash).map { action ->
+        val stripFavouriteOn = action == GalleryQuickAction.FAVOURITE && favouritesOn
         QuickActionItem(
-            label = action.label,
+            label = galleryQuickActionLabel(action, stripFavouriteOn),
             icon = action.icon,
             onClick = when (action) {
                 GalleryQuickAction.SELECT -> onStartSelection
@@ -216,13 +221,16 @@ fun GalleryActionsRoom(
                 })
             },
             enabled = galleryQuickActionEnabled(action, selectedCount, Build.VERSION.SDK_INT),
-            // Favourite reads as "on" when every chosen photo already is one: tapping removes.
-            highlighted = action == GalleryQuickAction.FAVOURITE && selectedCount > 0 && !markFavourite,
+            // Favourite reads as "on" when every chosen photo already is one: tapping removes,
+            // so the word says "Unfavourite" and a screen reader is told the state it is in.
+            highlighted = stripFavouriteOn,
+            stateDescription = if (stripFavouriteOn) "Favourited" else null,
         )
     }
 
     ActionsRoomFrame(
         quickActions = quickActions,
+        showStrip = hasBottomPeek,
         modifier = modifier,
         contentPadding = PaddingValues(
             start = RoomStyle.GutterStart,
@@ -488,6 +496,9 @@ private fun finishSelectionAction(
 /**
  * The gallery's quick actions, in the order they sit in the strip. [label] is the short word under
  * the glyph; the full row for the same action, further down the room, keeps its explanatory caption.
+ * Four cells share a 360dp phone, about 75dp of text each at 12sp, so the selection's labels are
+ * single short words ("Collection", "Trash"); the rows below keep "Add to collection" and "Move to
+ * trash" in full.
  *
  * The strip is context-aware, as the rows are: with nothing chosen it is the room's own entry points
  * (SELECT, NEW_COLLECTION, REFRESH); once a selection is under way it is the selection's most used
@@ -499,9 +510,9 @@ enum class GalleryQuickAction(val label: String, val icon: ImageVector) {
     NEW_COLLECTION("New collection", Icons.Outlined.CreateNewFolder),
     REFRESH("Refresh", Icons.Outlined.Refresh),
     SHARE("Share", Icons.Outlined.Share),
-    ADD_TO_COLLECTION("Add to collection", Icons.Outlined.Folder),
+    ADD_TO_COLLECTION("Collection", Icons.Outlined.Folder),
     FAVOURITE("Favourite", Icons.Outlined.FavoriteBorder),
-    MOVE_TO_TRASH("Move to trash", Icons.Outlined.DeleteOutline),
+    MOVE_TO_TRASH("Trash", Icons.Outlined.DeleteOutline),
     RESTORE("Restore", Icons.Outlined.Restore),
     DELETE_PERMANENTLY("Delete forever", Icons.Outlined.DeleteForever),
 }
@@ -526,6 +537,22 @@ fun galleryQuickActions(selectionActive: Boolean, inTrash: Boolean = false): Lis
         GalleryQuickAction.MOVE_TO_TRASH,
     )
 }
+
+/**
+ * Whether the strip's Favourite cell reads as switched on: a selection exists and every photo in it
+ * is already a favourite, so a tap removes them ([markFavourite] false is the bulk rule's answer
+ * for exactly that).
+ */
+fun galleryFavouriteStripOn(selectedCount: Int, markFavourite: Boolean): Boolean =
+    selectedCount > 0 && !markFavourite
+
+/**
+ * The word under [action]'s glyph. Favourite becomes "Unfavourite" when it is [favouriteOn],
+ * because the cell then removes favourites and the tint alone must not be the only thing saying so
+ * (TalkBack would otherwise read "Favourite, button" for a cell that un-favourites).
+ */
+fun galleryQuickActionLabel(action: GalleryQuickAction, favouriteOn: Boolean = false): String =
+    if (action == GalleryQuickAction.FAVOURITE && favouriteOn) "Unfavourite" else action.label
 
 /**
  * Whether [action]'s cell answers. A selection action needs a photo chosen (a selection that has

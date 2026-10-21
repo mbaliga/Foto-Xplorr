@@ -12,13 +12,32 @@ object ViewerBottomReserve {
 
     /**
      * The video transport's band above the navigation bar and above any filmstrip: its padding, the
-     * two button rows and the gap between them. This is the expanded height on purpose: the second
-     * row folds behind a toggle in a short window, but a person can unfold it, and a zone that is
-     * a little high on a folded transport is better than one that starts inside an unfolded one.
+     * two button rows and the gap between them. This is the EXPANDED height; where the second row
+     * is folded behind its toggle ([shouldCollapseSecondRow], short windows) the band is
+     * [VIDEO_TRANSPORT_FOLDED_BAND_DP] instead, so the zone sits on the transport that is really
+     * drawn rather than floating above it over the picture.
      * (A key-moment bar or a status line above the rows can add to it for a moment; not counted.)
      */
     const val VIDEO_TRANSPORT_BAND_DP: Int =
         (TRANSPORT_PADDING_DP + 2 * TRANSPORT_ROW_DP + TRANSPORT_GAP_DP).toInt()
+
+    /**
+     * The transport's band with its second row folded: the expanded band less that row and the gap
+     * above it. A person who unfolds the row in a short window gets a zone that starts inside it;
+     * that row holds buttons, not a scrubber, so it is the lesser evil next to a permanently
+     * floating zone, and the seek bar in the first row stays clear.
+     */
+    const val VIDEO_TRANSPORT_FOLDED_BAND_DP: Int =
+        VIDEO_TRANSPORT_BAND_DP - (TRANSPORT_ROW_DP + TRANSPORT_GAP_DP).toInt()
+
+    /**
+     * Whether the transport folds its second row on this window: the very decision the transport
+     * makes (it calls the same function with the same strip inset), so the two cannot disagree.
+     *
+     * @param screenHeightDp the window's height, as the transport reads it.
+     */
+    fun secondRowCollapsed(filmstripShown: Boolean, screenHeightDp: Int): Boolean =
+        shouldCollapseSecondRow(screenHeightDp, ViewerChromePolicy.videoBottomInsetDp(filmstripShown).toFloat())
 
     /**
      * The reserve, in dp, for the viewer's current chrome.
@@ -32,10 +51,16 @@ object ViewerBottomReserve {
      * @param filmstripShown [ViewerChromePolicy.filmstripShown].
      * @param videoTransportShown a video is up and its chrome is showing
      *   ([ViewerChromePolicy.chromeShown]).
+     * @param secondRowCollapsed the transport has folded its second row ([secondRowCollapsed]);
+     *   only matters while the transport is shown.
      */
-    fun reserveDp(filmstripShown: Boolean, videoTransportShown: Boolean): Int {
+    fun reserveDp(filmstripShown: Boolean, videoTransportShown: Boolean, secondRowCollapsed: Boolean = false): Int {
         val filmstrip = if (filmstripShown) FilmstripGeometry.REST_BAND_DP else 0
-        val transport = if (videoTransportShown) VIDEO_TRANSPORT_BAND_DP else 0
+        val transport = when {
+            !videoTransportShown -> 0
+            secondRowCollapsed -> VIDEO_TRANSPORT_FOLDED_BAND_DP
+            else -> VIDEO_TRANSPORT_BAND_DP
+        }
         return filmstrip + transport
     }
 }

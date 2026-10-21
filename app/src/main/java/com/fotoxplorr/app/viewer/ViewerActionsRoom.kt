@@ -120,6 +120,9 @@ fun ViewerActionsRoom(
     /** Closes the room. Only the quick strip's Favourite needs it: every other handler passed in
      *  closes the room itself. */
     onCloseRoom: () -> Unit = {},
+    /** [dev.aarso.cellshell.SpatialController.hasBottomPeek]: false on a window too short for the
+     *  peek, where the room is single-stage and the strip would only repeat the rows below it. */
+    hasBottomPeek: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     // The strip is the room's first inch: a short pull stops on it (RoomGeography.ActionsPeek).
@@ -142,6 +145,7 @@ fun ViewerActionsRoom(
 
     ActionsRoomFrame(
         quickActions = quickActions,
+        showStrip = hasBottomPeek,
         modifier = modifier,
         // Scrolls for a short phone: twelve rows can outgrow what the band leaves.
         contentPadding = PaddingValues(vertical = 20.dp, horizontal = 8.dp),

@@ -252,11 +252,11 @@ object PlaceMorph {
     // flier is available; they are kept unchanged because that path still has callers and tests.
 
     /**
-     * The grab band the shell leaves visible under the parked card, in dp. Mirrors cell-shell's
-     * private `BAND_DP` (a shared-library constant this app cannot reference); the room is padded
-     * by it at the bottom, so it is also the amount of the viewport the room does NOT use.
+     * The grab band the shell leaves visible under the parked card, in dp. It IS cell-shell's
+     * [SpatialMotion.BAND_DP] (a compile-time constant, so this stays a `const`); the room is
+     * padded by it at the bottom, so it is also the amount of the viewport the room does NOT use.
      */
-    const val SHELL_BAND_DP = 72f
+    const val SHELL_BAND_DP = SpatialMotion.BAND_DP
 
     /** How dark the ghost pin is on the unknown-location plate, 0..1. See [landedDim]. */
     const val GHOST_DIM = 0.35f
