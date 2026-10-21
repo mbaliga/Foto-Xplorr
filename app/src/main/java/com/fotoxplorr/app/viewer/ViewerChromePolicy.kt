@@ -146,7 +146,9 @@ internal object ViewerChromePolicy {
         videoPlaybackActive: Boolean,
         lifting: Boolean,
         hostRunning: Boolean = true,
-    ): Boolean = slideshowActive && total > 1 && !anyRoomVisible && !videoPlaybackActive && !lifting && hostRunning
+        paused: Boolean = false,
+    ): Boolean =
+        slideshowActive && total > 1 && !anyRoomVisible && !videoPlaybackActive && !lifting && hostRunning && !paused
 
     /**
      * Whether the hosting activity is running for the slideshow's purposes: at least STARTED (on
@@ -157,6 +159,58 @@ internal object ViewerChromePolicy {
      */
     fun slideshowHostRunning(lifecycleStarted: Boolean, inPictureInPicture: Boolean): Boolean =
         lifecycleStarted || inPictureInPicture
+
+    // ── the slideshow bar (owner, #16) ────────────────────────────────────────────────────────
+
+    /**
+     * Whether the slideshow bar (previous, play or pause, next) is drawn at the top: a slideshow
+     * is up, there is somewhere to go ([total] above one), and the chrome is up ([chromeShown],
+     * so it goes in picture-in-picture and under the lift editor with the rest). Not a function
+     * of a paused state: a paused slideshow is exactly when the bar is needed, to resume it.
+     */
+    fun slideshowBarShown(slideshowActive: Boolean, total: Int, chromeShown: Boolean): Boolean =
+        slideshowActive && total > 1 && chromeShown
+
+    /**
+     * Whether the chrome may fold itself away after [SLIDESHOW_CHROME_HIDE_MS] during a slideshow,
+     * so the photos are seen bare between touches.
+     *
+     * Not while paused (the bar is how it is resumed, and the person is plainly looking at the
+     * controls), not over a video (its transport and the bar stay up for the clip), not while a
+     * room is open or a lift is under way (those own the screen), and not once it is already down.
+     */
+    fun slideshowChromeMayAutoHide(
+        slideshowActive: Boolean,
+        paused: Boolean,
+        chromeVisible: Boolean,
+        isVideo: Boolean,
+        anyRoomVisible: Boolean,
+        lifting: Boolean,
+    ): Boolean = slideshowActive && !paused && chromeVisible && !isVideo && !anyRoomVisible && !lifting
+
+    /** How long the chrome stays up during a running slideshow before it folds away. */
+    const val SLIDESHOW_CHROME_HIDE_MS = 3_000L
+
+    /** The chip row's height: a 48dp button inside 8dp of padding. */
+    const val CHIP_ROW_DP = 64
+
+    /**
+     * How far down the chip row sits while the slideshow bar is above it: the bar's own height,
+     * so the two stack instead of overlapping (they are too wide to share a line on a phone).
+     */
+    fun chipRowDropDp(slideshowBarShown: Boolean): Float = if (slideshowBarShown) SlideshowBarGeometry.BAR_HEIGHT_DP else 0f
+
+    /**
+     * How much of the top the chrome occupies below the status bar, for a video's "Resume from"
+     * chip to sit under it rather than on top of it: nothing when the chrome is down, the chip
+     * row when it is up, and the slideshow bar as well when that is up. Rounded up so it clears.
+     */
+    fun videoTopInsetDp(chromeShown: Boolean, slideshowBarShown: Boolean): Int =
+        if (!chromeShown) {
+            0
+        } else {
+            CHIP_ROW_DP + kotlin.math.ceil(chipRowDropDp(slideshowBarShown)).toInt()
+        }
 
     // ── lifting a subject ─────────────────────────────────────────────────────────────────────
 

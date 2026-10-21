@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Audiotrack
@@ -197,6 +198,9 @@ fun VideoPlayer(
     /** Height of whatever the host stacks along the bottom edge (the filmstrip), so the transport
      *  sits clear above it instead of underneath. */
     bottomInset: Dp = 0.dp,
+    /** What the host draws along the top, below the status bar (the chip row, the slideshow bar),
+     *  so the "Resume from" chip sits beneath it instead of on top of it. */
+    topInset: Dp = 0.dp,
     /** True while the user is scrubbing the filmstrip: playback pauses, the transport dims, and a
      *  player that has not started yet does not start. */
     scrubSuspended: Boolean = false,
@@ -237,6 +241,7 @@ fun VideoPlayer(
             catalogueActions = catalogueActions,
             onOpenWith = onOpenWith,
             bottomInset = bottomInset,
+            topInset = topInset,
             scrubSuspended = scrubSuspended,
             onPlaybackActive = onPlaybackActive,
         )
@@ -267,6 +272,7 @@ private fun ArmedVideoPlayer(
     catalogueActions: Boolean,
     onOpenWith: (() -> Unit)?,
     bottomInset: Dp,
+    topInset: Dp,
     scrubSuspended: Boolean,
     onPlaybackActive: (Boolean) -> Unit,
 ) {
@@ -753,7 +759,10 @@ private fun ArmedVideoPlayer(
                             seekTo(resumeMs)
                             togglePlay()
                         },
-                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 24.dp),
+                        // Under the status bar and under whatever the host draws there: the chip
+                        // row's 48dp close button sits in the middle of this strip when the
+                        // chrome is up, and the old fixed 24dp landed on it.
+                        modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp + topInset),
                     )
                 }
 

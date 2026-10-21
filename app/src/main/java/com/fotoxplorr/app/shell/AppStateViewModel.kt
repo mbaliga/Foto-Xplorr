@@ -61,7 +61,26 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
             writeId(KEY_SELECTED_ASSET_ID, value)
         }
 
-    var slideshowActive: Boolean by mutableStateOf(false)
+    private var slideshowActiveState: Boolean by mutableStateOf(false)
+
+    /**
+     * Whether a slideshow is running (or paused: see [slideshowPaused]). Setting it, either way,
+     * clears [slideshowPaused], so every `slideshowActive = false` in the host that ends a
+     * slideshow also ends its pause, and a new slideshow always starts playing.
+     */
+    var slideshowActive: Boolean
+        get() = slideshowActiveState
+        set(value) {
+            slideshowActiveState = value
+            slideshowPaused = false
+        }
+
+    /**
+     * A slideshow that is up but holding on the current photo (the bar's pause, owner #16). The
+     * countdown does not run while this is true and the bar stays put. Only meaningful while
+     * [slideshowActive].
+     */
+    var slideshowPaused: Boolean by mutableStateOf(false)
 
     // ---- editor ----
 

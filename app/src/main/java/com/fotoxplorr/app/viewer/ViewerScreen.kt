@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -27,6 +30,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -200,6 +204,18 @@ fun ViewerScreen(
     onWriteLocationIntoFile: (() -> Unit)? = null,
     /** Play a slideshow in a random order rather than the browsing order. */
     slideshowShuffle: Boolean = false,
+    /**
+     * A slideshow that is up but holding on this photo (the bar's pause, owner #16). The
+     * countdown stops while it is true and the chrome does not fold itself away.
+     */
+    slideshowPaused: Boolean = false,
+    onSetSlideshowPaused: (Boolean) -> Unit = {},
+    /**
+     * What the slideshow's countdown calls to move on. Separate from [onNext] so a host can shuffle
+     * for the timer without a swipe or the bar's Next answering with a random photo; defaults to
+     * [onNext] for a caller with no such difference.
+     */
+    onSlideshowAdvance: () -> Unit = onNext,
     /**
      * Text the offline recognition pass read out of THIS photo, positioned.
      *
@@ -464,10 +480,39 @@ fun ViewerScreen(
         lifecycleStarted = lifecycleStarted.isAtLeast(Lifecycle.State.STARTED),
         inPictureInPicture = isInPip,
     )
-    LaunchedEffect(asset.id, slideshowActive, slideshowIntervalSeconds, roomOpen, videoPlaying, liftActive, hostRunning) {
-        if (ViewerChromePolicy.slideshowMayAdvance(slideshowActive, total, roomOpen, videoPlaying, liftActive, hostRunning)) {
+    //
+    // A paused slideshow does not count down at all; resuming starts a full interval afresh.
+    LaunchedEffect(
+        asset.id, slideshowActive, slideshowIntervalSeconds, roomOpen, videoPlaying, liftActive, hostRunning,
+        slideshowPaused,
+    ) {
+        if (ViewerChromePolicy.slideshowMayAdvance(
+                slideshowActive, total, roomOpen, videoPlaying, liftActive, hostRunning, slideshowPaused,
+            )
+        ) {
             delay(slideshowIntervalSeconds.coerceAtLeast(2) * 1_000L)
-            onNext()
+            onSlideshowAdvance()
+        }
+    }
+
+    // The chrome during a slideshow (owner, #16). Starting one brings it up, so the bar is seen
+    // at the moment it is useful (a slideshow started from the gallery opens the viewer with the
+    // chrome down), and a few seconds later it folds away so the photos are seen bare. A tap
+    // brings it back and the timer starts again, a press on the bar restarts it
+    // ([chromePulse]), and a pause, a video, a room or a lift keeps it up
+    // ([ViewerChromePolicy.slideshowChromeMayAutoHide]). Not keyed on the photo: the countdown
+    // moves on every few seconds and would otherwise keep restarting this one.
+    var chromePulse by remember { mutableIntStateOf(0) }
+    LaunchedEffect(slideshowActive) {
+        if (slideshowActive) chromeVisible = true
+    }
+    val chromeMayAutoHide = ViewerChromePolicy.slideshowChromeMayAutoHide(
+        slideshowActive, slideshowPaused, chromeVisible, asset.isVideo, roomOpen, liftActive,
+    )
+    LaunchedEffect(chromeMayAutoHide, chromePulse) {
+        if (chromeMayAutoHide) {
+            delay(ViewerChromePolicy.SLIDESHOW_CHROME_HIDE_MS)
+            chromeVisible = false
         }
     }
 
@@ -761,6 +806,10 @@ fun ViewerScreen(
                 },
             contentAlignment = Alignment.Center,
         ) {
+            // What is drawn over the photo, decided once for the video's top clearance below and
+            // the chrome at the end of this box.
+            val chromeShown = ViewerChromePolicy.chromeShown(chromeVisible, isInPip, liftActive)
+            val slideshowBarShown = ViewerChromePolicy.slideshowBarShown(slideshowActive, total, chromeShown)
             if (asset.isVideo) {
                 // key(asset.id): one VideoPlayer instance per video, not one reused across the
                 // roll. VideoPlayer hands its VideoView to AndroidView's factory, and AndroidView
@@ -781,6 +830,8 @@ fun ViewerScreen(
                         onPlaybackActive = { videoPlaying = it },
                         // Sits the transport above the filmstrip band instead of under it.
                         bottomInset = ViewerChromePolicy.videoBottomInsetDp(filmstripShown).dp,
+                        // And the "Resume from" chip sits beneath the chip row and the slideshow bar.
+                        topInset = ViewerChromePolicy.videoTopInsetDp(chromeShown, slideshowBarShown).dp,
                         scrubSuspended = scrubbing,
                     )
                 }
@@ -858,7 +909,19 @@ fun ViewerScreen(
             // All that is left over the photo, and only when asked for: where you are in the
             // run. The actions are the bottom room, the facts are the top room, and the view
             // options are the right room -- none of them costs the photo a pixel until pulled.
-            val chromeShown = ViewerChromePolicy.chromeShown(chromeVisible, isInPip, liftActive)
+            if (slideshowBarShown) {
+                // The slideshow's own controls, hung from the top edge on the gallery toolbar's
+                // coved bar. The chip row below is dropped by the bar's height so they stack.
+                SlideshowBar(
+                    playing = !slideshowPaused,
+                    hasPrevious = hasPrevious,
+                    onPrevious = { chromePulse++; onPrevious() },
+                    onPlayPause = { chromePulse++; onSetSlideshowPaused(!slideshowPaused) },
+                    onNext = { chromePulse++; onNext() },
+                    modifier = Modifier.align(Alignment.TopStart),
+                    topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
+                )
+            }
             if (chromeShown) {
                 ViewerPositionChip(
                     asset = asset,
@@ -876,7 +939,10 @@ fun ViewerScreen(
                         ViewerChromePolicy.transparencyControlShown(chromeShown, asset.isVideo, hasAlpha)
                     },
                     onCycleTransparency = { onSetTransparencyBackground(transparencyBackground.next()) },
-                    modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .statusBarsPadding()
+                        .padding(top = ViewerChromePolicy.chipRowDropDp(slideshowBarShown).dp),
                 )
             }
 

@@ -265,6 +265,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     var viewerAssets by viewModel::viewerAssets
     var selectedAssetId by viewModel::selectedAssetId
     var slideshowActive by viewModel::slideshowActive
+    var slideshowPaused by viewModel::slideshowPaused
     var pendingOperation by viewModel::pendingOperation
     var pendingOperationIds by viewModel::pendingOperationIds
     var pendingTreeOperation by viewModel::pendingTreeOperation
@@ -1551,6 +1552,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             slideshowActive = slideshowActive,
             slideshowIntervalSeconds = preferences.slideshowIntervalSeconds,
             onToggleSlideshow = { slideshowActive = !slideshowActive },
+            slideshowPaused = slideshowPaused,
+            onSetSlideshowPaused = { slideshowPaused = it },
             onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
             onToggleSensitive = { sensitiveStore.toggle(activeAsset.id) },
             onShare = { share(listOf(activeAsset)) },
@@ -1575,14 +1578,25 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 viewerAssets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id }
             },
             onNext = {
+                // A swipe, the bar's Next: the next photo, in order. The sequence wraps while a
+                // slideshow is up (running or paused), and ends otherwise.
                 val nextIndex = when {
-                    // Shuffle only applies to a running slideshow: a manual swipe means "the
-                    // next photo", and answering it with a random one would be a bug, not a
-                    // setting.
-                    slideshowActive && preferences.slideshowShuffle && viewerAssets.size > 1 ->
-                        randomOtherIndex(viewerAssets.size, selectedIndex)
                     selectedIndex < viewerAssets.lastIndex -> selectedIndex + 1
                     slideshowActive && viewerAssets.size > 1 -> 0
+                    else -> -1
+                }
+                viewerAssets.getOrNull(nextIndex)?.let { selectedAssetId = it.id }
+            },
+            // The slideshow's own countdown. Shuffle belongs here and only here: it used to live
+            // in onNext, so a swipe during a shuffled slideshow answered with a random photo,
+            // which the comment on it said was a bug, not a setting. The screen never calls this
+            // while the slideshow is paused or not running.
+            onSlideshowAdvance = {
+                val nextIndex = when {
+                    preferences.slideshowShuffle && viewerAssets.size > 1 ->
+                        randomOtherIndex(viewerAssets.size, selectedIndex)
+                    selectedIndex < viewerAssets.lastIndex -> selectedIndex + 1
+                    viewerAssets.size > 1 -> 0
                     else -> -1
                 }
                 viewerAssets.getOrNull(nextIndex)?.let { selectedAssetId = it.id }

@@ -17,9 +17,9 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.OpenInNew
-import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Visibility
@@ -153,8 +153,9 @@ fun ViewerActionsRoom(
         horizontalAlignment = Alignment.Start,
     ) {
         ActionRow(
-            icon = if (slideshowActive) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-            label = if (slideshowActive) "Pause slideshow" else "Slideshow",
+            // "Stop", not "Pause": the row ends the slideshow. Pausing and resuming is the bar's.
+            icon = if (slideshowActive) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+            label = if (slideshowActive) "Stop slideshow" else "Slideshow",
             onClick = onToggleSlideshow,
         )
         ActionRow(Icons.Outlined.Share, "Share", onShare)
