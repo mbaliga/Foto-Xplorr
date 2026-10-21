@@ -79,32 +79,42 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
     val editingAssetId: MediaId? get() = editingAssetIdState
 
     /**
-     * Opens the editor on [asset], or closes it for null. The failed-overwrite state belongs to
-     * the one photo whose replace failed, so it is cleared whenever the editor closes or opens on
-     * a different photo: left behind, the next editor would show the old banner, and "Save a
-     * copy" would write the old photo's bitmap.
+     * Opens the editor on [asset], or closes it for null; true when it did. The failed-overwrite
+     * state belongs to the one photo whose replace failed, so it is cleared whenever the editor
+     * closes or opens on a different photo: left behind, the next editor would show the old
+     * banner, and "Save a copy" would write the old photo's bitmap.
+     *
+     * While [editorCloseBlocked] a change to a different photo (or to none) is refused and returns
+     * false with nothing changed: a replace is in flight, or it failed and the held bitmap is the
+     * only good version of the photo. Every path that opens an editor on someone else's say-so (an
+     * EDIT or SEND intent) reaches this, so none is a side door around the block. The paths that
+     * end the replace themselves ([finishOverwriteSucceeded], [finishCopyOfDeclinedOverwrite]) clear
+     * the state first, which unblocks them.
      */
-    fun setEditingAsset(asset: MediaAsset?) {
-        if (asset == null || asset.id != editingAssetState?.id) clearOverwriteFailure()
+    fun setEditingAsset(asset: MediaAsset?): Boolean {
+        val sameAsset = asset != null && asset.id == editingAssetState?.id
+        if (!sameAsset && editorCloseBlocked) return false
+        if (!sameAsset) clearOverwriteFailure()
         editingAssetState = asset
         editingAssetIdState = asset?.id
         writeId(KEY_EDITING_ASSET_ID, asset?.id)
+        return true
     }
 
     /**
-     * True while the editor must not be dismissed: the replace failed after the original was
-     * opened and it could not be put back, so the edited bitmap held here is the only good
-     * version. Back and close then change nothing and the banner (which offers only "Save a
-     * copy") stays up.
+     * True while the editor must not be dismissed or pointed at another photo:
+     *  - a replace of the original is in flight ([overwriteInFlight]): the write is running or its
+     *    consent sheet is up, and closing now would drop the bitmap while the file is half written;
+     *  - a copy of the edit is being saved ([overwriteCopySaving]);
+     *  - the replace failed after the original was opened and it could not be put back, so the
+     *    edited bitmap held here is the only good version. Back and close then change nothing and
+     *    the banner (which offers only "Save a copy") stays up.
      */
-    val editorCloseBlocked: Boolean get() = overwriteDeclined && overwriteOriginalAtRisk
+    val editorCloseBlocked: Boolean
+        get() = overwriteInFlight || overwriteCopySaving || (overwriteDeclined && overwriteOriginalAtRisk)
 
     /** Closes the editor unless [editorCloseBlocked]; true when it closed. */
-    fun closeEditor(): Boolean {
-        if (editorCloseBlocked) return false
-        setEditingAsset(null)
-        return true
-    }
+    fun closeEditor(): Boolean = setEditingAsset(null)
 
     /** Forgets a failed overwrite and the photo and bitmap it was holding for "Save a copy". */
     fun clearOverwriteFailure() {
@@ -117,18 +127,18 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
 
     /**
      * Non-null exactly while a consent sheet for replacing [pendingOverwriteAsset]'s own file is
-     * outstanding, or was just declined — see [overwriteDeclined]. Kept separate from
-     * [editingAsset] being non-null: the editor stays open across the whole consent round trip
-     * (that is the fix — see docs on `requestOverwrite`), while this pair describes only the
-     * write attempt itself.
+     * outstanding, the write is running, or the replace was just declined or failed — see
+     * [overwriteDeclined]. Kept separate from [editingAsset] being non-null: the editor stays open
+     * across the whole consent round trip (that is the fix — see docs on `requestOverwrite`),
+     * while this pair describes only the write attempt itself.
      */
     var pendingOverwriteAsset: MediaAsset? by mutableStateOf(null)
     var pendingOverwriteBitmap: Bitmap? by mutableStateOf(null)
 
     /**
      * True after the user has said no to Android's own "allow Foto Xplorr to modify this file?"
-     * sheet, so the editor can offer "Save a copy instead" using the very bitmap it already
-     * rendered — [pendingOverwriteBitmap] — rather than losing the edit outright.
+     * sheet, or the replace failed, so the editor can offer "Save a copy instead" using the very
+     * bitmap it already rendered — [pendingOverwriteBitmap] — rather than losing the edit outright.
      */
     var overwriteDeclined: Boolean by mutableStateOf(false)
 
@@ -139,11 +149,98 @@ class AppStateViewModel(private val savedStateHandle: SavedStateHandle) : ViewMo
     var overwriteFailureMessage: String? by mutableStateOf(null)
 
     /**
-     * True when the failed write may have left the original damaged (it was opened, the write
+     * True when a failed write may have left the original damaged (it was opened, the write
      * failed, and putting the old bytes back failed too). The editor then keeps the edited bitmap
      * and offers only "Save a copy": a discard would throw away the only good version.
+     *
+     * Sticky: once set it stays set through a further attempt that fails safely or is declined, and
+     * only a replace that succeeds, a copy that was saved, or an explicit [clearOverwriteFailure]
+     * clears it. Otherwise a second try that Android refused would re-enable Discard and Back while
+     * the original is still damaged.
      */
     var overwriteOriginalAtRisk: Boolean by mutableStateOf(false)
+
+    /** True while "Save a copy" of a failed replace is running, so a second tap does nothing. */
+    var overwriteCopySaving: Boolean by mutableStateOf(false)
+        private set
+
+    /** True from the moment a replace is requested until its outcome is recorded. */
+    val overwriteInFlight: Boolean get() = pendingOverwriteAsset != null && !overwriteDeclined
+
+    /**
+     * Whether an outcome for the replace now being waited on still belongs to the open editor: a
+     * replace was requested for the photo the editor is open on. An outcome that arrives when it
+     * does not (the editor closed or moved on, which [editorCloseBlocked] prevents, or the state
+     * was cleared) must change nothing, least of all show one photo's banner over another's editor.
+     */
+    fun overwriteOutcomeApplies(): Boolean {
+        val pending = pendingOverwriteAsset ?: return false
+        return pending.id == editingAssetState?.id
+    }
+
+    /**
+     * Records that a replace of [asset] with [bitmap] is starting; false (and nothing changed) when
+     * one is already in flight or a copy is being saved, or when [asset] is not the photo the editor
+     * is open on. The at-risk flag is deliberately NOT reset: a retry does not make a damaged
+     * original safe until it succeeds.
+     */
+    fun beginOverwrite(asset: MediaAsset, bitmap: Bitmap): Boolean {
+        if (overwriteInFlight || overwriteCopySaving) return false
+        if (asset.id != editingAssetState?.id) return false
+        pendingOverwriteAsset = asset
+        pendingOverwriteBitmap = bitmap
+        overwriteDeclined = false
+        overwriteFailureMessage = null
+        return true
+    }
+
+    /**
+     * The replace failed or was declined. Keeps the editor open on the banner. Ignored (false) when
+     * [overwriteOutcomeApplies] is false. [OverwriteFailure.originalAtRisk] is OR-ed into the flag
+     * rather than assigned: see [overwriteOriginalAtRisk].
+     */
+    fun recordOverwriteFailure(failure: OverwriteFailure): Boolean {
+        if (!overwriteOutcomeApplies()) return false
+        overwriteFailureMessage = failure.message
+        overwriteOriginalAtRisk = overwriteOriginalAtRisk || failure.originalAtRisk
+        overwriteDeclined = true
+        return true
+    }
+
+    /**
+     * The replace succeeded: forgets the failure state and closes the editor. Ignored (false) when
+     * [overwriteOutcomeApplies] is false.
+     */
+    fun finishOverwriteSucceeded(): Boolean {
+        if (!overwriteOutcomeApplies()) return false
+        clearOverwriteFailure()
+        return setEditingAsset(null)
+    }
+
+    /**
+     * "Save a copy" is starting; false when there is nothing held to save or a copy is already
+     * being saved (a double tap). While true Back and the banner's Discard are off.
+     */
+    fun beginCopyOfDeclinedOverwrite(): Boolean {
+        if (!overwriteDeclined || pendingOverwriteAsset == null || pendingOverwriteBitmap == null) return false
+        if (overwriteCopySaving) return false
+        overwriteCopySaving = true
+        return true
+    }
+
+    /**
+     * The copy finished. On success the failure state is forgotten (the edit is saved, and the
+     * original, however damaged, is no longer the only place it lives) and the editor closes. On
+     * failure everything stays as it was: the banner, the at-risk flag and the held bitmap, so the
+     * person can retry.
+     */
+    fun finishCopyOfDeclinedOverwrite(saved: Boolean) {
+        overwriteCopySaving = false
+        if (saved && overwriteOutcomeApplies()) {
+            clearOverwriteFailure()
+            setEditingAsset(null)
+        }
+    }
 
     // ---- video ----
 

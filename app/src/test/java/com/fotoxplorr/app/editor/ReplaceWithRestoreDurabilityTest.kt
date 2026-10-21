@@ -185,15 +185,53 @@ class ReplaceWithRestoreDurabilityTest {
     }
 
     @Test
-    fun `sweeping never deletes a kept recovery file or an unrelated one however old`() {
+    fun `sweeping keeps a recovery file for a month and never deletes an unrelated one`() {
         val now = 1_000_000_000_000L
-        val kept = orphan("IMG_0001.jpg.1700000000000.bak", ageMillis = 400 * DAY, now = now)
+        val recent = orphan("IMG_0001.jpg.1700000000000.bak", ageMillis = 20 * DAY, now = now)
         val other = orphan("notes.txt", ageMillis = 400 * DAY, now = now)
 
         val remaining = sweepOrphanBackups(persistentDir, now, maxAgeMillis = 7 * DAY)
 
-        assertTrue(kept.exists() && other.exists())
-        assertEquals(setOf(kept, other), remaining.toSet())
+        assertTrue(recent.exists() && other.exists())
+        assertEquals(setOf(recent, other), remaining.toSet())
+    }
+
+    @Test
+    fun `sweeping deletes a recovery file once it is older than its own longer limit`() {
+        val now = 1_000_000_000_000L
+        val old = orphan("IMG_0002.jpg.1600000000000.bak", ageMillis = 31 * DAY, now = now)
+
+        val remaining = sweepOrphanBackups(persistentDir, now, maxAgeMillis = 7 * DAY)
+
+        assertFalse(old.exists())
+        assertTrue(remaining.isEmpty())
+    }
+
+    @Test
+    fun `a restore that read back at the right size leaves no safety copy even if the flush was unconfirmed`() {
+        // The write fails verification; the put-back goes through a stream that cannot be flushed
+        // to storage, yet reads back at the original's size: the original is back, so the copy goes.
+        var writes = 0
+        val original = object : OriginalFile {
+            override fun openForRead(): InputStream? = originalFile.inputStream()
+            override fun openForTruncatingWrite(): OutputStream? {
+                val real = originalFile.outputStream()
+                // The first open is the replace itself; only the restore's is made undurable.
+                if (writes++ == 0) return real
+                return object : OutputStream() {
+                    override fun write(b: Int) = real.write(b)
+                    override fun write(b: ByteArray, off: Int, len: Int) = real.write(b, off, len)
+                    override fun close() = real.close()
+                }
+            }
+            override fun currentSizeBytes(): Long = originalBytes.size.toLong()
+        }
+
+        val failure = runCatching { run(original) { error("does not read back") } }.exceptionOrNull() as OverwriteException.FailedAfterWrite
+
+        assertTrue(failure.restored)
+        assertArrayEquals(originalBytes, originalFile.readBytes())
+        assertTrue("no backup is left to announce an unfinished save", backups().isEmpty())
     }
 
     @Test

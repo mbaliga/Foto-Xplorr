@@ -76,19 +76,24 @@ enum class UncarriedMetadata(val label: String) {
     /** Extended XMP: the overflow packet for XMP larger than one JPEG segment. */
     EXTENDED_XMP("extended XMP"),
 
-    /** PNG `tEXt` / `zTXt` / `iTXt` text other than the XMP packet: where image generators keep
-     *  the prompt and settings, and where cameras and editors keep comments. */
+    /** PNG `tEXt` / `zTXt` / `iTXt` text other than the XMP packet and the boilerplate keywords
+     *  [isIgnorablePngTextKeyword] names: where image generators keep the prompt and settings, and
+     *  where cameras and editors keep comments. */
     PNG_TEXT("PNG text such as a generation prompt"),
-
-    /** A PNG `iCCP` chunk: the embedded colour profile. */
-    COLOR_PROFILE("embedded colour profile"),
 
     /** A WebP chunk that is neither image data, EXIF, XMP nor a colour profile. */
     WEBP_CHUNK("other WebP metadata"),
 }
 
-/** How much of a file's start [uncarriedMetadataIn] looks at: a JPEG keeps all of this before the scan,
- *  and a PNG or WebP keeps its metadata chunks ahead of the image data in the files this app writes. */
+/**
+ * How much of a file's start [uncarriedMetadataIn] looks at: a JPEG keeps all of this before the scan,
+ * and a PNG or WebP keeps its metadata chunks ahead of the image data in the files this app writes.
+ *
+ * It is a window, not a whole-file scan, so it fails open past its end: a PNG that puts a text
+ * chunk after more than this much image data, or a WebP whose extra chunk follows a large bitstream,
+ * is not seen. Image generators and editors write their text ahead of `IDAT`, which is why this is
+ * accepted rather than reading a whole file that can be tens of megabytes.
+ */
 internal const val UNCARRIED_SCAN_BYTES = 256 * 1024
 
 /**
@@ -98,12 +103,17 @@ internal const val UNCARRIED_SCAN_BYTES = 256 * 1024
  *  - JPEG: an IPTC-IIM block and extended XMP, found by walking the marker segments up to the
  *    start of the image data, so a coincidental string inside pixel data or a thumbnail is not a
  *    match.
- *  - PNG: text chunks other than the XMP packet, and a colour profile, found by walking the chunk
- *    list (image data is skipped by its length, not read).
+ *  - PNG: text chunks other than the XMP packet and the boilerplate keywords
+ *    [isIgnorablePngTextKeyword] names, found by walking the chunk list (image data is skipped by
+ *    its length, not read). A colour profile (`iCCP`) is deliberately not a loss here: the editor
+ *    decodes into a colour space and the PNG encoder writes that space back, so an ordinary sRGB
+ *    or Display P3 screenshot keeps its colours; like JPEG and WebP profiles, it is not gated.
  *  - WebP: any chunk other than image data, EXIF, XMP and a colour profile.
  *
  * Anything else answers empty; a segment or chunk cut off by the end of [head] is not seen, though
- * a chunk whose header is there is reported even when its body is cut off.
+ * a chunk whose header is there is reported even when its body is cut off. [head] is at most
+ * [UNCARRIED_SCAN_BYTES] long in practice, so metadata that sits beyond that window is not seen
+ * either (see that constant).
  *
  * Not covered, on purpose: `MakerNote` and the embedded thumbnail, which [EXCLUDED_TAGS] drops for
  * a stated reason and which nearly every camera file has, so refusing on them would refuse nearly
@@ -134,21 +144,59 @@ private fun uncarriedPngMetadata(head: ByteArray): Set<UncarriedMetadata> {
             ((head[at + 2].toLong() and 0xFF) shl 8) or (head[at + 3].toLong() and 0xFF)
         when (val type = fourCc(head, at + 4)) {
             "IEND" -> break
-            "tEXt", "zTXt" -> found += UncarriedMetadata.PNG_TEXT
+            "tEXt", "zTXt" -> {
+                val start = at + 8
+                val end = minOf(pos + 8 + length, head.size.toLong()).toInt()
+                // A keyword that is cut off cannot be told from a prompt, so it counts.
+                if (!isIgnorablePngTextKeyword(pngTextKeyword(head, start, end))) found += UncarriedMetadata.PNG_TEXT
+            }
             "iTXt" -> {
                 val start = at + 8
                 val end = minOf(pos + 8 + length, head.size.toLong()).toInt()
                 // The one iTXt ExifInterface carries is the XMP packet; one whose keyword is cut
                 // off cannot be told from a prompt, so it counts.
-                if (!startsWith(head, start, end, XMP_ITXT_KEYWORD)) found += UncarriedMetadata.PNG_TEXT
+                if (!startsWith(head, start, end, XMP_ITXT_KEYWORD) &&
+                    !isIgnorablePngTextKeyword(pngTextKeyword(head, start, end))
+                ) {
+                    found += UncarriedMetadata.PNG_TEXT
+                }
             }
-            "iCCP" -> found += UncarriedMetadata.COLOR_PROFILE
             else -> Unit
         }
         // Length, type, data, CRC.
         pos += 12 + length
     }
     return found
+}
+
+/** The keyword of the text chunk whose data is `[from, end)` (Latin-1 up to the first NUL), or null
+ *  when no NUL falls inside the window and the keyword may be longer than what is visible. A
+ *  keyword is at most 79 bytes, so a window that long without a NUL is not a keyword either. */
+private fun pngTextKeyword(head: ByteArray, from: Int, end: Int): String? {
+    val limit = minOf(end, from + PNG_MAX_KEYWORD_BYTES + 1)
+    for (i in from until limit) {
+        if (head[i] == 0.toByte()) return String(head, from, i - from, Charsets.ISO_8859_1)
+    }
+    return null
+}
+
+private const val PNG_MAX_KEYWORD_BYTES = 79
+
+/**
+ * Whether a PNG text chunk with this [keyword] holds nothing a person would miss: the tool and
+ * time stamps that ImageMagick, GIMP, screenshot tools and the OS write into ordinary files
+ * (`Software`, `Creation Time`, `date:create` / `date:modify` / `date:timestamp`) and the
+ * freedesktop thumbnail bookkeeping (`Thumb::*`). Anything else counts as content, including a
+ * keyword this has never heard of and one that is cut off ([keyword] null): a prompt
+ * (`parameters`, `prompt`, `workflow`), a `Comment` or `Description`, an `Author` or `Copyright`,
+ * and ImageMagick's `Raw profile type exif|iptc|xmp` dumps.
+ */
+internal fun isIgnorablePngTextKeyword(keyword: String?): Boolean {
+    if (keyword == null) return false
+    return keyword.equals("Software", ignoreCase = true) ||
+        keyword.equals("Creation Time", ignoreCase = true) ||
+        keyword.startsWith("date:", ignoreCase = true) ||
+        keyword.startsWith("Thumb::")
 }
 
 private val WEBP_CARRIED_CHUNKS = setOf("VP8 ", "VP8L", "VP8X", "ALPH", "EXIF", "XMP ", "ICCP")

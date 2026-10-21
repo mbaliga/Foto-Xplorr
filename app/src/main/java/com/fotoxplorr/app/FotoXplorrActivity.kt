@@ -60,7 +60,6 @@ import com.fotoxplorr.app.curate.AutoCurationPass
 import com.fotoxplorr.app.editor.EditedCopyWriter
 import com.fotoxplorr.app.editor.EditorScreen
 import com.fotoxplorr.app.editor.OverwriteRecovery
-import com.fotoxplorr.app.editor.orphanedBackupNotice
 import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.gallery.GalleryActions
@@ -188,6 +187,9 @@ class FotoXplorrActivity : ComponentActivity() {
  */
 private const val NO_MEDIA_ID = -1L
 
+/** Shown when another app asks to edit a photo while a replace is in flight or its failure is being held. */
+private const val FINISH_EDIT_FIRST_MESSAGE = "Finish saving your edit first"
+
 @Composable
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 private fun FotoXplorrActivity.FotoXplorrApp(
@@ -278,11 +280,13 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     var overwriteFailureMessage by viewModel::overwriteFailureMessage
     var overwriteOriginalAtRisk by viewModel::overwriteOriginalAtRisk
     // The one place a failed overwrite is recorded, so the banner's wording and its "original may
-    // be damaged" state are always set together with the flag that shows it.
+    // be damaged" state are always set together with the flag that shows it. Ignored when the
+    // replace it reports no longer belongs to the open editor (see overwriteOutcomeApplies); a
+    // failure that left the original damaged is then still said out loud, as it has no banner.
     fun declineOverwrite(failure: OverwriteFailure) {
-        overwriteFailureMessage = failure.message
-        overwriteOriginalAtRisk = failure.originalAtRisk
-        overwriteDeclined = true
+        if (!viewModel.recordOverwriteFailure(failure) && failure.originalAtRisk) {
+            viewModel.userMessage = failure.message
+        }
     }
 
     // P0-09 item 6 (process death): the ViewModel above keeps `viewerAssets` across an Activity
@@ -310,14 +314,18 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
     }
 
-    // Once per process, off the main thread: ages out the editor's leftover in-flight safety copies
-    // and, if a copy of a photo that was not put back still remains, says so. Nothing else ever
-    // called OverwriteRecovery.sweepOrphans, so a copy left by a crash lived forever.
+    // Once per process, off the main thread: ages out the editor's leftover safety copies and, if
+    // a copy of a photo that was not put back still remains, says so in a dialog that waits for an
+    // answer (a three-second notice is too easy to miss for a warning that a photo may be damaged).
+    // Said once per set of copies, not on every start: see OverwriteRecovery.noticeToShow.
+    var recoveryDialogMessage by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         if (viewModel.recoverySweepDone) return@LaunchedEffect
         viewModel.recoverySweepDone = true
-        val remaining = withContext(Dispatchers.IO) { OverwriteRecovery.sweepOrphans(applicationContext) }
-        orphanedBackupNotice(remaining)?.let { transientNotice = TransientNotice(it) }
+        recoveryDialogMessage = withContext(Dispatchers.IO) {
+            val remaining = OverwriteRecovery.sweepOrphans(applicationContext)
+            OverwriteRecovery.noticeToShow(applicationContext, remaining)
+        }
     }
 
     // [assets] narrowed to what the person may see right now (not trashed, archived, in a locked
@@ -526,7 +534,11 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 selectedAssetId = loaded.first().id
                 slideshowActive = false
             },
-            onEditImage = { asset -> viewModel.setEditingAsset(asset) },
+            // Refused while a replace is in flight or its failure is being held: the edit on screen
+            // is not yet safe, and opening another photo would drop it.
+            onEditImage = { asset ->
+                if (!viewModel.setEditingAsset(asset)) transientNotice = TransientNotice(FINISH_EDIT_FIRST_MESSAGE)
+            },
             onHidden = { transientNotice = TransientNotice(OPEN_REQUEST_HIDDEN_MESSAGE) },
             onUnverified = { transientNotice = TransientNotice(OPEN_REQUEST_UNVERIFIED_MESSAGE) },
         )
@@ -820,12 +832,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     fun finishOverwrite(outcome: Result<Unit>) {
         outcome.fold(
             onSuccess = {
-                pendingOverwriteAsset = null
-                pendingOverwriteBitmap = null
-                overwriteDeclined = false
-                overwriteFailureMessage = null
-                overwriteOriginalAtRisk = false
-                viewModel.setEditingAsset(null)
+                // The file changed whether or not the editor is still the one that asked, so the
+                // notice and the rescan do not depend on the state transition applying.
+                viewModel.finishOverwriteSucceeded()
                 transientNotice = TransientNotice("Replaced the original.")
                 // The bytes at this Uri changed size and content; the library's cached
                 // size/date-modified (and any thumbnail) are stale until MediaStore looks again.
@@ -843,7 +852,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     ) { result ->
         val asset = pendingOverwriteAsset
         val bitmap = pendingOverwriteBitmap
-        if (result.resultCode == Activity.RESULT_OK && asset != null && bitmap != null) {
+        if (!viewModel.overwriteOutcomeApplies()) {
+            // A result for a replace nobody is waiting on any more: nothing to write or to show.
+        } else if (result.resultCode == Activity.RESULT_OK && asset != null && bitmap != null) {
             scope.launch { finishOverwrite(editedCopyWriter.overwrite(asset, bitmap)) }
         } else {
             // Declined, not merely cancelled -- see finishOverwrite's own doc for why this is
@@ -858,11 +869,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // this function's only job is the consent dance and the actual write, the same division of
     // labour requestMetadataWrite already has with MetadataWriter.
     fun requestOverwrite(asset: MediaAsset, bitmap: Bitmap) {
-        pendingOverwriteAsset = asset
-        pendingOverwriteBitmap = bitmap
-        overwriteDeclined = false
-        overwriteFailureMessage = null
-        overwriteOriginalAtRisk = false
+        // A second request while one is in flight (or for another photo) is dropped; the editor
+        // disables Save and Cancel for the duration, so this is the belt to that brace.
+        if (!viewModel.beginOverwrite(asset, bitmap)) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             runCatching {
                 MediaStore.createWriteRequest(contentResolver, listOf(asset.contentUri))
@@ -921,16 +930,16 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     fun saveDeclinedOverwriteAsCopy() {
         val asset = pendingOverwriteAsset ?: return
         val bitmap = pendingOverwriteBitmap ?: return
+        // A second tap while the first copy is being written would save the same edit twice.
+        if (!viewModel.beginCopyOfDeclinedOverwrite()) return
         scope.launch {
             val outcome = editedCopyWriter.save(asset, bitmap)
-            pendingOverwriteAsset = null
-            pendingOverwriteBitmap = null
-            overwriteDeclined = false
-            overwriteFailureMessage = null
-            overwriteOriginalAtRisk = false
+            // The failure state is forgotten only once a copy exists: if the copy failed too (the
+            // same full storage, say) the banner, the at-risk flag and the held bitmap are all
+            // still here, and the person can try again.
+            viewModel.finishCopyOfDeclinedOverwrite(saved = outcome.isSuccess)
             outcome.fold(
                 onSuccess = { uri ->
-                    viewModel.setEditingAsset(null)
                     transientNotice = TransientNotice("Saved a copy.") { openViewerForSavedUri(uri) }
                     runtime.requestScan(false)
                 },
@@ -1283,6 +1292,29 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         )
     }
 
+    recoveryDialogMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { recoveryDialogMessage = null },
+            title = { Text("A save did not finish") },
+            text = {
+                Text(
+                    message + "\n\nFotoz kept a private copy of each original from before the save. The app cannot " +
+                        "open it for you, and it is deleted on its own after a while. Delete the copies now if " +
+                        "the photos look fine; that cannot be undone.",
+                )
+            },
+            confirmButton = { TextButton(onClick = { recoveryDialogMessage = null }) { Text("OK") } },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        recoveryDialogMessage = null
+                        scope.launch(Dispatchers.IO) { OverwriteRecovery.deleteSafetyCopies(applicationContext) }
+                    },
+                ) { Text("Delete copies") }
+            },
+        )
+    }
+
     transientNotice?.let { notice ->
         TransientNoticeBar(
             notice = notice,
@@ -1349,6 +1381,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 asset = editing,
                 saveMode = preferences.editorSaveMode,
                 onSetSaveMode = galleryPreferences::setEditorSaveMode,
+                // Cancel and Save are off while a replace is in flight or the original is at risk.
+                locked = viewModel.editorCloseBlocked,
                 onClose = { viewModel.closeEditor() },
                 onSaved = { message ->
                     viewModel.setEditingAsset(null)
@@ -1367,14 +1401,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 OverwriteDeclinedBanner(
                     message = overwriteFailureMessage ?: OVERWRITE_NOT_ALLOWED_MESSAGE,
                     originalAtRisk = overwriteOriginalAtRisk,
+                    copySaving = viewModel.overwriteCopySaving,
                     onSaveCopy = ::saveDeclinedOverwriteAsCopy,
-                    onDismiss = {
-                        overwriteDeclined = false
-                        overwriteFailureMessage = null
-                        overwriteOriginalAtRisk = false
-                        pendingOverwriteAsset = null
-                        pendingOverwriteBitmap = null
-                    },
+                    onDismiss = { viewModel.clearOverwriteFailure() },
                 )
             }
         }
@@ -1899,11 +1928,13 @@ private fun TransientNoticeBar(notice: TransientNotice, onDismiss: () -> Unit) {
  *
  * [message] says why, as it is (see `overwriteFailureOf`). When [originalAtRisk] the original may
  * be damaged and the edit is the only good version, so Discard is off and the copy is the way out.
+ * While [copySaving] both buttons are off, so a double tap cannot save the copy twice.
  */
 @Composable
 private fun OverwriteDeclinedBanner(
     message: String,
     originalAtRisk: Boolean,
+    copySaving: Boolean,
     onSaveCopy: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1928,10 +1959,10 @@ private fun OverwriteDeclinedBanner(
                 modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
             )
             Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                TextButton(onClick = onDismiss, enabled = !originalAtRisk) {
-                    Text("Discard", color = Color.White.copy(alpha = if (originalAtRisk) 0.3f else 0.7f))
+                TextButton(onClick = onDismiss, enabled = !originalAtRisk && !copySaving) {
+                    Text("Discard", color = Color.White.copy(alpha = if (originalAtRisk || copySaving) 0.3f else 0.7f))
                 }
-                TextButton(onClick = onSaveCopy) { Text("Save a copy") }
+                TextButton(onClick = onSaveCopy, enabled = !copySaving) { Text(if (copySaving) "Saving…" else "Save a copy") }
             }
         }
     }

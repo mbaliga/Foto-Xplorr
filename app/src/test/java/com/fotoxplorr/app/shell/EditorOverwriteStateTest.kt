@@ -99,13 +99,27 @@ class EditorOverwriteStateTest {
         val vm = viewModel()
         val a = photo(1)
         vm.setEditingAsset(a)
-        vm.failOverwrite(a, atRisk = true)
+        vm.failOverwrite(a, atRisk = false)
 
-        vm.setEditingAsset(photo(2))
+        assertTrue(vm.setEditingAsset(photo(2)))
 
         assertEquals(photo(2).id, vm.editingAsset?.id)
         vm.assertFailureCleared()
         assertFalse(vm.editorCloseBlocked)
+    }
+
+    @Test
+    fun `another photo cannot replace an editor whose original is at risk`() {
+        val vm = viewModel()
+        val a = photo(1)
+        vm.setEditingAsset(a)
+        vm.failOverwrite(a, atRisk = true)
+
+        assertFalse(vm.setEditingAsset(photo(2)))
+
+        assertSame(a, vm.editingAsset)
+        assertTrue(vm.overwriteDeclined)
+        assertSame(a, vm.pendingOverwriteAsset)
     }
 
     @Test

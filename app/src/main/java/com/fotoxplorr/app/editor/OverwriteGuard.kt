@@ -5,6 +5,7 @@ import android.os.Build
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.openForLocationRead
 import com.fotoxplorr.app.media.uriForLocationRead
+import com.fotoxplorr.app.metadata.UncarriedMetadata
 import com.fotoxplorr.core.formats.AlphaSniffer
 import com.fotoxplorr.core.formats.AnimationSniffer
 import java.io.File
@@ -102,8 +103,27 @@ internal fun Set<OverwriteHazard>.describe(): String {
 internal fun Set<OverwriteHazard>.refusalMessage(): String =
     "Replacing the original would destroy this photo's ${describe()}. Save a copy to keep the original as it is."
 
-/** [OverwriteException.Refused] for a metadata copy that was not complete, or null when it was. */
-internal fun overwriteMetadataRefusal(copy: MetadataCopy): OverwriteException.Refused? = when (copy) {
+/** "IPTC captions and keywords and PNG text such as a generation prompt": [labels] as a sentence part. */
+internal fun Set<UncarriedMetadata>.describeUncarried(): String {
+    val labels = UncarriedMetadata.entries.filter { it in this }.map { it.label }
+    return when (labels.size) {
+        0 -> ""
+        1 -> labels[0]
+        else -> labels.dropLast(1).joinToString(", ") + " and " + labels.last()
+    }
+}
+
+/**
+ * [OverwriteException.Refused] for a metadata copy that was not complete, or null when it was.
+ *
+ * [uncarried] is what [com.fotoxplorr.app.metadata.uncarriedMetadataIn] found that the copy cannot
+ * carry; when it is non-empty a [MetadataCopy.PARTIAL] refusal names those categories instead of
+ * guessing at them.
+ */
+internal fun overwriteMetadataRefusal(
+    copy: MetadataCopy,
+    uncarried: Set<UncarriedMetadata> = emptySet(),
+): OverwriteException.Refused? = when (copy) {
     // HEIC is never overwritten, so SKIPPED_HEIC cannot reach here; it is not a loss either way.
     MetadataCopy.COPIED, MetadataCopy.SKIPPED_HEIC -> null
     MetadataCopy.REDACTED -> OverwriteException.Refused(
@@ -117,8 +137,13 @@ internal fun overwriteMetadataRefusal(copy: MetadataCopy): OverwriteException.Re
     )
     MetadataCopy.PARTIAL -> OverwriteException.Refused(
         OverwriteException.Refused.Reason.METADATA_WOULD_BE_LOST,
-        "Some of this photo's embedded details (an XMP packet, IPTC captions or extended XMP) cannot be " +
-            "carried over, so replacing it would lose them. Save a copy instead.",
+        if (uncarried.isEmpty()) {
+            "Some of this photo's embedded details (an XMP packet, IPTC captions or extended XMP) cannot be " +
+                "carried over, so replacing it would lose them. Save a copy instead."
+        } else {
+            "This photo's ${uncarried.describeUncarried()} cannot be carried over, " +
+                "so replacing it would lose it. Save a copy instead."
+        },
     )
 }
 
@@ -386,45 +411,83 @@ internal const val BACKUP_SLACK_BYTES = 1L * 1024 * 1024
  * Where the safety copies live: under the app's private `filesDir`, not the cache, because the
  * system clears the cache exactly when storage is tight and a copy of the user's only original
  * must outlive that. A copy lands here as `backup-*.bin` while a replace is in flight and is
- * deleted when the replace verifies; one that survives (the process died, or the put-back could
- * not be confirmed on storage) is the only intact copy of a truncated original, so it is kept for
- * [ORPHAN_MAX_AGE_MS] by [sweepOrphans] before it is let go. A `.bak` (the file could not be put
- * back) is never deleted by the sweep. Nothing in the app opens either kind: they exist so the
- * bytes are not destroyed, and [orphanedBackupNotice] is how the person is told one remains.
+ * deleted when the replace verifies, or when the original was put back and read back at its right
+ * size (whether or not the flush could be confirmed: a full-size copy is not worth keeping for
+ * that). One that survives (the process died mid-write) is the only intact copy of a truncated
+ * original, so it is kept for [ORPHAN_MAX_AGE_MS] by [sweepOrphans] before it is let go. A `.bak`
+ * (the file could not be put back) is kept for the longer [KEPT_MAX_AGE_MS] and then deleted too:
+ * each is a full-size private copy, so they cannot be kept for ever. Nothing in the app opens
+ * either kind: they exist so the bytes are not destroyed, [noticeToShow] is how the person is told
+ * one remains (once per set of files), and [deleteSafetyCopies] is how they let go of them sooner.
  */
 object OverwriteRecovery {
     private const val DIR_NAME = "overwrite-recovery"
+    private const val PREFS_NAME = "overwrite_recovery_notice"
+    private const val KEY_SEEN = "seen"
 
     /** How long an orphaned in-flight safety copy is kept before [sweepOrphans] deletes it. */
     const val ORPHAN_MAX_AGE_MS: Long = 7L * 24 * 60 * 60 * 1000
 
+    /** How long a `.bak` (an original that could not be put back) is kept before [sweepOrphans] deletes it. */
+    const val KEPT_MAX_AGE_MS: Long = 30L * 24 * 60 * 60 * 1000
+
     fun dir(context: Context): File = File(context.filesDir, DIR_NAME)
 
     /**
-     * Deletes the in-flight safety copies in [dir] that are older than [maxAgeMillis] and returns
-     * every file that remains there, so the caller can tell the user a copy of a photo is still
-     * kept. Call it once at app start, off the main thread. Cheap and bounded: one non-recursive
-     * listing, at most [MAX_SWEPT_FILES] entries acted on, nothing read, and it never throws. The
-     * `.bak` files a failed restore leaves are never deleted here: the user is told about them.
+     * Deletes the in-flight safety copies in [dir] that are older than [maxAgeMillis] and the
+     * `.bak` files older than [keptMaxAgeMillis], and returns every file that remains there, so
+     * the caller can tell the user a copy of a photo is still kept. Call it once at app start, off
+     * the main thread. Cheap and bounded: one non-recursive listing, at most [MAX_SWEPT_FILES]
+     * entries acted on, nothing read, and it never throws.
      */
     fun sweepOrphans(
         context: Context,
         nowMillis: Long = System.currentTimeMillis(),
         maxAgeMillis: Long = ORPHAN_MAX_AGE_MS,
-    ): List<File> = sweepOrphanBackups(dir(context), nowMillis, maxAgeMillis)
+        keptMaxAgeMillis: Long = KEPT_MAX_AGE_MS,
+    ): List<File> = sweepOrphanBackups(dir(context), nowMillis, maxAgeMillis, keptMaxAgeMillis)
+
+    /**
+     * The notice to show now for the safety copies in [remaining], or null when there is none or
+     * the person has already been told about every one of them. What was shown is remembered in
+     * the app's private preferences, so a copy that stays for weeks is announced once, not on
+     * every start; a copy that appears later is announced again. Off the main thread, like
+     * [sweepOrphans].
+     */
+    fun noticeToShow(context: Context, remaining: List<File>): String? = try {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val seen = prefs.getStringSet(KEY_SEEN, emptySet()).orEmpty()
+        val copies = remaining.filter(::isSafetyCopy)
+        prefs.edit().putStringSet(KEY_SEEN, copies.mapTo(mutableSetOf()) { it.name }).apply()
+        if (unseenSafetyCopies(copies, seen).isEmpty()) null else orphanedBackupNotice(copies)
+    } catch (e: Exception) {
+        null
+    }
+
+    /** Deletes every safety copy that is not plausibly part of a replace running right now; returns how many went. */
+    fun deleteSafetyCopies(context: Context, nowMillis: Long = System.currentTimeMillis()): Int =
+        deleteSafetyCopies(dir(context), nowMillis)
 }
 
 internal const val MAX_SWEPT_FILES = 500
 
+/** A file [replaceWithRestore] left behind that may be the only intact copy of an original. */
+internal fun isSafetyCopy(file: File): Boolean =
+    file.name.endsWith(".bak") || (file.name.startsWith("backup-") && file.name.endsWith(".bin"))
+
+/** The safety copies in [copies] whose names are not in [seenNames], i.e. not yet announced. */
+internal fun unseenSafetyCopies(copies: List<File>, seenNames: Set<String>): List<File> =
+    copies.filter { isSafetyCopy(it) && it.name !in seenNames }
+
 /**
- * What to tell the person at app start when [sweepOrphans] left safety copies behind, or null when
- * there are none. An earlier replace of a photo did not finish (the app was closed or killed
- * mid-write, or the original could not be put back), so one photo may be damaged. The copy cannot
- * be opened from the app, so the notice sends the person to the photos they edited recently
- * rather than promising a way to retrieve it.
+ * What to tell the person when [sweepOrphans] left safety copies behind, or null when there are
+ * none. An earlier replace of a photo did not finish (the app was closed or killed mid-write, or
+ * the original could not be put back), so one photo may be damaged. The copy cannot be opened from
+ * the app, so the notice sends the person to the photos they edited recently rather than promising
+ * a way to retrieve it. It is shown once per set of files: see [OverwriteRecovery.noticeToShow].
  */
 fun orphanedBackupNotice(remaining: List<File>): String? {
-    val count = remaining.count { it.name.endsWith(".bak") || (it.name.startsWith("backup-") && it.name.endsWith(".bin")) }
+    val count = remaining.count(::isSafetyCopy)
     return when (count) {
         0 -> null
         1 -> "An earlier save over a photo did not finish. Check the photos you edited last."
@@ -432,14 +495,41 @@ fun orphanedBackupNotice(remaining: List<File>): String? {
     }
 }
 
-internal fun sweepOrphanBackups(dir: File, nowMillis: Long, maxAgeMillis: Long): List<File> = try {
+/** How long a `backup-*.bin` is assumed to belong to a replace that may still be running. */
+internal const val IN_FLIGHT_GRACE_MS: Long = 60L * 60 * 1000
+
+/**
+ * Deletes the safety copies in [dir]: every `.bak`, and a `backup-*.bin` only once it is older than
+ * [IN_FLIGHT_GRACE_MS] (a younger one may be the copy a running replace is about to need). Returns
+ * how many were deleted; never throws.
+ */
+internal fun deleteSafetyCopies(dir: File, nowMillis: Long): Int = try {
+    var deleted = 0
+    dir.listFiles().orEmpty().forEachIndexed { index, file ->
+        if (index >= MAX_SWEPT_FILES || !file.isFile || !isSafetyCopy(file)) return@forEachIndexed
+        val inFlight = file.name.endsWith(".bin") && nowMillis - file.lastModified() <= IN_FLIGHT_GRACE_MS
+        if (!inFlight && file.delete()) deleted++
+    }
+    deleted
+} catch (e: Exception) {
+    0
+}
+
+internal fun sweepOrphanBackups(
+    dir: File,
+    nowMillis: Long,
+    maxAgeMillis: Long,
+    keptMaxAgeMillis: Long = OverwriteRecovery.KEPT_MAX_AGE_MS,
+): List<File> = try {
     val remaining = mutableListOf<File>()
     dir.listFiles().orEmpty().forEachIndexed { index, file ->
         // Past the bound a file is left alone (and reported as remaining) for a later start.
-        val orphan = index < MAX_SWEPT_FILES && file.isFile &&
-            file.name.startsWith("backup-") && file.name.endsWith(".bin")
-        val old = nowMillis - file.lastModified() > maxAgeMillis
-        if (!(orphan && old && file.delete())) remaining += file
+        val inFlightCopy = file.name.startsWith("backup-") && file.name.endsWith(".bin")
+        val keptCopy = file.name.endsWith(".bak")
+        val limit = if (inFlightCopy) maxAgeMillis else keptMaxAgeMillis
+        val expired = index < MAX_SWEPT_FILES && file.isFile && (inFlightCopy || keptCopy) &&
+            nowMillis - file.lastModified() > limit
+        if (!(expired && file.delete())) remaining += file
     }
     remaining
 } catch (e: Exception) {
@@ -464,6 +554,8 @@ internal fun sweepOrphanBackups(dir: File, nowMillis: Long, maxAgeMillis: Long):
  *  4. On any failure in 2 or 3, write the backup back, and throw [OverwriteException.FailedAfterWrite]
  *     saying whether that worked. If it did not, the backup is moved to [recoveryDir] and kept.
  *  5. Once 3 passed, delete the backup, whether or not the flush to storage could be confirmed.
+ *     The same goes for a restore in 4 that read back at the right size: the original is back, so
+ *     the backup is surplus even when its flush could not be confirmed.
  *
  * This is best effort, not atomic: a crash between the truncate and the restore still leaves the
  * damaged file, with the backup left in [backupDir] for [OverwriteRecovery.sweepOrphans] to age out.
@@ -537,7 +629,10 @@ internal fun replaceWithRestore(
     } catch (t: Throwable) {
         val restore = restoreFrom(backup, original)
         val kept = if (restore.written) null else keepForRecovery(backup, recoveryDir, label)
-        if (restore.written && restore.durable) backup.delete()
+        // Put back and read back at the right size: the backup is surplus even if the flush could
+        // not be confirmed. Keeping it would announce an unfinished save, for a week, of a photo
+        // this very failure reports as restored.
+        if (restore.written) backup.delete()
         throw OverwriteException.FailedAfterWrite(
             restored = restore.written,
             recoveryFile = kept,

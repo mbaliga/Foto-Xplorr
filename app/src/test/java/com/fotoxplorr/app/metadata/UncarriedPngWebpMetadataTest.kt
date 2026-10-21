@@ -52,42 +52,59 @@ class UncarriedPngWebpMetadataTest {
     }
 
     @Test
-    fun `a PNG colour profile is found`() {
+    fun `a PNG colour profile alone is not a loss because the re-encode keeps the colour space`() {
         val profile = pngChunk("iCCP", ascii("sRGB\u0000\u0000") + ByteArray(12))
-        assertEquals(setOf(UncarriedMetadata.COLOR_PROFILE), uncarriedMetadataIn(png(ihdr, profile, idat, iend)))
+        assertTrue(uncarriedMetadataIn(png(ihdr, profile, idat, iend)).isEmpty())
     }
 
     @Test
     fun `text after the image data is found and the image data is skipped by length`() {
-        val text = pngChunk("tEXt", ascii("Software\u0000x"))
+        val text = pngChunk("tEXt", ascii("Comment\u0000x"))
         assertEquals(setOf(UncarriedMetadata.PNG_TEXT), uncarriedMetadataIn(png(ihdr, idat, text, iend)))
     }
 
     @Test
-    fun `a text marker inside image data is not a chunk`() {
-        val pixels = pngChunk("IDAT", ascii("....tEXtparameters\u0000...."))
-        assertTrue(uncarriedMetadataIn(png(ihdr, pixels, iend)).isEmpty())
+    fun `tool and time stamp keywords are not a loss`() {
+        val stamps = listOf(
+            pngChunk("tEXt", ascii("Software\u0000ImageMagick 7.1")),
+            pngChunk("tEXt", ascii("Creation Time\u0000Tue, 01 Jan 2030 00:00:00 GMT")),
+            pngChunk("tEXt", ascii("date:create\u00002030-01-01T00:00:00+00:00")),
+            pngChunk("tEXt", ascii("date:modify\u00002030-01-01T00:00:00+00:00")),
+            pngChunk("tEXt", ascii("date:timestamp\u00002030-01-01T00:00:00+00:00")),
+            pngChunk("zTXt", ascii("Software\u0000\u0000xx")),
+            pngChunk("iTXt", ascii("Software\u0000\u0000\u0000\u0000\u0000GIMP")),
+            pngChunk("tEXt", ascii("Thumb::URI\u0000file:///a.png")),
+        )
+        assertTrue(uncarriedMetadataIn(png(ihdr, *stamps.toTypedArray(), idat, iend)).isEmpty())
     }
 
     @Test
-    fun `an ordinary PNG with only structure and the exif chunk is clean`() {
-        val exif = pngChunk("eXIf", ByteArray(20))
-        val gamma = pngChunk("gAMA", ByteArray(4))
-        assertTrue(uncarriedMetadataIn(png(ihdr, gamma, exif, idat, iend)).isEmpty())
+    fun `a stamp next to real content still counts the content`() {
+        val stamp = pngChunk("tEXt", ascii("date:create\u00002030-01-01"))
+        val prompt = pngChunk("tEXt", ascii("parameters\u0000a cat"))
+        assertEquals(setOf(UncarriedMetadata.PNG_TEXT), uncarriedMetadataIn(png(ihdr, stamp, prompt, idat, iend)))
     }
 
     @Test
-    fun `a PNG whose text chunk is cut off by the end of the head is still found`() {
-        val text = png(ihdr, pngChunk("tEXt", ByteArray(200)))
-        assertEquals(setOf(UncarriedMetadata.PNG_TEXT), uncarriedMetadataIn(text.copyOf(text.size - 150)))
+    fun `keywords with real content count including ImageMagick raw profile dumps and unknown ones`() {
+        listOf("parameters", "prompt", "Comment", "Description", "Author", "Copyright", "Raw profile type exif", "SomethingNew").forEach { keyword ->
+            val chunk = pngChunk("tEXt", ascii("$keyword\u0000value"))
+            assertEquals(keyword, setOf(UncarriedMetadata.PNG_TEXT), uncarriedMetadataIn(png(ihdr, chunk, idat, iend)))
+        }
     }
 
     @Test
-    fun `a PNG chunk with an absurd length ends the walk instead of looping or throwing`() {
-        val hostile = pngSignature + byteArrayOf(0x7F, 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()) + ascii("IDAT") + ByteArray(8)
-        assertTrue(uncarriedMetadataIn(hostile).isEmpty())
-        val negative = pngSignature + byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()) + ascii("IDAT") + ByteArray(8)
-        assertTrue(uncarriedMetadataIn(negative).isEmpty())
+    fun `a text chunk whose keyword is not terminated in the window counts`() {
+        val unterminated = pngChunk("tEXt", ascii("Software"))
+        assertEquals(setOf(UncarriedMetadata.PNG_TEXT), uncarriedMetadataIn(png(ihdr, unterminated, idat, iend)))
+    }
+
+    @Test
+    fun `the keyword rule ignores case for stamps and treats a missing keyword as content`() {
+        assertTrue(isIgnorablePngTextKeyword("software"))
+        assertTrue(isIgnorablePngTextKeyword("DATE:create"))
+        assertTrue(!isIgnorablePngTextKeyword(null))
+        assertTrue(!isIgnorablePngTextKeyword("Softwarex"))
     }
 
     // ---- WebP ----

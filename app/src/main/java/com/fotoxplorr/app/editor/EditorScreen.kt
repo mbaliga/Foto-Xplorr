@@ -112,6 +112,13 @@ fun EditorScreen(
     onClose: () -> Unit,
     onSaved: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * True while the host cannot let this editor go: a replace of the original is in flight, or it
+     * failed and the edit held by the host is the only good version. Cancel and Save are then off
+     * (Save would re-render from a file that may be half written), and the host's Back does
+     * nothing either. The host clears it when the replace is over.
+     */
+    locked: Boolean = false,
     /** What Save does. ASK shows the choice; anything else acts and remembers. */
     saveMode: EditorSaveMode = EditorSaveMode.ASK,
     onSetSaveMode: (EditorSaveMode) -> Unit = {},
@@ -290,7 +297,7 @@ fun EditorScreen(
             Modifier.fillMaxWidth().padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            BarAction("Cancel", enabled = true, color = Color.White, onClick = onClose)
+            BarAction("Cancel", enabled = !locked, color = Color.White, onClick = onClose)
             BarAction(
                 "Undo",
                 enabled = history.canUndo,
@@ -315,7 +322,7 @@ fun EditorScreen(
             BarAction(
                 if (saving) "Saving…" else "Save",
                 // A no-op edit must not write a second copy of the photo.
-                enabled = !recipe.isIdentity && !saving && source != null,
+                enabled = !recipe.isIdentity && !saving && !locked && source != null,
                 color = MaterialTheme.colorScheme.primary,
                 bold = true,
                 onClick = { saveRequested = true },
