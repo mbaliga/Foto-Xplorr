@@ -874,3 +874,21 @@ setting changes; the gesture does not depend on that. While a selection runs a h
 under every setting except Nothing; in the Trash, Favourite, Share and Edit resolve to the preview
 (`effectiveFor`); no setting offers Trash. The retired `long_press_preview` key is read once as the
 default and never written, so a downgrade keeps the old choice.
+
+## 74. The info sections are read as one node per row, copied one row at a time, and counted from the browsable run only
+
+`InfoSections` (drawn inside `InformationBlock` once Show More is open) makes each row ONE accessibility
+node with `clearAndSetSemantics { contentDescription = "label, value" }`; the label and the value are
+not two stops, and tests find a row by that description (its two `Text`s exist only in the unmerged
+tree). The semantics modifier must sit BEFORE the row's vertical padding in the chain: after it, the
+node's bounds are the padded middle (36 dp) and a screen reader outlines less than the 48 dp the
+finger can hit. A long press copies `MetaRow.copyText` through `pointerInput` + `detectTapGestures`
+(not `combinedClickable`, which would add a click action that does nothing and be announced as one),
+and the same copy is offered as the node's `onLongClick` and as a `CustomAccessibilityAction`; a
+failed-read row offers neither. There is no "copy all details" and must not be one: a block of every
+row carries the coordinates out of the app in one gesture (#31). The video read is hoisted in
+`ViewerScreen` beside the EXIF read (`VideoDetails.PENDING` until it lands; a still passes null), and
+`MetadataSections.nearbyCount` runs over `relatedAssets` -- the run the grid or folder handed to the
+viewer, browsable by construction (#33) -- so "Nearby in time" counts photos in that run, not the whole
+library; never pass it `libraryAssets`, which is unfiltered. A new row label must not contain "Palette"
+(the palette tests assert the old row is gone by that text).

@@ -102,8 +102,10 @@ internal object MetadataSections {
         return browsable.count { other ->
             other.id != asset.id &&
                 other.dateTakenMillis > 0L &&
-                sameFolder(asset, other) &&
-                abs(other.dateTakenMillis - asset.dateTakenMillis) <= windowMillis
+                // The cheap test first: the folder identity is built per call, and nearly every
+                // photo in a big run is hours or years away.
+                abs(other.dateTakenMillis - asset.dateTakenMillis) <= windowMillis &&
+                sameFolder(asset, other)
         }
     }
 

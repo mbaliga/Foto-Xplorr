@@ -97,10 +97,10 @@ private val CARD_CHIP_TEXT = Color(0xFFCAC8CD)
 private val CARD_BODY_TEXT = Color(0xFF626165)
 private val CARD_STRIP_TEXT = Color(0xFF5B5A5E)
 private val CARD_GLYPH = Color(0xFF6A696E)
-private val SECTION_TEXT = Color(0xFFDDDDDD)
-private val ROW_LABEL = Color(0xFF949695)
-private val ROW_VALUE = Color(0xFFDCDCDC)
-private val HAIRLINE = Color(0xFF141414)
+internal val SECTION_TEXT = Color(0xFFDDDDDD)
+internal val ROW_LABEL = Color(0xFF949695)
+internal val ROW_VALUE = Color(0xFFDCDCDC)
+internal val HAIRLINE = Color(0xFF141414)
 private val PLACEHOLDER_TEXT = Color(0xFF474A4A)
 internal val SECONDARY_TEXT = Color(0xFF8A8A8A)
 internal val MUTED_TEXT = Color(0xFF6A6A6A)
@@ -219,6 +219,16 @@ fun PhotoDetailRoom(
     onSetCopyright: ((String) -> Unit)? = null,
     /** Writes this photo's [tags] into the file's own XMP keyword list. See [TagsBlock]. */
     onEmbedKeywords: (() -> Unit)? = null,
+    /**
+     * This video's file read -- codec, frame rate, bitrate, audio, HDR -- for the Video section.
+     * Null for a still. A video whose read has not finished is [VideoDetails.PENDING].
+     */
+    video: VideoDetails? = null,
+    /**
+     * How many other photos in the run being paged through were taken within a minute of this one,
+     * in its folder ([MetadataSections.nearbyCount]); null while unknown. Browsable photos only.
+     */
+    nearbyCount: Int? = null,
     /** Whether Information starts expanded. Collapsed by default: the reference's three rows. */
     informationInitiallyExpanded: Boolean = false,
     flightActive: Boolean = false,
@@ -329,6 +339,8 @@ fun PhotoDetailRoom(
             exif = exif,
             manualLatitude = manualLatitude,
             manualLongitude = manualLongitude,
+            video = video,
+            nearbyCount = nearbyCount,
             reveal = reveal,
             initiallyExpanded = informationInitiallyExpanded,
         )
@@ -1297,12 +1309,12 @@ private class PinReporter(
 
 /**
  * "Information": the reference's three rows (Modified, colour space, colour profile) with a
- * Show More / Show Less toggle; expanded, every remaining fact about the file that the camera
- * card does not already state -- aspect, a video's duration, album, folder and the coordinate. The
- * palette is not one of them: it has its own always-visible strip under the card
- * ([PaletteBlock]). Labels are present whether or not the file answers them, with a dash where it
- * does not: an absent row tells the reader nothing, a dashed one tells them this photo does not
- * record that.
+ * Show More / Show Less toggle; expanded, the detail sections ([InfoSections], built by
+ * [MetadataSections]): file, image, capture or video, location, library. The palette is not one of
+ * them: it has its own always-visible strip under the card ([PaletteBlock]). The three reference
+ * rows keep their labels whether or not the file answers them, with a dash where it does not (the
+ * owner's note: headers exist, empty values are fine); the sections below omit a row with nothing
+ * to say, and say "Couldn't read" where a read failed rather than claiming the file was empty.
  *
  * The toggle's label names the ACTION, so it reads "Show More" while collapsed; the reference's
  * frame shows "Show Less" over the same three rows, which would make the button a status rather
@@ -1314,6 +1326,8 @@ private fun InformationBlock(
     exif: ImageExifDetails,
     manualLatitude: Double?,
     manualLongitude: Double?,
+    video: VideoDetails?,
+    nearbyCount: Int?,
     reveal: () -> Float,
     initiallyExpanded: Boolean,
 ) {
@@ -1343,25 +1357,19 @@ private fun InformationBlock(
         InformationRow("Colour space", exif.colorSpace)
         InformationRow("Colour profile", exif.colorProfile)
         if (expanded) {
-            InformationRow("Aspect", aspectRatioLabel(asset.width, asset.height))
-            if (asset.isVideo) {
-                InformationRow("Duration", asset.durationMillis.takeIf { it > 0L }?.let(DetailFormatting::durationLine))
+            // Built only once opened; "now" is read once per set of facts, for the file-age line.
+            val model = remember(asset, exif, video, manualLatitude, manualLongitude, nearbyCount) {
+                MetadataSections.build(
+                    asset = asset,
+                    exif = exif,
+                    video = video,
+                    manualLatitude = manualLatitude,
+                    manualLongitude = manualLongitude,
+                    nearbyCount = nearbyCount,
+                    nowMillis = System.currentTimeMillis(),
+                )
             }
-            // Album and Where look like the same fact on a phone whose album name is the last
-            // segment of its folder path, and they are not: Album is the grouping the library
-            // files this photo under, Where is the folder it physically sits in.
-            InformationRow("Album", asset.bucketName?.takeIf(String::isNotBlank))
-            InformationRow("Where", asset.relativePath?.takeIf(String::isNotBlank))
-            val latitude = exif.latitude ?: manualLatitude
-            val longitude = exif.longitude ?: manualLongitude
-            InformationRow(
-                "Location",
-                if (PlaceMorph.isDrawable(latitude, longitude)) {
-                    PlaceMorph.coordinateLine(latitude!!, longitude!!)
-                } else {
-                    null
-                },
-            )
+            InfoSections(model = model, resetKey = asset.id)
         }
     }
 }

@@ -106,8 +106,10 @@ import kotlin.math.ln
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The full-screen viewer, as a spatial shell with three rooms around it: what this photo is (and
@@ -393,6 +395,21 @@ fun ViewerScreen(
     LaunchedEffect(asset.id, metadataRevision) {
         exif = readImageExifDetails(context, asset)
     }
+    // A video's own file read (codec, frame rate, audio, HDR), hoisted for the same reason, and
+    // PENDING until it lands for the same one. A still has none.
+    var videoDetails by remember(asset.id) {
+        mutableStateOf<VideoDetails?>(if (asset.isVideo) VideoDetails.PENDING else null)
+    }
+    LaunchedEffect(asset.id, metadataRevision) {
+        if (asset.isVideo) videoDetails = readVideoDetails(context, asset)
+    }
+    // How many other photos in the run being paged through were taken within a minute of this one,
+    // for the room's Library section. The run is what the grid or the folder handed over, so it is
+    // already browsable (no locked, hidden, archived or trashed photo can be counted -- TRAPS 33).
+    var nearbyCount by remember(asset.id) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(asset.id, relatedAssets) {
+        nearbyCount = withContext(Dispatchers.Default) { MetadataSections.nearbyCount(asset, relatedAssets) }
+    }
 
     // Whether this photo's file declares transparency (owner, #17): a bounded header read off the
     // main thread, remembered per photo, so a transparent PNG gets a backdrop and the chrome
@@ -560,6 +577,8 @@ fun ViewerScreen(
             PhotoDetailRoom(
                 asset = asset,
                 exif = exif,
+                video = videoDetails,
+                nearbyCount = nearbyCount,
                 isFavorite = isFavorite,
                 isSensitive = isSensitive,
                 manualLatitude = manualLatitude,
