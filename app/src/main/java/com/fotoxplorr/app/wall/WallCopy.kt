@@ -12,7 +12,7 @@ internal object WallCopy {
     /** The card's blurb. */
     const val BLURB = "Try pictures on a photo of your wall."
 
-    const val PRIVACY = "Nothing is saved or sent."
+    const val PRIVACY = "Nothing is saved or sent unless you ask."
     const val CLOSE = "Close"
     const val BACK = "Back"
 
@@ -75,6 +75,30 @@ internal object WallCopy {
     const val UNIT_IN = "in"
     const val CROPPED = "Part of the photo is cut off."
 
+    // Print file and system print.
+    const val PRINT_HEADER = "Print it"
+    const val SAVE_PRINT = "Save print file"
+    const val PRINT = "Print"
+    const val CANCEL = "Cancel"
+    const val MAKING = "Making your print file…"
+    const val PLACE_LEFT_OUT = "The place it was taken is left out."
+    const val PRINT_REAL_SIZE = "Prints at real size when the paper is big enough."
+
+    /** The job's name in the activity list, and the fallback for "finished" or "could not finish". */
+    const val PRINT_JOB_TITLE = "Making a print file"
+    const val SAVED = "Saved in Pictures/Fotoz/Prints."
+    const val PRINT_DOC_NAME = "Fotoz print"
+    const val PRINT_CLOSED = "This print is no longer available."
+    const val PRINT_FAILED = "The print could not be prepared."
+
+    // Why a print file was not made. Each is shown as it stands, so each is a whole sentence.
+    const val CANT_EXPORT = "This photo can't be exported right now."
+    const val CANT_READ_PHOTO = "This photo can't be read."
+    const val CANT_CREATE_FILE = "The new file could not be saved."
+    const val NOT_ENOUGH_MEMORY = "There is not enough memory for this size."
+    const val LOCATION_NOT_REMOVED = "The place could not be taken out, so nothing was saved."
+    const val FILE_NOT_AS_PLANNED = "The file did not come out right, so nothing was saved."
+
     const val STYLE_THIN_BLACK = "Thin black"
     const val STYLE_WHITE = "White"
     const val STYLE_WOOD = "Wood"
@@ -110,6 +134,8 @@ internal object WallCopy {
     }
 
     fun wallIs(wallWidthCm: Float): String = "The photo shows about ${FramePresets.number((wallWidthCm / 10).roundToInt() / 10f)} m of wall."
+
+    fun fileWillBe(widthPx: Int, heightPx: Int, dpi: Int): String = "Saves a JPEG, $widthPx x $heightPx px, $dpi dpi."
 
     fun chosen(count: Int, capacity: Int): String = "$count of $capacity chosen"
 
