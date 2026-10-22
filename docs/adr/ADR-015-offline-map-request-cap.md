@@ -22,8 +22,10 @@ keep to 4.
 ## Decision
 
 1. The cap is applied through that hook, from `MapRequestCap.install(4, "Fotoz")`, only while a
-   region is being downloaded, and removed by `MapRequestCap.restore()` when the last download stops.
-   Live panning is never throttled. The installed client has one dispatcher limited to 4 calls in
+   region is being downloaded, and removed by `MapRequestCap.restore()` only after the last region has
+   reported itself stopped, or 5 s after it was told to stop (`MapLibreRegionEngine.SETTLE_MILLIS`),
+   whichever comes first: `setActive(false)` is asynchronous and the cap must outlive it. Live panning is
+   not throttled outside a download and the few seconds after one. The installed client has one dispatcher limited to 4 calls in
    total and per host, and appends `Fotoz` to the library's own User-Agent.
 2. The hook's parameter type is an OkHttp type. The map library declares OkHttp with runtime scope
    only (checked in its Gradle module metadata), so `:app` cannot compile a call to it. Rather than
@@ -53,7 +55,12 @@ keep to 4.
   bytecode, not run. (`libmaplibre.so` registers a Java `HTTPRequest` peer and has no libcurl or cronet
   strings, which points to the Java OkHttp path, but that is not proof.) To check: run a debug build
   behind a logging proxy, download an area, and confirm no more than 4 requests are ever in flight and
-  that the User-Agent ends in `Fotoz`; then set `CAP_VERIFIED_ON_DEVICE` to true. If it does not, the cap is not in force and the download must not ship; the
+  that the User-Agent ends in `Fotoz`, including in the second after a Pause or a Delete; then set
+  `CAP_VERIFIED_ON_DEVICE` to true. Also check that the cap comes off within about a second of a Pause and
+  not only at the 5 s timer: the library delivers a stopped region's readings only because
+  `MapLibreOfflineBackend` calls `setDeliverInactiveMessages(true)`, which was read from bytecode and not
+  run (if it does not, only the timer ends the wait and the live map is throttled for 5 s after every
+  pause). If it does not, the cap is not in force and the download must not ship; the
   next step is then to ask OpenFreeMap for written permission, not to work around the limit.
 - Whether `OkHttp` 5.x (resolved for the app through `:feature:ai-remote`) satisfies the map
   library's calls, which were compiled against 4.12. The live map already depends on this.

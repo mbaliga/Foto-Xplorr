@@ -38,16 +38,16 @@ Tile counts are exact arithmetic (`TileMath`) but the map library's own count ma
 
 ## Decision 3 — City scale only
 
-Two ways to pick an area: **This view** (the area the Places map shows, via a pill on the embedded map) and **Places in your photos** (boxes grown around clusters of the person's own browsable photos, each one that fits at full detail). No country presets. The owner's "one click per region" therefore means a city-sized region unless the provider grants more.
+Two ways to pick an area: **This view** (the area the Places map shows, via a pill on the embedded map, including the map's rotation: the saved box is the bounding box of the turned screen, and pitch is still ignored) and **Places in your photos** (boxes grown around clusters of the person's own browsable photos, each one that fits at full detail). No country presets. The owner's "one click per region" therefore means a city-sized region unless the provider grants more.
 
 ## Decision 4 — Rules the UI keeps
 
-1. A download starts only from an explicit tap on Download, Resume, or the mobile-data question's Download (TRAPS #61, #71). Opening the pane, scrolling it, changing the map view and relaunching never start one. After a relaunch an unfinished area is listed as paused ("tap resume"), reconciled from the library's own list.
+1. A download starts only from an explicit tap on Download, Resume, or the mobile-data question's Download (TRAPS #61, #71). Opening the pane, scrolling it, changing the map view and relaunching never start one. After a relaunch an unfinished area is listed from the library's own list as stopped; with no recorded reason it reads as `PauseReason.RESTARTED` ("Paused, tap resume to continue.") and restarts only from a tap on Resume.
 2. Download and Resume are disabled, with the reason beside them, unless the engine reports that the 4-request cap can be applied (`throttleInstalled`). A build where it cannot be applied offers nothing instead of breaking the terms (ADR-015).
 3. No network code in `src/main` or `src/offline`. The Offline build shows an honest "Offline maps need the Connect build." from a same-name stub pane. The pure logic in `src/main` contains none of the dotted tokens `verifyOfflineSourceReferences` scans for, comments included.
-4. Mobile data: the platform connectivity check (only in `src/connect`, and "metered" when it cannot tell) asks first.
+4. Connection: the platform check (only in `src/connect`, with `ACCESS_NETWORK_STATE` declared in its manifest) tells no connection, mobile data and unmetered apart. With no connection a tap on Download or Resume says "No connection right now." before anything is created. On mobile data (or when the platform cannot tell) the person is asked first.
 5. One download at a time. Cancel means pause and keeps what was fetched; only Delete, after naming the area in a confirmation, removes data.
-6. Privacy line: *Downloading shows the area and your IP address to the map provider.* Attribution line: *© OpenStreetMap contributors, OpenMapTiles, OpenFreeMap*. Both are on the pane.
+6. Privacy line: *Downloading shows the area and your IP address to the map provider.* Attribution line: *© OpenStreetMap contributors, OpenMapTiles, OpenFreeMap*. The privacy line is under the first Download button and again in the mobile-data question; the attribution is at the bottom of the pane.
 7. Terrain shading and the dark map are loaded separately and are not part of a saved Liberty region; the pane says so.
 8. Saved areas are not part of the encrypted backup (`android:allowBackup` is false and the backup sections do not list them).
 
@@ -62,10 +62,10 @@ Everything above that talks to the map library. No line of it has run on a devic
 - the real byte and tile figures, the overhead of style, sprites and glyphs, and whether `completedResourceSize` is what the provider counts;
 - whether `createOfflineRegion` fetches nothing, whether a region survives a force-stop and resumes rather than restarting, whether delete gives the space back;
 - whether an area over the date line can be saved (refused for now, `MapLibreRegionEngine.ANTIMERIDIAN_VERIFIED`);
-- how a flat-view box from `ViewArea` compares with the library's visible region at zero tilt.
+- how a flat-view box from `ViewArea` compares with the library's visible region at zero tilt, and, turned by a bearing, that the rotated bounding box covers every corner of the screen.
 
 ## Consequences
 
 - Update policy (offer a re-download after 90 days; download the new area then delete the old) is not built. At the 6-area or 300 MB limit the person deletes first.
-- An area cannot be renamed after it is saved (the engine has no method to rewrite a region's stored record), and its size stays the estimate; `RegionRecord.bytesMeasured` is never set yet.
+- An area cannot be renamed after it is saved (the engine has no method to rewrite a region's stored record), and its size stays the estimate (the field `bytesMeasured` was removed; the saved row always says "about N MB").
 - Re-read the provider's terms before every release.
