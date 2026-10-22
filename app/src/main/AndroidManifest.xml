@@ -33,8 +33,9 @@
     <!-- No network permissions here. INTERNET lives in src/connect/AndroidManifest.xml:
          the offline flavor is the app's local-first identity, and the verifyOfflineManifest
          gate fails the build if any network permission reaches its merged manifest — from
-         this file OR from a library AAR's manifest. ACCESS_NETWORK_STATE was dropped
-         entirely: nothing in the app reads ConnectivityManager. -->
+         this file OR from a library AAR's manifest. ACCESS_NETWORK_STATE is declared in the
+         connect manifest only, for the offline-map pane's "no connection / mobile data" check;
+         the offline flavor strips it, and nothing in its source reads ConnectivityManager. -->
     <!-- Current location is optional and used only by the explicitly opened relative
          spatial-compass scene. ACCESS_MEDIA_LOCATION is separate: Android 10+ redacts
          GPS embedded in the user's media unless it is granted. -->
