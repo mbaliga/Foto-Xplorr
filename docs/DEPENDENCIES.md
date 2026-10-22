@@ -26,3 +26,9 @@ Flavours column to `offline` / `connect` / both the first time a module actually
 | Coordinate | Version | Why |
 |---|---|---|
 | `com.google.devtools.ksp` (Gradle plugin) | 2.1.0-1.0.29 | Must equal `hyle-design-system`'s own KSP pin exactly (ADR-009 decision 2) — KSP versions are tied to a specific Kotlin compiler version, and Hyle is already proven on this one. |
+
+## Compile-only declarations (no new artifact in any resolved classpath)
+
+| Module | Coordinate | Version | Why |
+|---|---|---|---|
+| `:feature:ai-remote` | `org.maplibre.gl:android-sdk` (`compileOnly`) | 13.0.2 | `MapRequestCap` passes an OkHttp client to the map library's `HttpRequestUtil` so offline region downloads keep to the tile provider's limit of 4 requests in flight. The app cannot name an OkHttp type, so the wrapper lives in the module that owns OkHttp. The same artifact is already `connectImplementation` in `:app`; this line adds nothing to either flavour's runtime classpath. See ADR-015. |
