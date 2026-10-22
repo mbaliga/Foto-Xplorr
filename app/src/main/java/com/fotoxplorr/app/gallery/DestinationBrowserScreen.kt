@@ -292,6 +292,8 @@ internal fun DestinationContent(
                     geoState = spatial.geoState,
                     onIndexLocations = spatial.onIndexLocations,
                     onOpenAsset = spatial.onOpenAsset,
+                    sensitiveIds = state.sensitiveIds,
+                    blurSensitive = state.preferences.blurSensitive,
                 )
             } else {
                 DestinationMessage("Experimental is unavailable here")

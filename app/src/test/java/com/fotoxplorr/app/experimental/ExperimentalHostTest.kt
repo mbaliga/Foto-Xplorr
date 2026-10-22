@@ -2,6 +2,7 @@ package com.fotoxplorr.app.experimental
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Science
+import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.spatial.GeoIndexState
 import com.fotoxplorr.core.model.MediaId
 import org.junit.Assert.assertEquals
@@ -145,5 +146,35 @@ class ExperimentalHostTest {
             builtInExperiments.map { it.title }.toSet().size,
         )
         assertTrue(duplicateIds(builtInExperiments).isEmpty())
+    }
+
+    private fun photo(id: Long) = MediaAsset(
+        id = MediaId(id),
+        contentUriString = "content://media/external/images/media/$id",
+        displayName = "p$id.jpg",
+        mimeType = "image/jpeg",
+        bucketName = null,
+        dateTakenMillis = id,
+        dateModifiedSeconds = id,
+        width = 4,
+        height = 4,
+        sizeBytes = 1L,
+        relativePath = null,
+        isFavorite = false,
+        isTrashed = false,
+    )
+
+    @Test
+    fun `with Blur sensitive on, photos flagged sensitive are not given to an experiment`() {
+        val all = listOf(photo(3), photo(2), photo(1))
+        val given = assetsForExperiments(all, sensitiveIds = setOf(MediaId(3)), blurSensitive = true)
+        assertEquals("newest-first order is kept", listOf(2L, 1L), given.map { it.id.value })
+    }
+
+    @Test
+    fun `with Blur sensitive off, or nothing flagged, the list is passed on as it is`() {
+        val all = listOf(photo(2), photo(1))
+        assertSame(all, assetsForExperiments(all, setOf(MediaId(2)), blurSensitive = false))
+        assertSame(all, assetsForExperiments(all, emptySet(), blurSensitive = true))
     }
 }

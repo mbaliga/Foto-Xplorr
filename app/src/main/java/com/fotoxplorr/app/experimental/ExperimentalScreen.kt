@@ -51,6 +51,7 @@ import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.spatial.GeoIndexState
 import com.fotoxplorr.app.ui.HelpCopy
 import com.fotoxplorr.app.ui.RoomStyle
+import com.fotoxplorr.core.model.MediaId
 
 /**
  * The Experimental section: the page behind the rail's "Experimental" word (and Discover's card).
@@ -63,13 +64,17 @@ import com.fotoxplorr.app.ui.RoomStyle
  *    own to save), and the id of a non-restorable one -- those reopen as the hub.
  *  - **Back**, one handler enabled while something is open. It exists because two of the screens
  *    here (similarity, AI keys) register none of their own. A screen with an inner step registers
- *    its own handler, which is composed after this one and so is asked first.
+ *    its own handler, which is composed after this one and so is asked first. A shell room opened
+ *    over the experiment is closed before any of them: the gallery's handler is re-registered when
+ *    a room opens ([RoomFirstBackHandler]).
  *  - **The ink** (TRAPS #62): on the root-destination path nothing above provides a content
  *    colour, and the theme's would be dark on the pane's black ground.
  *
  * Adding an experiment is one [ExperimentEntry] in [builtInExperiments]; nothing here changes.
  *
  * @param assets the gallery's browsable-filtered photos -- the only list anything is drawn from.
+ * @param sensitiveIds the photos flagged sensitive; with [blurSensitive] on they are not given to
+ *   any experiment (see [assetsForExperiments]).
  * @param indexInput what an indexer covers, trashed included; see [ExperimentEnv.indexInput].
  * @param entries the list to host; a test passes its own.
  */
@@ -82,6 +87,8 @@ fun ExperimentalScreen(
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
     modifier: Modifier = Modifier,
     entries: List<ExperimentEntry> = builtInExperiments,
+    sensitiveIds: Set<MediaId> = emptySet(),
+    blurSensitive: Boolean = true,
 ) {
     require(duplicateIds(entries).isEmpty()) { "Experiment ids must be unique: ${duplicateIds(entries)}" }
     val context = LocalContext.current.applicationContext
@@ -93,11 +100,16 @@ fun ExperimentalScreen(
 
     BackHandler(enabled = current != null) { openId = null }
 
+    // What an experiment may draw: the browsable list less flagged photos while they are blurred
+    // in the grid (see assetsForExperiments).
+    val shown = remember(assets, sensitiveIds, blurSensitive) {
+        assetsForExperiments(assets, sensitiveIds, blurSensitive)
+    }
     // Read live by ExperimentEnv.mayExport, so an export that outlives a re-lock is refused.
-    val browsableIds = remember(assets) { assets.mapTo(HashSet()) { it.id } }
+    val browsableIds = remember(shown) { shown.mapTo(HashSet()) { it.id } }
     val latestBrowsableIds by rememberUpdatedState(browsableIds)
     val env = ExperimentEnv(
-        assets = assets,
+        assets = shown,
         indexInput = indexInput,
         geoState = geoState,
         onIndexLocations = onIndexLocations,

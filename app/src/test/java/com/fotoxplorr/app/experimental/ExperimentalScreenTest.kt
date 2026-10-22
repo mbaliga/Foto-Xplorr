@@ -22,8 +22,11 @@ import androidx.compose.ui.test.performClick
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleRegistry
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
+import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.core.model.MediaId
 import com.fotoxplorr.app.spatial.GeoIndexState
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -73,20 +76,43 @@ class ExperimentalScreenTest {
     private val owner = BackOwner()
 
     @Composable
-    private fun Host(entries: List<ExperimentEntry>) {
+    private fun Host(
+        entries: List<ExperimentEntry>,
+        assets: List<MediaAsset> = emptyList(),
+        sensitiveIds: Set<MediaId> = emptySet(),
+        blurSensitive: Boolean = true,
+    ) {
         FotoXplorrTheme(GalleryPreferencesState()) {
             CompositionLocalProvider(LocalOnBackPressedDispatcherOwner provides owner) {
                 ExperimentalScreen(
-                    assets = emptyList(),
+                    assets = assets,
                     indexInput = emptyList(),
                     geoState = GeoIndexState(),
                     onIndexLocations = {},
                     onOpenAsset = { _, _ -> },
                     entries = entries,
+                    sensitiveIds = sensitiveIds,
+                    blurSensitive = blurSensitive,
                 )
             }
         }
     }
+
+    private fun photo(id: Long) = MediaAsset(
+        id = MediaId(id),
+        contentUriString = "content://media/external/images/media/$id",
+        displayName = "p$id.jpg",
+        mimeType = "image/jpeg",
+        bucketName = null,
+        dateTakenMillis = id,
+        dateModifiedSeconds = id,
+        width = 4,
+        height = 4,
+        sizeBytes = 1L,
+        relativePath = null,
+        isFavorite = false,
+        isTrashed = false,
+    )
 
     private fun pressBack() = compose.runOnUiThread { owner.onBackPressedDispatcher.onBackPressed() }
 
@@ -204,5 +230,123 @@ class ExperimentalScreenTest {
         compose.onNodeWithText("inside b").assertDoesNotExist()
         compose.onNodeWithText("Title a").assertExists()
         assertFalse(owner.onBackPressedDispatcher.hasEnabledCallbacks())
+    }
+
+    // The shell's room (nav or options) is opened with an edge drag over an open experiment and is
+    // not a back-stack entry: the gallery's one Back handler closes it. That handler is composed
+    // before the experiment, and the dispatcher asks the last one registered first, so without
+    // RoomFirstBackHandler the experiment closed underneath a room that was still open.
+
+    @Test
+    fun `Back closes a room opened over an experiment before the experiment`() {
+        var roomOpen by mutableStateOf(false)
+        compose.setContent {
+            CompositionLocalProvider(LocalOnBackPressedDispatcherOwner provides owner) {
+                RoomFirstBackHandler(roomOpen = roomOpen, enabled = roomOpen) { roomOpen = false }
+                Host(listOf(entry("a")))
+            }
+        }
+        compose.onNodeWithText("Title a").performClick()
+        compose.onNodeWithText("inside a").assertExists()
+
+        compose.runOnUiThread { roomOpen = true }
+        compose.waitForIdle()
+
+        pressBack()
+        compose.waitForIdle()
+        assertFalse("the room is closed first", roomOpen)
+        compose.onNodeWithText("inside a").assertExists()
+
+        pressBack()
+        compose.waitForIdle()
+        compose.onNodeWithText("inside a").assertDoesNotExist()
+        compose.onNodeWithText("Title a").assertExists()
+    }
+
+    @Test
+    fun `a room is closed before an experiment's own inner step too`() {
+        var roomOpen by mutableStateOf(false)
+        var step by mutableStateOf(2)
+        compose.setContent {
+            CompositionLocalProvider(LocalOnBackPressedDispatcherOwner provides owner) {
+                RoomFirstBackHandler(roomOpen = roomOpen, enabled = roomOpen) { roomOpen = false }
+                Host(
+                    listOf(
+                        entry("a") { _, _ ->
+                            BackHandler(enabled = step > 1) { step -= 1 }
+                            Text("inside a step $step")
+                        },
+                    ),
+                )
+            }
+        }
+        compose.onNodeWithText("Title a").performClick()
+        compose.runOnUiThread { roomOpen = true }
+        compose.waitForIdle()
+
+        pressBack()
+        compose.waitForIdle()
+        assertFalse(roomOpen)
+        compose.onNodeWithText("inside a step 2").assertExists()
+
+        pressBack()
+        compose.waitForIdle()
+        compose.onNodeWithText("inside a step 1").assertExists()
+    }
+
+    @Test
+    fun `a room opened a second time is closed first again`() {
+        var roomOpen by mutableStateOf(false)
+        compose.setContent {
+            CompositionLocalProvider(LocalOnBackPressedDispatcherOwner provides owner) {
+                RoomFirstBackHandler(roomOpen = roomOpen, enabled = roomOpen) { roomOpen = false }
+                Host(listOf(entry("a")))
+            }
+        }
+        compose.onNodeWithText("Title a").performClick()
+        repeat(2) {
+            compose.runOnUiThread { roomOpen = true }
+            compose.waitForIdle()
+            pressBack()
+            compose.waitForIdle()
+            assertFalse(roomOpen)
+            compose.onNodeWithText("inside a").assertExists()
+        }
+    }
+
+    // "Blur sensitive" is on by default and the grid blurs a flagged photo. An experiment draws
+    // photos at its own size and has no blur of its own, so the host does not give it a flagged
+    // photo at all while the setting is on: not as the hub's cover, a picker thumbnail, a wall
+    // picture, a pin or a node.
+
+    @Test
+    fun `an experiment is not given a sensitive photo while Blur sensitive is on, and mayExport refuses it`() {
+        var seen: ExperimentEnv? = null
+        val spy = entry("a") { env, _ ->
+            seen = env
+            Text("inside a")
+        }
+        val newestIsSensitive = listOf(photo(3), photo(2), photo(1))
+        compose.setContent { Host(listOf(spy), newestIsSensitive, sensitiveIds = setOf(MediaId(3))) }
+        compose.onNodeWithText("Title a").performClick()
+        compose.onNodeWithText("inside a").assertExists()
+
+        val env = seen!!
+        assertEquals(listOf(2L, 1L), env.assets.map { it.id.value })
+        assertFalse(env.mayExport(photo(3)))
+        assertTrue(env.mayExport(photo(2)))
+    }
+
+    @Test
+    fun `an experiment is given every photo once Blur sensitive is off`() {
+        var seen: ExperimentEnv? = null
+        val spy = entry("a") { env, _ ->
+            seen = env
+            Text("inside a")
+        }
+        compose.setContent { Host(listOf(spy), listOf(photo(3), photo(2)), setOf(MediaId(3)), blurSensitive = false) }
+        compose.onNodeWithText("Title a").performClick()
+        compose.onNodeWithText("inside a").assertExists()
+        assertEquals(listOf(3L, 2L), seen!!.assets.map { it.id.value })
     }
 }

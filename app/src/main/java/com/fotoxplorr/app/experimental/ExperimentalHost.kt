@@ -1,6 +1,8 @@
 package com.fotoxplorr.app.experimental
 
+import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.spatial.GeoIndexState
+import com.fotoxplorr.core.model.MediaId
 
 /*
  * The pure decisions of the Experimental host, apart from the composables so a plain JUnit test
@@ -42,3 +44,17 @@ internal fun duplicateIds(entries: List<ExperimentEntry>): List<String> =
  */
 internal fun shouldStartLocationIndex(geoState: GeoIndexState, alreadyAsked: Boolean): Boolean =
     !alreadyAsked && geoState.scannedCount == 0 && !geoState.isIndexing
+
+/**
+ * The photos an experiment is given. While "Blur sensitive" is on, a photo flagged sensitive is
+ * left out: the grid blurs such a photo, but an experiment draws it at its own size (a card cover,
+ * a picker, a wall, a node) and has no blur of its own, so the safe reading of the setting here is
+ * that the photo is not offered. With the setting off, or nothing flagged, [assets] is returned as
+ * it is. [ExperimentEnv.mayExport] follows the same list, so a flagged photo is not read either.
+ */
+internal fun assetsForExperiments(
+    assets: List<MediaAsset>,
+    sensitiveIds: Set<MediaId>,
+    blurSensitive: Boolean,
+): List<MediaAsset> =
+    if (!blurSensitive || sensitiveIds.isEmpty()) assets else assets.filterNot { it.id in sensitiveIds }

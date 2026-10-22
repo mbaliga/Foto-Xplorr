@@ -54,7 +54,8 @@ class ExperimentEntry(
  * What an experiment is given by the host, and the only way it should reach the photo library.
  *
  * The photo list is the gallery's already-filtered one (`browsableAssets`, TRAPS #33): no trashed,
- * archived, locked-folder or hidden-sensitive photo is in [assets]. An experiment that copies
+ * archived, locked-folder or hidden-sensitive photo is in [assets], and while "Blur sensitive" is
+ * on no flagged one either (see [assetsForExperiments]), because an experiment cannot blur. An experiment that copies
  * pixels out of the library (a cut-out, a print, an export) must additionally ask [mayExport]
  * again at the moment it does so, because the folder can be locked again while the experiment is
  * open, and read the pixels through [decode], which makes the same check.

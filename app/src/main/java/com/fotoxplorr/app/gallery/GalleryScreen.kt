@@ -6,7 +6,6 @@
 package com.fotoxplorr.app.gallery
 
 import android.os.Build
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -79,6 +78,7 @@ import androidx.compose.ui.Modifier
 import androidx.annotation.DrawableRes
 import androidx.compose.ui.res.painterResource
 import com.fotoxplorr.app.R
+import com.fotoxplorr.app.experimental.RoomFirstBackHandler
 import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.PaneScaffold
 import com.fotoxplorr.app.ui.navigationOnlyWhen
@@ -850,7 +850,10 @@ private fun GalleryBrowser(
             PaneBackTarget.NONE -> Unit
         }
     }
-    BackHandler(
+    // Re-registered when a room opens, so it is asked before an open experiment's own handlers
+    // (see RoomFirstBackHandler).
+    RoomFirstBackHandler(
+        roomOpen = !shell.atHome,
         enabled = !shell.atHome || paneTakenOver || mapOpen || timeEditorIsShown ||
             selection.isActive || searchVisible || route != BrowserRoute.Root,
     ) {
