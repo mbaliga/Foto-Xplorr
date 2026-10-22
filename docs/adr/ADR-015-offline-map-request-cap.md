@@ -4,7 +4,7 @@
 **Date:** 22 Oct 2026
 **Scope of this record:** the one place the app gives the map library an HTTP client
 (`feature/ai-remote/.../MapRequestCap.kt`) and the compile-only declaration behind it. The wider
-decision (source, caps, regions, UI) is recorded with the offline-maps UI work.
+decision (source, caps, regions, UI) is ADR-016.
 
 ## Context
 
