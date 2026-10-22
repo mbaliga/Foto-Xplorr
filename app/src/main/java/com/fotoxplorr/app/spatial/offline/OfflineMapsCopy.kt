@@ -14,6 +14,9 @@ object OfflineMapsCopy {
     /** Shown beside the Download button. Tile requests really do reveal both. */
     const val PRIVACY = "Downloading shows the area and your IP address to the map provider."
 
+    /** A saved area is a place on a map, listed in Settings whether or not a private folder is open. */
+    const val NOT_LOCKED = "Saved areas are not locked with your private folders."
+
     /** The credit the data licences require. */
     const val ATTRIBUTION = "© OpenStreetMap contributors, OpenMapTiles, OpenFreeMap"
 

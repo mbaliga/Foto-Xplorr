@@ -123,7 +123,16 @@ object DownloadGuard {
         throttleInstalled && (state is DownloadState.Ready || state is DownloadState.ConfirmMetered)
 
     fun canResume(state: DownloadState, throttleInstalled: Boolean): Boolean =
-        throttleInstalled && state is DownloadState.Paused
+        throttleInstalled && state is DownloadState.Paused && !isOverCap(state.progress)
+
+    /**
+     * True when [progress] is past a cap of ours. A region that stopped there stays that way: the
+     * numbers do not go down, so a resume would fetch a few more resources, trip the guard again
+     * and spend the provider's allowance for nothing. It is judged from the stored numbers, so it
+     * holds after a relaunch too.
+     */
+    fun isOverCap(progress: RegionProgress): Boolean =
+        progress.completedBytes > OfflineMapLimits.MAX_BYTES || progress.completedTiles > OfflineMapLimits.MAX_TILES
 
     fun reduce(state: DownloadState, event: DownloadEvent): GuardResult = when (event) {
         is DownloadEvent.Select -> when (state) {
@@ -163,6 +172,7 @@ object DownloadGuard {
 
         is DownloadEvent.Resume -> when {
             state !is DownloadState.Paused -> refuse(state)
+            isOverCap(state.progress) -> refuse(state)
             !event.throttleInstalled -> refuse(state, RejectReason.THROTTLE_NOT_INSTALLED)
             event.metered -> moved(DownloadState.ConfirmMetered(state.estimate, resumeFrom = state.progress))
             else -> moved(DownloadState.Downloading(state.estimate, state.progress))
@@ -200,7 +210,7 @@ object DownloadGuard {
         // A finished download is finished, whatever it weighed: there is nothing left to stop.
         if (progress.complete) return moved(DownloadState.Done(state.estimate, progress))
 
-        if (progress.completedBytes > OfflineMapLimits.MAX_BYTES || progress.completedTiles > OfflineMapLimits.MAX_TILES) {
+        if (isOverCap(progress)) {
             return moved(DownloadState.Failed(FailureReason.OVER_CAP, state.estimate))
         }
 

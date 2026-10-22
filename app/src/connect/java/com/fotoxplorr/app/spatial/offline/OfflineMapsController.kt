@@ -32,6 +32,8 @@ internal data class PaneUiState(
     val live: Map<Long, RegionProgress> = emptyMap(),
     /** Why each stopped area stopped; an area missing here was found after a relaunch. */
     val pauseReasons: Map<Long, PauseReason> = emptyMap(),
+    /** Why a download gave up on each area this session (a size limit, the provider, the engine). */
+    val failures: Map<Long, FailureReason> = emptyMap(),
     /** Map downloads the job runner has running, which can be ahead of the engine's own list. */
     val jobsRunning: Int = 0,
     val question: MeteredQuestion? = null,
@@ -106,6 +108,7 @@ internal class OfflineMapsController(
         throttleInstalled = engine.throttleInstalled,
         canDownloadBox = { box -> MapLibreRegionEngine.canDownload(box) },
         saved = state.regions.map { it.record },
+        covering = OfflineMapsPaneModel.coveringRecords(state.regions),
         // The runner's own list is read here, not only the collected copy in [state]: a second tap
         // that lands before the collector has caught up must still see the first download.
         downloadRunning = state.downloadRunning ||
@@ -125,6 +128,7 @@ internal class OfflineMapsController(
                         listFailed = false,
                         regions = regions,
                         pauseReasons = old.pauseReasons.filterKeys { it in unfinished },
+                        failures = old.failures.filterKeys { it in unfinished },
                         live = old.live.filterKeys { id -> regions.any { it.id == id && it.running } },
                     )
                 }
@@ -166,9 +170,11 @@ internal class OfflineMapsController(
     fun resume(id: Long) {
         val current = mutable.value
         val region = current.regions.firstOrNull { it.id == id } ?: return
-        val row = OfflineMapsPaneModel.savedRows(listOf(region), current.pauseReasons, current.live, envOf(current)).single()
+        val row = OfflineMapsPaneModel.savedRows(
+            listOf(region), current.pauseReasons, current.live, envOf(current), failures = current.failures,
+        ).single()
         if (!row.canResume) {
-            note(row.resumeNote)
+            note(row.resumeNote ?: row.statusLine.takeIf { row.stoppedAtLimit })
             return
         }
         val reason = current.pauseReasons[id] ?: PauseReason.RESTARTED
@@ -245,7 +251,9 @@ internal class OfflineMapsController(
         mutable.update { it.copy(notice = null) }
         val existingId = (request as? DownloadRequest.Existing)?.region?.id
         var regionId: Long? = existingId
-        if (existingId != null) mutable.update { it.copy(pauseReasons = it.pauseReasons - existingId) }
+        if (existingId != null) {
+            mutable.update { it.copy(pauseReasons = it.pauseReasons - existingId, failures = it.failures - existingId) }
+        }
         val target = when (request) {
             is DownloadRequest.Fresh -> DownloadTarget.New(request.name, from.estimate)
             is DownloadRequest.Existing -> DownloadTarget.Existing(request.region)
@@ -260,6 +268,10 @@ internal class OfflineMapsController(
                 val id = regionId
                 if (moved is DownloadState.Paused && id != null) {
                     mutable.update { it.copy(pauseReasons = it.pauseReasons + (id to moved.reason)) }
+                }
+                // A failed run leaves the area stopped in the engine, not paused: say what happened.
+                if (moved is DownloadState.Failed && id != null) {
+                    mutable.update { it.copy(failures = it.failures + (id to moved.reason)) }
                 }
             },
             onStarted = { id ->

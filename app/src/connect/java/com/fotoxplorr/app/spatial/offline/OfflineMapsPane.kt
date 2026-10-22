@@ -55,8 +55,10 @@ import com.fotoxplorr.app.ui.RoomStyle
  *
  * Inputs
  * - [placePoints]: where the person's own photos were taken, already reduced to the photos the app
- *   may show (from `browsableAssets` through `GeoIndexState.browsablePoints`, TRAPS #33), never read
- *   here from the whole library. Feeds the "Places in your photos" choices.
+ *   may show and then to those outside every protected folder (from `browsableAssets` through
+ *   `GeoIndexState.everydayPoints`, TRAPS #33), never read here from the whole library. A saved
+ *   area outlives an unlock, so an unlocked folder's photos are left out too. Feeds the "Places in
+ *   your photos" choices.
  * - [currentView]: the area the Places map shows right now, or null when no map is open. The
  *   "This view" choice is offered only when it is not null.
  * - [jobRunner]: the app's one runner (`AppStateViewModel.jobRunner`), so a download outlives the pane.
@@ -148,9 +150,10 @@ private fun ColumnScope.PaneContent(
         canDownloadBox = { box -> MapLibreRegionEngine.canDownload(box) },
         saved = ui.regions.map { it.record },
         downloadRunning = ui.downloadRunning,
+        covering = OfflineMapsPaneModel.coveringRecords(ui.regions),
     )
-    val rows = remember(ui.regions, ui.pauseReasons, ui.live, env.throttleInstalled, ui.downloadRunning) {
-        OfflineMapsPaneModel.savedRows(ui.regions, ui.pauseReasons, ui.live, env)
+    val rows = remember(ui.regions, ui.pauseReasons, ui.failures, ui.live, env.throttleInstalled, ui.downloadRunning) {
+        OfflineMapsPaneModel.savedRows(ui.regions, ui.pauseReasons, ui.live, env, failures = ui.failures)
     }
     val view = options.firstOrNull { it.source == AreaSource.THIS_VIEW }
     val places = options.filter { it.source == AreaSource.PLACE }
@@ -209,6 +212,7 @@ private fun ColumnScope.PaneContent(
 
         RoomRule(Modifier.padding(vertical = 14.dp))
         Note(OfflineMapsCopy.PRIVACY)
+        Note(OfflineMapsCopy.NOT_LOCKED)
         Note(OfflineMapsCopy.ATTRIBUTION)
     }
 
@@ -292,7 +296,7 @@ private fun SavedRowItem(row: SavedRow, onResume: () -> Unit, onPause: () -> Uni
         }
         row.resumeNote?.let { Note(it) }
         Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (row.status == RowStatus.PAUSED) {
+            if (row.status == RowStatus.PAUSED && !row.stoppedAtLimit) {
                 PaneButton(OfflineMapsCopy.RESUME, row.canResume, "${OfflineMapsCopy.RESUME} ${row.name}", onClick = onResume)
             }
             if (row.canPause) PaneButton(OfflineMapsCopy.PAUSE, true, "${OfflineMapsCopy.PAUSE} ${row.name}", onClick = onPause)

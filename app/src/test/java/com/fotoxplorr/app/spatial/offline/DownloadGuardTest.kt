@@ -160,6 +160,25 @@ class DownloadGuardTest {
     }
 
     @Test
+    fun `an area stopped at the size limit cannot be resumed, whatever the throttle says`() {
+        val over = someProgress.copy(completedBytes = OfflineMapLimits.MAX_BYTES + 1)
+        val stopped = DownloadState.Paused(estimate, over, PauseReason.RESTARTED)
+        assertTrue(DownloadGuard.isOverCap(over))
+        assertFalse(DownloadGuard.canResume(stopped, throttleInstalled = true))
+        assertRejected(stopped, DownloadEvent.Resume(throttleInstalled = true, metered = false))
+        assertRejected(stopped, DownloadEvent.Resume(throttleInstalled = true, metered = true))
+        val tiles = DownloadState.Paused(estimate, someProgress.copy(completedTiles = OfflineMapLimits.MAX_TILES + 1), PauseReason.USER)
+        assertFalse(DownloadGuard.canResume(tiles, throttleInstalled = true))
+    }
+
+    @Test
+    fun `an area exactly at a cap can still be resumed`() {
+        val atCap = someProgress.copy(completedBytes = OfflineMapLimits.MAX_BYTES, completedTiles = OfflineMapLimits.MAX_TILES)
+        assertFalse(DownloadGuard.isOverCap(atCap))
+        assertTrue(DownloadGuard.canResume(DownloadState.Paused(estimate, atCap, PauseReason.USER), true))
+    }
+
+    @Test
     fun `a download that completes is done even if it landed over a cap`() {
         val finished = someProgress.copy(complete = true, completedBytes = OfflineMapLimits.MAX_BYTES + 5)
         assertTrue(downloading.after(DownloadEvent.Progress(finished)) is DownloadState.Done)

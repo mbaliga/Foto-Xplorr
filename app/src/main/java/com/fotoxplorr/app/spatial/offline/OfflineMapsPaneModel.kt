@@ -45,6 +45,11 @@ data class PaneEnv(
     val canDownloadBox: (GeoBox) -> Boolean,
     val saved: List<RegionRecord>,
     val downloadRunning: Boolean,
+    /**
+     * The saved areas that really hold their box, for "already saved": [saved] without an area that
+     * stopped at the size limit and never finished (see [OfflineMapsPaneModel.coveringRecords]).
+     */
+    val covering: List<RegionRecord> = saved,
 )
 
 /** A button's label, whether it can be tapped, and the one sentence that says why not (or a caveat). */
@@ -67,6 +72,8 @@ data class SavedRow(
     val canResume: Boolean,
     /** Why Resume is off, or null. Shown only for a paused area. */
     val resumeNote: String?,
+    /** The area ran into the size limit and cannot be continued; only Delete is offered. */
+    val stoppedAtLimit: Boolean,
     val canPause: Boolean,
     val canDelete: Boolean,
     /** What deleting would free, for the confirmation. */
@@ -163,7 +170,7 @@ object OfflineMapsPaneModel {
             option.verdict is BudgetVerdict.TooLarge -> OfflineMapsCopy.tooLarge(option.verdict.reason)
             option.verdict is BudgetVerdict.NoArea -> OfflineMapsCopy.failure(FailureReason.NO_AREA)
             !env.canDownloadBox(option.box) -> OfflineMapsCopy.DATE_LINE
-            estimate != null && isAlreadySaved(option, estimate, env.saved) -> OfflineMapsCopy.ALREADY_SAVED
+            estimate != null && isAlreadySaved(option, estimate, env.covering) -> OfflineMapsCopy.ALREADY_SAVED
             estimate != null -> OfflineMapsCopy.room(RegionLedger.checkRoom(env.saved, estimate.bytes))
             else -> OfflineMapsCopy.failure(FailureReason.ENGINE)
         }
@@ -195,7 +202,8 @@ object OfflineMapsPaneModel {
      * The saved-areas list: downloads first, then paused areas, then finished ones, each newest-used
      * first. [pauseReasons] says why an unfinished, not-running area stopped (an area missing from it
      * is one found after a relaunch). [live] holds the newest reading for areas being fetched; an area
-     * with none falls back to what the engine stored.
+     * with none falls back to what the engine stored. [failures] says which unfinished areas a
+     * download gave up on this session; an area past a cap says so whether or not it is listed there.
      */
     fun savedRows(
         regions: List<StoredRegion>,
@@ -204,12 +212,20 @@ object OfflineMapsPaneModel {
         env: PaneEnv,
         locale: Locale = Locale.getDefault(),
         zone: TimeZone = TimeZone.getDefault(),
+        failures: Map<Long, FailureReason> = emptyMap(),
     ): List<SavedRow> {
-        val rows = regions.map { region -> rowOf(region, pauseReasons, live, env, locale, zone) }
+        val rows = regions.map { region -> rowOf(region, pauseReasons, live, failures, env, locale, zone) }
         return rows.sortedWith(
             compareBy<SavedRow> { it.status.ordinal }.thenByDescending { lastUsed(regions, it.id) },
         )
     }
+
+    /**
+     * [regions]' records minus the ones that stopped at the size limit without finishing: such an
+     * area does not hold its box, and counting it would block a smaller download of the same place.
+     */
+    fun coveringRecords(regions: List<StoredRegion>): List<RegionRecord> =
+        regions.filter { it.progress.complete || !DownloadGuard.isOverCap(it.progress) }.map { it.record }
 
     private fun lastUsed(regions: List<StoredRegion>, id: Long): Long =
         regions.firstOrNull { it.id == id }?.record?.lastUsedMillis ?: 0L
@@ -218,6 +234,7 @@ object OfflineMapsPaneModel {
         region: StoredRegion,
         pauseReasons: Map<Long, PauseReason>,
         live: Map<Long, RegionProgress>,
+        failures: Map<Long, FailureReason>,
         env: PaneEnv,
         locale: Locale,
         zone: TimeZone,
@@ -236,6 +253,8 @@ object OfflineMapsPaneModel {
         }
         val reading = live[region.id] ?: region.progress
         val reason = pauseReasons[region.id] ?: PauseReason.RESTARTED
+        val stoppedAtLimit = status == RowStatus.PAUSED && DownloadGuard.isOverCap(region.progress)
+        val failure = failures[region.id]
         val paused = DownloadState.Paused(PaneDownloadFlow.estimateOf(record), region.progress, reason)
         val canResume = status == RowStatus.PAUSED && !env.downloadRunning && DownloadGuard.canResume(paused, env.throttleInstalled)
         val resumeNote = when {
@@ -252,12 +271,17 @@ object OfflineMapsPaneModel {
             dateText = date,
             statusLine = when (status) {
                 RowStatus.DOWNLOADING -> OfflineMapsCopy.downloading(reading.fraction?.let { (it * 100f).toInt().coerceIn(0, 99) })
-                RowStatus.PAUSED -> OfflineMapsCopy.paused(reason)
+                RowStatus.PAUSED -> when {
+                    stoppedAtLimit -> OfflineMapsCopy.failure(FailureReason.OVER_CAP)
+                    failure != null -> OfflineMapsCopy.failure(failure)
+                    else -> OfflineMapsCopy.paused(reason)
+                }
                 RowStatus.SAVED -> null
             },
             fraction = if (status == RowStatus.DOWNLOADING) reading.fraction else null,
             canResume = canResume,
             resumeNote = resumeNote,
+            stoppedAtLimit = stoppedAtLimit,
             canPause = status == RowStatus.DOWNLOADING,
             canDelete = status != RowStatus.DOWNLOADING,
             bytes = record.bytes,

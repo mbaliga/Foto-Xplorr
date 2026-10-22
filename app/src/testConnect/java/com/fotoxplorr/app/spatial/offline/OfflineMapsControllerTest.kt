@@ -278,6 +278,31 @@ class OfflineMapsControllerTest {
     }
 
     @Test
+    fun `an area that ran into the size limit is stopped, not paused, and a tap on resume fetches nothing more`() = runTest {
+        val rig = rig()
+        rig.controller.open()
+        rig.controller.download(parisOption, null)
+        rig.engine.emit(1, reading(OfflineMapLimits.MAX_BYTES / 100_000 + 5))
+        rig.controller.refresh()
+
+        val state = rig.controller.state.value
+        assertEquals(FailureReason.OVER_CAP, state.failures[1])
+        assertFalse(state.regions.single().running)
+        val env = rig.controller.env()
+        val row = OfflineMapsPaneModel.savedRows(state.regions, state.pauseReasons, state.live, env, failures = state.failures).single()
+        assertTrue(row.stoppedAtLimit)
+        assertFalse(row.canResume)
+        assertEquals(OfflineMapsCopy.failure(FailureReason.OVER_CAP), row.statusLine)
+
+        rig.engine.calls.clear()
+        rig.controller.resume(1)
+        assertTrue(rig.engine.calls.none { it.startsWith("resume") || it == "create" })
+        assertEquals(0, rig.runner.jobs.value.size)
+        assertEquals(OfflineMapsCopy.failure(FailureReason.OVER_CAP), rig.controller.state.value.notice)
+        rig.scope.cancel()
+    }
+
+    @Test
     fun `resume without the request limit starts nothing`() = runTest {
         val rig = rig(throttle = false)
         val region = rig.engine.stored()

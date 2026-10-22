@@ -12,6 +12,7 @@ class OfflineMapsCopyTest {
         add(OfflineMapsCopy.PRIVACY)
         add(OfflineMapsCopy.UNAVAILABLE)
         add(OfflineMapsCopy.NOT_SAVED)
+        add(OfflineMapsCopy.NOT_LOCKED)
         add(OfflineMapsCopy.REDUCED_DETAIL)
         add(OfflineMapsCopy.METERED)
         add(OfflineMapsCopy.ROOM_NEEDED)

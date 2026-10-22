@@ -245,7 +245,59 @@ class OfflineMapsPaneModelTest {
         reasons: Map<Long, PauseReason> = emptyMap(),
         live: Map<Long, RegionProgress> = emptyMap(),
         env: PaneEnv = env(),
-    ) = OfflineMapsPaneModel.savedRows(regions, reasons, live, env, usEnglish, utc)
+        failures: Map<Long, FailureReason> = emptyMap(),
+    ) = OfflineMapsPaneModel.savedRows(regions, reasons, live, env, usEnglish, utc, failures)
+
+    private val overCap = RegionProgress.EMPTY.copy(completedBytes = OfflineMapLimits.MAX_BYTES + 1)
+
+    @Test
+    fun `an area that stopped at the size limit says so and offers no resume`() {
+        val row = rows(listOf(stored(1, record(), progress = overCap))).single()
+        assertEquals(RowStatus.PAUSED, row.status)
+        assertEquals(OfflineMapsCopy.failure(FailureReason.OVER_CAP), row.statusLine)
+        assertTrue(row.stoppedAtLimit)
+        assertFalse(row.canResume)
+        assertTrue(row.canDelete)
+        // The same after the job reported a pause reason for it.
+        val again = rows(listOf(stored(1, record(), progress = overCap)), reasons = mapOf(1L to PauseReason.USER)).single()
+        assertEquals(OfflineMapsCopy.failure(FailureReason.OVER_CAP), again.statusLine)
+        assertFalse(again.canResume)
+    }
+
+    @Test
+    fun `a failed download that can be retried says what failed and keeps resume`() {
+        val row = rows(listOf(stored(1, record())), failures = mapOf(1L to FailureReason.SERVER)).single()
+        assertEquals(OfflineMapsCopy.failure(FailureReason.SERVER), row.statusLine)
+        assertFalse(row.stoppedAtLimit)
+        assertTrue(row.canResume)
+    }
+
+    @Test
+    fun `a failure recorded for an area that then finished does not show`() {
+        val row = rows(listOf(stored(1, record(), complete = true)), failures = mapOf(1L to FailureReason.SERVER)).single()
+        assertEquals(RowStatus.SAVED, row.status)
+        assertNull(row.statusLine)
+    }
+
+    @Test
+    fun `an area stopped at the size limit does not count as already saved`() {
+        val around = GeoBox.clamped(2.0, 48.5, 2.7, 49.2)!!
+        val stopped = stored(1, record(box = around), progress = overCap)
+        val finished = stored(2, record(name = "Done", box = around), complete = true)
+        val partial = stored(3, record(name = "Half", box = around))
+        val covering = OfflineMapsPaneModel.coveringRecords(listOf(stopped, finished, partial))
+        assertEquals(listOf("Done", "Half"), covering.map { it.name })
+        // A finished area that went over its cap is still a finished area.
+        val finishedOver = stored(4, record(name = "Big", box = around), complete = true, progress = overCap.copy(complete = true))
+        assertEquals(listOf("Big"), OfflineMapsPaneModel.coveringRecords(listOf(finishedOver)).map { it.name })
+
+        val saved = listOf(stopped.record)
+        val withStopped = PaneEnv(true, { true }, saved, false)
+        // Without the filter the stopped area blocks a re-download, which is the bug.
+        assertFalse(OfflineMapsPaneModel.button(optionOf(paris), withStopped).enabled)
+        val env = PaneEnv(true, { true }, saved, false, covering = OfflineMapsPaneModel.coveringRecords(listOf(stopped)))
+        assertTrue(OfflineMapsPaneModel.button(optionOf(paris), env).enabled)
+    }
 
     @Test
     fun `a finished area shows its size, date and a delete`() {
