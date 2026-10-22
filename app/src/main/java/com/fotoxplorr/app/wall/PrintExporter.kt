@@ -344,7 +344,8 @@ internal class MediaStorePrintPublisher(context: Context) : PrintPublisher {
  * Out of memory steps the file down [exportEdgeLadder] (the density tag follows the real pixels,
  * and an enlargement steps down to fewer made-up pixels); if every rung fails the person gets a
  * sentence, not a crash. Cancellation is honoured between the steps and between an enlargement's
- * bands; a single decode, draw, band or encode call is not interrupted.
+ * bands; a single decode, draw, band or encode call is not interrupted, and once the publish has
+ * begun the file is reported as saved whatever arrives after.
  *
  * Nothing here has run on a device: the colour conversion, the JPEG's marker order after Exif is
  * written, and memory on a 48 MP photo are device checks.
@@ -360,17 +361,28 @@ internal class PrintExporter(
      * Saves a print file for [source] at [size]. Cancellation is rethrown; every other failure is in the [Result].
      * With [enlarge], a photo short of pixels is enlarged to the size ([lanczosResample]) instead of
      * being saved at its own pixels; a photo that has enough is saved as it always was.
+     *
+     * The publish into the library cannot be interrupted. A cancel that arrives before it is
+     * honoured (nothing is published); one that arrives during or after it finds the print already in
+     * the library, and the [Result] says so instead of reporting a cancelled job for a saved file.
      */
-    suspend fun save(source: PrintSource, size: PrintSize, enlarge: Boolean = false, onProgress: (Float?) -> Unit = {}): Result<PrintSaved> =
-        withContext(Dispatchers.IO) {
-            try {
-                Result.success(saveNow(source, size, enlarge, onProgress))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                Result.failure(e)
+    suspend fun save(source: PrintSource, size: PrintSize, enlarge: Boolean = false, onProgress: (Float?) -> Unit = {}): Result<PrintSaved> {
+        var published: PrintSaved? = null
+        return try {
+            withContext(Dispatchers.IO) {
+                try {
+                    Result.success(saveNow(source, size, enlarge, onProgress) { published = it })
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    Result.failure(e)
+                }
             }
+        } catch (e: CancellationException) {
+            // withContext drops its result when the caller was cancelled meanwhile.
+            published?.let { Result.success(it) } ?: throw e
         }
+    }
 
     /**
      * A bitmap of [size] for the system print path, up to [dpi] dots per inch, in sRGB. [use] gets
@@ -390,7 +402,13 @@ internal class PrintExporter(
         pruneStaleFiles(stagingDir, System.currentTimeMillis(), maxAgeMillis)
     }
 
-    private suspend fun saveNow(source: PrintSource, size: PrintSize, enlarge: Boolean, onProgress: (Float?) -> Unit): PrintSaved {
+    private suspend fun saveNow(
+        source: PrintSource,
+        size: PrintSize,
+        enlarge: Boolean,
+        onProgress: (Float?) -> Unit,
+        onPublished: (PrintSaved) -> Unit,
+    ): PrintSaved {
         pruneCache()
         val staging = File(stagingDir.apply { mkdirs() }, "print-${UUID.randomUUID()}.jpg")
         try {
@@ -406,11 +424,14 @@ internal class PrintExporter(
             verify(staging, plan)
             onProgress(0.9f)
             val name = printFileName(source.asset.displayName, size, publisher.existingNames(printNameBase(source.asset.displayName, size)))
-            // The last look before a copy of the pixels goes into the library.
+            // The last look before a copy of the pixels goes into the library; and the last point a cancel is honoured.
             if (!source.mayExport()) throw PrintRefusedException()
+            coroutineContext.ensureActive()
             val uri = publisher.publish(staging, name, source.asset.dateTakenMillis)
+            val saved = PrintSaved(uri, name, plan.outW, plan.outH, plan.dpi, plan.enlarged)
+            onPublished(saved)
             onProgress(1f)
-            return PrintSaved(uri, name, plan.outW, plan.outH, plan.dpi, plan.enlarged)
+            return saved
         } finally {
             staging.delete()
         }

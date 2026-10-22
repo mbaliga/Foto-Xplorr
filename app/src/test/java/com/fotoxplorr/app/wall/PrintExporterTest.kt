@@ -58,7 +58,11 @@ class PrintExporterTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
 
-    private class FakePublisher(var taken: Set<String> = emptySet(), var onNames: () -> Unit = {}) : PrintPublisher {
+    private class FakePublisher(
+        var taken: Set<String> = emptySet(),
+        var onNames: () -> Unit = {},
+        var onPublish: () -> Unit = {},
+    ) : PrintPublisher {
         var published: ByteArray? = null
         var name: String? = null
         var dateTaken: Long? = null
@@ -70,6 +74,7 @@ class PrintExporterTest {
         }
 
         override fun publish(file: File, displayName: String, dateTakenMillis: Long): Uri {
+            onPublish()
             count++
             published = file.readBytes()
             name = displayName
@@ -351,6 +356,53 @@ class PrintExporterTest {
             }
             withTimeout(10_000) { started.await() }
             job.cancelAndJoin()
+        }
+        assertTrue(thrown is CancellationException)
+        assertEquals(0, publisher.count)
+        assertEquals(0, stagingDir.listFiles()?.size ?: 0)
+    }
+
+    @Test
+    fun `a cancel that arrives while the file is being published still reports the file that was published`() {
+        val (media, _) = asset(1200, 900)
+        var result: Result<PrintSaved>? = null
+        var thrown: Throwable? = null
+        runBlocking {
+            lateinit var job: kotlinx.coroutines.Job
+            // The publish cannot be interrupted: the cancel lands in the middle of it.
+            publisher.onPublish = { job.cancel() }
+            job = launch(Dispatchers.Default) {
+                try {
+                    result = exporter.save(source(media), PrintSize(20.0, 30.0))
+                } catch (e: CancellationException) {
+                    thrown = e
+                    throw e
+                }
+            }
+            job.join()
+        }
+        assertEquals(1, publisher.count)
+        assertNull("the print is in the library, so no cancel is reported: $thrown", thrown)
+        assertEquals("wall-shot-print-20x30cm.jpg", result!!.getOrThrow().displayName)
+        assertEquals(0, stagingDir.listFiles()?.size ?: 0)
+    }
+
+    @Test
+    fun `a cancel that arrives just before the publish stops it, and nothing is published`() {
+        val (media, _) = asset(1200, 900)
+        var thrown: Throwable? = null
+        runBlocking {
+            lateinit var job: kotlinx.coroutines.Job
+            publisher.onNames = { job.cancel() }
+            job = launch(Dispatchers.Default) {
+                try {
+                    exporter.save(source(media), PrintSize(20.0, 30.0))
+                } catch (e: CancellationException) {
+                    thrown = e
+                    throw e
+                }
+            }
+            job.join()
         }
         assertTrue(thrown is CancellationException)
         assertEquals(0, publisher.count)
