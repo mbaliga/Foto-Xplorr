@@ -56,12 +56,14 @@ keep to 4.
   strings, which points to the Java OkHttp path, but that is not proof.) To check: run a debug build
   behind a logging proxy, download an area, and confirm no more than 4 requests are ever in flight and
   that the User-Agent ends in `Fotoz`, including in the second after a Pause or a Delete; then set
-  `CAP_VERIFIED_ON_DEVICE` to true. Also check that the cap comes off within about a second of a Pause and
-  not only at the 5 s timer: the library delivers a stopped region's readings only because
-  `MapLibreOfflineBackend` calls `setDeliverInactiveMessages(true)`, which was read from bytecode and not
-  run (if it does not, only the timer ends the wait and the live map is throttled for 5 s after every
-  pause). If it does not, the cap is not in force and the download must not ship; the
-  next step is then to ask OpenFreeMap for written permission, not to work around the limit.
+  `CAP_VERIFIED_ON_DEVICE` to true. If the downloader does not use the client, the cap is not in force
+  and the download must not ship; the next step is then to ask OpenFreeMap for written permission, not to
+  work around the limit.
+- Whether the cap comes off promptly after a Pause. The library delivers a stopped region's readings only
+  because `MapLibreOfflineBackend` calls `setDeliverInactiveMessages(true)`, read from bytecode and not
+  run. Check that the default client comes back within about a second of a Pause and not only at the 5 s
+  timer; if it does not, only the timer ends the wait and the live map is throttled for 5 s after every
+  pause, which is slow but within the terms.
 - Whether `OkHttp` 5.x (resolved for the app through `:feature:ai-remote`) satisfies the map
   library's calls, which were compiled against 4.12. The live map already depends on this.
 
