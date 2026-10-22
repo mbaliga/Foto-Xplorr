@@ -63,6 +63,22 @@ class SketchRasterizerTest {
     }
 
     @Test
+    fun `a tall loop the board calls closed is filled in the sprite too`() {
+        // 0.10 wide, 0.30 tall, MEDIUM brush, ends 0.03 apart across the top: closed in board
+        // units, but a wider gap relative to the sprite window, which used to be judged again there.
+        val delta = Math.asin(0.3).toFloat()
+        val n = 48
+        val loop = List(n + 1) {
+            val a = (-Math.PI / 2 + delta + (2 * Math.PI - 2 * delta) * it / n).toFloat()
+            NormPoint(0.5f + 0.05f * cos(a), 0.5f + 0.15f * sin(a))
+        }
+        val s = sketchOf(loop, width = BrushSize.MEDIUM.width)
+        assertTrue(s.strokes.single().filled)
+        val bmp = SketchRasterizer.rasterize(s.strokes)!!
+        assertEquals(red, px(bmp, bmp.width / 2, bmp.height / 2))
+    }
+
+    @Test
     fun `an open line is not filled`() {
         val line = List(10) { NormPoint(0.1f + 0.08f * it, 0.5f) }
         val bmp = SketchRasterizer.rasterize(sketchOf(line).strokes)!!

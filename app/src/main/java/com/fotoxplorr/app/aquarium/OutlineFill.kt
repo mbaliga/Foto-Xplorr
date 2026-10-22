@@ -128,9 +128,19 @@ object OutlineFill {
      * covered edge pixels of the ink are never left as a pale rim.
      */
     fun filledRegion(points: List<NormPoint>, widthNorm: Float, w: Int, h: Int): BooleanArray {
+        return filledRegionClosed(closedOutline(points, widthNorm), widthNorm, w, h)
+    }
+
+    /**
+     * [filledRegion] for an outline the caller has already decided to close (and closed, by repeating
+     * its first point): no closure test is made here. The rasteriser uses this because the board
+     * decided "filled" in board units, and the window rescales x, y and the brush differently, so
+     * asking again there could disagree with what the person saw.
+     */
+    fun filledRegionClosed(closedPoints: List<NormPoint>, widthNorm: Float, w: Int, h: Int): BooleanArray {
         if (w <= 0 || h <= 0 || w.toLong() * h > MAX_CELLS) return BooleanArray(0)
         val ink = BooleanArray(w * h)
-        stampStroke(ink, w, h, closedOutline(points, widthNorm), widthNorm)
+        stampStroke(ink, w, h, closedPoints, widthNorm)
         return interior(ink, w, h)
     }
 

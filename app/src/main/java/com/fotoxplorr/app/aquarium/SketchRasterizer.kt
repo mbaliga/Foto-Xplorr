@@ -34,8 +34,10 @@ object SketchRasterizer {
             val pts = stroke.points.map(window::toWindow)
             if (pts.isEmpty()) continue
             val widthN = window.widthInWindow(stroke.width)
+            // The sketch decided "filled" in board units; do not ask again in window units (they differ).
+            val closed: List<NormPoint> = if (stroke.filled && pts.size > 1) pts + pts.first() else pts
             if (stroke.filled) {
-                val mask = OutlineFill.filledRegion(pts, widthN, w, h)
+                val mask = OutlineFill.filledRegionClosed(closed, widthN, w, h)
                 if (mask.size == w * h) {
                     val px = IntArray(w * h)
                     board.getPixels(px, 0, w, 0, 0, w, h)
@@ -54,8 +56,8 @@ object SketchRasterizer {
                 ink.strokeCap = Paint.Cap.ROUND
                 ink.strokeJoin = Paint.Join.ROUND
                 path.rewind()
-                // A nearly closed outline is drawn closed too, so the ink never shows the gap the fill closed.
-                val drawn: List<NormPoint> = if (stroke.filled) OutlineFill.closedOutline(pts, widthN) else pts
+                // A filled outline is drawn closed too, so the ink never shows the gap the fill closed.
+                val drawn = closed
                 path.moveTo(drawn[0].x * w, drawn[0].y * h)
                 for (i in 1 until drawn.size) path.lineTo(drawn[i].x * w, drawn[i].y * h)
                 canvas.drawPath(path, ink)
