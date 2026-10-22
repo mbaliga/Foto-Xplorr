@@ -56,4 +56,44 @@ internal class WallView(
             )
         }
     }
+
+    /**
+     * [f] after a gesture step: moved by ([panX], [panY]) area pixels, its size times [zoom], turned
+     * by [rotDeg]. The centre stays on the photo; the size stays within the preset limits.
+     */
+    fun transformed(f: WallFrame, panX: Float, panY: Float, zoom: Float, rotDeg: Float): WallFrame {
+        if (bitmapW <= 0 || scale <= 0f) return f
+        val unit = bitmapW * scale
+        val (w, h) = FramePresets.scaled(f.wCm, f.hCm, zoom)
+        return f.copy(
+            cx = (f.cx + panX / unit).coerceIn(0f, 1f),
+            cy = (f.cy + panY / unit).coerceIn(0f, bitmapH.toFloat() / bitmapW),
+            wCm = w,
+            hCm = h,
+            rotationDeg = turned(f.rotationDeg + rotDeg),
+        )
+    }
+
+    companion object {
+        /** A tilt closer than this to level is taken as level when a gesture ends. */
+        const val LEVEL_SNAP_DEG = 3f
+
+        /** [deg] brought into -180..180. */
+        fun turned(deg: Float): Float {
+            var d = deg % 360f
+            if (d > 180f) d -= 360f
+            if (d <= -180f) d += 360f
+            return d
+        }
+
+        /** [f] as a gesture leaves it: onto a standard size and level when close to them. */
+        fun settled(f: WallFrame): WallFrame {
+            val snapped = FramePresets.snap(f.wCm, f.hCm)
+            return f.copy(
+                wCm = snapped?.first ?: f.wCm,
+                hCm = snapped?.second ?: f.hCm,
+                rotationDeg = if (kotlin.math.abs(f.rotationDeg) < LEVEL_SNAP_DEG) 0f else f.rotationDeg,
+            )
+        }
+    }
 }
