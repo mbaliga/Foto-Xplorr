@@ -113,6 +113,7 @@ import com.fotoxplorr.app.shell.shouldRefreshRecoveryNotice
 import com.fotoxplorr.app.video.VideoExportOptions
 import com.fotoxplorr.app.recognition.RecognitionIndexer
 import com.fotoxplorr.app.recognition.RecognitionStore
+import com.fotoxplorr.app.recognition.TextLayoutProvider
 import com.fotoxplorr.app.share.PreparedItem
 import com.fotoxplorr.app.share.ShareFrame
 import com.fotoxplorr.app.share.ShareOptions
@@ -234,6 +235,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // the device (the BYOK remote-AI path stays separate and strictly opt-in).
     val recognitionStore = remember { RecognitionStore(applicationContext) }
     val recognitionIndexer = remember { RecognitionIndexer(applicationContext, recognitionStore) }
+    // Word-level text for the photo being viewed, made on demand and kept in memory only.
+    val textLayoutProvider = remember { TextLayoutProvider(applicationContext) }
     val scope = rememberCoroutineScope()
     // One geo index for the whole app: the gallery reads it for the map and compass, the viewer
     // writes hand-placed locations into it. Two instances over the same file would each hold
@@ -538,6 +541,10 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val activeAsset = viewerAssets.getOrNull(selectedIndex)?.let { fromList ->
         if (fromList.isExternal) fromList else assets.firstOrNull { it.id == fromList.id } ?: fromList
     }
+    // The cached layouts hold the text of the photos viewed and the recogniser holds its model:
+    // both are let go when the viewer closes (and with the screen).
+    val viewerOpen = activeAsset != null
+    DisposableEffect(viewerOpen) { onDispose { if (viewerOpen) textLayoutProvider.release() } }
 
     // Open-with / share-to: classifies whatever this Activity was started or re-delivered with
     // (see onNewIntent's own doc on incomingIntentGeneration) and routes it straight to the
@@ -1473,6 +1480,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // than passed wholesale: the index holds every photo's text, and the viewer needs
             // exactly one photo's worth.
             liveTextBlocks = recognition.textByMedia[activeAsset.id].orEmpty(),
+            textLayoutProvider = textLayoutProvider,
             // Likewise the palette that pass sampled, and every photo's dominant colour for the
             // expanded map's dots.
             palette = recognition.paletteFor(activeAsset.id),

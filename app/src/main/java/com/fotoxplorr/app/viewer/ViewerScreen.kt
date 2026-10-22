@@ -226,6 +226,11 @@ fun ViewerScreen(
      */
     liveTextBlocks: List<com.fotoxplorr.app.recognition.TextBlock> = emptyList(),
     /**
+     * Word-level text for this photo on demand (see [com.fotoxplorr.app.recognition.TextLayoutProvider]);
+     * null where a caller has none, which leaves the block-only layout from the stored index.
+     */
+    textLayoutProvider: com.fotoxplorr.app.recognition.TextLayoutProvider? = null,
+    /**
      * Search the library for text read off this photo, from the details room's Search pill.
      *
      * Leaving the viewer is the caller's job, not this screen's: the pill hands over a string and
