@@ -33,7 +33,8 @@ class MapLibreRegionEngineTest {
     private fun engine(
         b: FakeOfflineBackend = backend,
         c: FakeRequestCap = cap,
-    ) = MapLibreRegionEngine(b, c, dispatcher = Dispatchers.Unconfined)
+        verified: Boolean = true,
+    ) = MapLibreRegionEngine(b, c, dispatcher = Dispatchers.Unconfined, releaseGateOpen = verified)
 
     private fun status(done: Long, bytes: Long = done * 100_000, complete: Boolean = false) = BackendStatus(
         completedResourceCount = done, completedResourceSize = bytes, completedTileCount = done / 2,
@@ -62,6 +63,30 @@ class MapLibreRegionEngineTest {
         // The probe at construction is the only time the cap was touched.
         assertEquals(1, cap.installCalls)
         assertEquals(1, cap.restoreCalls)
+    }
+
+    @Test
+    fun `until the cap is verified on a device a release build offers no download and never probes the cap`() = runTest {
+        val engine = engine(verified = false)
+        val id = engine.createOne()
+
+        assertFalse(engine.throttleInstalled)
+        assertEquals(0, cap.installCalls)
+        assertEquals(0, cap.restoreCalls)
+        assertEquals(
+            EngineFailure.THROTTLE_NOT_INSTALLED,
+            (engine.resume(id) as EngineResult.Failure).reason,
+        )
+        assertFalse(backend.calls.any { it.startsWith("setActive") })
+        assertEquals(0, cap.installCalls)
+    }
+
+    @Test
+    fun `the release gate is shut in the source until someone confirms the cap with a logging proxy`() {
+        assertFalse(MapLibreRegionEngine.CAP_VERIFIED_ON_DEVICE)
+        assertFalse(MapLibreRegionEngine.downloadsAllowed(verified = false, debugBuild = false))
+        assertTrue(MapLibreRegionEngine.downloadsAllowed(verified = false, debugBuild = true))
+        assertTrue(MapLibreRegionEngine.downloadsAllowed(verified = true, debugBuild = false))
     }
 
     @Test

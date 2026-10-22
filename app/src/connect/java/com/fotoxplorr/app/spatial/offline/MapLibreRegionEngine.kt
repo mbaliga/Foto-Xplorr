@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.spatial.offline
 
 import android.content.Context
+import com.fotoxplorr.app.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +37,13 @@ import kotlinx.coroutines.withContext
  *
  * [throttleInstalled] here means "the limit can be applied and [resume] will apply it": the cap is
  * deliberately NOT left installed between downloads, so it is probed once when the engine is built
- * (install, then restore at once, no request is made) and again for real on every [resume].
+ * (install, then restore at once, no request is made) and again for real on every [resume]. The
+ * request cap starts the map library itself before it touches the library's HTTP hook
+ * ([MapLibreRequestCap]); a probe that ran first would fail the library's HTTP class for the process.
+ *
+ * It is also false in a release build until [CAP_VERIFIED_ON_DEVICE] is set: nobody has yet seen
+ * the native downloader go through the capped client, and a download that ignores the limit breaks
+ * the provider's terms (ADR-015). Debug builds are allowed so that the check can be done.
  *
  * Progress figures are the library's own counts; they are not this package's estimates. They count
  * every resource (style, sprites, glyphs, tiles), which is what [DownloadGuard] compares to the
@@ -47,6 +54,7 @@ internal class MapLibreRegionEngine(
     private val cap: RequestCap,
     private val dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
     private val styleUrl: String = LIBERTY_STYLE_URL,
+    private val releaseGateOpen: Boolean = downloadsAllowed(CAP_VERIFIED_ON_DEVICE, BuildConfig.DEBUG),
 ) : OfflineRegionEngine {
 
     private sealed interface FeedItem {
@@ -74,6 +82,9 @@ internal class MapLibreRegionEngine(
     override val throttleInstalled: Boolean get() = capUsable
 
     private fun probeCap(): Boolean {
+        // A release build offers no download until the cap is confirmed on a device (ADR-015), and
+        // does not touch the library's HTTP hook for nothing.
+        if (!releaseGateOpen) return false
         val worked = try {
             cap.install()
         } catch (e: Exception) {
@@ -274,6 +285,15 @@ internal class MapLibreRegionEngine(
 
         fun canDownload(box: GeoBox): Boolean = ANTIMERIDIAN_VERIFIED || !box.crossesAntimeridian
 
+        /**
+         * Whether anyone has watched the native downloader obey the four-request limit: run a debug
+         * build behind a logging proxy, download an area, and count the requests in flight (ADR-015).
+         * Until it is true, a release build offers no download. Flip it only after that check.
+         */
+        const val CAP_VERIFIED_ON_DEVICE: Boolean = false
+
+        fun downloadsAllowed(verified: Boolean, debugBuild: Boolean): Boolean = verified || debugBuild
+
         private const val FEED_BUFFER = 64
 
         @Volatile
@@ -287,7 +307,7 @@ internal class MapLibreRegionEngine(
             shared ?: synchronized(this) {
                 shared ?: MapLibreRegionEngine(
                     backend = MapLibreOfflineBackend(context.applicationContext),
-                    cap = MapLibreRequestCap,
+                    cap = MapLibreRequestCap(context),
                 ).also { shared = it }
             }
     }

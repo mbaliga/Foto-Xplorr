@@ -32,7 +32,17 @@ keep to 4.
    artifact is the one `:app` already has as `connectImplementation`; the declaration adds nothing to
    any resolved classpath (compile-only), so `verifyOfflineRuntimeClasspath` is unaffected, and no
    Offline code can reach the class.
-3. A build where the cap cannot be applied (the hook missing, the client refused, a link error)
+3. The cap starts the map library itself (`MapLibre.getInstance`, idempotent) before its first call
+   into the HTTP hook. The library's HTTP class reads the application context when it first loads and,
+   read from its bytecode, fails permanently for the process if the library has not been started: the
+   probe made when the Offline maps pane opens on a cold process would then both report "unavailable"
+   and break the live map's own requests. If the library cannot be started, `install` returns false
+   and the hook is not touched.
+4. A release build offers no download until `MapLibreRegionEngine.CAP_VERIFIED_ON_DEVICE` is set,
+   which is done only after the check under "What is not known" has been made. Debug builds are
+   allowed, so the check can be done. Until then the pane says downloads are unavailable and the cap
+   is not even probed.
+5. A build where the cap cannot be applied (the hook missing, the client refused, a link error)
    offers no download. The engine reports `throttleInstalled = false`, the Download and Resume
    buttons are disabled, and `resume` refuses with `THROTTLE_NOT_INSTALLED` and fetches nothing.
    The app does not fall back to downloading without the cap.
@@ -40,7 +50,10 @@ keep to 4.
 ## What is not known
 
 - Whether the native downloader sends its requests through this client at all. This is read from
-  bytecode, not run. If it does not, the cap is not in force and the download must not ship; the
+  bytecode, not run. (`libmaplibre.so` registers a Java `HTTPRequest` peer and has no libcurl or cronet
+  strings, which points to the Java OkHttp path, but that is not proof.) To check: run a debug build
+  behind a logging proxy, download an area, and confirm no more than 4 requests are ever in flight and
+  that the User-Agent ends in `Fotoz`; then set `CAP_VERIFIED_ON_DEVICE` to true. If it does not, the cap is not in force and the download must not ship; the
   next step is then to ask OpenFreeMap for written permission, not to work around the limit.
 - Whether `OkHttp` 5.x (resolved for the app through `:feature:ai-remote`) satisfies the map
   library's calls, which were compiled against 4.12. The live map already depends on this.
