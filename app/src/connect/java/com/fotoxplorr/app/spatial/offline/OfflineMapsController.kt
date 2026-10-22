@@ -65,7 +65,7 @@ internal data class PaneUiState(
 internal class OfflineMapsController(
     private val engine: OfflineRegionEngine,
     private val runner: JobRunner,
-    private val metered: MeteredCheck,
+    private val network: ConnectionCheck,
     private val nowMillis: () -> Long,
     private val scope: CoroutineScope,
 ) {
@@ -158,11 +158,20 @@ internal class OfflineMapsController(
             note(button.note)
             return
         }
+        // Before anything is created: with no connection the area would sit in one of the six slots
+        // and fetch nothing.
+        val connection = network.connection()
+        if (connection == Connection.NONE) {
+            note(OfflineMapsCopy.NO_CONNECTION)
+            return
+        }
         val name = OfflineMapsPaneModel.uniqueName(
             OfflineMapsPaneModel.nameFor(option, typedName),
             current.regions.map { it.record },
         )
-        val step = PaneDownloadFlow.tapDownload(option.box, option.verdict, engine.throttleInstalled, metered.isMetered())
+        val step = PaneDownloadFlow.tapDownload(
+            option.box, option.verdict, engine.throttleInstalled, connection == Connection.METERED,
+        )
         proceed(step, DownloadRequest.Fresh(name))
     }
 
@@ -177,8 +186,15 @@ internal class OfflineMapsController(
             note(row.resumeNote ?: row.statusLine.takeIf { row.stoppedAtLimit })
             return
         }
+        val connection = network.connection()
+        if (connection == Connection.NONE) {
+            note(OfflineMapsCopy.NO_CONNECTION)
+            return
+        }
         val reason = current.pauseReasons[id] ?: PauseReason.RESTARTED
-        val step = PaneDownloadFlow.tapResume(region.record, region.progress, reason, engine.throttleInstalled, metered.isMetered())
+        val step = PaneDownloadFlow.tapResume(
+            region.record, region.progress, reason, engine.throttleInstalled, connection == Connection.METERED,
+        )
         proceed(step, DownloadRequest.Existing(region))
     }
 

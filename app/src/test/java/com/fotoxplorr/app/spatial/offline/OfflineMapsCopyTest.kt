@@ -21,6 +21,7 @@ class OfflineMapsCopyTest {
         add(OfflineMapsCopy.NOTHING_SAVED)
         add(OfflineMapsCopy.SAVED)
         add(OfflineMapsCopy.ONE_AT_A_TIME)
+        add(OfflineMapsCopy.NO_CONNECTION)
         add(OfflineMapsCopy.DATE_LINE)
         add(OfflineMapsCopy.ALREADY_SAVED)
         add(OfflineMapsCopy.DELETE_FAILED)

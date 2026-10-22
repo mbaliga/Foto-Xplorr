@@ -65,8 +65,9 @@ import com.fotoxplorr.app.ui.RoomStyle
  * - [onClose]: the pane asked to close (its own back control).
  *
  * What it does: lists what is saved (nothing else happens on open), offers each area with a Download
- * button that carries the size estimate, asks before using mobile data, and lets the person pause,
- * resume and delete. A download starts only from a tap on Download, Resume or the mobile-data
+ * button that carries the size estimate, says what is shared with the map provider (once, under the
+ * first button, and again in the mobile-data question), asks before using mobile data, says so when
+ * there is no connection at all, and lets the person pause, resume and delete. A download starts only from a tap on Download, Resume or the mobile-data
  * question's Download (TRAPS #61, #71); see [OfflineMapsController]. Download is disabled, with its
  * reason beside it, when the build cannot apply the provider's request limit, when another download
  * is running, when the area is too big, over the date line or already saved, and when there is no
@@ -96,15 +97,15 @@ fun OfflineMapsPane(
     // Throwable on purpose: a map library that cannot load is an Error, not an Exception. The pane
     // then says downloads are unavailable instead of crashing Settings.
     val engine = remember(context) { runCatching { MapLibreRegionEngine.shared(context) }.getOrNull() }
-    val metered = remember(context) { PlatformMeteredCheck(context) }
-    OfflineMapsPaneBody(engine, metered, System::currentTimeMillis, placePoints, currentView, jobRunner, onClose, modifier)
+    val network = remember(context) { PlatformConnectionCheck(context) }
+    OfflineMapsPaneBody(engine, network, System::currentTimeMillis, placePoints, currentView, jobRunner, onClose, modifier)
 }
 
 /** The pane over an injected engine, so a test can mount it with the fake. */
 @Composable
 internal fun OfflineMapsPaneBody(
     engine: OfflineRegionEngine?,
-    metered: MeteredCheck,
+    network: ConnectionCheck,
     nowMillis: () -> Long,
     placePoints: List<GeoPoint>,
     currentView: GeoBox?,
@@ -118,7 +119,7 @@ internal fun OfflineMapsPaneBody(
             return@PaneScaffold
         }
         val scope = rememberCoroutineScope()
-        val controller = remember(engine, jobRunner) { OfflineMapsController(engine, jobRunner, metered, nowMillis, scope) }
+        val controller = remember(engine, jobRunner) { OfflineMapsController(engine, jobRunner, network, nowMillis, scope) }
         DisposableEffect(controller) {
             controller.open()
             onDispose { controller.close() }
@@ -168,10 +169,13 @@ private fun ColumnScope.PaneContent(
         ui.notice?.let { Note(it) }
         if (ui.listFailed) Note(OfflineMapsCopy.LIST_FAILED)
 
+        // The privacy sentence goes under the first Download button, where the choice is made.
+        val firstKey = view?.key ?: places.firstOrNull()?.key
         if (view != null) {
             RoomEyebrow(OfflineMapsCopy.HEADING_THIS_VIEW, Modifier.padding(top = 8.dp))
             AreaCard(
                 title = OfflineMapsCopy.THIS_VIEW,
+                showPrivacy = view.key == firstKey,
                 detail = OfflineMapsPaneModel.nameFor(view, names[view.key]),
                 button = OfflineMapsPaneModel.button(view, env),
                 onRename = { renaming = view.key; draft = names[view.key].orEmpty() },
@@ -184,6 +188,7 @@ private fun ColumnScope.PaneContent(
                 val name = OfflineMapsPaneModel.nameFor(option, names[option.key])
                 AreaCard(
                     title = name,
+                    showPrivacy = option.key == firstKey,
                     detail = OfflineMapsCopy.photos(option.photoCount),
                     button = OfflineMapsPaneModel.button(option, env),
                     onRename = { renaming = option.key; draft = names[option.key].orEmpty() },
@@ -211,7 +216,6 @@ private fun ColumnScope.PaneContent(
         }
 
         RoomRule(Modifier.padding(vertical = 14.dp))
-        Note(OfflineMapsCopy.PRIVACY)
         Note(OfflineMapsCopy.NOT_LOCKED)
         Note(OfflineMapsCopy.ATTRIBUTION)
     }
@@ -220,7 +224,13 @@ private fun ColumnScope.PaneContent(
         AlertDialog(
             onDismissRequest = controller::declineMetered,
             title = { Text(OfflineMapsCopy.METERED) },
-            text = { Text(OfflineMapsCopy.meteredBody(question.bytes)) },
+            text = {
+                Column {
+                    Text(OfflineMapsCopy.meteredBody(question.bytes))
+                    Spacer(Modifier.height(8.dp))
+                    Text(OfflineMapsCopy.PRIVACY)
+                }
+            },
             confirmButton = { TextButton(onClick = controller::confirmMetered) { Text(OfflineMapsCopy.DOWNLOAD) } },
             dismissButton = { TextButton(onClick = controller::declineMetered) { Text(OfflineMapsCopy.NOT_NOW) } },
         )
@@ -260,6 +270,7 @@ private fun ColumnScope.PaneContent(
 @Composable
 private fun AreaCard(
     title: String,
+    showPrivacy: Boolean,
     detail: String,
     button: DownloadButton,
     onRename: () -> Unit,
@@ -276,6 +287,7 @@ private fun AreaCard(
         Spacer(Modifier.height(8.dp))
         PaneButton(button.label, enabled = button.enabled, note = button.note, onClick = onDownload)
         button.note?.let { Note(it) }
+        if (showPrivacy) Note(OfflineMapsCopy.PRIVACY)
     }
 }
 

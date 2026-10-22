@@ -41,7 +41,7 @@ class OfflineMapsControllerTest {
         val runner: JobRunner,
         val controller: OfflineMapsController,
         val scope: CoroutineScope,
-        var metered: Boolean,
+        var connection: Connection,
         val scopeOf: (FakeOfflineRegionEngine) -> OfflineMapsController,
     )
 
@@ -51,9 +51,9 @@ class OfflineMapsControllerTest {
         val runner = JobRunner(scope)
         lateinit var rig: Rig
         val make = { e: FakeOfflineRegionEngine ->
-            OfflineMapsController(e, runner, MeteredCheck { rig.metered }, nowMillis = { 777L }, scope = scope)
+            OfflineMapsController(e, runner, ConnectionCheck { rig.connection }, nowMillis = { 777L }, scope = scope)
         }
-        rig = Rig(engine, runner, make(engine), scope, metered, make)
+        rig = Rig(engine, runner, make(engine), scope, if (metered) Connection.METERED else Connection.UNMETERED, make)
         return rig
     }
 
@@ -100,7 +100,7 @@ class OfflineMapsControllerTest {
             override suspend fun list(): EngineResult<List<StoredRegion>> = EngineResult.Failure(EngineFailure.ENGINE_ERROR)
         }
         val scope = CoroutineScope(UnconfinedTestDispatcher(testScheduler) + SupervisorJob())
-        val controller = OfflineMapsController(failing, JobRunner(scope), MeteredCheck { false }, { 0L }, scope)
+        val controller = OfflineMapsController(failing, JobRunner(scope), ConnectionCheck { Connection.UNMETERED }, { 0L }, scope)
         controller.open()
         assertTrue(controller.state.value.listFailed)
         assertTrue(controller.state.value.loaded)
@@ -240,6 +240,38 @@ class OfflineMapsControllerTest {
         rig.scope.cancel()
     }
 
+    @Test
+    fun `with no connection a tap on Download says so and creates nothing`() = runTest {
+        val rig = rig()
+        rig.connection = Connection.NONE
+        rig.controller.open()
+        rig.engine.calls.clear()
+
+        rig.controller.download(parisOption, null)
+
+        assertTrue("no region, no job, no question", rig.engine.calls.isEmpty())
+        assertEquals(0, rig.runner.jobs.value.size)
+        assertNull(rig.controller.state.value.question)
+        assertEquals(OfflineMapsCopy.NO_CONNECTION, rig.controller.state.value.notice)
+        rig.scope.cancel()
+    }
+
+    @Test
+    fun `with no connection a tap on Resume says so and starts nothing`() = runTest {
+        val rig = rig()
+        val region = rig.engine.stored()
+        rig.engine.emit(region.id, reading(40))
+        rig.controller.open()
+        rig.connection = Connection.NONE
+        rig.engine.calls.clear()
+
+        rig.controller.resume(region.id)
+
+        assertTrue(rig.engine.calls.isEmpty())
+        assertEquals(OfflineMapsCopy.NO_CONNECTION, rig.controller.state.value.notice)
+        rig.scope.cancel()
+    }
+
     // ---- pause and resume ----
 
     @Test
@@ -273,7 +305,7 @@ class OfflineMapsControllerTest {
                     is EngineResult.Failure -> listed
                 }
         }
-        val controller = OfflineMapsController(renamed, rig.runner, MeteredCheck { false }, { 777L }, rig.scope)
+        val controller = OfflineMapsController(renamed, rig.runner, ConnectionCheck { Connection.UNMETERED }, { 777L }, rig.scope)
         controller.open()
         controller.download(parisOption, "Typed name")
         assertEquals("Stored name", controller.state.value.regions.single().record.name)

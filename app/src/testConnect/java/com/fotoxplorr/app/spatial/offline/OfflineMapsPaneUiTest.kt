@@ -1,9 +1,12 @@
 package com.fotoxplorr.app.spatial.offline
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -58,7 +61,7 @@ class OfflineMapsPaneUiTest {
             FotoXplorrTheme(GalleryPreferencesState()) {
                 OfflineMapsPaneBody(
                     engine = engine,
-                    metered = MeteredCheck { metered },
+                    network = ConnectionCheck { if (metered) Connection.METERED else Connection.UNMETERED },
                     nowMillis = { 777L },
                     placePoints = points,
                     currentView = view,
@@ -88,10 +91,28 @@ class OfflineMapsPaneUiTest {
     }
 
     @Test
-    fun `the privacy sentence and the attribution are on the pane`() {
-        mount(FakeOfflineRegionEngine())
+    fun `the privacy sentence sits directly under the first Download button, once, and the attribution is on the pane`() {
+        mount(FakeOfflineRegionEngine(), points = listOf(GeoPoint(48.86, 2.35)))
         compose.onNodeWithText(OfflineMapsCopy.PRIVACY).assertIsDisplayed()
         compose.onNodeWithText(OfflineMapsCopy.ATTRIBUTION).assertIsDisplayed()
+
+        // The first card is This view; the place below it must not repeat the sentence.
+        // The place below is the same size, so its button reads the same: take the first.
+        val button = compose.onAllNodesWithText(OfflineMapsCopy.downloadWithSize(parisBytes))[0].getBoundsInRoot()
+        val privacy = compose.onNodeWithText(OfflineMapsCopy.PRIVACY).getBoundsInRoot()
+        val places = compose.onNodeWithText(OfflineMapsCopy.HEADING_PLACES).getBoundsInRoot()
+        assertTrue("under the button", privacy.top >= button.bottom)
+        assertTrue("before the next section", privacy.bottom <= places.top)
+        compose.onAllNodesWithText(OfflineMapsCopy.PRIVACY).assertCountEquals(1)
+    }
+
+    @Test
+    fun `with only places the sentence sits under the first place's button`() {
+        mount(FakeOfflineRegionEngine(), view = null, points = listOf(GeoPoint(48.86, 2.35)))
+        val privacy = compose.onNodeWithText(OfflineMapsCopy.PRIVACY).getBoundsInRoot()
+        val heading = compose.onNodeWithText(OfflineMapsCopy.HEADING_PLACES).getBoundsInRoot()
+        assertTrue(privacy.top > heading.bottom)
+        compose.onAllNodesWithText(OfflineMapsCopy.PRIVACY).assertCountEquals(1)
     }
 
     @Test
@@ -137,6 +158,8 @@ class OfflineMapsPaneUiTest {
         compose.onNodeWithText(OfflineMapsCopy.downloadWithSize(parisBytes)).performClick()
         compose.waitForIdle()
         compose.onNodeWithText(OfflineMapsCopy.METERED).assertIsDisplayed()
+        // The dialog repeats the privacy sentence next to its own Download button.
+        compose.onAllNodesWithText(OfflineMapsCopy.PRIVACY).assertCountEquals(2)
         assertFalse(engine.calls.any { it.startsWith("create") || it.startsWith("resume") })
 
         compose.onNodeWithText(OfflineMapsCopy.NOT_NOW).performClick()
@@ -192,7 +215,7 @@ class OfflineMapsPaneUiTest {
         val runner = JobRunner(scope)
         compose.setContent {
             FotoXplorrTheme(GalleryPreferencesState()) {
-                OfflineMapsPaneBody(null, MeteredCheck { false }, { 0L }, emptyList(), paris, runner, {})
+                OfflineMapsPaneBody(null, ConnectionCheck { Connection.UNMETERED }, { 0L }, emptyList(), paris, runner, {})
             }
         }
         compose.onNodeWithText(OfflineMapsCopy.UNAVAILABLE).assertIsDisplayed()

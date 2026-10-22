@@ -11,7 +11,10 @@ object OfflineMapsCopy {
     /** The honest row in the Offline build, which has no network code at all. */
     const val STUB_ROW = "Offline maps need the Connect build."
 
-    /** Shown beside the Download button. Tile requests really do reveal both. */
+    /**
+     * Shown under the first Download button and in the mobile-data question, where the choice is
+     * made. Tile requests really do reveal both.
+     */
     const val PRIVACY = "Downloading shows the area and your IP address to the map provider."
 
     /** A saved area is a place on a map, listed in Settings whether or not a private folder is open. */
@@ -62,6 +65,7 @@ object OfflineMapsCopy {
     const val NOTHING_SAVED = "Nothing is saved yet."
     const val SAVED = "Saved."
     const val ONE_AT_A_TIME = "One download at a time."
+    const val NO_CONNECTION = "No connection right now."
     const val DATE_LINE = "Areas over the date line cannot be saved yet."
     const val ALREADY_SAVED = "Already in your saved areas."
     const val DELETE_FAILED = "That area could not be deleted."
