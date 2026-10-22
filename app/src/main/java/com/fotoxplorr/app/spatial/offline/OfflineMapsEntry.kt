@@ -33,7 +33,7 @@ import com.fotoxplorr.app.ui.RoomStyle
  * found it shows [OfflineMapsCopy.UNAVAILABLE] instead of a pane that could not start anything.
  *
  * Opening the sheet starts nothing. Back, the pane's own back control and a tap outside all close it.
- * [placePoints] must come from `browsableAssets` (TRAPS #33).
+ * [placePoints] must come from `browsableAssets` (TRAPS #33) and leave out protected folders, unlocked or not (`everydayPoints`).
  */
 @Composable
 fun OfflineMapsDialog(placePoints: List<GeoPoint>, currentView: GeoBox?, onDismiss: () -> Unit) {
@@ -68,11 +68,13 @@ fun OfflineMapsDialog(placePoints: List<GeoPoint>, currentView: GeoBox?, onDismi
  *
  * "Places in your photos" is read here, only when the sheet is open, from the browsable photos the
  * Experimental section and the map already use (`LocalSpatialExperience.assets` is the output of
- * `browsableAssets`, TRAPS #33); with none provided there are no places. Whether the sheet is open is
- * saved across a rotation and process death; opening it starts no download.
+ * `browsableAssets`, TRAPS #33), less every photo in a protected folder ([lockedFolders], the whole
+ * set, unlocked ones included: a saved area outlives the unlock, see [everydayPoints]); with none
+ * provided there are no places. Whether the sheet is open is saved across a rotation and process
+ * death; opening it starts no download.
  */
 @Composable
-fun OfflineMapsSettingsRow() {
+fun OfflineMapsSettingsRow(lockedFolders: Set<String>) {
     var open by rememberSaveable { mutableStateOf(false) }
     RoomRow(
         label = OfflineMapsCopy.ROW_LABEL,
@@ -81,8 +83,8 @@ fun OfflineMapsSettingsRow() {
     )
     if (open) {
         val spatial = LocalSpatialExperience.current
-        val points = remember(spatial?.assets, spatial?.geoState) {
-            spatial?.let { it.geoState.browsablePoints(it.assets.map { asset -> asset.id }) }.orEmpty()
+        val points = remember(spatial?.assets, spatial?.geoState, lockedFolders) {
+            spatial?.let { it.geoState.everydayPoints(it.assets, lockedFolders) }.orEmpty()
         }
         OfflineMapsDialog(placePoints = points, currentView = null, onDismiss = { open = false })
     }

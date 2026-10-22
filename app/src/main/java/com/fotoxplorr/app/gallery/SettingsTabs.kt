@@ -381,7 +381,7 @@ fun SettingsTabsRoom(
                     EncryptedBackupRows()
 
                     SectionLabel("MAPS")
-                    OfflineMapsSettingsRow()
+                    OfflineMapsSettingsRow(lockedFolders = state.lockedFolders)
 
                     SectionLabel("LIBRARY")
                     ActionText("Rescan for new photos", actions.onRefresh)

@@ -11,8 +11,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.spatial.offline.browsablePoints
+import com.fotoxplorr.app.spatial.offline.everydayPoints
 
 /**
  * The connect flavour's map pane: the street map, embedded -- but only once the browser has been
@@ -41,6 +42,7 @@ fun PhotoMapPaneImpl(
     settled: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     var reachedRest by remember { mutableStateOf(false) }
     LaunchedEffect(settled) { if (settled) reachedRest = true }
     if (!reachedRest) {
@@ -57,7 +59,8 @@ fun PhotoMapPaneImpl(
         modifier = modifier,
         embedded = true,
         // frameAssets is the browser's privacy-filtered list (TRAPS #33), read only when the Offline
-        // maps sheet opens from the pill.
-        offlinePlacePoints = { geoState.browsablePoints(frameAssets.map { it.id }) },
+        // maps sheet opens from the pill; photos in any protected folder, unlocked now or not, are
+        // left out because a saved area outlives the unlock.
+        offlinePlacePoints = { geoState.everydayPoints(context, frameAssets) },
     )
 }

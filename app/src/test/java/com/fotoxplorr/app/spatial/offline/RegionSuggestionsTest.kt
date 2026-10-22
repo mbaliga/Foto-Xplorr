@@ -2,6 +2,8 @@ package com.fotoxplorr.app.spatial.offline
 
 import com.fotoxplorr.app.spatial.GeoIndexState
 import com.fotoxplorr.app.spatial.GeoMetadata
+import com.fotoxplorr.app.gallery.folderIdentity
+import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.core.model.MediaId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -163,5 +165,41 @@ class RegionSuggestionsTest {
     fun `a browsable photo with no stored location adds no point`() {
         val state = index(Triple(1L, 48.0, 2.0))
         assertEquals(1, state.browsablePoints(listOf(MediaId(1), MediaId(99))).size)
+    }
+
+    // ---- places never come from a protected folder ----
+
+    private fun photo(id: Long, relativePath: String) = MediaAsset(
+        id = MediaId(id),
+        contentUriString = "content://media/$id",
+        displayName = "p$id.jpg",
+        mimeType = "image/jpeg",
+        bucketName = relativePath.trimEnd('/').substringAfterLast('/'),
+        dateTakenMillis = 1L,
+        dateModifiedSeconds = 1L,
+        width = 100,
+        height = 100,
+        sizeBytes = 1L,
+        relativePath = relativePath,
+        isFavorite = false,
+        isTrashed = false,
+    )
+
+    @Test
+    fun `a photo in a protected folder gives no place, even while that folder is unlocked`() {
+        val state = index(Triple(1L, 48.0, 2.0), Triple(2L, 35.0, 139.0))
+        val everyday = photo(1, "Pictures/Trips/")
+        val unlocked = photo(2, "Pictures/Private/")
+        val locked = setOf(folderIdentity(unlocked).key.value)
+        // The browsable list includes the unlocked folder's photo, which is the point of the test.
+        val points = state.everydayPoints(listOf(everyday, unlocked), locked)
+        assertEquals(listOf(GeoPoint(48.0, 2.0)), points)
+    }
+
+    @Test
+    fun `with no protected folders every browsable photo still gives its place`() {
+        val state = index(Triple(1L, 48.0, 2.0), Triple(2L, 35.0, 139.0))
+        val points = state.everydayPoints(listOf(photo(1, "Pictures/A/"), photo(2, "Pictures/B/")), emptySet())
+        assertEquals(setOf(GeoPoint(48.0, 2.0), GeoPoint(35.0, 139.0)), points.toSet())
     }
 }

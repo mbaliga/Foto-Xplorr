@@ -1,5 +1,9 @@
 package com.fotoxplorr.app.spatial.offline
 
+import android.content.Context
+import com.fotoxplorr.app.gallery.folderIdentity
+import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.spatial.GeoIndexState
 import com.fotoxplorr.core.model.MediaId
 import kotlin.math.abs
@@ -19,6 +23,22 @@ data class GeoPoint(val latitude: Double, val longitude: Double)
  */
 fun GeoIndexState.browsablePoints(browsableIds: Collection<MediaId>): List<GeoPoint> =
     browsableIds.mapNotNull { id -> metadataById[id]?.let { GeoPoint(it.latitude, it.longitude) } }
+
+/**
+ * Like [browsablePoints], for the places offered to save: without any photo in a protected folder,
+ * whether that folder is unlocked right now or not.
+ *
+ * [browsable] includes an unlocked folder's photos. A saved map area outlives the unlock (it stays
+ * listed in Settings after the folder locks again, named by its coordinates, and the tile requests
+ * tell the provider where it is), so those photos must not suggest one. [lockedFolders] is the
+ * app's whole set of protected folder keys, unlocked ones included.
+ */
+fun GeoIndexState.everydayPoints(browsable: Collection<MediaAsset>, lockedFolders: Set<String>): List<GeoPoint> =
+    browsablePoints(browsable.filter { folderIdentity(it).key.value !in lockedFolders }.map { it.id })
+
+/** [everydayPoints] with the protected-folder set read from the store at this moment, for a caller that has none. */
+fun GeoIndexState.everydayPoints(context: Context, browsable: Collection<MediaAsset>): List<GeoPoint> =
+    everydayPoints(browsable, PrivateFolderStore(context.applicationContext).observeLockedFolders().value)
 
 /** A suggested area to save, with how many photos fall inside it and how it would be downloaded. */
 data class SuggestedRegion(
