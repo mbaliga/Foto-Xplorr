@@ -151,7 +151,7 @@ class GeoMetadataRepository(context: Context) {
             val existingIds = helper.readIndexedIds()
             val missing = assets.filterNot { it.id in existingIds }
             if (missing.isEmpty()) {
-                state.value = state.value.copy(totalCount = assets.size)
+                state.value = state.value.copy(totalCount = assets.size, scannedCount = existingIds.size)
                 return@withLock
             }
 
@@ -161,6 +161,7 @@ class GeoMetadataRepository(context: Context) {
             state.value = state.value.copy(totalCount = assets.size, isIndexing = true, errorMessage = null)
 
             var completed = 0
+            var persisted = 0
             missing.chunked(INDEX_BATCH_SIZE).forEach { batch ->
                 val toPersist = batch.mapNotNull { asset ->
                     val read = readMetadata(asset)
@@ -174,6 +175,7 @@ class GeoMetadataRepository(context: Context) {
                 }
                 if (toPersist.isNotEmpty()) helper.upsert(toPersist)
                 completed += batch.size
+                persisted += toPersist.size
 
                 if (toPersist.isNotEmpty()) {
                     val updated = metadataById.toMutableMap()
@@ -184,6 +186,10 @@ class GeoMetadataRepository(context: Context) {
                 }
                 state.value = state.value.copy(
                     metadataById = metadataById,
+                    // Rows in the table, as readState() counts them: a photo whose read failed is
+                    // not written, so it is not scanned. Without this the count stayed at its
+                    // construction-time value and the compass kept offering to read locations.
+                    scannedCount = existingIds.size + persisted,
                     totalCount = assets.size,
                     isIndexing = completed < missing.size,
                 )
