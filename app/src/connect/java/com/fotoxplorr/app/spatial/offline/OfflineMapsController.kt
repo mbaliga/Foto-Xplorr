@@ -106,7 +106,10 @@ internal class OfflineMapsController(
         throttleInstalled = engine.throttleInstalled,
         canDownloadBox = { box -> MapLibreRegionEngine.canDownload(box) },
         saved = state.regions.map { it.record },
-        downloadRunning = state.downloadRunning,
+        // The runner's own list is read here, not only the collected copy in [state]: a second tap
+        // that lands before the collector has caught up must still see the first download.
+        downloadRunning = state.downloadRunning ||
+            runner.jobs.value.any { it.kind == ActivityKind.DOWNLOADING_MAP },
     )
 
     suspend fun refresh() {

@@ -144,6 +144,18 @@ class OfflineMapsControllerTest {
     }
 
     @Test
+    fun `a second tap in a row creates nothing more`() = runTest {
+        val rig = rig()
+        rig.controller.open()
+        rig.controller.download(parisOption, "One")
+        rig.controller.download(parisOption, "Two")
+
+        assertEquals(1, rig.engine.calls.count { it == "create" })
+        assertEquals(1, rig.runner.jobs.value.size)
+        rig.scope.cancel()
+    }
+
+    @Test
     fun `live progress follows the engine`() = runTest {
         val rig = rig()
         rig.controller.open()
