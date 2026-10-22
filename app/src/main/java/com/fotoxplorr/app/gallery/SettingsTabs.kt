@@ -61,6 +61,7 @@ import com.fotoxplorr.app.background.formatHourOfDay
 import com.fotoxplorr.app.background.summarize
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.pro.LocalProEntitlement
+import com.fotoxplorr.app.spatial.offline.OfflineMapsSettingsRow
 import com.fotoxplorr.app.ui.BUILT_IN_THEMES
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomRow
@@ -378,6 +379,9 @@ fun SettingsTabsRoom(
                     Paragraph(HelpCopy.Hint.BACKUP_ENCRYPTED_ADDS, strong = true)
                     Paragraph(HelpCopy.Note.BACKUP_NO_RECOVERY)
                     EncryptedBackupRows()
+
+                    SectionLabel("MAPS")
+                    OfflineMapsSettingsRow()
 
                     SectionLabel("LIBRARY")
                     ActionText("Rescan for new photos", actions.onRefresh)
