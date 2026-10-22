@@ -281,3 +281,60 @@ if the cap does not hold, do not ship the download** (email info@openfreemap.org
       pill; Experimental shows no map card; nothing in either experiment needs a permission.
 - [ ] Connect build: the photo details room's expanded map (header, close, refresh, footer) still works after
       the search and chip rows were removed; Map mode's embedded street map is unchanged.
+
+## 7. After the audit fixes
+
+Added by the final verifier for the fixes made after the first audit. Each is unverified on a device.
+
+### Experimental host, rail, compass and flagged photos
+
+- [ ] Open an experiment, drag from a screen edge to open the nav or options room, press Back: the room
+      closes and the experiment stays; a second Back closes the experiment. Repeat inside the aquarium
+      drawing step, the wall steps and the compass. Unverified on a device: only a Robolectric stand-in
+      handler was tested.
+- [ ] Rail: look at "Experimental" on the 260 dp pinned rail and in the pull-out room on a 360 dp phone. It
+      should be whole at a smaller size than the other words. Also check at font scale 1.3 (it may still be
+      cut at the 28 sp floor), that no word flickers when the wheel scrolls, and that the 44 sp words did not
+      move.
+- [ ] Fresh install or library with no location data: open Experimental > Compass view. After the read
+      finishes, the compass should leave the "Read embedded coordinates first" panel without leaving the
+      screen, and the map should stop saying "not read yet".
+- [ ] Flag a newest photo as sensitive with Blur sensitive on: it should not appear as a hub card cover, in
+      the wall picker, in the 3D wall, similarity or compass. Turn Blur sensitive off and it should come back.
+
+### Aquarium
+
+- [ ] Open the aquarium with Remove animations on (animator scale 0) and at least one saved creature.
+      Creatures should be visible at once without pressing Play.
+- [ ] While paused, draw a creature and press Swim. It should be visible in the tank on return, without
+      pressing Play. Delete one from the list while paused. It should disappear at once.
+- [ ] Draw a tall narrow loop (about a third of the board high, a finger-width wide) and lift the finger a
+      little short of the start. The board preview should show it filled, and the saved creature should be
+      filled and have a closed outline.
+
+### Wall
+
+- [ ] On a phone: mark a door's two ends with the Door chip, tap the Hang chip, then Set scale again. The
+      wall width and the mock-up size should not change, and the Door chip should still be selected.
+- [ ] Type a wall width by hand after marking, go to Hang and back, and check the typed width is still there.
+- [ ] Change the reference chip or its length after marking and check the mock-up resizes at once. The tests
+      inject taps, so where marks land on a real touch screen is unverified.
+
+### Offline map areas
+
+- [ ] Cold start (force-stop, open Settings > Data > Offline maps before ever opening Map mode): the pane
+      must not say downloads are unavailable in a debug build. Then open Map mode and confirm tiles and style
+      load normally. This checks that the cap probe no longer breaks the live map.
+- [ ] With a debug build behind a logging proxy, download an area. Confirm no more than 4 requests are ever
+      in flight and the User-Agent ends in "Fotoz". Only then set
+      `MapLibreRegionEngine.CAP_VERIFIED_ON_DEVICE` to true. Until then confirm a release build shows the
+      pane as unavailable with Download disabled.
+- [ ] Unlock a private folder that has geotagged photos, open Settings > Offline maps and the map pill's
+      sheet: "Places in your photos" must not list that folder's locations. Then lock it again and confirm no
+      such area is listed under SAVED AREAS.
+- [ ] Make an area hit the size limit (a dense city at the top zoom if one beats the estimate). Confirm the
+      row says "Stopped at the size limit.", shows only Delete, and that a smaller download of the same place
+      is allowed. Force-stop and reopen: the row must still show the limit state and no Resume.
+- [ ] Look at the pane at large font size and with TalkBack. The new line "Saved areas are not locked with
+      your private folders." sits under the privacy note, and the stopped row has no Resume button. Nothing in
+      this batch has run on a device.
