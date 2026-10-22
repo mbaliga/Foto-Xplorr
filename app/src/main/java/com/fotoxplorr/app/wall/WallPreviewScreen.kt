@@ -89,6 +89,7 @@ internal class HungPicture(val decoded: DecodedBitmap) {
  *
  * Every control has a non-touch-gesture path: the frames are chosen from a list, moved and
  * resized and tilted with buttons, and the scale is set by typing a distance or the wall's width.
+ * [export], when the host can run one, adds the print controls to the hang panel.
  */
 @Composable
 internal fun WallPreviewScreen(
@@ -99,6 +100,7 @@ internal fun WallPreviewScreen(
     onEdit: ((WallDraft) -> WallDraft) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    export: PrintActions? = null,
 ) {
     val step = draft.step
     BackHandler(enabled = step != WallStep.WALL) {
@@ -110,7 +112,7 @@ internal fun WallPreviewScreen(
         when (step) {
             WallStep.WALL -> WallStepContent(draft, stills, onEdit)
             WallStep.PICTURES -> PicturesStep(draft, stills, wall, onEdit)
-            WallStep.SCALE, WallStep.HANG -> WallAndPanel(draft, wall, pictures, onEdit)
+            WallStep.SCALE, WallStep.HANG -> WallAndPanel(draft, wall, pictures, onEdit, export)
         }
     }
 }
@@ -273,6 +275,7 @@ private fun WallAndPanel(
     wall: WallPhoto?,
     pictures: Map<Long, HungPicture?>,
     onEdit: ((WallDraft) -> WallDraft) -> Unit,
+    export: PrintActions?,
 ) {
     val marks = remember { mutableStateListOf<Offset>() }
     val maxPanel = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
@@ -296,7 +299,7 @@ private fun WallAndPanel(
             Modifier.fillMaxWidth().heightIn(max = maxPanel).verticalScroll(rememberScrollState()).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (draft.step == WallStep.SCALE) ScalePanel(draft, wall, marks, onEdit) else HangPanel(draft, pictures, onEdit)
+            if (draft.step == WallStep.SCALE) ScalePanel(draft, wall, marks, onEdit) else HangPanel(draft, pictures, onEdit, export)
         }
     }
 }
@@ -371,7 +374,7 @@ private fun ScalePanel(draft: WallDraft, wall: WallPhoto?, marks: List<Offset>, 
 }
 
 @Composable
-private fun HangPanel(draft: WallDraft, pictures: Map<Long, HungPicture?>, onEdit: ((WallDraft) -> WallDraft) -> Unit) {
+private fun HangPanel(draft: WallDraft, pictures: Map<Long, HungPicture?>, onEdit: ((WallDraft) -> WallDraft) -> Unit, export: PrintActions?) {
     if (draft.frames.isEmpty()) return
     val index = draft.selected.coerceIn(0, draft.frames.lastIndex)
     val frame = draft.frames[index]
@@ -427,6 +430,8 @@ private fun HangPanel(draft: WallDraft, pictures: Map<Long, HungPicture?>, onEdi
         Text(WallCopy.mat(draft.matCm, draft.inches), Modifier.padding(horizontal = 8.dp))
         WallIconButton(Icons.Outlined.Add, WallCopy.MORE_MAT, { onEdit { it.copy(matCm = (it.matCm + unit).coerceAtMost(FramePresets.MAT_MAX_CM)) } }, enabled = draft.matCm + unit <= FramePresets.MAT_MAX_CM + 0.01f)
     }
+
+    if (export != null) ExportControls(frame, pictures[frame.assetId], export)
 
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         WallButton(WallCopy.CHANGE_PICTURES, { onEdit { it.copy(step = WallStep.PICTURES) } })

@@ -34,13 +34,14 @@ internal val PICTURE_PREVIEW_LIMITS = DecodeLimits(maxLongEdge = 1024, maxPixels
  * "See it on your wall": a mock-up of pictures hung on a photo of the person's own wall, at their
  * real size, with an honest word on how well each would print. The wall photo comes from the
  * browsable list (their camera app already put it there), so this needs no camera, no permission and
- * no library. It saves, shares and sends nothing.
+ * no library. It saves, shares and sends nothing until the person asks for a print file or
+ * the system print dialog (see [PrintExporter] and [PhotoPrintAdapter]).
  *
  * Photos: only `env.assets` is listed; a draft restored after the process died is checked against
  * it, and a photo that has since been locked or trashed drops out of the draft and out of memory.
- * Pixels come only through `env.decode`, which asks the live browsable set again. There is no
- * export here yet; the print step (a later unit) must call `env.mayExport(asset)` again at the
- * moment it writes, and read pixels through `env.decode`.
+ * Pixels come only through `env.decode`, which asks the live browsable set again; the export asks
+ * `env.mayExport` once more at the moment it writes. An export in flight is cancelled when this
+ * screen is left, and is not restored after process death.
  *
  * Process death: the [WallDraft] is kept by one `rememberSaveable` (see there for what that holds).
  * Decoded pictures, the lens read, and a reference being marked are not, and come back by decoding
@@ -84,6 +85,8 @@ fun WallExperience(env: ExperimentEnv, onClose: () -> Unit, modifier: Modifier =
         }
     }
 
+    val export = rememberPrintActions(env, byId)
+
     WallPreviewScreen(
         draft = draft,
         stills = stills,
@@ -92,6 +95,7 @@ fun WallExperience(env: ExperimentEnv, onClose: () -> Unit, modifier: Modifier =
         onEdit = { change -> saved = change(latestDraft) },
         onClose = onClose,
         modifier = modifier,
+        export = export,
     )
 }
 

@@ -53,6 +53,9 @@ class WallExperienceTest {
     @get:Rule
     val compose = createComposeRule()
 
+    @org.junit.Before
+    fun warmUp() = warmUpNativeImageDecoder()
+
     private class BackOwner : OnBackPressedDispatcherOwner {
         private val registry = LifecycleRegistry.createUnsafe(this).also { it.currentState = Lifecycle.State.RESUMED }
         override val lifecycle: Lifecycle get() = registry
