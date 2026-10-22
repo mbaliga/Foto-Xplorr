@@ -79,6 +79,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
@@ -869,29 +870,17 @@ fun DiscoverScreen(
         if (spatial != null) {
             item(key = "experimental") {
                 Card(
-                    modifier = Modifier.combinedClickable(
-                        onClick = onOpenExperimental,
-                        onLongClick = onOpenExperimental,
-                    ),
+                    // One button: no onLongClick copy of onClick (TalkBack would read out a second,
+                    // identical action), and no count on it -- a bare number meant nothing here.
+                    modifier = Modifier.clickable(role = Role.Button, onClick = onOpenExperimental),
                     colors = paneCardColors(),
                 ) {
                     Box(
                         modifier = Modifier.fillMaxWidth().aspectRatio(1.35f),
                         contentAlignment = Alignment.Center,
                     ) {
+                        // Decorative: the title under it names the card.
                         Icon(Icons.Outlined.Science, contentDescription = null, modifier = Modifier.size(40.dp))
-                        if (spatial.geoState.locatedCount > 0) {
-                            Text(
-                                spatial.geoState.locatedCount.toString(),
-                                modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(8.dp)
-                                    .background(Color.Black.copy(alpha = 0.68f))
-                                    .padding(horizontal = 7.dp, vertical = 3.dp),
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelMedium,
-                            )
-                        }
                     }
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("Experimental", style = MaterialTheme.typography.titleSmall)
