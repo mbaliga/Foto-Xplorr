@@ -145,29 +145,34 @@ class HelpCopyTest {
     }
 
     @Test
-    fun `the experimental paragraph in the offline build says nothing here goes online`() {
-        val paragraph = HelpCopy.experimentalPrivacy(networkFeatures = false)
-        assertTrue(paragraph, paragraph.contains("runs on this device"))
-        assertTrue(paragraph, paragraph.contains("goes online"))
-        assertTrue(paragraph, paragraph.contains("uploads your photos"))
+    fun `the experimental sentence in the offline build says nothing is uploaded and names the printer`() {
+        val sentence = HelpCopy.experimentalPrivacy(networkFeatures = false)
+        assertTrue(sentence, sentence.contains("Nothing here uploads your photos"))
+        // Print hands the photo to Android's print service, which may reach a network printer.
+        assertTrue(sentence, sentence.contains("printing uses the printer you choose"))
         // The offline build has no network at all, so it must not name anything that can use it.
-        assertFalse(paragraph, paragraph.contains("AI services"))
-        assertFalse(paragraph, paragraph.contains("Street map"))
-        assertFalse(paragraph, paragraph.contains("download"))
-        assertTrue(paragraph, paragraph.length <= NOTE_MAX)
+        assertFalse(sentence, sentence.contains("AI services"))
+        assertFalse(sentence, sentence.contains("Street map"))
+        assertFalse(sentence, sentence.contains("download"))
+        assertTrue(sentence, sentence.length <= NOTE_MAX)
+        assertEquals("one sentence: $sentence", 1, sentence.count { it == '.' })
+        assertTrue(sentence, sentence.endsWith("."))
     }
 
     @Test
-    fun `the experimental paragraph in the connect build lists everything that uses the network`() {
-        val paragraph = HelpCopy.experimentalPrivacy(networkFeatures = true)
-        assertTrue(paragraph, paragraph.contains("Nothing here uploads your photos"))
-        // The street map is Map mode's, not this screen's: the paragraph must not claim it here.
-        assertFalse(paragraph, paragraph.contains("Street map"))
-        assertTrue(paragraph, paragraph.contains("one-time similarity model download"))
-        assertTrue(paragraph, paragraph.contains("AI services you add"))
-        assertTrue(paragraph, paragraph.length <= NOTE_MAX)
+    fun `the experimental sentence in the connect build lists everything that uses the network`() {
+        val sentence = HelpCopy.experimentalPrivacy(networkFeatures = true)
+        assertTrue(sentence, sentence.contains("Nothing here uploads your photos"))
+        // The street map is Map mode's, not this screen's: the sentence must not claim it here.
+        assertFalse(sentence, sentence.contains("Street map"))
+        assertTrue(sentence, sentence.contains("one-time similarity model download"))
+        assertTrue(sentence, sentence.contains("AI services you add"))
+        assertTrue(sentence, sentence.contains("printing uses the printer you choose"))
+        assertTrue(sentence, sentence.length <= NOTE_MAX)
+        assertEquals("one sentence: $sentence", 1, sentence.count { it == '.' })
+        assertTrue(sentence, sentence.endsWith("."))
         // Not the exhaustive-sounding "Only the Street map and AI services" it replaced.
-        assertFalse(paragraph, paragraph.contains("Connect build"))
+        assertFalse(sentence, sentence.contains("Connect build"))
     }
 
     @Test

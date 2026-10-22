@@ -108,7 +108,6 @@ internal object HelpCopy {
         const val COMPASS_POOR = "Compass is poor. Move away from magnets and wave in a figure-eight."
         const val COMPASS_UNAVAILABLE = "Compass unavailable. Drag to look around."
 
-        const val EXPLORE_HEADER = "Optional extras. The gallery works without them."
         const val EXPLORE_SIMILARITY = "Group look-alike photos"
         const val EXPLORE_WALL = "Walk through a 3D wall of your photos"
         const val EXPLORE_PREVIEW = "Browse photos in depth"
@@ -193,12 +192,16 @@ internal object HelpCopy {
          * Neither may claim more than its build does: the Connect list is every network use
          * reachable from that screen (the similarity model download is offered there; the street
          * map is Map mode's, not this screen's), and the Offline build names nothing that could go
-         * online.
+         * online. One sentence each (owner feedback #6). Both say the wall's Print uses the printer
+         * the person picks, because Android's print service may reach a network printer: that is the
+         * system's connection, not Fotoz uploading, but "everything stays on this device" would not
+         * be true once someone prints.
          */
-        const val EXPERIMENTAL_PRIVACY_OFFLINE = "Everything here runs on this device. Nothing here goes online or " +
-            "uploads your photos."
-        const val EXPERIMENTAL_PRIVACY_CONNECT = "Nothing here uploads your photos. Only the one-time similarity " +
-            "model download and AI services you add go online."
+        const val EXPERIMENTAL_PRIVACY_OFFLINE = "Nothing here uploads your photos, and printing uses the " +
+            "printer you choose."
+        const val EXPERIMENTAL_PRIVACY_CONNECT = "Nothing here uploads your photos; only the one-time " +
+            "similarity model download and AI services you add go online, and printing uses the " +
+            "printer you choose."
         const val EXPERIMENTAL_LOCATION = "Location is used only by Compass view."
 
         /**

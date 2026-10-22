@@ -141,6 +141,21 @@ class ExperimentalHostTest {
     }
 
     @Test
+    fun `the hub's own words are one short sentence or phrase and the cards take them from the copy object`() {
+        listOf(
+            ExperimentalCopy.TITLE, ExperimentalCopy.HEADER, ExperimentalCopy.UNAVAILABLE,
+            ExperimentalCopy.PRIVACY_TITLE, ExperimentalCopy.SIMILARITY_TITLE, ExperimentalCopy.WALL_TITLE,
+            ExperimentalCopy.PREVIEW_TITLE, ExperimentalCopy.COMPASS_TITLE, ExperimentalCopy.AI_TITLE,
+            ExperimentalCopy.BADGE_ON_DEVICE, ExperimentalCopy.BADGE_OPENGL, ExperimentalCopy.BADGE_TOUCH_DPAD,
+            ExperimentalCopy.BADGE_KEYSTORE, ExperimentalCopy.BADGE_INDEXING, ExperimentalCopy.located(12),
+        ).forEach { text ->
+            assertTrue("'$text' is short", text.isNotBlank() && text == text.trim() && text.length <= 50)
+            assertTrue("'$text' is at most one sentence", text.count { it == '.' } <= 1)
+        }
+        assertEquals("12 located", ExperimentalCopy.located(12))
+    }
+
+    @Test
     fun `every registered entry has a stable id, a title and a one-sentence blurb`() {
         val idShape = Regex("[a-z][a-z0-9-]*")
         builtInExperiments.forEach { e ->

@@ -64,12 +64,12 @@ internal val builtInExperiments: List<ExperimentEntry> = listOf(
     // Explore.
     ExperimentEntry(
         id = "similarity",
-        title = "Organise by similarity",
+        title = ExperimentalCopy.SIMILARITY_TITLE,
         blurb = HelpCopy.Hint.EXPLORE_SIMILARITY,
         group = ExperimentGroup.EXPLORE,
         icon = Icons.Outlined.Psychology,
         coverSkip = 0,
-        badge = { "On-device" },
+        badge = { ExperimentalCopy.BADGE_ON_DEVICE },
     ) { env, onClose ->
         SimilarityExplorerScreen(
             assets = env.assets,
@@ -80,36 +80,38 @@ internal val builtInExperiments: List<ExperimentEntry> = listOf(
     },
     ExperimentEntry(
         id = "wall",
-        title = "3D photo wall",
+        title = ExperimentalCopy.WALL_TITLE,
         blurb = HelpCopy.Hint.EXPLORE_WALL,
         group = ExperimentGroup.EXPLORE,
         icon = Icons.Outlined.AutoAwesomeMosaic,
         coverSkip = 0,
-        badge = { "OpenGL ES" },
+        badge = { ExperimentalCopy.BADGE_OPENGL },
     ) { env, onClose ->
         PhotoWallScreen(assets = env.assets, onOpenAsset = env.onOpenAsset, onClose = onClose)
     },
     ExperimentEntry(
         id = "preview",
-        title = "Gallery preview",
+        title = ExperimentalCopy.PREVIEW_TITLE,
         blurb = HelpCopy.Hint.EXPLORE_PREVIEW,
         group = ExperimentGroup.EXPLORE,
         icon = Icons.Outlined.PermMedia,
         coverSkip = 8,
-        badge = { "Touch + D-pad" },
+        badge = { ExperimentalCopy.BADGE_TOUCH_DPAD },
     ) { env, onClose ->
         GalleryPreviewScreen(assets = env.assets, onOpenAsset = env.onOpenAsset, onClose = onClose)
     },
     ExperimentEntry(
         id = "compass",
-        title = "Compass view",
+        title = ExperimentalCopy.COMPASS_TITLE,
         blurb = HelpCopy.Hint.EXPLORE_COMPASS,
         group = ExperimentGroup.EXPLORE,
         icon = Icons.Outlined.ViewInAr,
         // Not restorable: it starts a location read when it opens and asks for the location
         // permission in context, so a restored id must not put the person back in it.
         restorable = false,
-        badge = { env -> if (env.geoState.isIndexing) "Indexing…" else "${env.geoState.locatedCount} located" },
+        badge = { env ->
+            if (env.geoState.isIndexing) ExperimentalCopy.BADGE_INDEXING else ExperimentalCopy.located(env.geoState.locatedCount)
+        },
     ) { env, onClose ->
         // The location index starts here, when the compass opens with nothing scanned, and nowhere
         // else in this section. Map mode starts its own (PhotoMapPane).
@@ -125,11 +127,11 @@ internal val builtInExperiments: List<ExperimentEntry> = listOf(
     // Setup, always last.
     ExperimentEntry(
         id = "ai",
-        title = "AI and provider keys",
+        title = ExperimentalCopy.AI_TITLE,
         blurb = HelpCopy.Hint.EXPLORE_AI,
         group = ExperimentGroup.SETUP,
         icon = Icons.Outlined.Key,
-        badge = { "Keystore" },
+        badge = { ExperimentalCopy.BADGE_KEYSTORE },
     ) { _, onClose ->
         AiSettingsScreen(onClose = onClose)
     },

@@ -14,6 +14,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -81,13 +86,14 @@ class ExperimentalScreenTest {
         assets: List<MediaAsset> = emptyList(),
         sensitiveIds: Set<MediaId> = emptySet(),
         blurSensitive: Boolean = true,
+        geoState: GeoIndexState = GeoIndexState(),
     ) {
         FotoXplorrTheme(GalleryPreferencesState()) {
             CompositionLocalProvider(LocalOnBackPressedDispatcherOwner provides owner) {
                 ExperimentalScreen(
                     assets = assets,
                     indexInput = emptyList(),
-                    geoState = GeoIndexState(),
+                    geoState = geoState,
                     onIndexLocations = {},
                     onOpenAsset = { _, _ -> },
                     entries = entries,
@@ -114,6 +120,8 @@ class ExperimentalScreenTest {
         isTrashed = false,
     )
 
+    private fun hasRole(role: Role) = SemanticsMatcher.expectValue(SemanticsProperties.Role, role)
+
     private fun pressBack() = compose.runOnUiThread { owner.onBackPressedDispatcher.onBackPressed() }
 
     @Test
@@ -125,6 +133,34 @@ class ExperimentalScreenTest {
         compose.onNodeWithText("inside a").assertDoesNotExist()
         // On the hub nothing takes Back, so the destination's own Back order is what runs.
         assertFalse(owner.onBackPressedDispatcher.hasEnabledCallbacks())
+    }
+
+    @Test
+    fun `the hub title and the privacy title are headings`() {
+        compose.setContent { Host(listOf(entry("a"))) }
+        val heading = SemanticsMatcher.keyIsDefined(SemanticsProperties.Heading)
+        compose.onNodeWithText(ExperimentalCopy.TITLE).assert(heading)
+        compose.onNodeWithText(ExperimentalCopy.PRIVACY_TITLE).assert(heading)
+        compose.onNodeWithText(ExperimentalCopy.GROUP_EXPLORE).assert(heading)
+    }
+
+    @Test
+    fun `a hub card is one button with a click and no second, identical long-press action`() {
+        compose.setContent { Host(listOf(entry("a"))) }
+        compose.onNodeWithText("Title a")
+            .assert(hasRole(Role.Button))
+            .assert(SemanticsMatcher.keyIsDefined(SemanticsActions.OnClick))
+            .assert(SemanticsMatcher.keyNotDefined(SemanticsActions.OnLongClick))
+    }
+
+    @Test
+    fun `the cards of the built-in list carry their badges from the copy object`() {
+        compose.setContent { Host(builtInExperiments, geoState = GeoIndexState(isIndexing = true)) }
+        compose.onNodeWithText(ExperimentalCopy.BADGE_ON_DEVICE).assertExists()
+        compose.onNodeWithText(ExperimentalCopy.BADGE_OPENGL).assertExists()
+        compose.onNodeWithText(ExperimentalCopy.BADGE_TOUCH_DPAD).assertExists()
+        compose.onNodeWithText(ExperimentalCopy.BADGE_KEYSTORE).assertExists()
+        compose.onNodeWithText(ExperimentalCopy.BADGE_INDEXING).assertExists()
     }
 
     @Test

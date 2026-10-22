@@ -1,10 +1,8 @@
-@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-
 package com.fotoxplorr.app.experimental
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -150,9 +148,13 @@ private fun ExperimentalHub(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
             Column {
-                Text(ExperimentalCopy.TITLE, style = MaterialTheme.typography.headlineSmall)
                 Text(
-                    HelpCopy.Hint.EXPLORE_HEADER,
+                    ExperimentalCopy.TITLE,
+                    modifier = Modifier.semantics { heading() },
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+                Text(
+                    ExperimentalCopy.HEADER,
                     style = MaterialTheme.typography.bodySmall,
                     color = RoomStyle.InkFaint,
                 )
@@ -177,7 +179,7 @@ private fun ExperimentalHub(
                 items(inGroup, key = { it.id }) { entry ->
                     ExperimentCard(
                         entry = entry,
-                        cover = entry.coverSkip?.let { skip -> stills.drop(skip).firstOrNull() },
+                        cover = entry.coverSkip?.let { skip -> stills.getOrNull(skip) },
                         badge = entry.badge(env),
                         available = entry.available(env.context),
                         onClick = { onOpen(entry) },
@@ -186,7 +188,11 @@ private fun ExperimentalHub(
             }
             item(key = "privacy", span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(ExperimentalCopy.PRIVACY_TITLE, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        ExperimentalCopy.PRIVACY_TITLE,
+                        modifier = Modifier.semantics { heading() },
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                     Text(
                         HelpCopy.experimentalPrivacy(BuildConfig.NETWORK_FEATURES),
                         style = MaterialTheme.typography.bodySmall,
@@ -215,8 +221,9 @@ private fun ExperimentCard(
     Card(
         modifier = Modifier
             .alpha(if (available) 1f else 0.5f)
-            // The card is one button: a tap or a hold opens it; a disabled one is announced as such.
-            .combinedClickable(enabled = available, role = Role.Button, onClick = onClick, onLongClick = onClick),
+            // The card is one button; a disabled one is announced as such. No onLongClick: a copy of
+            // onClick would only give TalkBack a second, identical action to read out.
+            .clickable(enabled = available, role = Role.Button, onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Box(
