@@ -73,7 +73,13 @@ class JobForegroundService : LifecycleService() {
     }
 
     private fun buildNotification(jobs: List<RunningJob>) = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setSmallIcon(android.R.drawable.stat_sys_upload)
+        .setSmallIcon(
+            if (jobs.all { it.kind == ActivityKind.DOWNLOADING_MAP }) {
+                android.R.drawable.stat_sys_download
+            } else {
+                android.R.drawable.stat_sys_upload
+            },
+        )
         .setOngoing(true)
         .setOnlyAlertOnce(true)
         .setContentTitle(
@@ -123,21 +129,26 @@ class JobForegroundService : LifecycleService() {
     companion object {
         /**
          * The foreground-service type to start with, as a bit mask (0 below Android 10, which has none).
-         * A backup copies bytes to a folder: that is data sync, on every version. Media processing is
-         * for the transcodes, and is what Android 15 and later get for every other kind of job, as
-         * before. A mix of the two asks for both; both are declared in the manifest.
+         * A backup copies bytes to a folder and a map download fetches them over the network: both are
+         * data sync, on every version. Media processing is for the transcodes, and is what Android 15
+         * and later get for every other kind of job, as before. A mix of the two asks for both; both
+         * are declared in the manifest.
          */
         internal fun foregroundTypeFor(kinds: Collection<ActivityKind>, sdk: Int): Int {
             if (sdk < Build.VERSION_CODES.Q) return 0
             if (sdk < Build.VERSION_CODES.VANILLA_ICE_CREAM) return ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            val backup = kinds.any { it == ActivityKind.BACKING_UP }
-            val other = kinds.any { it != ActivityKind.BACKING_UP }
+            val dataSync = kinds.any { it.movesBytes() }
+            val other = kinds.any { !it.movesBytes() }
             return when {
-                backup && other -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
-                backup -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                dataSync && other -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+                dataSync -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
                 else -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
             }
         }
+
+        /** Kinds that copy or fetch bytes rather than transcode media. */
+        private fun ActivityKind.movesBytes(): Boolean =
+            this == ActivityKind.BACKING_UP || this == ActivityKind.DOWNLOADING_MAP
 
         private const val CHANNEL_ID = "foto_xplorr_jobs"
         private const val NOTIFICATION_ID = 4210
