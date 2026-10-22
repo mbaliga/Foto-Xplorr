@@ -271,7 +271,7 @@ renders its surfaces to real PNGs under Robolectric NATIVE graphics (`GalleryRen
   it); `ActivityKind` colours re-measured off the screenshots (`BACKING_UP` #4DFF00, `MOVING`
   #40A0FF, `COPYING` #FFA100 -- was blue -- with distinct hues for scanning/recognising/exporting
   so no two kinds share one). The destination rail is the inline reference's word wheel: 44sp
-  bold, one word per 80dp row, white for the current destination with a 16dp square bullet, the
+  bold (batch 6: "Experimental" is too wide for the row, so that one row shrinks to fit, floor 28sp), one word per 80dp row, white for the current destination with a 16dp square bullet, the
   rest fading by distance (`DestinationWordRail`, app-local because `WordWheelRail`'s type, fade
   and marker are private constants); the 2026-08-14 "covers in the marker gutter" decision is
   superseded by the owner's later reference and recorded as such. The search entry is the root
@@ -889,7 +889,7 @@ visual verification. Traps found are TRAPS #78 to #88.
   Registered: `aquarium`, `wall-mockup` (Make), `similarity`, `wall`, `preview`, `compass` (Explore), `ai`
   (Setup, last). `ExperimentalHostTest` pins the ids and that each has a title and a one-sentence blurb.
 - **Draw an aquarium** (`aquarium/`): pure core (sketch, flood fill, swim mesh, tank simulation, codec),
-  creature store (PNG then JSON, at most 12), draft saver, rasteriser, draw and tank screens, a frame loop.
+  creature store (PNG then JSON, at most 12; a pair that will not decode is swept on open), draft saver, rasteriser, draw and tank screens, a frame loop.
 - **See it on your wall** (`wall/`): print maths, scale from a reference or the lens, 12 standard sizes, frames
   and set layouts, the draft, canvas and four steps; print-ready JPEG with the density in Exif and JFIF and no
   place; system print at real size; a banded Lanczos Enlarge labelled "Enlarged, no new detail".
@@ -910,7 +910,7 @@ visual verification. Traps found are TRAPS #78 to #88.
   percent under-read for 4:3). "Size" is the print, not the framed piece. The id is `wall-mockup` because
   `wall` is the 3D photo wall.
 - The print: the design said to reuse the editor's writer path; its encoder is private and copies GPS, so the
-  print has its own exporter. Pictures/Fotoz became `Pictures/Fotoz/Prints`. `ExifCopier` does carry the
+  print has its own exporter. Pictures/Fotoz became `Pictures/Fotoz/Prints` (Android 10 and later; below that the default Pictures folder). `ExifCopier` does carry the
   source's resolution tags, so the density is written after it.
 - Enlarge: no whole-picture `IntArray` (a 64 MP result is 256 MB), so rows are streamed in bands, single
   threaded; the editor's mask runs per band with a two-row halo.
@@ -934,13 +934,24 @@ visual verification. Traps found are TRAPS #78 to #88.
   automatic orientation, tiling, TIFF, CMYK, bleed, choosing the dpi or crop. Enlarge for the system Print
   path, a marker in the enlarged file, a cap on the enlarging factor.
 - Offline maps: date-line areas, updates after 90 days, measured sizes written back (no record-rewrite on the
-  engine seam), low-battery confirm, renaming a saved area, the hillshade or dark style offline.
+  engine seam; the unused `bytesMeasured` field was removed), low-battery confirm, renaming a saved area, the hillshade or dark style offline.
 
 ### Found, not fixed
 
 - `decodeUpright` returns null on API 26 and 27 (known): the wall and the print file are unverified there.
-- Back ordering between a shell room opened over an open experiment and the host's handler depends on
-  registration order (same as the old compass and wall handlers).
+- Back ordering between a shell room opened over an open experiment and the host's handler depended on
+  registration order. Fixed after the first audit (`RoomFirstBackHandler`: the gallery's Back handler
+  re-registers a frame after a room opens, so the room closes first), but only a Robolectric stand-in
+  handler has run it: the real shell's room over the real browser has no test and no device has seen it.
+- Open after the second audit pass (LOW, not built): in the wall's Hang step with frames hung and the wall
+  width at 0 (a typed distance that gives no width), the Move buttons can compute an infinite or NaN
+  position; the Connect privacy sentence is 154 characters with a semicolon, one sentence only by grammar;
+  a disabled colour swatch in the aquarium has no dimmed look; a refused-shape line can hide a later
+  save-failed sentence; `JfifDensityFileTest` makes 2 GiB and 3 GiB sparse files and assumes a filesystem
+  that supports them; a region that finishes by itself may hold the map request cap for the full 5 s;
+  the privacy sentence of the offline-map pane sits only under the first Download button; other Discover
+  and album cards still pass `onLongClick = onClick`; the aquarium's `TANK_FULL` and `SAVE_FAILED` are two
+  sentences each.
 - A Compose test that shows the unpaused tank never goes idle (TRAPS #80).
 - A native-test JVM abort on a fresh run of Robolectric-native tests that decode on a worker (TRAPS #88).
 - `changelogs/5.txt` was not updated for this batch.
@@ -950,7 +961,7 @@ visual verification. Traps found are TRAPS #78 to #88.
 - **Decisions to confirm.** The 60 dp edge clearance on the drawing board and the wall (it costs a 360 dp phone
   120 dp of width; the alternative is to ignore only the first touch in the zone); "Draw an aquarium" and
   "See it on your wall" as titles; a frame's size meaning the print; the print keeping the camera make, serials
-  and date and dropping only the place; prints in `Pictures/Fotoz/Prints`; Enlarge aiming at 300 dpi with no
+  and date and dropping only the place; prints in `Pictures/Fotoz/Prints` (Android 10 and later only); Enlarge aiming at 300 dpi with no
   cap on the factor; one download at a time, at most 6 areas and 300 MB, the 12-fish store, MIN useful zoom 12.
 - **A human read of the new wording** (every string is one short sentence): the Copy objects
   `AquariumCopy`, `WallCopy` and `OfflineMapsCopy`, the Discover card ("Draw fish, try pictures on your wall,
@@ -958,4 +969,27 @@ visual verification. Traps found are TRAPS #78 to #88.
 - **Release gates.** Do the map spike (checklist section 5) before the Connect build ships the download; if the
   4-request cap does not hold, do not ship it. Re-read the OpenFreeMap terms before release (read 22 Oct 2026).
   Whether printing through the system print service counts as "goes online" in the Offline build's privacy
-  line is a wording call: the app has no network code, a print service may.
+  line was a wording call: the line now reads "Nothing here uploads your photos, and printing uses the
+  printer you choose." (the app has no network code, a print service may). Confirm that wording.
+- **Offline map downloads are DISABLED in release builds.** `MapLibreRegionEngine.CAP_VERIFIED_ON_DEVICE` is
+  `false`, so a release build of the Connect flavour reports the 4-request cap as not applicable and the pane
+  says downloads are unavailable. Debug builds work, so the check can be done: run a debug build behind a
+  logging proxy, download an area, confirm never more than 4 requests in flight (including just after Pause
+  or Delete) and the User-Agent ending in " Fotoz", then flip the constant to `true` (ADR-015, checklist
+  section 5). If the cap does not hold, do not ship the download and ask OpenFreeMap instead. The store
+  text and README describe the feature as if it ships; they are right only after this step.
+- **Blur sensitive hides, it does not blur, in the experiments.** With Blur sensitive on, a photo flagged
+  sensitive is dropped from `ExperimentEnv.assets` (`assetsForExperiments`), so the hub covers, the wall
+  picker, the 3D wall, similarity, preview and the compass never offer it, and `mayExport` refuses it. A
+  per-experiment blur would be gentler but needs edits in `wall/`, `ai/` and `experience/`. Owner decision:
+  keep hiding, or ask for blurring.
+- **Not built, and what would change that.** Panorama (#24): the critic recommended no and the owner has not
+  said go; an owner go would reuse the Lanczos `PixelRows` and `RowSink`, and needs a stitching approach that
+  adds no dependency. Live-camera AR: needs a CAMERA permission decision and a `restorable = false` entry
+  (TRAPS #83), and ARCore, a dependency this batch did not add; the wall uses a photo. On-device upscaler: needs a
+  model (LiteRT, Real-ESRGAN) with a licence file (`docs/MODEL_LICENSES.md` does not exist) and a size and
+  speed budget on a low-end phone; Enlarge is Lanczos with a mild mask, labelled "no new detail".
+- **Nothing in batches 1 to 6 has run on a real device.** Every test is JVM, Robolectric or a fake; Roborazzi
+  runs in record mode, so no screenshot test proves how anything looks. The device checklists
+  (`docs/device-test/`, batch 6 section 8 for the polish) list what to run; each box is unverified until
+  ticked.
