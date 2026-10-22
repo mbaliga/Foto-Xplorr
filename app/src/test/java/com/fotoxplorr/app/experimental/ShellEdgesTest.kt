@@ -11,8 +11,8 @@ import androidx.compose.ui.unit.dp
 import dev.aarso.cellshell.SpatialMotion
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -37,14 +37,16 @@ class ShellEdgesTest {
     @Test
     fun `the zone is the shell's own private edge size, read from its source`() {
         // EDGE_DP is private to the library, so a change there is noticed here rather than by a
-        // drawing board that suddenly loses its first stroke at the edge.
+        // drawing board that suddenly loses its first stroke at the edge. This FAILS, not skips,
+        // when the source cannot be found: a skipped guard is the same as no guard, and the
+        // library is a submodule of this repository, so a checkout without it is the problem.
         val source = listOf(
             File("../shared-libraries/cell-shell/src/main/kotlin/dev/aarso/cellshell/SpatialShell.kt"),
             File("shared-libraries/cell-shell/src/main/kotlin/dev/aarso/cellshell/SpatialShell.kt"),
         ).firstOrNull { it.isFile }
-        assumeTrue("the shell's source is not checked out here", source != null)
+        assertNotNull("the shell's source (a submodule) is not checked out where the tests run from", source)
         val declared = Regex("""private const val EDGE_DP = (\d+(?:\.\d+)?)f""").find(source!!.readText())
-        assumeTrue("EDGE_DP is no longer declared that way; update this test", declared != null)
+        assertNotNull("EDGE_DP is no longer declared that way; update this test", declared)
         assertEquals(declared!!.groupValues[1].toFloat(), ShellEdges.ZONE_DP, 0f)
     }
 
