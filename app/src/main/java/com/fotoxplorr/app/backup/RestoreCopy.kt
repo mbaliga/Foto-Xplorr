@@ -36,6 +36,9 @@ object RestoreCopy {
         "Fotoz may not be allowed to read photo locations, so it may not recognise photos already on this phone and bring them back as copies. Allow it first to avoid that."
     const val FEW_PHOTOS_NOTE = "Photos and videos only; any other file in the backup is left out."
 
+    const val EARLIER_SNAPSHOT =
+        "The newest snapshot holds fewer tags, locks or map pins than the one before it, so the earlier ones are included too."
+
     private fun count(n: Int, noun: String, plural: String = noun + "s") = BackupCopy.count(n, noun, plural)
 
     /** "12 March 2026", in the phone's own language and calendar. */
@@ -53,6 +56,7 @@ object RestoreCopy {
             if (info.recipes > 0) add(count(info.recipes, "saved edit"))
         }
         if (extras.isNotEmpty()) add(BackupCopy.Line(BackupCopy.Severity.INFO, "Also: ${extras.joinToString(", ")}."))
+        if (info.earlierSnapshotUsed) add(BackupCopy.Line(BackupCopy.Severity.INFO, EARLIER_SNAPSHOT))
         if (info.missing > 0) {
             add(
                 BackupCopy.Line(

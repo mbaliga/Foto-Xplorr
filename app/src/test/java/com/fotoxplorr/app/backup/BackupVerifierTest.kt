@@ -129,8 +129,9 @@ class BackupVerifierTest {
     }
 
     @Test
-    fun `a folder with no manifest has nothing to check`() {
-        destination.names().filter { BackupLayout.manifestGeneration(it) != null }.forEach { File(dir, it).delete() }
+    fun `a folder with no manifest and no index has nothing to check`() {
+        // (With the indexes the finished packs are known and are checked: BackupCheckCoverageTest.)
+        destination.names().filter { BackupLayout.manifestGeneration(it) != null || BackupLayout.isIndexName(it) }.forEach { File(dir, it).delete() }
         try {
             verify()
             fail("there is no finished backup")

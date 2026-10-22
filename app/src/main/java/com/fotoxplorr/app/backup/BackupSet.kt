@@ -32,6 +32,8 @@ sealed interface SetState {
  * - [leftovers]: files Fotoz cannot use: a pack with no index (the run died inside it), an index
  *   that does not open or whose pack is gone. Never deleted by a run; the person can remove them.
  * - [reservedPackNumbers]: numbers in use by a name with no pack beside it.
+ * - [foreignFiles]: backup files that belong to some other set, or that this version cannot read
+ *   (a newer one's). They are not this run's to use and never leftovers: nothing offers to delete them.
  */
 class LoadedSet(
     val listing: List<DestinationFile>,
@@ -41,6 +43,7 @@ class LoadedSet(
     val recovered: List<PackIndex>,
     val leftovers: List<DestinationFile>,
     val reservedPackNumbers: Set<Int>,
+    val foreignFiles: List<DestinationFile> = emptyList(),
 ) {
     val known: List<ManifestEntry> get() = manifest?.entries.orEmpty() + recovered.flatMap { it.entries }
     val nextGeneration: Int get() = highestGeneration + 1
@@ -106,6 +109,11 @@ object BackupSetLoader {
      * entries of finished packs no manifest lists. Throws [BackupException.WrongPassphraseOrDamaged]
      * when nothing in a folder that holds backup files authenticates, which is also what a wrong
      * passphrase looks like; that must stop a run before anything is written with those keys.
+     *
+     * A file whose header is a backup's but of another set (or another kind, or a version this one
+     * cannot read) proves the folder holds a backup these keys do not open. When nothing opened,
+     * that is [BackupException.AnotherBackupHere]: the listing the person chose "a new backup" on
+     * may have been a partial one, and a new set written beside the real one would hide it.
      */
     suspend fun load(destination: BackupDestination, keys: BackupKeys): LoadedSet {
         val listing = destination.list()
@@ -119,6 +127,10 @@ object BackupSetLoader {
         var firstFailure: IOException? = null
         var authenticated = false
         var unprovenOurs = false
+        val foreign = LinkedHashMap<String, DestinationFile>()
+        fun markForeign(name: String) {
+            foreign[name] = DestinationFile(name, sizes[name] ?: -1L)
+        }
         for (name in manifestNames) {
             currentCoroutineContext().ensureActive()
             try {
@@ -127,6 +139,7 @@ object BackupSetLoader {
                 break
             } catch (e: IOException) {
                 if (e is BackupException.WrongPassphraseOrDamaged) unprovenOurs = true
+                if (isForeignFailure(e)) markForeign(name)
                 // A manifest that stopped half way (the run died while writing it), a damaged one, or
                 // not a manifest at all: the generation before it is a whole snapshot, and the
                 // indexes below cover anything newer. A failure of the folder itself is not damage:
@@ -150,7 +163,11 @@ object BackupSetLoader {
             if (packName in listedPacks) continue
             if (packName !in names) {
                 reserved += number
-                leftovers += DestinationFile(indexName, sizes[indexName] ?: -1L)
+                if (isForeign(destination, indexName, keys, BackupKind.PACK_INDEX)) {
+                    markForeign(indexName)
+                } else {
+                    leftovers += DestinationFile(indexName, sizes[indexName] ?: -1L)
+                }
                 continue
             }
             val index = try {
@@ -158,6 +175,7 @@ object BackupSetLoader {
             } catch (e: IOException) {
                 if (!isDamage(e)) throw e
                 if (e is BackupException.WrongPassphraseOrDamaged) unprovenOurs = true
+                if (isForeignFailure(e)) markForeign(indexName)
                 authenticated = authenticated || e is ManifestFormatException || e is BackupException.Damaged
                 firstFailure = firstFailure ?: e
                 null
@@ -165,14 +183,22 @@ object BackupSetLoader {
             val packLength = sizes[packName] ?: -1L
             if (index != null && index.pack.name == packName && (packLength < 0 || packLength == index.pack.fileBytes)) {
                 recovered += index
-            } else {
+            } else if (indexName !in foreign) {
                 leftovers += DestinationFile(indexName, sizes[indexName] ?: -1L)
             }
         }
 
         val covered = listedPacks + recovered.map { it.pack.name }
         for (name in names.filter { BackupLayout.isPackName(it) }.sorted()) {
-            if (name !in covered) leftovers += DestinationFile(name, sizes[name] ?: -1L)
+            if (name in covered) continue
+            currentCoroutineContext().ensureActive()
+            // A pack with no usable index is a leftover only if it is this set's (or not a backup file
+            // at all); one that belongs to another set is that set's data, not ours to offer for deletion.
+            if (name in foreign || isForeign(destination, name, keys, BackupKind.PACK)) {
+                markForeign(name)
+            } else {
+                leftovers += DestinationFile(name, sizes[name] ?: -1L)
+            }
         }
 
         if (!authenticated) {
@@ -188,6 +214,7 @@ object BackupSetLoader {
                 } catch (e: IOException) {
                     if (!isDamage(e)) throw e
                     if (e is BackupException.WrongPassphraseOrDamaged) unprovenOurs = true
+                    if (isForeignFailure(e)) markForeign(pack)
                     firstFailure = firstFailure ?: e
                 }
             }
@@ -195,6 +222,9 @@ object BackupSetLoader {
         // Something of this set is here and nothing of it opened: a wrong passphrase (or damage, which
         // GCM cannot tell apart). Nothing may be written with keys that were never proven.
         if (!authenticated && unprovenOurs) throw (firstFailure as? BackupException) ?: BackupException.WrongPassphraseOrDamaged()
+        // Nothing opened, and what is here says it is a backup of someone else's keys. Not damage and
+        // not a wrong guess at this set's passphrase: never write a second set beside it.
+        if (!authenticated && foreign.isNotEmpty()) throw BackupException.AnotherBackupHere()
 
         return LoadedSet(
             listing = listing,
@@ -204,11 +234,56 @@ object BackupSetLoader {
             recovered = recovered,
             leftovers = leftovers,
             reservedPackNumbers = reserved,
+            foreignFiles = foreign.values.toList(),
         )
     }
 
     /** Failures that mean the file is bad, as opposed to the folder being unreadable. */
     private fun isDamage(e: IOException): Boolean = e is BackupException || e is ManifestFormatException
+
+    /**
+     * Failures that come from a readable backup header which is not for these keys: another set, a
+     * file of another kind, or a format this version does not know. Damage inside the body is not
+     * among them, and neither is a file that is not a backup at all ([BackupException.NotABackup]).
+     */
+    private fun isForeignFailure(e: IOException): Boolean = e is BackupException && e !is BackupException.NotABackup &&
+        e !is BackupException.WrongPassphraseOrDamaged && e !is BackupException.Damaged
+
+    /** True when [name] starts with a genuine backup header that is not [kind] of the set [keys] open. */
+    private fun isForeign(destination: BackupDestination, name: String, keys: BackupKeys, kind: BackupKind): Boolean = try {
+        val header = destination.open(name).use { BackupStreams.readHeader(it) }
+        header.kind != kind || !keys.matches(header)
+    } catch (e: BackupException) {
+        e !is BackupException.NotABackup
+    }
+
+    /**
+     * The sections (tags, locks, pins, edits) of the newest manifest older than [loaded]'s that opens
+     * and is whole, or null when there is none. Reads the file a line at a time and keeps only the
+     * sections, so the older snapshot's file list is never held in memory. A restore uses it when
+     * the newest snapshot carries less than the one before.
+     */
+    suspend fun olderSections(destination: BackupDestination, keys: BackupKeys, loaded: LoadedSet): List<ManifestSection>? {
+        val newest = loaded.manifest?.header?.generation ?: return null
+        val older = BackupLayout.manifestsNewestFirst(loaded.listing.map { it.name })
+            .filter { (BackupLayout.manifestGeneration(it) ?: Int.MAX_VALUE) < newest }
+        for (name in older) {
+            currentCoroutineContext().ensureActive()
+            try {
+                val sections = ArrayList<ManifestSection>()
+                BufferedInputStream(destination.open(name), 1 shl 16).use { raw ->
+                    val opened = BackupStreams.open(raw, keys, BackupKind.MANIFEST)
+                    InputStreamReader(opened.plaintext, Charsets.UTF_8).use { reader ->
+                        ManifestReader.read(reader) { record -> if (record is ManifestRecord.Section) sections += record.section }
+                    }
+                }
+                return sections
+            } catch (e: IOException) {
+                if (!isDamage(e)) throw e
+            }
+        }
+        return null
+    }
 
     private fun readManifest(destination: BackupDestination, name: String, keys: BackupKeys): BackupManifest =
         BufferedInputStream(destination.open(name), 1 shl 16).use { raw ->
@@ -221,4 +296,25 @@ object BackupSetLoader {
             val opened = BackupStreams.open(raw, keys, BackupKind.PACK_INDEX)
             InputStreamReader(opened.plaintext, Charsets.UTF_8).use { PackIndexReader.read(it) }
         }
+}
+
+/**
+ * Removes the leftovers the person was shown, and only those that are still leftovers. The folder
+ * is listed and classified again first: between the preflight and the confirm a cloud-backed
+ * folder may have finished syncing, and a file that was a leftover in the first listing can be a
+ * pack of the real set in the second. A name that is no longer a leftover is kept, and so is any
+ * file of another set ([LoadedSet.foreignFiles]).
+ */
+object LeftoverRemoval {
+    /** Names actually deleted. Throws what [BackupSetLoader.load] throws, before anything is deleted. */
+    suspend fun remove(destination: BackupDestination, keys: BackupKeys, shown: Collection<String>): List<String> {
+        val fresh = BackupSetLoader.load(destination, keys)
+        val stillLeftovers = fresh.leftovers.mapTo(HashSet()) { it.name }
+        val removed = ArrayList<String>()
+        for (name in shown) {
+            currentCoroutineContext().ensureActive()
+            if (name in stillLeftovers && BackupLayout.isBackupFileName(name) && destination.delete(name)) removed += name
+        }
+        return removed
+    }
 }

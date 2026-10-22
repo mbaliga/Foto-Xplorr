@@ -85,6 +85,13 @@ class PlannedPack(val name: String, val copies: List<PlannedCopy>, val plaintext
  *   MISSING flag. Superseded records of a file too large for any pack are already in [retained]
  *   (or [missing]), since no replacement will ever be written.
  *
+ * - A file copied while the location could not be read is stored with its GPS redacted and without
+ *   [EntryFlag.ORIGINAL_LOCATION]. When the caller says the location IS readable now
+ *   (`locationReadable`), such a record no longer counts as the same bytes: the file is copied
+ *   again, its old record leaves the snapshot only once the new copy is written, and the count is
+ *   [locationRecopies]. Without that, granting the permission later would never fix those copies,
+ *   and the person could delete the originals believing the geotags were safe.
+ *
  * [destinationLooksUnlisted] says the lost share is large enough that the destination listing is
  * more likely wrong than the whole destination emptied: the writer lists it once more before it
  * trusts the plan.
@@ -100,6 +107,8 @@ class BackupPlan(
     val skipped: List<SkippedFile>,
     val bytesOnPhone: Long,
     val knownCount: Int = 0,
+    /** Records that would have counted as backed up but were written without the photo's location, which can be read now: they are in [superseded] and copied again. */
+    val locationRecopies: Int = 0,
 ) {
     val copies: List<PlannedCopy> get() = packs.flatMap { it.copies }
     val kept: List<ManifestEntry> get() = unchanged + moved + retained + missing
@@ -167,9 +176,10 @@ object BackupPlanner {
         limits: PackLimits = PackLimits(),
         aead: ChunkedAead = TinkChunkedAead,
         reservedPackNumbers: Collection<Int> = emptyList(),
+        locationReadable: Boolean = false,
     ): BackupPlan {
         val skipped = ArrayList<SkippedFile>()
-        val matching = match(known, candidates, options, existingPacks, skipped)
+        val matching = match(known, candidates, options, existingPacks, skipped, locationReadable)
 
         var nextEntryId = (known.maxOfOrNull { it.entryId } ?: -1L) + 1
         val firstPack = (
@@ -200,6 +210,7 @@ object BackupPlanner {
             skipped = skipped,
             bytesOnPhone = eligibleBytes,
             knownCount = known.size,
+            locationRecopies = matching.locationRecopies,
         )
     }
 
@@ -213,8 +224,9 @@ object BackupPlanner {
         candidates: Collection<BackupCandidate>,
         options: BackupOptions = BackupOptions(),
         existingPacks: Set<String>,
+        locationReadable: Boolean = false,
     ): List<BackupCandidate> {
-        val matching = match(known, candidates, options, existingPacks, ArrayList())
+        val matching = match(known, candidates, options, existingPacks, ArrayList(), locationReadable)
         val vanishedBySize = matching.vanished.filter { it.quickHash != null }.map { it.displayName to it.sizeBytes }.toSet()
         return matching.toCopy.filter { it.quickHash == null && (it.displayName to it.sizeBytes) in vanishedBySize }
     }
@@ -230,6 +242,7 @@ object BackupPlanner {
         val superseded: List<ManifestEntry>,
         /** Records still usable whose file is gone from the phone: move sources, or retained. */
         val vanished: List<ManifestEntry>,
+        val locationRecopies: Int,
     )
 
     private fun match(
@@ -238,6 +251,7 @@ object BackupPlanner {
         options: BackupOptions,
         existingPacks: Set<String>,
         skipped: MutableList<SkippedFile>,
+        locationReadable: Boolean,
     ): Matching {
         val eligible = ArrayList<BackupCandidate>()
         for (c in candidates.sortedWith(compareBy({ it.relativePath.orEmpty() }, { it.displayName }, { it.mediaId }))) {
@@ -260,12 +274,16 @@ object BackupPlanner {
         val claimed = HashSet<Long>()
         val unchanged = ArrayList<ManifestEntry>()
         val unmatched = ArrayList<BackupCandidate>()
+        var locationRecopies = 0
         for (c in eligible) {
-            val record = byKey[c.fileKey]?.firstOrNull { it.entryId !in claimed && sameBytesProbably(it, c) }
+            val same = byKey[c.fileKey]?.firstOrNull { it.entryId !in claimed && sameBytesProbably(it, c) }
+            // A copy made without the location is the right bytes with the GPS cut out: not "the same" once it can be read.
+            val record = same?.takeUnless { locationReadable && it.lacksLocation }
             if (record != null) {
                 claimed += record.entryId
                 unchanged += refreshed(record, c, c.relativePath.orEmpty())
             } else {
+                if (same != null) locationRecopies++
                 unmatched += c
             }
         }
@@ -287,7 +305,7 @@ object BackupPlanner {
         for (c in unmatched) {
             val source = c.quickHash?.let { hash ->
                 movable[Triple(c.displayName, c.sizeBytes, c.dateTakenMillis)]
-                    ?.firstOrNull { it.entryId !in claimed && it.quickHash == hash }
+                    ?.firstOrNull { it.entryId !in claimed && it.quickHash == hash && !(locationReadable && it.lacksLocation) }
             }
             if (source != null) {
                 claimed += source.entryId
@@ -297,10 +315,12 @@ object BackupPlanner {
             }
         }
         val retained = vanished.filter { it.entryId !in claimed }
-        return Matching(eligible, toCopy, unchanged, moved, retained, lost, missing, supersededUsable + supersededLost, vanished)
+        return Matching(eligible, toCopy, unchanged, moved, retained, lost, missing, supersededUsable + supersededLost, vanished, locationRecopies)
     }
 
     private val ManifestEntry.isMissing: Boolean get() = EntryFlag.MISSING in flags
+
+    private val ManifestEntry.lacksLocation: Boolean get() = EntryFlag.ORIGINAL_LOCATION !in flags
 
     private fun sameBytesProbably(record: ManifestEntry, c: BackupCandidate): Boolean =
         record.sizeBytes == c.sizeBytes &&

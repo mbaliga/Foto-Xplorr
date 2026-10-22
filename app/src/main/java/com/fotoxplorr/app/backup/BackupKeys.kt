@@ -94,23 +94,15 @@ class BackupKeys private constructor(
             Normalizer.normalize(String(passphrase), Normalizer.Form.NFC).toCharArray()
 
         /**
-         * Runs the published key-derivation vector (also in BackupFormatTest, produced by
-         * `golden_vector.py`) through this device's PBKDF2 provider. False means a backup made here
-         * could not be opened elsewhere: refuse to start one. Takes one minimum-cost derivation.
+         * Runs the published key-derivation vector ([BackupGoldenVector], also in BackupFormatTest,
+         * produced by `golden_vector.py`) through this device's PBKDF2 provider. False means a backup
+         * made here could not be opened elsewhere: refuse to start one. Takes one minimum-cost
+         * derivation. The app's self-check is [BackupGoldenVector.run], which adds the cipher.
          */
         fun providerMatchesGoldenVector(): Boolean {
-            val passphrase = GOLDEN_PASSPHRASE.toCharArray()
-            val keys = derive(passphrase, GOLDEN_SALT, BackupFormat.MIN_ITERATIONS)
-            return keys.use { MessageDigest.isEqual(it.master, GOLDEN_MASTER) }
+            val keys = derive(BackupGoldenVector.PASSPHRASE.toCharArray(), BackupGoldenVector.SALT, BackupFormat.MIN_ITERATIONS)
+            return keys.use { MessageDigest.isEqual(it.master, BackupGoldenVector.MASTER) }
         }
-
-        // "Cafe" + U+0301, "Zu" + U+0308: decomposed on purpose, plus Japanese.
-        private const val GOLDEN_PASSPHRASE = "Café Zürich 日本語 #7"
-        private val GOLDEN_SALT = ByteArray(BackupFormat.SALT_SIZE) { (0x10 + it).toByte() }
-        private val GOLDEN_MASTER = intArrayOf(
-            0x33, 0x5a, 0x45, 0x10, 0x76, 0xe7, 0xc6, 0x4c, 0x9c, 0x56, 0x62, 0xd7, 0x8b, 0xfc, 0x88, 0x1d,
-            0x4c, 0x9b, 0x89, 0x49, 0x44, 0xc4, 0x00, 0xdb, 0x6a, 0x08, 0x2a, 0x18, 0x6b, 0xae, 0x23, 0xd8,
-        ).let { values -> ByteArray(values.size) { values[it].toByte() } }
     }
 }
 

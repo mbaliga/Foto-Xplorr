@@ -128,13 +128,19 @@ class BackupSetLoaderTest {
     }
 
     @Test
-    fun `a pack of another set is not this set's and says nothing about the passphrase`() {
+    fun `a pack of another set, with nothing of ours beside it, is a backup this passphrase does not open`() {
+        // A folder that holds a genuine backup file of another set is not an empty folder: starting a
+        // new set here would hide it. (Before, such a pack was classed a leftover and the run went on.)
         val foreign = java.io.ByteArrayOutputStream()
         val other = BackupTestSupport.newKeys(BackupTestSupport.otherSalt, "another set's passphrase")
         BackupStreams.encrypt(foreign, BackupKind.PACK, other, BackupTestSupport.SEGMENT).use { it.write(ByteArray(300)) }
         write(BackupLayout.packName(1), foreign.toByteArray())
-        val loaded = load()
-        assertEquals(listOf(BackupLayout.packName(1)), loaded.leftovers.map { it.name })
+        try {
+            load()
+            fail("a new set must not be started beside a backup of another set")
+        } catch (e: BackupException.AnotherBackupHere) {
+            // expected
+        }
     }
 
     @Test

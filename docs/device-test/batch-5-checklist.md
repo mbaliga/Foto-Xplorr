@@ -26,10 +26,15 @@ pin), then a second pass with **a library of several GB** for the throughput and
 
 ## 0. Before anything else: the passphrase key must come out the same on this phone
 
-Sandbox coverage: `BackupFormatTest` (the golden vector, on the JDK's PBKDF2), `BackupStreamsTest`.
-The vector itself is run by `BackupKeys.providerMatchesGoldenVector()` as a self-check at the start of the
-first backup or check after each launch; on a mismatch Fotoz says "This phone computes the passphrase
-key differently from the standard ... Fotoz will not start one" and writes nothing.
+Sandbox coverage: `BackupFormatTest` (the golden vector, on the JDK's PBKDF2), `BackupStreamsTest`,
+`BackupGoldenVectorTest` (the self-check passes on the JVM, and each broken cipher is a failed check).
+The vector itself is run by `BackupGoldenVector.run()` as a self-check at the start of the first backup,
+check or restore after each launch. It proves three things on the phone: PBKDF2 gives the standard key,
+the cipher opens a known encrypted file to its known text (the decrypt side, which is the part a release
+build could break), and what it seals opens again while a copy with one bit changed does not. On a key
+mismatch Fotoz says "This phone computes the passphrase key differently from the standard ... Fotoz will
+not start one"; on a cipher failure "Encryption did not pass Fotoz's self-test on this phone ... will not
+start one". Either way it writes nothing.
 
 - [ ] On **every** device in the list, start "Back up everything, encrypted" and reach the passphrase
       dialog and then the preflight card. The self-check passing is the card appearing at all. If any
@@ -41,6 +46,14 @@ key differently from the standard ... Fotoz will not start one" and writes nothi
 - [ ] **Release build only** (`assembleOfflineRelease`, R8): make one backup and one check. R8 ran over
       the Tink code and an R8-minified harness on the JVM round-tripped all three file kinds, flipped-bit
       and wrong-passphrase included, but ART on a device is the real test.
+- [ ] **One release-build backup, Check and restore on a device** (the whole round trip on the shrunk
+      build, not a debug one): `assembleOfflineRelease`, install it, back up the prepared 200-photo library
+      with a passphrase containing an accent and an emoji, run **Check a backup** (it must end "everything
+      is intact"), then restore into a cleared phone (section 13) and compare a few photos byte for byte.
+      Do the same on the Connect release build. If the backup is refused at the passphrase step with
+      "Encryption did not pass Fotoz's self-test on this phone", the release build's cipher is broken on
+      that device (R8 or the phone's AES-GCM provider): stop and note the device, the flavour and the Android
+      version.
 
 ## 1. The two options are told apart, on the page
 
@@ -334,3 +347,46 @@ the photos, which is the real disaster case). Do the lines below on both.
 - [ ] Time to plan (the "Working out what is new..." step) with the real library, and with 50,000+ photos if
       you have them.
 - [ ] Time of **Check a backup** per GB.
+
+## 15. Safety fixes from the backup audit
+
+Sandbox coverage: `SafListingTest` (the loading flag is re-asked with a backoff and then fails, an error
+is thrown, a created document that is not new is refused), `BackupFolderSafetyTest` (a listing that was
+empty while the folder loaded cannot start a second set; files of another set are never leftovers; the
+removal lists again and deletes only what is still a leftover), `BackupCheckCoverageTest`,
+`SectionMergeTest`, `BackupJobSectionsTest`, `BackupPlannerLocationTest`. **Not covered**: a real
+provider's `EXTRA_LOADING`/`EXTRA_ERROR` behaviour and timing, which is why these lines need a device.
+
+- [ ] **Cloud folder that is still syncing.** In a folder served by a cloud-storage app that already holds
+      a finished backup, make the provider cold (clear the app's cache, or turn the network off in that
+      app, then on) and start **Back up everything, encrypted**. Either the folder is recognised as an
+      existing backup ("Enter the passphrase") or Fotoz says "The folder is still loading. Wait for the app
+      that manages it to finish, then try again." It must **never** offer "Choose a passphrase" for a folder
+      that already holds a backup. Note how long the provider took to answer and whether the 8 seconds
+      Fotoz waits is enough.
+- [ ] Pick the same folder with a **new** passphrase by mistake (a different one from the backup's): the
+      run stops with "This folder already holds a backup that this passphrase does not open ..." and the
+      folder is unchanged. With the **right** passphrase it proceeds.
+- [ ] Put a file of another backup (copy `pack-0001.fzbp` from a different backup set, renamed
+      `pack-0050.fzbp`) into a folder that holds your backup: the preflight says "1 file in this folder
+      belongs to a different backup ... and is left alone", and **Remove the leftover files** (if shown)
+      never lists or deletes it.
+- [ ] **Remove the leftover files** with a folder that finishes syncing while the confirmation is open:
+      only files that are still leftovers are removed; no `manifest-*`, `pack-*.fzbx` or listed pack goes.
+- [ ] **Check a backup after an interrupted run.** Kill the app while it writes the manifest (or truncate
+      the newest `manifest-NNNN.fzbm` by a few hundred bytes), then Check: it must **not** say "everything
+      is intact". It says "The newest snapshot could not be read; checked the one before it plus N finished
+      packs." and the count of files covers the newest photos too. Damage one byte in one of those finished
+      packs: the check reports it.
+- [ ] **A wiped or new phone, back up first.** Restore nothing yet; run **Back up everything, encrypted**
+      into the existing folder with the right passphrase. The preflight says "This phone has fewer tags,
+      collections, favourites or locks than the backup already holds. The backup keeps the ones it has".
+      After the run, restore (section 13): tags, favourites, collections, folder locks, pins and edits are
+      all there, and formerly protected photos come back **locked**. Note the other direction too: a tag you
+      removed on a phone you kept using comes back after a restore (the backup only adds).
+- [ ] **Location granted later.** Back up once with the location permission **denied**, then allow it and
+      back up again: the preflight says "N files were backed up without their location and will be copied
+      again", the second run copies them, and a restored photo has its GPS (open its info). A third run says
+      everything is already backed up (it must not copy them every time; if it does, note which files, they
+      are ones whose original cannot be read).
+

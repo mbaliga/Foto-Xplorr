@@ -55,7 +55,12 @@ internal sealed interface BackupStage {
         val managedByAnotherApp: Boolean,
         val freeBytes: Long?,
         val leftoversConfirm: Boolean = false,
-    ) : BackupStage
+        /** This phone's tags, collections, favourites or locks are fewer than the newest snapshot holds. */
+        val sectionsFewer: Boolean = false,
+    ) : BackupStage {
+        fun withLeftoversConfirm(confirm: Boolean) =
+            Preflight(preparation, folderLabel, onPhoneStorage, managedByAnotherApp, freeBytes, confirm, sectionsFewer)
+    }
 
     class Message(val title: String, val text: String) : BackupStage
 
@@ -162,10 +167,6 @@ internal class BackupFlow(
                 opened = withContext(Dispatchers.Default) { openKeys(passphrase, state) }
                 // The derivation cannot be interrupted, so a screen that went away meanwhile is noticed here.
                 ensureActive()
-                if (opened == null) {
-                    stage = BackupStage.Message(BackupCopy.OPTION_LABEL, BackupCopy.KEY_SELF_CHECK_FAILED)
-                    return@launch
-                }
                 keys = opened
                 when (purpose) {
                     BackupPurpose.BACKUP -> plan(folder, opened)
@@ -196,10 +197,14 @@ internal class BackupFlow(
         startCheck(folder, opened, loaded)
     }
 
-    private suspend fun openKeys(passphrase: CharArray, state: SetState): BackupKeys? {
-        if (!BackupSelfCheck.passes()) {
+    /** The keys for [state]'s set, or a [BackupRefused] with an honest sentence when this phone's crypto fails its self-check. */
+    private suspend fun openKeys(passphrase: CharArray, state: SetState): BackupKeys {
+        val check = BackupSelfCheck.run()
+        if (check != BackupGoldenVector.Result.PASSED) {
             passphrase.fill('\u0000')
-            return null
+            throw BackupRefused(
+                if (check == BackupGoldenVector.Result.KEY_DERIVATION) BackupCopy.KEY_SELF_CHECK_FAILED else BackupCopy.CIPHER_SELF_CHECK_FAILED,
+            )
         }
         return when (state) {
             is SetState.Existing -> BackupKeys.derive(passphrase, state.header.setSalt, state.header.iterations)
@@ -216,6 +221,7 @@ internal class BackupFlow(
             return
         }
         snapshot = assets
+        val locationReadable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && locationGranted()
         val prepared = try {
             withContext(Dispatchers.IO) {
                 val locked = PrivateFolderStore(appContext).observeLockedFolders().value
@@ -223,7 +229,10 @@ internal class BackupFlow(
                 val archived = LibraryStore.get(appContext).observe().value.archivedIds
                 val candidates = BackupCandidates.from(assets, locked, sensitive, archived)
                 val byId = assets.associateBy { it.id.value }
-                BackupPreparer.prepare(folder, opened, candidates, BackupOptions(), MediaStoreBackupSource(appContext, byId))
+                BackupPreparer.prepare(
+                    folder, opened, candidates, BackupOptions(), MediaStoreBackupSource(appContext, byId),
+                    locationReadable = locationReadable,
+                )
             }
         } catch (e: BackupException.WrongPassphraseOrDamaged) {
             closeKeys()
@@ -231,12 +240,16 @@ internal class BackupFlow(
             return
         }
         val free = withContext(Dispatchers.IO) { folder.freeBytes() }
+        // The job writes the previous snapshot's tags and locks into the new one anyway; this only says so up front.
+        val newest = prepared.loaded.manifest?.sections
+        val fewer = newest != null && SectionMerge.isFewer(sectionSource().gather(assets, System.currentTimeMillis()), newest)
         stage = BackupStage.Preflight(
             preparation = prepared,
             folderLabel = folder.label,
             onPhoneStorage = folder.isOnPhoneStorage,
             managedByAnotherApp = folder.isManagedByAnotherApp,
             freeBytes = free,
+            sectionsFewer = fewer,
         )
     }
 
@@ -263,6 +276,9 @@ internal class BackupFlow(
             managedByAnotherApp = preflight.managedByAnotherApp,
             batteryLowAndNotCharging = batteryLowAndNotCharging(),
             newSet = prep.isNewSet,
+            locationRecopies = plan.locationRecopies,
+            foreignCount = prep.loaded.foreignFiles.size,
+            sectionsFewer = preflight.sectionsFewer,
         )
     }
 
@@ -327,7 +343,12 @@ internal class BackupFlow(
             try {
                 attempt {
                     val report = BackupVerifier.verify(folder, opened, onProgress = { onProgress(it) }, loaded = loaded)
-                    if (report.isClean) BackupCopy.verifyClean(report) else throw BackupRefused(BackupCopy.verifyProblems(report))
+                    when {
+                        !report.isClean -> throw BackupRefused(BackupCopy.verifyProblems(report))
+                        // A check that fell back or left files unread says so in a dialog, which stays.
+                        report.hasCaveats -> throw BackupRefused(BackupCopy.verifyClean(report))
+                        else -> BackupCopy.verifyClean(report)
+                    }
                 }.recoverWrongPassphrase()
             } finally {
                 opened.close()
@@ -347,7 +368,8 @@ internal class BackupFlow(
             stage = BackupStage.Passphrase(purpose, newSet = false, folderLabel = folder.label, wrong = true)
             return
         }
-        val set = RestoreSet.from(loaded)
+        val earlier = withContext(Dispatchers.IO) { BackupSetLoader.olderSections(folder, opened, loaded) }
+        val set = RestoreSet.from(loaded, earlier)
         if (set.isEmpty) {
             closeKeys()
             releaseFolder()
@@ -424,7 +446,11 @@ internal class BackupFlow(
         }
     }
 
-    /** The person chose to remove the leftovers they were shown; nothing else in the folder is touched. */
+    /**
+     * The person chose to remove the leftovers they were shown. The folder is listed and classified
+     * again first and only the shown files that are STILL leftovers are deleted ([LeftoverRemoval]):
+     * a folder that finished syncing since the preflight may show some of them to be the real set's.
+     */
     fun removeLeftovers() {
         val current = stage as? BackupStage.Preflight ?: return
         val folder = destination ?: return
@@ -433,10 +459,7 @@ internal class BackupFlow(
         stage = BackupStage.Working(BackupCopy.PLANNING)
         work = scope.launch {
             try {
-                withContext(Dispatchers.IO) {
-                    folder.list() // refresh the name table; only names the person was shown are deleted
-                    names.forEach { folder.delete(it) }
-                }
+                withContext(Dispatchers.IO) { LeftoverRemoval.remove(folder, opened, names) }
                 plan(folder, opened)
             } catch (e: CancellationException) {
                 throw e
@@ -449,16 +472,12 @@ internal class BackupFlow(
 
     fun askRemoveLeftovers() {
         val current = stage as? BackupStage.Preflight ?: return
-        stage = BackupStage.Preflight(
-            current.preparation, current.folderLabel, current.onPhoneStorage, current.managedByAnotherApp, current.freeBytes, leftoversConfirm = true,
-        )
+        stage = current.withLeftoversConfirm(true)
     }
 
     fun keepLeftovers() {
         val current = stage as? BackupStage.Preflight ?: return
-        stage = BackupStage.Preflight(
-            current.preparation, current.folderLabel, current.onPhoneStorage, current.managedByAnotherApp, current.freeBytes, leftoversConfirm = false,
-        )
+        stage = current.withLeftoversConfirm(false)
     }
 
     /** Back to the passphrase form after a wrong one; the folder stays picked. */
@@ -485,6 +504,8 @@ internal class BackupFlow(
         val text = when {
             error is BackupRefused -> error.message ?: fallback
             error is BackupException.WrongPassphraseOrDamaged -> BackupCopy.WRONG_PASSPHRASE
+            error is BackupException.AnotherBackupHere -> error.message ?: fallback
+            error is FolderNotReadyException -> error.message ?: fallback
             error is BackupException -> "${error.message}. ${BackupCopy.CHOOSE_ANOTHER_FOLDER}"
             error is SecurityException -> "Android would not let Fotoz use that folder."
             error is IOException -> fallback
@@ -565,16 +586,18 @@ internal fun isBackupJob(title: String): Boolean =
     title == BackupCopy.JOB_TITLE || title == BackupCopy.CHECK_JOB_TITLE || title == RestoreCopy.JOB_TITLE
 
 /**
- * The key-derivation self-check, run once per process on the first backup or check (ADR-014): it
- * proves this phone's PBKDF2 turns the passphrase into the same key every other phone gets. A
- * false answer means a backup made here might not open elsewhere, so none is started.
+ * The crypto self-check, run once per process on the first backup, check or restore (ADR-014): it
+ * proves this phone's PBKDF2 turns the passphrase into the same key every other phone gets, that
+ * the cipher opens a known encrypted file, and that what it seals opens again (and a damaged copy
+ * does not). It is the release build's only on-device proof of the decrypt side. A failure means a
+ * backup made here might not open later, so none is started.
  */
 internal object BackupSelfCheck {
     @Volatile
-    private var result: Boolean? = null
+    private var result: BackupGoldenVector.Result? = null
 
-    suspend fun passes(): Boolean = result ?: withContext(Dispatchers.Default) {
-        runCatching { BackupKeys.providerMatchesGoldenVector() }.getOrDefault(false)
+    suspend fun run(): BackupGoldenVector.Result = result ?: withContext(Dispatchers.Default) {
+        BackupGoldenVector.run()
     }.also { result = it }
 }
 

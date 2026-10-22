@@ -241,4 +241,13 @@ class BackupFormatTest {
         assertThrows(BackupException.KdfOutOfRange::class.java) { BackupTestSupport.open(lowered, keys) }
         assertNotEquals(hex(file), hex(lowered))
     }
+
+    @Test
+    fun `the vector the app carries for its self-check is this published one`() {
+        assertEquals(goldenPassphrase, BackupGoldenVector.PASSPHRASE)
+        assertArrayEquals(unhex(goldenFile), BackupGoldenVector.FILE)
+        assertArrayEquals(goldenPlaintext, BackupGoldenVector.PLAINTEXT)
+        assertArrayEquals(unhex(goldenMaster), BackupGoldenVector.MASTER)
+        assertArrayEquals(unhex(goldenHeader).copyOfRange(16, 32), BackupGoldenVector.SALT)
+    }
 }

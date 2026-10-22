@@ -91,6 +91,16 @@ sealed class BackupException(message: String, cause: Throwable? = null) : IOExce
     class DifferentSet : BackupException("This file belongs to a different backup")
 
     /**
+     * The folder holds backup files of a set these keys do not open, and nothing in it opened.
+     * Starting a new set beside them would hide the old one behind a different passphrase, so a
+     * run stops here. Raised by [BackupSetLoader.load], never by the cipher layer.
+     */
+    class AnotherBackupHere : BackupException(
+        "This folder already holds a backup that this passphrase does not open. " +
+            "If it is yours, pick the folder again and enter its passphrase. Otherwise choose a different folder for a new backup.",
+    )
+
+    /**
      * The first segment did not authenticate. GCM cannot tell a wrong passphrase from a damaged
      * file, and this type does not pretend to: say "wrong passphrase, or the backup is damaged".
      */

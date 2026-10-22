@@ -37,8 +37,15 @@ class VerifyReport(
     val problems: List<VerifyProblem>,
     /** Newer manifests that did not open (the last run died while writing one). */
     val skippedManifests: Int,
+    /** Finished packs that no readable manifest lists (the last run's), checked through their indexes; included in [packsChecked]. */
+    val recoveredPacks: Int = 0,
+    /** Files in the folder Fotoz cannot use (a pack with no index, an index that does not open); they were not checked. */
+    val leftovers: Int = 0,
 ) {
     val isClean: Boolean get() = problems.isEmpty()
+
+    /** True when "everything is intact" would claim more than the check saw: it fell back, covered packs no snapshot lists, or skipped files. */
+    val hasCaveats: Boolean get() = skippedManifests > 0 || recoveredPacks > 0 || leftovers > 0
 }
 
 /**
@@ -49,9 +56,14 @@ class VerifyReport(
  * (ADR-014): a restore of a protected photo into the cache would leave it on disk.
  *
  * [loaded] is the set as the caller already opened it (the passphrase check), so the manifest is
- * not decrypted twice. It proves the files are intact and the passphrase is right. It cannot prove a pack the manifest
- * does not list, and a pack that is damaged is reported once, with the files after the damage
- * counted as not found, not as individually bad.
+ * not decrypted twice. It proves the files are intact and the passphrase is right.
+ *
+ * Two kinds of pack are read: those the newest readable manifest lists, and the finished packs of
+ * a run that died before its manifest ([LoadedSet.recovered], known from their encrypted index).
+ * When the newest manifest could not be read the check fell back to the one before, which is why
+ * the report carries [VerifyReport.skippedManifests] and [VerifyReport.recoveredPacks]: the person
+ * is told what the check stood on. A pack that is damaged is reported once, with the files after
+ * the damage counted as not found, not as individually bad.
  */
 object BackupVerifier {
     suspend fun verify(
@@ -70,11 +82,16 @@ object BackupVerifier {
 
     private suspend fun check(destination: BackupDestination, keys: BackupKeys, onProgress: (Float) -> Unit, loaded: LoadedSet): VerifyReport {
         val manifest = loaded.manifest
-            ?: throw BackupRefused("This folder has no finished backup in it yet, so there is nothing to check.")
+        if (manifest == null && loaded.recovered.isEmpty()) {
+            throw BackupRefused("This folder has no finished backup in it yet, so there is nothing to check.")
+        }
 
         val sizes = loaded.listing.associate { it.name to it.sizeBytes }
-        val byPack = manifest.entries.groupBy { it.packName }
-        val packs = manifest.packs.sortedBy { it.name }
+        val byPack = HashMap<String, List<ManifestEntry>>()
+        manifest?.entries?.groupBy { it.packName }?.let { byPack.putAll(it) }
+        // A recovered pack is not in the manifest, so its files are the ones its own index lists.
+        loaded.recovered.forEach { byPack[it.pack.name] = it.entries }
+        val packs = (manifest?.packs.orEmpty() + loaded.recovered.map { it.pack }).distinctBy { it.name }.sortedBy { it.name }
         val totalBytes = packs.sumOf { it.fileBytes }.coerceAtLeast(1)
         val problems = ArrayList<VerifyProblem>()
         var verified = 0
@@ -125,12 +142,14 @@ object BackupVerifier {
             onProgress((passed.toDouble() / totalBytes).toFloat().coerceAtMost(1f))
         }
         return VerifyReport(
-            generation = manifest.header.generation,
+            generation = manifest?.header?.generation ?: 0,
             packsChecked = checked,
             filesVerified = verified,
             bytesChecked = bytes,
             problems = problems,
             skippedManifests = loaded.skippedManifests,
+            recoveredPacks = loaded.recovered.size,
+            leftovers = loaded.leftovers.size,
         )
     }
 

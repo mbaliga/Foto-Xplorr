@@ -30,6 +30,9 @@ class SafBackupDestination(context: Context, private val treeUri: Uri) : BackupD
     private val rootUri: Uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, rootDocumentId)
     private val documentIds = HashMap<String, String>()
 
+    /** Every document id the last [list] returned (duplicate names included) plus those [create] made. */
+    private val listedDocumentIds = HashSet<String>()
+
     override val label: String by lazy {
         queryString(rootUri, DocumentsContract.Document.COLUMN_DISPLAY_NAME)?.takeIf { it.isNotBlank() }
             ?: SafDocumentIds.fallbackLabel(rootDocumentId)
@@ -44,6 +47,25 @@ class SafBackupDestination(context: Context, private val treeUri: Uri) : BackupD
             SafDocumentIds.volumeOf(rootDocumentId) == SafDocumentIds.PRIMARY_VOLUME
 
     override fun list(): List<DestinationFile> {
+        val page = SafListing.settle(query = ::queryChildren)
+        val files = ArrayList<DestinationFile>()
+        val ids = HashMap<String, String>()
+        val every = HashSet<String>()
+        for (row in page.rows) {
+            if (row.isDirectory) continue
+            files += DestinationFile(row.name, row.sizeBytes)
+            ids[row.name] = row.documentId
+            every += row.documentId
+        }
+        documentIds.clear()
+        documentIds.putAll(ids)
+        listedDocumentIds.clear()
+        listedDocumentIds.addAll(every)
+        return files
+    }
+
+    /** One query of the folder's children, with the provider's own "still loading" and "error" answers. */
+    private fun queryChildren(): SafPage {
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, rootDocumentId)
         val cursor = resolver.query(
             children,
@@ -57,23 +79,26 @@ class SafBackupDestination(context: Context, private val treeUri: Uri) : BackupD
             null,
             null,
         ) ?: throw IOException("The folder could not be read")
-        val files = ArrayList<DestinationFile>()
-        val ids = HashMap<String, String>()
-        cursor.use {
+        return cursor.use {
+            val extras = it.extras
+            val loading = extras?.getBoolean(DocumentsContract.EXTRA_LOADING, false) == true
+            val error = extras?.getString(DocumentsContract.EXTRA_ERROR)
             val idColumn = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
             val nameColumn = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
             val sizeColumn = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE)
             val mimeColumn = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+            val rows = ArrayList<SafRow>()
             while (it.moveToNext()) {
-                if (it.getString(mimeColumn) == DocumentsContract.Document.MIME_TYPE_DIR) continue
                 val name = it.getString(nameColumn) ?: continue
-                files += DestinationFile(name, if (it.isNull(sizeColumn)) -1L else it.getLong(sizeColumn))
-                ids[name] = it.getString(idColumn)
+                rows += SafRow(
+                    documentId = it.getString(idColumn) ?: continue,
+                    name = name,
+                    sizeBytes = if (it.isNull(sizeColumn)) -1L else it.getLong(sizeColumn),
+                    isDirectory = it.getString(mimeColumn) == DocumentsContract.Document.MIME_TYPE_DIR,
+                )
             }
+            SafPage(rows, loading, error)
         }
-        documentIds.clear()
-        documentIds.putAll(ids)
-        return files
     }
 
     override fun open(name: String): InputStream {
@@ -85,13 +110,22 @@ class SafBackupDestination(context: Context, private val treeUri: Uri) : BackupD
         if (documentIds.containsKey(name)) throw IOException("A file with this name is already in the folder")
         val created = DocumentsContract.createDocument(resolver, rootUri, OCTET_STREAM, name)
             ?: throw IOException("The folder would not accept a new file")
+        val createdId = DocumentsContract.getDocumentId(created)
+        // A provider that answers a create with a file that is already there (a name its listing had
+        // not shown yet) would have that file truncated by the write below. Nothing is deleted here:
+        // the document is not ours.
+        val existingSize = queryLong(created, DocumentsContract.Document.COLUMN_SIZE)
+        if (!SafDocumentIds.isFreshDocument(createdId, listedDocumentIds, existingSize)) {
+            throw IOException("The folder handed back a file that was already there, so nothing was written")
+        }
         val shownName = queryString(created, DocumentsContract.Document.COLUMN_DISPLAY_NAME)
         if (shownName != name) {
             // A provider that adds an extension or a number is one the set's file names cannot rely on.
             runCatching { DocumentsContract.deleteDocument(resolver, created) }
             throw IOException("The folder renamed a file Fotoz created, so it cannot be used for a backup")
         }
-        documentIds[name] = DocumentsContract.getDocumentId(created)
+        documentIds[name] = createdId
+        listedDocumentIds += createdId
         return resolver.openOutputStream(created, "w") ?: throw IOException("The file could not be opened for writing")
     }
 
@@ -132,6 +166,13 @@ class SafBackupDestination(context: Context, private val treeUri: Uri) : BackupD
         return DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
     }
 
+    private fun queryLong(uri: Uri, column: String): Long? =
+        runCatching {
+            resolver.query(uri, arrayOf(column), null, null, null)?.use {
+                if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else null
+            }
+        }.getOrNull()
+
     private fun queryString(uri: Uri, column: String): String? =
         runCatching {
             resolver.query(uri, arrayOf(column), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
@@ -139,6 +180,53 @@ class SafBackupDestination(context: Context, private val treeUri: Uri) : BackupD
 
     private companion object {
         const val OCTET_STREAM = "application/octet-stream"
+    }
+}
+
+/** One child of the folder as the provider listed it. */
+internal class SafRow(val documentId: String, val name: String, val sizeBytes: Long, val isDirectory: Boolean)
+
+/** One answer to a children query: the rows, and the two things a provider may say about them. */
+internal class SafPage(val rows: List<SafRow>, val loading: Boolean, val error: String?)
+
+/**
+ * A children query is not an answer until the provider says it is one. A tree provider that is
+ * still syncing (a cloud app's folder) returns whatever it has so far, often nothing, with
+ * [android.provider.DocumentsContract.EXTRA_LOADING] set; trusting that listing reads an existing
+ * backup as an empty folder. Pure, so the retry rule is tested without a provider.
+ */
+internal object SafListing {
+    /** Waits between asking again; the folder gets about eight seconds in all to finish loading. */
+    val DEFAULT_DELAYS_MILLIS: List<Long> = listOf(500L, 1_000L, 2_000L, 4_000L)
+
+    private const val MAX_ERROR_CHARS = 200
+
+    fun settle(
+        delaysMillis: List<Long> = DEFAULT_DELAYS_MILLIS,
+        pause: (Long) -> Unit = ::sleepOrFail,
+        query: () -> SafPage,
+    ): SafPage {
+        var attempt = 0
+        while (true) {
+            val page = query()
+            page.error?.takeIf { it.isNotBlank() }?.let {
+                throw FolderNotReadyException("The app that manages this folder reported a problem: ${it.take(MAX_ERROR_CHARS)}")
+            }
+            if (!page.loading) return page
+            if (attempt >= delaysMillis.size) {
+                throw FolderNotReadyException("The folder is still loading. Wait for the app that manages it to finish, then try again.")
+            }
+            pause(delaysMillis[attempt++])
+        }
+    }
+
+    private fun sleepOrFail(millis: Long) {
+        try {
+            Thread.sleep(millis)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw IOException("The folder was being read when the work was stopped")
+        }
     }
 }
 
@@ -153,6 +241,13 @@ object SafDocumentIds {
 
     fun fallbackLabel(documentId: String): String =
         documentId.substringAfter(':', "").substringAfterLast('/').ifBlank { "the folder" }
+
+    /**
+     * True when a document a create call returned can be written to: it is not one the folder
+     * already listed, and it is empty (or the provider will not say how long it is).
+     */
+    fun isFreshDocument(documentId: String, listedIds: Set<String>, sizeBytes: Long?): Boolean =
+        documentId !in listedIds && (sizeBytes == null || sizeBytes <= 0L)
 
     /** Anything that is not the device's own storage or the Downloads folder belongs to some other app. */
     fun isManagedByAnotherApp(authority: String?): Boolean =

@@ -937,4 +937,26 @@ records `u64 id, u64 size, bytes, sha256`), `pack-NNNN.fzbx` (the encrypted inde
   cut off simply resumes. A partial wake lock keeps the copy going with the screen off.
 - A SAF provider may rename a created file (a number, an extension); the destination checks the name it
   got and refuses the folder rather than let the set's names drift.
+- **A tree provider's listing is not an answer until it says it is** (`SafListing`). A cloud-backed
+  folder answers its first children query with an empty or partial cursor and
+  `DocumentsContract.EXTRA_LOADING`; read as "empty folder" it offers "Choose a passphrase" for what is
+  an existing set, and the run writes a second set (new salt, next manifest) beside the real one, after
+  which the real passphrase is "wrong" and "remove the leftovers" would delete the real files. Loading
+  is re-queried with a bounded backoff and then fails (`FolderNotReadyException`); `EXTRA_ERROR` throws.
+  Behind it: `BackupSetLoader.load` refuses (`AnotherBackupHere`) when nothing opened and a file has a
+  genuine header for other keys; a file of another set, or of a newer format, is `foreignFiles`, never a
+  leftover; `LeftoverRemoval` lists and classifies again before it deletes; `create` refuses a document
+  id the listing already had (writing "w" to it would truncate it).
+- **A manifest's sections are the phone's current stores, so they are carried forward** (`SectionMerge`).
+  Without it a run made on a wiped phone writes empty tags, locks and pins over a full backup, and a
+  restore then puts protected photos back unlocked. The price of additive: a tag or lock removed since
+  the last run comes back at a restore. Photo ids are one phone's row numbers; the tags file renumbers
+  a clashing id by its identity block, pins and recipes cannot (they merge by id as they stand).
+- **"Backed up" includes whether the GPS was readable.** A copy made without `ACCESS_MEDIA_LOCATION` has
+  no `ORIGINAL_LOCATION` flag and is copied again once the location is readable
+  (`BackupPlanner` `locationReadable`); a file whose original read falls back every time would be
+  copied on every run.
+- **The device self-check covers the cipher** (`BackupGoldenVector`): opening the embedded golden file,
+  a fresh seal and open, and a flipped bit that must fail, on top of PBKDF2. Keep the embedded bytes
+  equal to `BackupFormatTest`'s (a test pins it).
 

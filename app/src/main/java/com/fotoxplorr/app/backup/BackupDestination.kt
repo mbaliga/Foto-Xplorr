@@ -23,7 +23,12 @@ interface BackupDestination {
     /** What the person sees as this folder's name. */
     val label: String
 
-    /** Every file directly in the folder (sub-folders are ignored). */
+    /**
+     * Every file directly in the folder (sub-folders are ignored). A listing the provider has not
+     * finished (a cloud-backed folder still syncing) or reports an error for is a
+     * [FolderNotReadyException], never a short list: a partial listing read as the whole folder starts
+     * a second backup set beside the real one.
+     */
     fun list(): List<DestinationFile>
 
     fun open(name: String): InputStream
@@ -39,6 +44,13 @@ interface BackupDestination {
     /** Bytes free where the folder lives, or null when that cannot be known (most providers). */
     fun freeBytes(): Long?
 }
+
+/**
+ * The folder cannot be read yet or right now (a cloud-backed folder still syncing, a provider that
+ * reports an error), as opposed to a read that failed half way. [message] is a sentence for the
+ * person. It is NOT "the folder is empty": callers must not plan from it.
+ */
+class FolderNotReadyException(message: String) : IOException(message)
 
 /** What a failed write means for the person. Pure, so the matching is pinned by a test. */
 object DestinationErrors {

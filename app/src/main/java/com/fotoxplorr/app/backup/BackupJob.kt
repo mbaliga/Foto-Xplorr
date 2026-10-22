@@ -69,7 +69,9 @@ class BackupRefused(message: String) : Exception(message)
  * turned into a failure (TRAPS #49).
  *
  * @param sections the extra data the manifest carries (tags, locks, pins, edits); read once, at
- *   the start, so a failure there stops the run before a byte is written.
+ *   the start, so a failure there stops the run before a byte is written. They are the phone's
+ *   current state, and the previous snapshot's sections are folded into them when the manifest is
+ *   written ([SectionMerge]): a phone that has lost its tags must not turn the backup's into none.
  */
 class BackupJob(
     private val destination: BackupDestination,
@@ -326,6 +328,12 @@ class BackupJob(
         val referenced = entries.mapTo(HashSet()) { it.packName }
         val packs = known.values.filter { it.name in referenced }.sortedBy { it.name }
 
+        val sections = SectionMerge.union(
+            previous = prep.loaded.manifest?.sections.orEmpty(),
+            current = extra,
+            avoidIdsAbove = entries.maxOfOrNull { it.mediaId } ?: 0L,
+        )
+
         val name = BackupLayout.manifestName(prep.nextGeneration)
         val sink = destination.create(name)
         try {
@@ -335,7 +343,7 @@ class BackupJob(
                 manifest.writeHeader(ManifestHeader(prep.nextGeneration, clock(), appVersion, keys.iterations, limits.segmentSize))
                 entries.sortedBy { it.entryId }.forEach(manifest::writeEntry)
                 packs.forEach(manifest::writePack)
-                extra.forEach(manifest::writeSection)
+                sections.forEach(manifest::writeSection)
                 manifest.finish()
             }
         } catch (t: Throwable) {

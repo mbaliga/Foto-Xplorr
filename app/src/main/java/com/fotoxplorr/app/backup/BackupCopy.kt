@@ -31,6 +31,11 @@ object BackupCopy {
     const val ALREADY_RUNNING = "A backup is already running."
     const val KEY_SELF_CHECK_FAILED =
         "This phone computes the passphrase key differently from the standard, so a backup made here might not open elsewhere. Fotoz will not start one."
+    const val CIPHER_SELF_CHECK_FAILED =
+        "Encryption did not pass Fotoz's self-test on this phone: it could not open a known sample, or what it sealed would not open again. " +
+            "A backup made here might not be readable later, so Fotoz will not start one."
+    const val SECTIONS_FEWER =
+        "This phone has fewer tags, collections, favourites or locks than the backup already holds. The backup keeps the ones it has; nothing is removed from it."
     const val WRONG_PASSPHRASE = "That passphrase did not open the backup. Check it and try again, or the backup is damaged."
     const val CHOOSE_ANOTHER_FOLDER = "Choose a different folder for a new backup."
     const val PASSPHRASE_NEW_TITLE = "Choose a passphrase"
@@ -81,6 +86,12 @@ object BackupCopy {
         val managedByAnotherApp: Boolean,
         val batteryLowAndNotCharging: Boolean,
         val newSet: Boolean,
+        /** Files an earlier run stored without their location, which can be read now: they are copied again. */
+        val locationRecopies: Int = 0,
+        /** The folder also holds backup files of another set (or a newer version's); they are left alone. */
+        val foreignCount: Int = 0,
+        /** This phone's tags, collections, favourites or locks are fewer than the newest snapshot holds. */
+        val sectionsFewer: Boolean = false,
     )
 
     fun preflight(f: PreflightFacts): List<Line> = buildList {
@@ -125,6 +136,16 @@ object BackupCopy {
         if (f.locationApplicable) {
             add(if (f.locationGranted) Line(Severity.INFO, LOCATION_INCLUDED) else Line(Severity.WARNING, LOCATION_MISSING))
         }
+        if (f.locationRecopies > 0) {
+            add(
+                Line(
+                    Severity.INFO,
+                    "${count(f.locationRecopies, "file")} ${if (f.locationRecopies == 1) "was" else "were"} backed up without " +
+                        "${if (f.locationRecopies == 1) "its" else "their"} location and will be copied again.",
+                ),
+            )
+        }
+        if (f.sectionsFewer) add(Line(Severity.INFO, SECTIONS_FEWER))
         if (f.onPhoneStorage) add(Line(Severity.WARNING, SAME_PHONE))
         if (f.managedByAnotherApp) add(Line(Severity.INFO, OTHER_APP_FOLDER))
         if (f.batteryLowAndNotCharging) add(Line(Severity.WARNING, LOW_BATTERY))
@@ -134,6 +155,15 @@ object BackupCopy {
                     Severity.INFO,
                     "${count(f.leftoverCount, "leftover file")} (${size(f.leftoverBytes)}) from an interrupted backup cannot be used. " +
                         "They stay unless you remove them.",
+                ),
+            )
+        }
+        if (f.foreignCount > 0) {
+            add(
+                Line(
+                    Severity.INFO,
+                    "${count(f.foreignCount, "file")} in this folder ${if (f.foreignCount == 1) "belongs" else "belong"} to a different backup " +
+                        "(or to a newer version of Fotoz) and ${if (f.foreignCount == 1) "is" else "are"} left alone.",
                 ),
             )
         }
@@ -160,9 +190,35 @@ object BackupCopy {
         }
     }.joinToString(" ")
 
-    /** "Checked 1,204 files in 9 packs (8.3 GB): everything is intact." */
-    fun verifyClean(report: VerifyReport): String =
-        "Checked ${count(report.filesVerified, "file")} in ${count(report.packsChecked, "pack")} (${size(report.bytesChecked)}): everything is intact."
+    /**
+     * "Checked 1,204 files in 9 packs (8.3 GB): everything is intact." Only when the check saw all of
+     * the set; when it fell back to an older snapshot, read finished packs no snapshot lists, or
+     * left files unread, it says that in plain words instead of claiming more than it read.
+     */
+    fun verifyClean(report: VerifyReport): String {
+        val read = "Checked ${count(report.filesVerified, "file")} in ${count(report.packsChecked, "pack")} (${size(report.bytesChecked)})"
+        if (!report.hasCaveats) return "$read: everything is intact."
+        return "$read: no damage found in what was read. ${verifyNotes(report).joinToString(" ")}"
+    }
+
+    /** What a check stood on, when that is not simply the newest snapshot and nothing else. Empty for a plain check. */
+    fun verifyNotes(report: VerifyReport): List<String> = buildList {
+        val finished = count(report.recoveredPacks, "finished pack")
+        when {
+            report.skippedManifests > 0 && report.generation > 0 -> add(
+                "The newest snapshot could not be read; checked the one before it" +
+                    (if (report.recoveredPacks > 0) " plus $finished." else "."),
+            )
+            report.skippedManifests > 0 -> add("No snapshot could be read; checked $finished on their own.")
+            report.recoveredPacks > 0 -> add(
+                "${count(report.recoveredPacks, "pack")} from the last backup ${if (report.recoveredPacks == 1) "is" else "are"} " +
+                    "not in a snapshot yet; ${if (report.recoveredPacks == 1) "it was" else "they were"} checked too.",
+            )
+        }
+        if (report.leftovers > 0) {
+            add("${count(report.leftovers, "file")} in the folder cannot be used and ${if (report.leftovers == 1) "was" else "were"} not checked.")
+        }
+    }
 
     /** The problems of a check, at most [MAX_PROBLEMS] of them spelled out. Names are shown here only, never in a notification. */
     fun verifyProblems(report: VerifyReport): String {
@@ -171,7 +227,8 @@ object BackupCopy {
             "• $what: ${problem.detail}."
         }
         val more = if (report.problems.size > MAX_PROBLEMS) "\n…and ${report.problems.size - MAX_PROBLEMS} more." else ""
-        return "Checked the backup and found ${count(report.problems.size, "problem")}.\n$shown$more\n" +
+        val notes = verifyNotes(report).joinToString(" ").let { if (it.isEmpty()) "" else "$it\n" }
+        return "Checked the backup and found ${count(report.problems.size, "problem")}.\n$shown$more\n$notes" +
             "Back up again to a fresh folder to be safe; this folder was not changed."
     }
 

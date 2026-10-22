@@ -14,14 +14,23 @@ import com.fotoxplorr.app.editor.JsonValue
  *    one file name would otherwise come back as a photo and its "(restored)" copy.
  *  - Sections (tags, locks, pins, edits) are only in a manifest. A folder that holds packs a run
  *    finished but never wrote a manifest for restores their photos and nothing else.
+ *  - A manifest written before the sections were carried forward ([SectionMerge]) can hold less than
+ *    the one before it (a run made on a phone that had lost its tags). When [from] is given that
+ *    earlier snapshot's sections and the newest holds no more than them anywhere, they are folded in.
  */
 class RestoreSet internal constructor(
     val entries: List<ManifestEntry>,
     private val manifest: BackupManifest?,
+    /** The newest manifest's sections with the snapshot before it folded in; null when the newest is used as it is. */
+    private val foldedSections: List<ManifestSection>? = null,
 ) {
     val header: ManifestHeader? get() = manifest?.header
 
-    fun section(name: String): JsonValue? = manifest?.section(name)
+    /** True when the newest snapshot held less than the one before it, so the earlier tags, locks and pins are put back too. */
+    val usesEarlierSnapshot: Boolean get() = foldedSections != null
+
+    fun section(name: String): JsonValue? =
+        foldedSections?.firstOrNull { it.name == name }?.data ?: manifest?.section(name)
 
     /** Nothing a restore could put back: no file and no tags section. */
     val isEmpty: Boolean get() = entries.isEmpty() && info.metadata == null
@@ -44,11 +53,12 @@ class RestoreSet internal constructor(
             folderLocks = BackupSections.locks(section(BackupSections.LOCKS)).size,
             pins = BackupSections.pins(section(BackupSections.PINS)).size,
             recipes = BackupSections.recipes(section(BackupSections.RECIPES)).size,
+            earlierSnapshotUsed = usesEarlierSnapshot,
         )
     }
 
     companion object {
-        fun from(loaded: LoadedSet): RestoreSet {
+        fun from(loaded: LoadedSet, earlierSections: List<ManifestSection>? = null): RestoreSet {
             val present = loaded.packFileNames
             val newestPerFile = HashMap<String, ManifestEntry>()
             for (entry in loaded.known) {
@@ -62,7 +72,13 @@ class RestoreSet internal constructor(
                     entry.copy(flags = entry.flags + EntryFlag.MISSING)
                 }
             }
-            return RestoreSet(entries, loaded.manifest)
+            val newest = loaded.manifest?.sections
+            val folded = if (newest != null && earlierSections != null && SectionMerge.isFewer(newest, earlierSections)) {
+                SectionMerge.union(earlierSections, newest, avoidIdsAbove = entries.maxOfOrNull { it.mediaId } ?: 0L)
+            } else {
+                null
+            }
+            return RestoreSet(entries, loaded.manifest, folded)
         }
     }
 }
@@ -81,6 +97,8 @@ class RestoreSetInfo(
     val folderLocks: Int,
     val pins: Int,
     val recipes: Int,
+    /** The newest snapshot held less than the one before it; the earlier tags, locks and pins are included. */
+    val earlierSnapshotUsed: Boolean = false,
 ) {
     val files: Int get() = photos + videos
 }

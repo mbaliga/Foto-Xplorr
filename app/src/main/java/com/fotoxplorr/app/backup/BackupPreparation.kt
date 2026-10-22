@@ -34,6 +34,9 @@ object BackupPreparer {
      *
      * Files that look like moved ones (same name and size as a vanished record) get a
      * [QuickHash] read from [source] so a renamed album is recognised instead of copied again.
+     *
+     * [locationReadable] says the photos' own GPS can be read now ([BackupPlanner]): files an earlier
+     * run stored without it are then planned for another copy.
      */
     suspend fun prepare(
         destination: BackupDestination,
@@ -42,16 +45,17 @@ object BackupPreparer {
         options: BackupOptions,
         source: BackupSource,
         packLimits: PackLimits = PackLimits(),
+        locationReadable: Boolean = false,
     ): BackupPreparation {
         var loaded = BackupSetLoader.load(destination, keys)
-        var plan = planFor(loaded, candidates, options, limitsFor(loaded, packLimits))
+        var plan = planFor(loaded, candidates, options, limitsFor(loaded, packLimits), locationReadable)
         if (plan.destinationLooksUnlisted) {
             loaded = BackupSetLoader.load(destination, keys)
-            plan = planFor(loaded, candidates, options, limitsFor(loaded, packLimits))
+            plan = planFor(loaded, candidates, options, limitsFor(loaded, packLimits), locationReadable)
         }
         val limits = limitsFor(loaded, packLimits)
 
-        val needing = BackupPlanner.candidatesNeedingQuickHash(loaded.known, candidates, options, loaded.packFileNames)
+        val needing = BackupPlanner.candidatesNeedingQuickHash(loaded.known, candidates, options, loaded.packFileNames, locationReadable)
         var working = candidates
         if (needing.isNotEmpty()) {
             val hashes = HashMap<Long, String>()
@@ -61,7 +65,7 @@ object BackupPreparer {
             }
             if (hashes.isNotEmpty()) {
                 working = candidates.map { c -> hashes[c.mediaId]?.let { c.copy(quickHash = it) } ?: c }
-                plan = planFor(loaded, working, options, limits)
+                plan = planFor(loaded, working, options, limits, locationReadable)
             }
         }
         return BackupPreparation(loaded, plan, limits, options, candidates.size)
@@ -71,7 +75,7 @@ object BackupPreparer {
     private fun limitsFor(loaded: LoadedSet, wanted: PackLimits): PackLimits =
         loaded.manifest?.header?.segmentSize?.let { wanted.copy(segmentSize = it) } ?: wanted
 
-    private fun planFor(loaded: LoadedSet, candidates: List<BackupCandidate>, options: BackupOptions, limits: PackLimits): BackupPlan =
+    private fun planFor(loaded: LoadedSet, candidates: List<BackupCandidate>, options: BackupOptions, limits: PackLimits, locationReadable: Boolean): BackupPlan =
         BackupPlanner.plan(
             known = loaded.known,
             candidates = candidates,
@@ -79,5 +83,6 @@ object BackupPreparer {
             existingPacks = loaded.packFileNames,
             limits = limits,
             reservedPackNumbers = loaded.reservedPackNumbers,
+            locationReadable = locationReadable,
         )
 }
