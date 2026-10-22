@@ -164,10 +164,17 @@ class TextSelection private constructor(private val sorted: IntArray) {
      * This selection expressed in a different layout of the same photo: the words of [newLayout]
      * whose centre lies inside a selected word of [old]. How a tap on a block, made on the
      * block-only layout, survives the word-level layout arriving a moment later.
+     *
+     * The two layouts need not share a frame size (the block-only one is laid over the photo's
+     * full-size upright frame, the word-level one over its 2048 px decode), so the old boxes are
+     * first scaled onto the new frame.
      */
     fun carriedOver(old: TextLayout, newLayout: TextLayout): TextSelection {
         if (isEmpty) return this
-        val boxes = sorted.asList().mapNotNull { old.words.getOrNull(it)?.quad }
+        if (old === newLayout) return this
+        val sx = newLayout.frameWidth / old.frameWidth
+        val sy = newLayout.frameHeight / old.frameHeight
+        val boxes = sorted.asList().mapNotNull { old.words.getOrNull(it)?.quad?.scaled(sx, sy) }
         val carried = newLayout.words.indices.filter { i ->
             val centre = newLayout.words[i].quad.centre
             boxes.any { it.contains(centre) }

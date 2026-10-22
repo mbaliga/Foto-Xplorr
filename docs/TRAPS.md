@@ -505,6 +505,13 @@ bitmap's own width and height. The same `asset.width/height` pair is still hande
 `LiveTextOverlay` and to the flight's `photoRect`, so Live Text and the shrink-to-map start rectangle
 may misalign for a rotated-EXIF photo — **unverified, not fixed**, and listed in the device checklist.
 
+*Text half fixed.* `ViewerScreen` now lays the text layer over `PlaceMorph.restingImageSize(...)` (the
+EXIF-displayed upright size) and the word-level layout carries its own decode's size
+(`TextLayout.frameWidth/Height`), never `asset.width/height`. The block-only and word-level layouts
+are NOT the same size (full-size upright frame against a 2048 px decode), so a selection carried from
+one to the other is rescaled (`TextSelection.carriedOver`). Whether it lines up on a real EXIF-rotated
+portrait is still a device check. The flight's `photoRect` already used the upright size.
+
 ## 49. `runCatching` around suspend work swallows cancellation; and `decodeUpright` can throw before its own `runCatching`
 
 `runCatching { suspendCall() }` catches `CancellationException`, so a cancelled coroutine keeps running
@@ -522,13 +529,14 @@ Any caller of `decodeUpright` on a URI it does not control guards the call (lift
 `pointerInput` block starts, so a block keyed on `asset.id` sees whatever the surrounding state was
 at that moment, forever. The Live Text long-press guard read a stale `liveTextBlocks` list that way.
 Anything that can change without the asset changing — the animated sniff result, recognised text
-arriving after OCR — must be read through `rememberUpdatedState`, as `ViewerScreen` now does for
-`canLift` and the recognised-block count.
+arriving after OCR — must be read through `rememberUpdatedState`, as `ViewerScreen` does for
+`canLift` (a mode flag held in a `mutableStateOf` is read at call time and needs no wrapper).
 
-Related, **not fixed**: `LiveTextOverlay` is a full-size sibling whose `detectTapGestures` consumes
-every tap and long press on the photo while the chrome is up, bare photo included. A long press to
-lift therefore does nothing on a photo with recognised text; the actions room's "Lift subject" row is
-the way in, and the same layer means a tap on bare photo cannot toggle the chrome there either.
+*Fixed:* the always-on text layer is gone. `LiveTextOverlay` renders nothing at all unless Select text
+is on (the `LiftOverlay` rule), so a photo that is only being looked at has no invisible tap target
+over it: tap-to-hide-chrome, double-tap zoom and long-press Lift all work on a photo with text, and
+`longPressStartsLift` no longer looks at the chrome or the recognised-block count. While the mode IS
+on, a long press is not Lift (leave the mode first).
 
 ## 51. An overlay that draws its own stage belongs outside the viewer's zoom layer
 
@@ -960,3 +968,17 @@ records `u64 id, u64 size, bytes, sha256`), `pack-NNNN.fzbx` (the encrypted inde
   a fresh seal and open, and a flipped bit that must fail, on top of PBKDF2. Keep the embedded bytes
   equal to `BackupFormatTest`'s (a test pins it).
 
+## 76. A mode that takes the lone finger must claim the down, skip the viewer's loop, and never consume a move
+
+Select text reads one finger as a stroke, and a second finger must still pinch. Three rules make that
+work, and each was found by thinking through what the stock detectors do. (1) The mode's detector
+(`detectTextSelectGestures`) **consumes the down**, because `detectTapGestures` only looks at
+unconsumed downs: that alone switches off tap-to-hide-chrome, double-tap zoom and long-press Lift while
+the mode is on. (2) It **does not consume moves**: a consumed move makes `detectViewerGestures` break
+out of its loop, and `awaitEachGesture` then waits for every finger to lift, so a pinch begun after
+a consumed stroke would never zoom. (3) The viewer's loop therefore skips a lone finger itself
+(`oneFingerInert`, read live) instead of being pre-empted, and a second finger reaches it intact; the
+overlay abandons its stroke the moment a second pointer appears (`onCancel`). Strokes, tap slop and
+the lasso-close distance are dp divided by the zoom, because the overlay sits inside the zoom layer.
+The arbitration is pinned in `TextSelectOverlayTest` with the real `detectViewerGestures`, but a real
+finger on a real screen is still a device check.

@@ -20,11 +20,12 @@ internal object ViewerChromePolicy {
      * Whether the chrome drawn over the photo (the position chip with its Close button) is up.
      *
      * Hidden in picture-in-picture, where the whole window is a small video and a Close button in
-     * its corner would be a control for a window nobody can reach, and hidden while the lift
-     * editor owns the screen, which brings toolbars of its own.
+     * its corner would be a control for a window nobody can reach, and hidden while a viewer mode
+     * ([modeActive], see [ViewerMode.ownsScreen]: the lift editor or text selection) owns the
+     * screen, since each brings toolbars of its own.
      */
-    fun chromeShown(chromeVisible: Boolean, inPictureInPicture: Boolean, lifting: Boolean = false): Boolean =
-        chromeVisible && !inPictureInPicture && !lifting
+    fun chromeShown(chromeVisible: Boolean, inPictureInPicture: Boolean, modeActive: Boolean = false): Boolean =
+        chromeVisible && !inPictureInPicture && !modeActive
 
     /**
      * Whether the favourite heart is drawn in the chrome row beside the position chip.
@@ -88,8 +89,8 @@ internal object ViewerChromePolicy {
         inPictureInPicture: Boolean,
         showFilmstripPreference: Boolean,
         rollSize: Int,
-        lifting: Boolean = false,
-    ): Boolean = chromeShown(chromeVisible, inPictureInPicture, lifting) && showFilmstripPreference && rollSize > 1
+        modeActive: Boolean = false,
+    ): Boolean = chromeShown(chromeVisible, inPictureInPicture, modeActive) && showFilmstripPreference && rollSize > 1
 
     /**
      * How far above the bottom edge the video transport must sit so it clears the filmstrip: the
@@ -127,8 +128,9 @@ internal object ViewerChromePolicy {
     /**
      * Whether the slideshow's countdown to the next photo should be running.
      *
-     * Stopped while any room is open (the person is reading something), while the lift editor owns
-     * the screen (an advance would throw a half-made selection away), and while a video is playing
+     * Stopped while any room is open (the person is reading something), while a viewer mode owns
+     * the screen ([modeActive]: an advance would throw a half-made lift or text selection away),
+     * and while a video is playing
      * or about to (an advance after the interval would cut it off mid-scene). When the video ends,
      * or is paused, the countdown starts afresh, so a clip plays out and then gets its normal
      * interval before the slideshow moves on.
@@ -144,11 +146,11 @@ internal object ViewerChromePolicy {
         total: Int,
         anyRoomVisible: Boolean,
         videoPlaybackActive: Boolean,
-        lifting: Boolean,
+        modeActive: Boolean,
         hostRunning: Boolean = true,
         paused: Boolean = false,
     ): Boolean =
-        slideshowActive && total > 1 && !anyRoomVisible && !videoPlaybackActive && !lifting && hostRunning && !paused
+        slideshowActive && total > 1 && !anyRoomVisible && !videoPlaybackActive && !modeActive && hostRunning && !paused
 
     /**
      * Whether the hosting activity is running for the slideshow's purposes: at least STARTED (on
@@ -165,7 +167,7 @@ internal object ViewerChromePolicy {
     /**
      * Whether the slideshow bar (previous, play or pause, next) is drawn at the top: a slideshow
      * is up, there is somewhere to go ([total] above one), and the chrome is up ([chromeShown],
-     * so it goes in picture-in-picture and under the lift editor with the rest). Not a function
+     * so it goes in picture-in-picture and under a viewer mode with the rest). Not a function
      * of a paused state: a paused slideshow is exactly when the bar is needed, to resume it.
      */
     fun slideshowBarShown(slideshowActive: Boolean, total: Int, chromeShown: Boolean): Boolean =
@@ -177,7 +179,7 @@ internal object ViewerChromePolicy {
      *
      * Not while paused (the bar is how it is resumed, and the person is plainly looking at the
      * controls), not over a video (its transport and the bar stay up for the clip), not while a
-     * room is open or a lift is under way (those own the screen), and not once it is already down.
+     * room is open or a viewer mode is up (those own the screen), and not once it is already down.
      */
     fun slideshowChromeMayAutoHide(
         slideshowActive: Boolean,
@@ -185,8 +187,8 @@ internal object ViewerChromePolicy {
         chromeVisible: Boolean,
         isVideo: Boolean,
         anyRoomVisible: Boolean,
-        lifting: Boolean,
-    ): Boolean = slideshowActive && !paused && chromeVisible && !isVideo && !anyRoomVisible && !lifting
+        modeActive: Boolean,
+    ): Boolean = slideshowActive && !paused && chromeVisible && !isVideo && !anyRoomVisible && !modeActive
 
     /** How long the chrome stays up during a running slideshow before it folds away. */
     const val SLIDESHOW_CHROME_HIDE_MS = 3_000L
@@ -227,26 +229,36 @@ internal object ViewerChromePolicy {
     /**
      * Whether a long press on the photo starts a lift.
      *
-     * Off for anything [canLift] says cannot be lifted, and off while the Live Text layer is up
-     * ([chromeVisible] with [recognisedBlocks] > 0): that layer is a full-size sibling that takes
-     * every tap and long press within its bounds, bare photo included, so a long press there would
-     * reach neither it nor this detector reliably. Lift is not lost for such a photo -- the actions
-     * room's "Lift subject" row is always available, and hiding the chrome brings the long press
-     * back -- but a gesture that sometimes silently does nothing is worse than one that is
-     * consistently absent while the text layer is showing.
+     * On for anything [canLift] says can be lifted, whether or not the photo has recognised text
+     * and whether or not the chrome is up. It used to be off while the Live Text layer was up,
+     * because that layer was always composed over a photo with text and swallowed every tap and
+     * long press on it (TRAPS 50). The text layer now renders nothing until the person opens
+     * Select text, so there is no dead zone to avoid.
+     *
+     * Off while a viewer mode already owns the screen ([modeActive]): a long press inside text
+     * selection stays inside it, and opening the lift editor from there would be a mode change
+     * nobody asked for. A mode is left (Done, Back) before the other is opened.
      */
-    fun longPressStartsLift(canLift: Boolean, chromeVisible: Boolean, recognisedBlocks: Int): Boolean =
-        canLift && !(chromeVisible && recognisedBlocks > 0)
+    fun longPressStartsLift(canLift: Boolean, modeActive: Boolean = false): Boolean = canLift && !modeActive
+
+    /**
+     * Whether a one-finger drag, a double tap and a plain tap on the photo are the viewer's (page
+     * turn, pan, zoom, toggle the chrome) or belong to the mode on screen. Text selection reads a
+     * one-finger drag as a stroke over words and a tap as selecting a block, so while it is up the
+     * viewer's own one-finger gestures are off; a pinch is still the viewer's, in every mode.
+     */
+    fun oneFingerGesturesAreViewers(modeActive: Boolean): Boolean = !modeActive
 
     /**
      * Whether the rooms should be withdrawn (their slots passed as null, so the shell neither
-     * composes them nor lets an edge drag open one) because a lift owns the screen.
+     * composes them nor lets an edge drag open one) because a viewer mode owns the screen: the lift
+     * editor, or text selection with a stroke being drawn near an edge.
      *
-     * Waits for the shell to be [atHome]: a lift started from the actions room first closes that
-     * room, and removing its slot on the spot would make the room vanish while the card is still
-     * sliding back over it.
+     * Waits for the shell to be [atHome]: a mode started from a room first closes that room, and
+     * removing its slot on the spot would make the room vanish while the card is still sliding
+     * back over it.
      */
-    fun roomsWithdrawn(lifting: Boolean, atHome: Boolean): Boolean = lifting && atHome
+    fun roomsWithdrawn(modeActive: Boolean, atHome: Boolean): Boolean = modeActive && atHome
 
     // ── the shrink-to-map flight ──────────────────────────────────────────────────────────────
 

@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.doubleClick
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -29,6 +30,7 @@ import androidx.compose.ui.test.swipeDown
 import androidx.test.core.app.ApplicationProvider
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.recognition.TextBlock
 import com.fotoxplorr.app.render.ViewerFixtures
 import com.fotoxplorr.app.ui.FotoXplorrTheme
 import org.junit.Assert.assertEquals
@@ -96,6 +98,7 @@ class ViewerIntegrationTest {
         manualLatitude: Double? = null,
         manualLongitude: Double? = null,
         animated: Boolean = false,
+        liveTextBlocks: List<TextBlock> = emptyList(),
     ) {
         ViewerScreen(
             asset = asset,
@@ -124,6 +127,7 @@ class ViewerIntegrationTest {
             manualLatitude = manualLatitude,
             manualLongitude = manualLongitude,
             animated = animated,
+            liveTextBlocks = liveTextBlocks,
             plateMapBackdrop = ViewerFixtures.mapStandIn,
             // Keeps these tests about wiring: no catalogue writes, no key-moment indexing.
             catalogueActions = false,
@@ -292,6 +296,48 @@ class ViewerIntegrationTest {
         compose.onNodeWithText("Open with").assertExists()
         // ...and the row for lifting is not.
         compose.onAllNodesWithText("Lift subject").assertCountEquals(0)
+    }
+
+    private val signText = listOf(TextBlock("PLATFORM 9", left = 0.2f, top = 0.4f, right = 0.8f, bottom = 0.6f))
+
+    @Test
+    fun `a photo with recognised text still hides and shows its chrome on a tap`() {
+        // The old always-on text layer swallowed this tap whenever the chrome was up (TRAPS 50).
+        val photos = roll()
+        compose.setContent { themed { Viewer(photos[4], photos, liveTextBlocks = signText) } }
+        compose.waitForIdle()
+        compose.onAllNodesWithContentDescription("Close").assertCountEquals(0)
+
+        compose.onRoot().performTouchInput { click(center) }
+        compose.mainClock.advanceTimeBy(500L)
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Close").assertExists()
+
+        // The chrome is up now -- exactly when the old layer was composed -- and a tap on the text
+        // itself must put it away again.
+        compose.onRoot().performTouchInput { click(center) }
+        compose.mainClock.advanceTimeBy(500L)
+        compose.waitForIdle()
+        compose.onAllNodesWithContentDescription("Close").assertCountEquals(0)
+    }
+
+    @Test
+    fun `a long press lifts a photo that has recognised text, with the chrome up`() {
+        val photos = roll()
+        compose.setContent { themed { Viewer(photos[4], photos, liveTextBlocks = signText) } }
+        compose.waitForIdle()
+        compose.onRoot().performTouchInput { click(center) }
+        compose.mainClock.advanceTimeBy(500L)
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Close").assertExists()
+
+        compose.onRoot().performTouchInput { longClick(center) }
+        compose.waitForIdle()
+        // The editor is up: its loading, ready and failed states all carry Cancel or Close text.
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodesWithText("Cancel").fetchSemanticsNodes().isNotEmpty() ||
+                compose.onAllNodesWithText("Close").fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     @Test

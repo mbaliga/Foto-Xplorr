@@ -47,8 +47,8 @@ class ViewerChromePolicyTest {
             pip: Boolean = false,
             preference: Boolean = true,
             roll: Int = 9,
-            lifting: Boolean = false,
-        ) = ViewerChromePolicy.filmstripShown(chrome, pip, preference, roll, lifting)
+            modeActive: Boolean = false,
+        ) = ViewerChromePolicy.filmstripShown(chrome, pip, preference, roll, modeActive)
 
         assertTrue(shown())
         assertFalse("immersive means no strip", shown(chrome = false))
@@ -56,7 +56,7 @@ class ViewerChromePolicyTest {
         assertFalse("the settings switch", shown(preference = false))
         assertFalse("one photo has nothing to scrub", shown(roll = 1))
         assertFalse("an empty roll", shown(roll = 0))
-        assertFalse("the lift editor owns the screen", shown(lifting = true))
+        assertFalse("a viewer mode (lift or text selection) owns the screen", shown(modeActive = true))
     }
 
     /**
@@ -80,7 +80,7 @@ class ViewerChromePolicyTest {
         assertTrue(ViewerChromePolicy.chromeShown(chromeVisible = true, inPictureInPicture = false))
         assertFalse(ViewerChromePolicy.chromeShown(chromeVisible = false, inPictureInPicture = false))
         assertFalse(ViewerChromePolicy.chromeShown(chromeVisible = true, inPictureInPicture = true))
-        assertFalse(ViewerChromePolicy.chromeShown(chromeVisible = true, inPictureInPicture = false, lifting = true))
+        assertFalse(ViewerChromePolicy.chromeShown(chromeVisible = true, inPictureInPicture = false, modeActive = true))
     }
 
     // ── the video transport clears the strip ───────────────────────────────────────────────────
@@ -124,8 +124,8 @@ class ViewerChromePolicyTest {
         total: Int = 9,
         room: Boolean = false,
         video: Boolean = false,
-        lifting: Boolean = false,
-    ) = ViewerChromePolicy.slideshowMayAdvance(active, total, room, video, lifting)
+        modeActive: Boolean = false,
+    ) = ViewerChromePolicy.slideshowMayAdvance(active, total, room, video, modeActive)
 
     @Test
     fun `the slideshow advances only when nothing is holding it`() {
@@ -134,7 +134,7 @@ class ViewerChromePolicyTest {
         assertFalse("one photo", advances(total = 1))
         assertFalse("a room is open", advances(room = true))
         assertFalse("a video is playing", advances(video = true))
-        assertFalse("a selection is being made", advances(lifting = true))
+        assertFalse("a selection is being made (a lift or text)", advances(modeActive = true))
     }
 
     @Test
@@ -157,24 +157,37 @@ class ViewerChromePolicyTest {
     }
 
     @Test
-    fun `a long press lifts only what can be lifted and only where no text layer is eating it`() {
-        assertTrue(ViewerChromePolicy.longPressStartsLift(canLift = true, chromeVisible = false, recognisedBlocks = 0))
-        assertTrue(ViewerChromePolicy.longPressStartsLift(canLift = true, chromeVisible = true, recognisedBlocks = 0))
-        // Text recognised but chrome down: the Live Text layer is not composed, so lift is free.
-        assertTrue(ViewerChromePolicy.longPressStartsLift(canLift = true, chromeVisible = false, recognisedBlocks = 4))
-        // The dead zone: chrome up AND text on the photo.
-        assertFalse(ViewerChromePolicy.longPressStartsLift(canLift = true, chromeVisible = true, recognisedBlocks = 4))
+    fun `a long press lifts whatever can be lifted, text on the photo or not`() {
+        // The text layer renders nothing until Select text is opened, so there is no dead zone:
+        // a photo with recognised text lifts on a long press exactly like one without (TRAPS 50).
+        // There is no chrome or text-count input to this rule any more.
+        assertTrue(ViewerChromePolicy.longPressStartsLift(canLift = true))
         // Never for a video, SVG, RAW or animated image.
-        assertFalse(ViewerChromePolicy.longPressStartsLift(canLift = false, chromeVisible = false, recognisedBlocks = 0))
+        assertFalse(ViewerChromePolicy.longPressStartsLift(canLift = false))
     }
 
     @Test
-    fun `the rooms are withdrawn only once a lift is up and the shell is home`() {
-        assertTrue(ViewerChromePolicy.roomsWithdrawn(lifting = true, atHome = true))
-        // A room just closed to start the lift is still sliding away: leave it be until it lands.
-        assertFalse(ViewerChromePolicy.roomsWithdrawn(lifting = true, atHome = false))
-        assertFalse(ViewerChromePolicy.roomsWithdrawn(lifting = false, atHome = true))
-        assertFalse(ViewerChromePolicy.roomsWithdrawn(lifting = false, atHome = false))
+    fun `a long press does nothing while a mode already owns the screen`() {
+        // Leave text selection (Done, Back) before lifting; a held press inside it is not a Lift.
+        assertFalse(ViewerChromePolicy.longPressStartsLift(canLift = true, modeActive = true))
+        assertFalse(ViewerChromePolicy.longPressStartsLift(canLift = false, modeActive = true))
+    }
+
+    @Test
+    fun `the viewer keeps the lone finger only when no mode owns the screen`() {
+        // Page swipe, pan, tap-to-hide-chrome and double-tap zoom are the viewer's one-finger
+        // gestures; Select text reads that finger as a stroke, so they are off while it is on.
+        assertTrue(ViewerChromePolicy.oneFingerGesturesAreViewers(modeActive = false))
+        assertFalse(ViewerChromePolicy.oneFingerGesturesAreViewers(modeActive = true))
+    }
+
+    @Test
+    fun `the rooms are withdrawn only once a mode is up and the shell is home`() {
+        assertTrue(ViewerChromePolicy.roomsWithdrawn(modeActive = true, atHome = true))
+        // A room just closed to start the mode is still sliding away: leave it be until it lands.
+        assertFalse(ViewerChromePolicy.roomsWithdrawn(modeActive = true, atHome = false))
+        assertFalse(ViewerChromePolicy.roomsWithdrawn(modeActive = false, atHome = true))
+        assertFalse(ViewerChromePolicy.roomsWithdrawn(modeActive = false, atHome = false))
     }
 
     // ── the shrink-to-map flight (#19) ─────────────────────────────────────────────────────────

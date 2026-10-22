@@ -19,10 +19,10 @@ class ViewerSlideshowPolicyTest {
         total: Int = 9,
         room: Boolean = false,
         video: Boolean = false,
-        lifting: Boolean = false,
+        modeActive: Boolean = false,
         host: Boolean = true,
         paused: Boolean = false,
-    ) = ViewerChromePolicy.slideshowMayAdvance(active, total, room, video, lifting, host, paused)
+    ) = ViewerChromePolicy.slideshowMayAdvance(active, total, room, video, modeActive, host, paused)
 
     @Test
     fun `a paused slideshow never advances`() {
@@ -44,7 +44,7 @@ class ViewerSlideshowPolicyTest {
         assertFalse("one photo", mayAdvance(total = 1))
         assertFalse("a room is open", mayAdvance(room = true))
         assertFalse("a video is playing", mayAdvance(video = true))
-        assertFalse("a lift owns the screen", mayAdvance(lifting = true))
+        assertFalse("a viewer mode owns the screen", mayAdvance(modeActive = true))
         assertFalse("the host is stopped", mayAdvance(host = false))
     }
 
@@ -66,8 +66,8 @@ class ViewerSlideshowPolicyTest {
         chrome: Boolean = true,
         video: Boolean = false,
         room: Boolean = false,
-        lifting: Boolean = false,
-    ) = ViewerChromePolicy.slideshowChromeMayAutoHide(active, paused, chrome, video, room, lifting)
+        modeActive: Boolean = false,
+    ) = ViewerChromePolicy.slideshowChromeMayAutoHide(active, paused, chrome, video, room, modeActive)
 
     @Test
     fun `a running slideshow on a photo lets the chrome fold away`() {
@@ -79,7 +79,7 @@ class ViewerSlideshowPolicyTest {
         assertFalse("paused: the bar is how it resumes", mayHide(paused = true))
         assertFalse("a video keeps its transport and the bar", mayHide(video = true))
         assertFalse("a room is open", mayHide(room = true))
-        assertFalse("a lift owns the screen", mayHide(lifting = true))
+        assertFalse("a viewer mode owns the screen", mayHide(modeActive = true))
         assertFalse("no slideshow", mayHide(active = false))
         assertFalse("already down", mayHide(chrome = false))
     }

@@ -1,10 +1,8 @@
 package com.fotoxplorr.app.viewer
 
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import com.fotoxplorr.app.recognition.TextBlock
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -52,33 +50,6 @@ class LiveTextGeometryTest {
         assertEquals(250f + 0.4f * 500f, box.top, 0.01f)
         assertEquals(750f, box.right, 0.01f)
         assertEquals(500f, box.width, 0.01f)
-    }
-
-    @Test
-    fun `a tap inside a block finds it and a tap on bare photo finds nothing`() {
-        val rect = fittedImageRect(Size(1000f, 1000f), imageWidth = 1000, imageHeight = 1000)
-        val blocks = listOf(
-            TextBlock("top", left = 0.0f, top = 0.0f, right = 0.5f, bottom = 0.2f),
-            TextBlock("bottom", left = 0.0f, top = 0.8f, right = 0.5f, bottom = 1.0f),
-        )
-
-        assertEquals(0, blockAt(blocks, rect, Offset(100f, 100f)))
-        assertEquals(1, blockAt(blocks, rect, Offset(100f, 900f)))
-        assertNull(blockAt(blocks, rect, Offset(900f, 500f)))
-    }
-
-    @Test
-    fun `overlapping blocks resolve to the last one so small boxes stay reachable`() {
-        val rect = fittedImageRect(Size(1000f, 1000f), imageWidth = 1000, imageHeight = 1000)
-        val blocks = listOf(
-            TextBlock("whole paragraph", left = 0f, top = 0f, right = 1f, bottom = 1f),
-            TextBlock("one word", left = 0.4f, top = 0.4f, right = 0.6f, bottom = 0.6f),
-        )
-
-        // Inside the small one: the small one wins, or it could never be selected at all.
-        assertEquals(1, blockAt(blocks, rect, Offset(500f, 500f)))
-        // Outside it but inside the big one: the big one.
-        assertEquals(0, blockAt(blocks, rect, Offset(100f, 100f)))
     }
 
     @Test

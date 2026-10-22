@@ -347,10 +347,13 @@ fun ViewerScreen(
     var offsetY by remember(asset.id) { mutableFloatStateOf(0f) }
     var rotation by remember(asset.id) { mutableFloatStateOf(0f) }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
-    // Lifting a subject: long-press the photo, or "Lift subject" in the actions room. Keyed on
-    // asset.id like every other per-photo gesture state here, so paging to the next photo cannot
-    // leave a stale "picking a subject" overlay armed over a photo the user never long-pressed.
-    var liftActive by remember(asset.id) { mutableStateOf(false) }
+    // The full-screen mode that owns the viewer, if any: lifting a subject (long-press the photo,
+    // or "Lift subject" in the actions room) or selecting text. ONE value, so the two cannot both
+    // be on and every predicate below asks the same question (see ViewerMode). Keyed on asset.id
+    // like every other per-photo gesture state here, so paging to the next photo cannot leave a
+    // stale "picking a subject" overlay armed over a photo the user never long-pressed.
+    var viewerMode by remember(asset.id) { mutableStateOf<ViewerMode>(ViewerMode.Browsing) }
+    val modeActive = viewerMode.ownsScreen
     // Whether a subject can be lifted from THIS asset at all (not a video, SVG, RAW or an
     // animated image): gates both the long press and the actions-room row, so neither offers an
     // editor that could only report that it cannot open the photo.
@@ -358,20 +361,20 @@ fun ViewerScreen(
     val canLift = remember(asset, animatedImage) { canLiftSubject(asset, animatedImage) }
     // The tap detector below is keyed on the asset alone and captures what it reads when it
     // starts, so anything that can change under it without the asset changing -- the animated flag
-    // once the sniff lands, the recognised text once OCR finishes -- is read through these.
+    // once the sniff lands -- is read through this (TRAPS 50).
     val liftable by rememberUpdatedState(canLift)
-    val recognisedBlockCount by rememberUpdatedState(liveTextBlocks.size)
     val shell = rememberSpatialController()
     // Picture-in-picture shrinks the whole window to a small video: nothing drawn over the photo
     // (the position chip, the filmstrip) belongs in it. VideoPlayer hides its own transport the
     // same way; the host's chrome has to ask for itself because it is not inside that composition.
     val isInPip by rememberIsInPictureInPicture()
-    // While a lift owns the screen the rooms are withdrawn (null slots): the editor consumes every
-    // touch that lands on it, but the shell claims edge drags on an earlier pass than any child
-    // sees, so without this an edge pull would open a room under the editor. Held until the shell
-    // is home so a room that was just closed to start the lift slides away instead of vanishing.
+    // While a mode owns the screen the rooms are withdrawn (null slots): the lift editor consumes
+    // every touch that lands on it, and a text stroke runs to the edges of the photo, but the shell
+    // claims edge drags on an earlier pass than any child sees, so without this an edge pull would
+    // open a room under the mode. Held until the shell is home so a room that was just closed to
+    // start the mode slides away instead of vanishing.
     val roomsWithdrawn by remember(shell, asset.id) {
-        derivedStateOf { ViewerChromePolicy.roomsWithdrawn(lifting = liftActive, atHome = shell.atHome) }
+        derivedStateOf { ViewerChromePolicy.roomsWithdrawn(modeActive = viewerMode.ownsScreen, atHome = shell.atHome) }
     }
     // True while the user is moving the filmstrip (a finger on it, or its fling). Pauses a playing
     // video and keeps the next one from starting until the strip settles -- see VideoPlayer's
@@ -386,7 +389,7 @@ fun ViewerScreen(
         inPictureInPicture = isInPip,
         showFilmstripPreference = showFilmstrip,
         rollSize = relatedAssets.size,
-        lifting = liftActive,
+        modeActive = modeActive,
     )
 
     // Read here rather than inside the room: the shell only composes a room once it is slightly
@@ -480,6 +483,23 @@ fun ViewerScreen(
     // Disabled at home so the activity's own handler still closes the viewer.
     BackHandler(enabled = !shell.atHome) { shell.closeAll() }
 
+    // Select text. The layout comes from the stored whole-block boxes at once and from a word-level
+    // read of this photo a moment later; the boxes are normalised to the UPRIGHT decoded bitmap, so
+    // the frame they are laid over is the displayed size (TRAPS 48), not MediaStore's stored
+    // width/height, which an EXIF-rotated portrait reports landscape. Nothing is read while the
+    // mode is off. Back leaves the mode (the lift editor registers its own).
+    val textFrame = PlaceMorph.restingImageSize(asset.width, asset.height, exif.displayWidth, exif.displayHeight)
+    val textSelect = rememberTextSelectState(
+        active = viewerMode.isSelectingText,
+        asset = asset,
+        animated = animatedImage,
+        blocks = liveTextBlocks,
+        frameWidth = textFrame.width.toInt(),
+        frameHeight = textFrame.height.toInt(),
+        provider = textLayoutProvider,
+    )
+    BackHandler(enabled = viewerMode.isSelectingText) { viewerMode = ViewerMode.leave(viewerMode) }
+
     // Cleared on dispose, not just toggled off: leaving FLAG_KEEP_SCREEN_ON set behind a closed
     // viewer would hold the whole app awake for as long as it stayed in the foreground.
     val view = LocalView.current
@@ -505,11 +525,11 @@ fun ViewerScreen(
     //
     // A paused slideshow does not count down at all; resuming starts a full interval afresh.
     LaunchedEffect(
-        asset.id, slideshowActive, slideshowIntervalSeconds, roomOpen, videoPlaying, liftActive, hostRunning,
+        asset.id, slideshowActive, slideshowIntervalSeconds, roomOpen, videoPlaying, modeActive, hostRunning,
         slideshowPaused,
     ) {
         if (ViewerChromePolicy.slideshowMayAdvance(
-                slideshowActive, total, roomOpen, videoPlaying, liftActive, hostRunning, slideshowPaused,
+                slideshowActive, total, roomOpen, videoPlaying, modeActive, hostRunning, slideshowPaused,
             )
         ) {
             delay(slideshowIntervalSeconds.coerceAtLeast(2) * 1_000L)
@@ -529,7 +549,7 @@ fun ViewerScreen(
         if (slideshowActive) chromeVisible = true
     }
     val chromeMayAutoHide = ViewerChromePolicy.slideshowChromeMayAutoHide(
-        slideshowActive, slideshowPaused, chromeVisible, asset.isVideo, roomOpen, liftActive,
+        slideshowActive, slideshowPaused, chromeVisible, asset.isVideo, roomOpen, modeActive,
     )
     LaunchedEffect(chromeMayAutoHide, chromePulse) {
         if (chromeMayAutoHide) {
@@ -652,7 +672,7 @@ fun ViewerScreen(
                 // Not behind catalogueActions: lifting reads only the photo's URI and writes a
                 // sticker file only when asked, so it is as valid on a photo opened from another
                 // app. Closing the room first hands the screen to the editor cleanly.
-                onLiftSubject = if (canLift) ({ shell.closeAll(); liftActive = true }) else null,
+                onLiftSubject = if (canLift) ({ shell.closeAll(); viewerMode = ViewerMode.open(viewerMode, ViewerMode.Lifting) }) else null,
             )
         },
         // RIGHT = how the photo is shown: the viewing options, in from the side.
@@ -708,7 +728,7 @@ fun ViewerScreen(
         // the shell's.
         bottomReserve = ViewerBottomReserve.reserveDp(
             filmstripShown = filmstripShown,
-            videoTransportShown = asset.isVideo && ViewerChromePolicy.chromeShown(chromeVisible, isInPip, liftActive),
+            videoTransportShown = asset.isVideo && ViewerChromePolicy.chromeShown(chromeVisible, isInPip, modeActive),
             secondRowCollapsed = ViewerBottomReserve.secondRowCollapsed(
                 filmstripShown = filmstripShown,
                 screenHeightDp = LocalConfiguration.current.screenHeightDp,
@@ -742,6 +762,9 @@ fun ViewerScreen(
                     detectViewerGestures(
                         scaleProvider = { scale },
                         pinchMode = pinchMode,
+                        // Select text reads a lone finger as a stroke over words, so while it is on
+                        // the one-finger page turn and pan are off; a pinch still reaches this.
+                        oneFingerInert = { !ViewerChromePolicy.oneFingerGesturesAreViewers(viewerMode.ownsScreen) },
                         onTransform = { zoomChange, panChange, rotationChange ->
                             val next = (scale * zoomChange).coerceIn(MIN_SCALE, MAX_SCALE)
                             rotation += rotationChange
@@ -782,9 +805,16 @@ fun ViewerScreen(
                 }
                 .pointerInput(asset.id) {
                     detectTapGestures(
-                        onTap = { chromeVisible = !chromeVisible },
+                        // Gated on the mode as well as on the mode's own overlay consuming the
+                        // down: a touch that lands outside a rotated or panned text layer reaches
+                        // this detector, and a tap there must not hide the chrome under the mode.
+                        onTap = {
+                            if (ViewerChromePolicy.oneFingerGesturesAreViewers(viewerMode.ownsScreen)) {
+                                chromeVisible = !chromeVisible
+                            }
+                        },
                         onDoubleTap = {
-                            if (!asset.isVideo) {
+                            if (!asset.isVideo && ViewerChromePolicy.oneFingerGesturesAreViewers(viewerMode.ownsScreen)) {
                                 if (scale > 1.05f || rotation != 0f) {
                                     scale = 1f
                                     rotation = 0f
@@ -806,24 +836,15 @@ fun ViewerScreen(
                         // stream, and this screen never has to reason about ordering between two
                         // detectTapGestures instances at all.
                         //
-                        // Guarded off whenever LiveTextOverlay is up (chrome visible AND this
-                        // photo has recognised text): that layer is a later sibling inside the
-                        // same photo Box below, so it is hit-tested first and already consumes
-                        // every tap and long-press within its bounds -- bare photo included, per
-                        // its own "a tap on bare photo clears [selection]" behaviour. Without
-                        // this guard a long press over live text would not reliably do EITHER
-                        // thing, a dead zone rather than a conflict. The guard now sits behind
-                        // ViewerChromePolicy.longPressStartsLift, which also refuses anything
-                        // that cannot be lifted (video, SVG, RAW, animated). Lift stays reachable
-                        // for a photo with text through the actions room's "Lift subject" row,
-                        // which is why the dead zone is acceptable rather than a loss of the
-                        // feature; hiding the chrome brings the long press back as well.
+                        // Long-press is Lift on every photo that can be lifted, text or no text.
+                        // It used to be refused while the always-on text layer was up, because
+                        // that layer sat over the whole photo and swallowed the press (TRAPS 50);
+                        // the text layer now renders nothing until Select text is opened, so the
+                        // press reaches this detector. It is not a way into Select text, and it
+                        // does nothing while a mode is already on: leave the mode first.
                         onLongPress = {
-                            if (ViewerChromePolicy.longPressStartsLift(
-                                    liftable, chromeVisible, recognisedBlockCount,
-                                )
-                            ) {
-                                liftActive = true
+                            if (ViewerChromePolicy.longPressStartsLift(liftable, viewerMode.ownsScreen)) {
+                                viewerMode = ViewerMode.open(viewerMode, ViewerMode.Lifting)
                             }
                         },
                     )
@@ -832,7 +853,7 @@ fun ViewerScreen(
         ) {
             // What is drawn over the photo, decided once for the video's top clearance below and
             // the chrome at the end of this box.
-            val chromeShown = ViewerChromePolicy.chromeShown(chromeVisible, isInPip, liftActive)
+            val chromeShown = ViewerChromePolicy.chromeShown(chromeVisible, isInPip, modeActive)
             val slideshowBarShown = ViewerChromePolicy.slideshowBarShown(slideshowActive, total, chromeShown)
             if (asset.isVideo) {
                 // key(asset.id): one VideoPlayer instance per video, not one reused across the
@@ -881,7 +902,7 @@ fun ViewerScreen(
                 ) {
                     // Behind the photo and inside the zoom layer, so it moves with the picture.
                     // Image content rather than chrome: it shows with the chrome down.
-                    if (ViewerChromePolicy.transparencyBackdropShown(asset.isVideo, hasAlpha, liftActive)) {
+                    if (ViewerChromePolicy.transparencyBackdropShown(asset.isVideo, hasAlpha, viewerMode.isLifting)) {
                         TransparencyBackdrop(
                             mode = transparencyBackground,
                             rect = TransparencyBackdropGeometry.rect(
@@ -902,39 +923,44 @@ fun ViewerScreen(
                         animate = animatedImage,
                     )
 
-                    // Text found by the offline recognition pass, selectable in place. Only while
-                    // the chrome is up: the viewer's whole premise is that a photo is unobstructed
-                    // until asked otherwise, and tap targets over the picture are an obstruction
-                    // even when they are invisible.
-                    if (chromeVisible && liveTextBlocks.isNotEmpty()) {
-                        // The boxes are normalised to the UPRIGHT decoded bitmap, so the frame
-                        // they are laid over is the displayed size (TRAPS 48), not MediaStore's
-                        // stored width/height, which an EXIF-rotated portrait reports landscape.
-                        val textFrame = PlaceMorph.restingImageSize(
-                            asset.width, asset.height, exif.displayWidth, exif.displayHeight,
-                        )
-                        LiveTextOverlay(
-                            blocks = liveTextBlocks,
-                            imageWidth = textFrame.width.toInt(),
-                            imageHeight = textFrame.height.toInt(),
-                        )
-                    }
+                    // Select text: the outlines and the finger's strokes, inside the zoom layer so
+                    // they track the image. Renders nothing at all unless the mode is on, so a photo
+                    // that is just being looked at has no invisible tap target over it (TRAPS 50).
+                    LiveTextOverlay(
+                        state = textSelect,
+                        active = viewerMode.isSelectingText,
+                        scale = { scale },
+                    )
                 }
             }
 
             // The lift editor, over the whole content area and OUTSIDE the zoom transform above. It
             // paints an opaque stage and the decoded photo itself, maps touches against that
             // bitmap's own size, and consumes every touch that lands on it, so the gestures on
-            // this Box never see them. Renders nothing at all while `liftActive` is false -- see
+            // this Box never see them. Renders nothing at all unless the mode is Lifting -- see
             // LiftOverlay's own KDoc for why that, not an internal armed/disarmed flag, is what
             // keeps it from contending with them. Its Back handler registers after the shell's
             // (it composes inside the shell's content), and the most recent enabled one wins.
             LiftOverlay(
                 asset = asset,
-                active = liftActive,
-                onDismiss = { liftActive = false },
+                active = viewerMode.isLifting,
+                onDismiss = { viewerMode = ViewerMode.leave(viewerMode) },
                 modifier = Modifier.fillMaxSize(),
             )
+
+            // The Select text toolbar: outside the zoom layer so it neither scales nor turns with
+            // the photo, and on top of the text overlay so a press on a button reaches the button
+            // and not the stroke detector beneath it.
+            if (viewerMode.isSelectingText) {
+                TextSelectToolbar(
+                    state = textSelect,
+                    onDone = { viewerMode = ViewerMode.leave(viewerMode) },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                )
+            }
 
             // All that is left over the photo, and only when asked for: where you are in the
             // run. The actions are the bottom room, the facts are the top room, and the view
@@ -980,7 +1006,7 @@ fun ViewerScreen(
             // navigator that only appears when the chrome does is a navigator nobody finds while
             // zoomed, and the owner's reference shows it over the bare photo. It is the one
             // thing drawn over the photo without asking, and only while the photo is zoomed.
-            if (!asset.isVideo && !liftActive && scale > MINIMAP_SCALE_THRESHOLD) {
+            if (!asset.isVideo && !modeActive && scale > MINIMAP_SCALE_THRESHOLD) {
                 ZoomMinimap(
                     asset = asset,
                     scale = { scale },
@@ -1135,18 +1161,23 @@ private fun roomSlot(available: Boolean, content: @Composable () -> Unit): (@Com
  * @param scaleProvider read live rather than captured: the scale changes during the gesture this
  *   very function is driving, and a captured copy would decide "is it zoomed?" using a value from
  *   before the pinch.
+ * @param oneFingerInert read live: while true a lone finger is ignored entirely (no page turn, no
+ *   pan, nothing consumed) because a mode on screen owns it; a second finger still starts a pinch,
+ *   which is why the lone finger is skipped rather than consumed (a consumed move would end this
+ *   whole touch and a pinch begun after it would never zoom).
  * @param onPage forward = true means "next photo".
  * @param onPinch PANEL_SHORTCUTS only -- called at most once per gesture, at its end, with the
  *   pinch's net direction. Never called for OPTICAL_ZOOM, and never called at all for a pinch too
  *   small to cross [resolvePinchDirection]'s own threshold.
  */
-private suspend fun PointerInputScope.detectViewerGestures(
+internal suspend fun PointerInputScope.detectViewerGestures(
     scaleProvider: () -> Float,
     pinchMode: ViewerPinchMode,
     onTransform: (zoomChange: Float, panChange: Offset, rotationChange: Float) -> Unit,
     onPage: (forward: Boolean) -> Unit,
     onPinch: (PinchDirection) -> Unit,
     onGestureEnd: () -> Unit,
+    oneFingerInert: () -> Boolean = { false },
 ) {
     awaitEachGesture {
         var zoom = 1f
@@ -1171,6 +1202,8 @@ private suspend fun PointerInputScope.detectViewerGestures(
             if (event.changes.any { it.isConsumed }) break
             val pointersNow = event.changes.count { it.pressed }
             maxPointers = maxOf(maxPointers, pointersNow)
+            // A mode owns the lone finger: do not even measure it. Two fingers are the viewer's.
+            if (maxPointers == 1 && oneFingerInert()) continue
 
             val zoomChange = event.calculateZoom()
             val rotationChange = event.calculateRotation()

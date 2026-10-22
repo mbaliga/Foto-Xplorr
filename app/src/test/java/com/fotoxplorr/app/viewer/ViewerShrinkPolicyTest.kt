@@ -19,7 +19,7 @@ class ViewerShrinkPolicyTest {
 
     private fun advances(hostRunning: Boolean) = ViewerChromePolicy.slideshowMayAdvance(
         slideshowActive = true, total = 9, anyRoomVisible = false,
-        videoPlaybackActive = false, lifting = false, hostRunning = hostRunning,
+        videoPlaybackActive = false, modeActive = false, hostRunning = hostRunning,
     )
 
     @Test
