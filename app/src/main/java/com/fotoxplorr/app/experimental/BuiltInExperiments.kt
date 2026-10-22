@@ -31,8 +31,8 @@ import com.fotoxplorr.app.wall.WallExperience
  * **To add one:** append one [ExperimentEntry] here (its screen is a file of its own, in its own
  * package; its words are constants in its own copy object, with the one-sentence [blurb] taken
  * from there). Pick a new, permanent `id`. Nothing else in this package changes. Set
- * `restorable = false` for a camera screen or anything that starts work or asks a permission, and
- * keep the Setup entry last in its group. Give a full-screen interactive area
+ * `restorable = false` for a camera screen or anything that starts work or asks a permission (the
+ * compass does both), and keep the Setup entry last in its group. Give a full-screen interactive area
  * [clearOfShellEdges] (TRAPS #72) and read photos only through [ExperimentEnv].
  *
  * The ids below are saved state: never rename one.
@@ -106,6 +106,9 @@ internal val builtInExperiments: List<ExperimentEntry> = listOf(
         blurb = HelpCopy.Hint.EXPLORE_COMPASS,
         group = ExperimentGroup.EXPLORE,
         icon = Icons.Outlined.ViewInAr,
+        // Not restorable: it starts a location read when it opens and asks for the location
+        // permission in context, so a restored id must not put the person back in it.
+        restorable = false,
         badge = { env -> if (env.geoState.isIndexing) "Indexing…" else "${env.geoState.locatedCount} located" },
     ) { env, onClose ->
         // The location index starts here, when the compass opens with nothing scanned, and nowhere

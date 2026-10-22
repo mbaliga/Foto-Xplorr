@@ -131,6 +131,16 @@ class ExperimentalHostTest {
     }
 
     @Test
+    fun `an entry that reads the location on open is not reopened after the process was killed`() {
+        // The compass starts a location read when it opens and asks for the location permission in
+        // context (ExperimentEntry.restorable), so a restored id must not put the person back in it.
+        assertEquals(listOf("compass"), builtInExperiments.filter { !it.restorable }.map { it.id })
+        assertNull(idToSave(builtInExperiments, "compass"))
+        assertEquals("aquarium", idToSave(builtInExperiments, "aquarium"))
+        assertEquals("wall-mockup", idToSave(builtInExperiments, "wall-mockup"))
+    }
+
+    @Test
     fun `every registered entry has a stable id, a title and a one-sentence blurb`() {
         val idShape = Regex("[a-z][a-z0-9-]*")
         builtInExperiments.forEach { e ->
