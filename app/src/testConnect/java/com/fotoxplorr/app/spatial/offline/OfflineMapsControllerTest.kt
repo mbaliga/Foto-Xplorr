@@ -262,6 +262,32 @@ class OfflineMapsControllerTest {
     }
 
     @Test
+    fun `pause finds the running job by the area's id even when its stored name reads differently from the job title`() = runTest {
+        val rig = rig()
+        // An engine whose list gives the name back changed, as a stored record does after the
+        // 80-character cut and the escape round trip. The job was titled from the typed name.
+        val renamed = object : OfflineRegionEngine by rig.engine {
+            override suspend fun list(): EngineResult<List<StoredRegion>> =
+                when (val listed = rig.engine.list()) {
+                    is EngineResult.Ok -> EngineResult.Ok(listed.value.map { it.copy(record = it.record.copy(name = "Stored name")) })
+                    is EngineResult.Failure -> listed
+                }
+        }
+        val controller = OfflineMapsController(renamed, rig.runner, MeteredCheck { false }, { 777L }, rig.scope)
+        controller.open()
+        controller.download(parisOption, "Typed name")
+        assertEquals("Stored name", controller.state.value.regions.single().record.name)
+        assertEquals(1, rig.runner.jobs.value.size)
+
+        controller.pause(1)
+
+        assertEquals("the job is stopped, not left running", 0, rig.runner.jobs.value.size)
+        assertFalse(rig.engine.isRunning(1))
+        assertEquals(PauseReason.USER, controller.state.value.pauseReasons[1])
+        rig.scope.cancel()
+    }
+
+    @Test
     fun `resume continues a paused area from where it stopped without creating another`() = runTest {
         val rig = rig()
         val region = rig.engine.stored()

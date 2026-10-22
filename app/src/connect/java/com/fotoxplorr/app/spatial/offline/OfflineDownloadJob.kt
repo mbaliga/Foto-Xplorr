@@ -74,10 +74,53 @@ internal object OfflineDownloadJob {
             is DownloadTarget.Existing -> target.region.record.name
             is DownloadTarget.New -> target.name
         }
-        return runner.launch(OfflineJobCopy.title(name), ActivityKind.DOWNLOADING_MAP) { onProgress ->
-            // A cancellation is thrown, not returned: run() has already paused the region.
-            outcomeOf(run(engine, target, from, nowMillis, onState, onProgress, onStarted), name)
+        // A pause must find this job by the region it works on, not by its title: the title is the
+        // typed name, which a stored record can read back differently (the 80-character cut).
+        var regionId: Long? = (target as? DownloadTarget.Existing)?.region?.id
+        var jobId: String? = null
+        fun bind() {
+            val region = regionId
+            val job = jobId
+            if (region != null && job != null) jobIds.bind(region, job)
         }
+        val handle = runner.launch(OfflineJobCopy.title(name), ActivityKind.DOWNLOADING_MAP) { onProgress ->
+            // A cancellation is thrown, not returned: run() has already paused the region.
+            outcomeOf(
+                run(
+                    engine, target, from, nowMillis, onState, onProgress,
+                    onStarted = { id ->
+                        regionId = id
+                        bind()
+                        onStarted(id)
+                    },
+                ),
+                name,
+            )
+        }
+        // The job can start (and bind a fresh region) before launch returns, or after: bind both ways.
+        jobId = handle.id
+        bind()
+        return handle
+    }
+
+    /**
+     * The runner's id of the job downloading region [regionId], or null when none is known. Only a
+     * hint: the caller checks it against the runner's list, because a finished job leaves its entry
+     * until the next download of that region replaces it.
+     */
+    fun jobIdOf(regionId: Long): String? = jobIds.idOf(regionId)
+
+    /** Region id to runner job id, process-wide: a pane opened later must still find a running job. */
+    private val jobIds = object {
+        private val byRegion = HashMap<Long, String>()
+
+        @Synchronized
+        fun bind(regionId: Long, jobId: String) {
+            byRegion[regionId] = jobId
+        }
+
+        @Synchronized
+        fun idOf(regionId: Long): String? = byRegion[regionId]
     }
 
     /** The job's result for the activity: a notice for done and for a paused connection, a failure for the rest. */

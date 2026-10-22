@@ -198,11 +198,11 @@ internal class OfflineMapsController(
 
     /** Pause area [id]: cancel its job, which pauses and keeps what was fetched. */
     fun pause(id: Long) {
-        val region = mutable.value.regions.firstOrNull { it.id == id && it.running } ?: return
+        if (mutable.value.regions.none { it.id == id && it.running }) return
         mutable.update { it.copy(pauseReasons = it.pauseReasons + (id to PauseReason.USER), notice = null) }
-        val job = runner.jobs.value.firstOrNull {
-            it.kind == ActivityKind.DOWNLOADING_MAP && it.title == OfflineJobCopy.title(region.record.name)
-        }
+        // By region id, not title: the title is the name as typed, which can differ from the stored one.
+        val jobId = OfflineDownloadJob.jobIdOf(id)
+        val job = runner.jobs.value.firstOrNull { it.kind == ActivityKind.DOWNLOADING_MAP && it.id == jobId }
         if (job != null) {
             job.cancel()
         } else {
