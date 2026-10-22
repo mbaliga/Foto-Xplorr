@@ -114,7 +114,6 @@ class OfflineRegionEngineSeamTest {
         var state: DownloadState = DownloadState.Ready(estimate)
 
         // Download tapped: only now does anything reach the engine.
-        assertTrue(DownloadGuard.canStart(state, engine.throttleInstalled))
         state = DownloadGuard.reduce(state, DownloadEvent.Start(engine.throttleInstalled, metered = false)).state
         assertTrue(state is DownloadState.Downloading)
         val id = engine.createOne()
@@ -139,27 +138,29 @@ class OfflineRegionEngineSeamTest {
     }
 
     @Test
-    fun `without the throttle the button is off and the engine is never asked`() = runTest {
+    fun `without the throttle the guard refuses and the engine is never asked`() = runTest {
         val engine = FakeOfflineRegionEngine(throttleInstalled = false)
         val state = DownloadState.Ready(estimate)
-        assertFalse(DownloadGuard.canStart(state, engine.throttleInstalled))
         val result = DownloadGuard.reduce(state, DownloadEvent.Start(engine.throttleInstalled, metered = false))
         assertTrue(result is GuardResult.Rejected)
         assertEquals(emptyList<String>(), engine.calls)
     }
 
     @Test
-    fun `after a relaunch a stored half finished region comes back paused`() = runTest {
+    fun `after a relaunch a stored half finished region lists as stopped and a tap on resume is the only way back`() = runTest {
         val engine = FakeOfflineRegionEngine()
         val id = engine.createOne()
         engine.emit(id, progress(55))
         val stored = (engine.list() as EngineResult.Ok).value.single()
-        val state = DownloadGuard.reduce(
-            DownloadState.Idle,
-            DownloadEvent.Restored(RegionBudget.estimate(stored.record.box, stored.record.minZoom, stored.record.maxZoom), stored.progress),
-        ).state
-        assertEquals(PauseReason.RESTARTED, (state as DownloadState.Paused).reason)
-        assertEquals(55L, state.progress.completedResources)
+        assertFalse(stored.running)
+        assertEquals(55L, stored.progress.completedResources)
         assertTrue(engine.calls.none { it.startsWith("resume") })
+
+        // What the pane does with it: no recorded reason reads as RESTARTED, and only Resume moves it.
+        val step = PaneDownloadFlow.tapResume(
+            stored.record, stored.progress, PauseReason.RESTARTED, engine.throttleInstalled, metered = false,
+        )
+        assertTrue(step is PaneStep.Launch)
+        assertEquals(55L, (step as PaneStep.Launch).from.progress.completedResources)
     }
 }

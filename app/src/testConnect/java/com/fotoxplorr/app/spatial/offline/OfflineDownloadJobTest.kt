@@ -98,9 +98,8 @@ class OfflineDownloadJobTest {
     fun `nothing is started until the job runs`() = runTest {
         val engine = FakeOfflineRegionEngine()
         engine.stored()
-        // Listing, reconciling and even building the target are not a start.
+        // Listing and even building the target are not a start.
         engine.list()
-        OfflineRegionReconcile.unfinished((engine.list() as EngineResult.Ok).value)
         assertFalse(engine.calls.any { it.startsWith("resume") })
     }
 

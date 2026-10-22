@@ -151,28 +151,6 @@ class GeoBoxTest {
     }
 
     @Test
-    fun `padding grows every side and stays inside the world`() {
-        val box = GeoBox.clamped(10.0, 20.0, 12.0, 24.0)!!.pad(0.25)
-        assertEquals(9.5, box.west, delta)
-        assertEquals(12.5, box.east, delta)
-        assertEquals(19.0, box.south, delta)
-        assertEquals(25.0, box.north, delta)
-
-        val edge = GeoBox.clamped(-180.0, -85.0, 180.0, 85.0)!!.pad(0.5)
-        assertEquals(360.0, edge.widthDegrees, delta)
-        assertTrue(edge.north <= OfflineMapLimits.MAX_MERCATOR_LATITUDE)
-    }
-
-    @Test
-    fun `padding a crossing box keeps it crossing`() {
-        val box = GeoBox.clamped(170.0, 0.0, -170.0, 1.0)!!.pad(0.5)
-        assertTrue(box.crossesAntimeridian)
-        assertEquals(40.0, box.widthDegrees, delta)
-        assertEquals(160.0, box.west, delta)
-        assertEquals(-160.0, box.east, delta)
-    }
-
-    @Test
     fun `equal boxes are equal`() {
         assertEquals(GeoBox.clamped(1.0, 2.0, 3.0, 4.0), GeoBox.clamped(1.0, 2.0, 3.0, 4.0))
         assertEquals(GeoBox.clamped(1.0, 2.0, 3.0, 4.0).hashCode(), GeoBox.clamped(1.0, 2.0, 3.0, 4.0).hashCode())

@@ -36,12 +36,10 @@ class OfflineMapsPaneModelTest {
         box: GeoBox = paris,
         maxZoom: Int = 14,
         bytes: Long = 12_000_000L,
-        lastUsed: Long = 1_000L,
-        measured: Boolean = false,
+        created: Long = 1_000L,
     ) = RegionRecord(
         name = name, box = box, minZoom = 0, maxZoom = maxZoom, styleId = "liberty",
-        createdAtMillis = 1_000L, lastUsedMillis = lastUsed, bytes = bytes, tileCount = 100L,
-        bytesMeasured = measured,
+        createdAtMillis = created, lastUsedMillis = created, bytes = bytes, tileCount = 100L,
     )
 
     private fun stored(
@@ -300,10 +298,10 @@ class OfflineMapsPaneModelTest {
     }
 
     @Test
-    fun `a finished area shows its size, date and a delete`() {
-        val row = rows(listOf(stored(1, record(measured = true, bytes = 38_200_000L), complete = true))).single()
+    fun `a finished area shows its estimated size, date and a delete`() {
+        val row = rows(listOf(stored(1, record(bytes = 38_200_000L), complete = true))).single()
         assertEquals(RowStatus.SAVED, row.status)
-        assertEquals("39 MB", row.sizeText)
+        assertEquals("about 39 MB", row.sizeText)
         assertEquals("Jan 1, 1970", row.dateText)
         assertNull(row.statusLine)
         assertTrue(row.canDelete)
@@ -371,13 +369,13 @@ class OfflineMapsPaneModelTest {
     }
 
     @Test
-    fun `downloads come first, then paused, then saved, newest used first`() {
+    fun `downloads come first, then paused, then saved, newest saved first`() {
         val rows = rows(
             listOf(
-                stored(1, record("old saved", lastUsed = 10), complete = true),
-                stored(2, record("new saved", lastUsed = 90), complete = true),
-                stored(3, record("paused", lastUsed = 50)),
-                stored(4, record("running", lastUsed = 5), running = true),
+                stored(1, record("old saved", created = 10), complete = true),
+                stored(2, record("new saved", created = 90), complete = true),
+                stored(3, record("paused", created = 50)),
+                stored(4, record("running", created = 5), running = true),
             ),
         )
         assertEquals(listOf("running", "paused", "new saved", "old saved"), rows.map { it.name })

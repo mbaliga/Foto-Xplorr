@@ -79,14 +79,7 @@ class DownloadGuardTest {
     }
 
     @Test
-    fun `the button is enabled only where a download is legal and the throttle is there`() {
-        assertTrue(DownloadGuard.canStart(ready, throttleInstalled = true))
-        assertTrue(DownloadGuard.canStart(confirm, throttleInstalled = true))
-        assertFalse(DownloadGuard.canStart(ready, throttleInstalled = false))
-        assertFalse(DownloadGuard.canStart(confirm, throttleInstalled = false))
-        for (state in everyState - listOf(ready, confirm)) {
-            assertFalse("$state", DownloadGuard.canStart(state, throttleInstalled = true))
-        }
+    fun `resume is legal only for a paused area and only with the throttle`() {
         assertTrue(DownloadGuard.canResume(paused, throttleInstalled = true))
         assertFalse(DownloadGuard.canResume(paused, throttleInstalled = false))
         assertFalse(DownloadGuard.canResume(downloading, throttleInstalled = true))
@@ -133,9 +126,8 @@ class DownloadGuardTest {
     }
 
     @Test
-    fun `a restart finds a stored region paused and waits for a tap`() {
-        val state = idle.after(DownloadEvent.Restored(estimate, someProgress))
-        assertEquals(DownloadState.Paused(estimate, someProgress, PauseReason.RESTARTED), state)
+    fun `an area found stopped after a restart waits for a tap on Resume`() {
+        val state = DownloadState.Paused(estimate, someProgress, PauseReason.RESTARTED)
         assertTrue(state.after(DownloadEvent.Resume(throttleInstalled = true, metered = false)) is DownloadState.Downloading)
     }
 
@@ -258,11 +250,6 @@ class DownloadGuardTest {
     }
 
     @Test
-    fun `restored is legal only from idle`() {
-        for (state in everyState - idle) assertRejected(state, DownloadEvent.Restored(estimate, someProgress))
-    }
-
-    @Test
     fun `a new selection is refused while downloading or paused`() {
         assertRejected(downloading, DownloadEvent.Select(box))
         assertRejected(paused, DownloadEvent.Select(box))
@@ -282,12 +269,6 @@ class DownloadGuardTest {
     }
 
     @Test
-    fun `dismiss returns to idle from anywhere except a running download`() {
-        for (state in everyState - downloading) assertEquals(idle, state.after(DownloadEvent.Dismiss))
-        assertEquals(RejectReason.NOT_ALLOWED_NOW, assertRejected(downloading, DownloadEvent.Dismiss).reason)
-    }
-
-    @Test
     fun `decline is legal only from the metered question`() {
         for (state in everyState - confirm) assertRejected(state, DownloadEvent.Decline)
     }
@@ -296,7 +277,7 @@ class DownloadGuardTest {
     fun `no event can reach downloading without passing through start confirm or resume`() {
         val events = listOf(
             DownloadEvent.Select(box), DownloadEvent.Estimated(BudgetVerdict.Fits(estimate)), DownloadEvent.Cancel,
-            DownloadEvent.Decline, DownloadEvent.Dismiss, DownloadEvent.Restored(estimate, someProgress),
+            DownloadEvent.Decline,
             DownloadEvent.Progress(someProgress), DownloadEvent.EngineFailed,
         )
         for (state in everyState - downloading) {

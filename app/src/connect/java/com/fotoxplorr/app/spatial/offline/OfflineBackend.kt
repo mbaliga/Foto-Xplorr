@@ -3,7 +3,7 @@ package com.fotoxplorr.app.spatial.offline
 /**
  * The few things [MapLibreRegionEngine] needs from the map library's offline manager, as plain
  * types, so the engine's rules (the request cap, pause that keeps data, one progress feed per
- * region, reconcile after a relaunch) run in a JVM test against a fake. The one real
+ * region, a relaunch listing regions as stopped) run in a JVM test against a fake. The one real
  * implementation is [MapLibreOfflineBackend].
  *
  * Every call is made on the main thread, which is where the library delivers its callbacks; the

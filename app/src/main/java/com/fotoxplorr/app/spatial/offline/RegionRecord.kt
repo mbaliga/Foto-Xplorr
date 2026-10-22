@@ -9,8 +9,9 @@ package com.fotoxplorr.app.spatial.offline
  * (the box and the zoom range) that is missing or unreadable makes the whole record undecodable,
  * because guessing a box would download or delete the wrong place.
  *
- * [bytes] is an estimate until the download completes and [bytesMeasured] says the engine has since
- * reported the real figure. Per-region progress is not stored here: it lives in the engine.
+ * [bytes] is the estimate made when the area was planned and stays so: the engine has no call to
+ * rewrite a stored record, so the figure it measures is never written back. Per-region progress is
+ * not stored here either: it lives in the engine.
  */
 data class RegionRecord(
     val name: String,
@@ -20,14 +21,14 @@ data class RegionRecord(
     /** A short id for the style that was downloaded, not its address. */
     val styleId: String,
     val createdAtMillis: Long,
+    /**
+     * Written equal to [createdAtMillis] when the area is saved and never updated since: nothing
+     * records a "use" of a saved area. Kept in the text so records written so far still decode.
+     */
     val lastUsedMillis: Long,
     val bytes: Long,
     val tileCount: Long,
-    val bytesMeasured: Boolean = false,
 ) {
-    /** The same record marked as used at [nowMillis]. */
-    fun touched(nowMillis: Long): RegionRecord = copy(lastUsedMillis = nowMillis)
-
     fun encode(): String = buildString {
         line("v", VERSION.toString())
         line("name", escape(cutName(name)))
@@ -42,7 +43,6 @@ data class RegionRecord(
         line("lastUsed", lastUsedMillis.toString())
         line("bytes", bytes.toString())
         line("tiles", tileCount.toString())
-        line("measured", if (bytesMeasured) "1" else "0")
     }.trimEnd('\n')
 
     companion object {
@@ -86,7 +86,6 @@ data class RegionRecord(
                 lastUsedMillis = lastUsed,
                 bytes = bytes,
                 tileCount = tiles,
-                bytesMeasured = values["measured"] == "1",
             )
         }
 
@@ -155,8 +154,8 @@ sealed interface RoomVerdict {
  * The count and total-size limits across all saved regions.
  *
  * This only answers yes or no. It never picks a region to remove: eviction would delete data the
- * person was not shown (TRAPS #64), so the answer is a refusal and [oldestUnusedFirst] gives the
- * order in which to offer regions for them to delete themselves.
+ * person was not shown (TRAPS #64), so the answer is a refusal and the person chooses what to
+ * delete themselves.
  */
 object RegionLedger {
 
@@ -180,10 +179,4 @@ object RegionLedger {
         val over = total - OfflineMapLimits.MAX_TOTAL_BYTES
         return if (over > 0L) RoomVerdict.OverTotalBytes(OfflineMapLimits.MAX_TOTAL_BYTES, over) else RoomVerdict.Ok
     }
-
-    /** Least recently used first, then oldest created, then by name so the order is stable. */
-    fun oldestUnusedFirst(records: List<RegionRecord>): List<RegionRecord> =
-        records.sortedWith(
-            compareBy<RegionRecord> { it.lastUsedMillis }.thenBy { it.createdAtMillis }.thenBy { it.name },
-        )
 }

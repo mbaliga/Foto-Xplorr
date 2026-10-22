@@ -48,13 +48,6 @@ class GeoBox private constructor(
         return if (crossesAntimeridian) longitude >= west || longitude <= east else longitude in west..east
     }
 
-    /** This box grown by [fraction] of its own width and height on every side, clamped to the world. */
-    fun pad(fraction: Double): GeoBox {
-        val lonPad = widthDegrees * fraction
-        val latPad = heightDegrees * fraction
-        return clamped(west - lonPad, south - latPad, west + widthDegrees + lonPad, north + latPad) ?: this
-    }
-
     override fun equals(other: Any?): Boolean =
         other is GeoBox && west == other.west && south == other.south && east == other.east && north == other.north
 

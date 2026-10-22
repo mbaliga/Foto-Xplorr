@@ -62,7 +62,7 @@ data class SavedRow(
     val id: Long,
     val name: String,
     val status: RowStatus,
-    /** "38 MB" once measured, "about 38 MB" while it is the estimate. */
+    /** "about 38 MB": the size is the estimate made when the area was planned. */
     val sizeText: String,
     val dateText: String,
     /** The one sentence under the name for a download or a pause; null for a finished area. */
@@ -199,8 +199,8 @@ object OfflineMapsPaneModel {
     }
 
     /**
-     * The saved-areas list: downloads first, then paused areas, then finished ones, each newest-used
-     * first. [pauseReasons] says why an unfinished, not-running area stopped (an area missing from it
+     * The saved-areas list: downloads first, then paused areas, then finished ones, each newest
+     * saved first. [pauseReasons] says why an unfinished, not-running area stopped (an area missing from it
      * is one found after a relaunch). [live] holds the newest reading for areas being fetched; an area
      * with none falls back to what the engine stored. [failures] says which unfinished areas a
      * download gave up on this session; an area past a cap says so whether or not it is listed there.
@@ -216,7 +216,7 @@ object OfflineMapsPaneModel {
     ): List<SavedRow> {
         val rows = regions.map { region -> rowOf(region, pauseReasons, live, failures, env, locale, zone) }
         return rows.sortedWith(
-            compareBy<SavedRow> { it.status.ordinal }.thenByDescending { lastUsed(regions, it.id) },
+            compareBy<SavedRow> { it.status.ordinal }.thenByDescending { savedAt(regions, it.id) },
         )
     }
 
@@ -227,8 +227,8 @@ object OfflineMapsPaneModel {
     fun coveringRecords(regions: List<StoredRegion>): List<RegionRecord> =
         regions.filter { it.progress.complete || !DownloadGuard.isOverCap(it.progress) }.map { it.record }
 
-    private fun lastUsed(regions: List<StoredRegion>, id: Long): Long =
-        regions.firstOrNull { it.id == id }?.record?.lastUsedMillis ?: 0L
+    private fun savedAt(regions: List<StoredRegion>, id: Long): Long =
+        regions.firstOrNull { it.id == id }?.record?.createdAtMillis ?: 0L
 
     private fun rowOf(
         region: StoredRegion,
@@ -240,11 +240,7 @@ object OfflineMapsPaneModel {
         zone: TimeZone,
     ): SavedRow {
         val record = region.record
-        val size = if (record.bytesMeasured) {
-            OfflineMapsCopy.megabytes(record.bytes)
-        } else {
-            "about ${OfflineMapsCopy.megabytes(record.bytes)}"
-        }
+        val size = "about ${OfflineMapsCopy.megabytes(record.bytes)}"
         val date = formatDate(record.createdAtMillis, locale, zone)
         val status = when {
             region.running -> RowStatus.DOWNLOADING

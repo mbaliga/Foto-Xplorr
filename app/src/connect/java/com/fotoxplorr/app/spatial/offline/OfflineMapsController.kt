@@ -59,8 +59,10 @@ internal data class PaneUiState(
  *   area the person was shown in the confirmation (TRAPS #64).
  *
  * Not saved across process death: the running downloads, the open question and any notice. What a
- * download fetched, and the area itself, persist in the map library's database; [refresh] lists
- * them again and they come back as "Paused, tap resume to continue".
+ * download fetched, and the area itself, persist in the map library's database. After a relaunch
+ * [refresh] lists them as stopped, not running; an unfinished one has no entry in
+ * [PaneUiState.pauseReasons], which reads as [PauseReason.RESTARTED] ("Paused, tap resume to
+ * continue"), and it restarts only from a tap on Resume.
  */
 internal class OfflineMapsController(
     private val engine: OfflineRegionEngine,

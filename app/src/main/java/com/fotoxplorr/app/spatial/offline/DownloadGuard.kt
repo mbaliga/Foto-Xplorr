@@ -8,7 +8,10 @@ enum class PauseReason {
     /** Repeated connection errors; resumable when the network is back. */
     CONNECTION,
 
-    /** The app was relaunched and found the region partly downloaded. */
+    /**
+     * The area stopped with no reason this session knows: the app was relaunched and found it partly
+     * downloaded. The pane reads a stopped area with no recorded reason as this one.
+     */
     RESTARTED,
 }
 
@@ -81,11 +84,6 @@ sealed interface DownloadEvent {
     /** The engine reported that it cannot continue. */
     data object EngineFailed : DownloadEvent
 
-    /** After a relaunch: a stored region that is not finished. Never starts a download. */
-    data class Restored(val estimate: RegionEstimate, val progress: RegionProgress) : DownloadEvent
-
-    /** Forget the current flow and go back to idle. Does not delete a stored region. */
-    data object Dismiss : DownloadEvent
 }
 
 sealed interface GuardResult {
@@ -109,18 +107,16 @@ sealed interface GuardResult {
  * Downloading -caps or repeated errors-> Failed / Paused
  * ```
  *
- * Download is legal only from [DownloadState.Ready] or [DownloadState.ConfirmMetered], and only
- * when the engine's throttle is installed; a [DownloadState.Downloading] can be reached by nothing
- * else. The caller must stop the engine on any move into [DownloadState.Paused] or
+ * A [DownloadState.Downloading] is reached only by Start (from Ready), Confirm (from
+ * ConfirmMetered) or Resume (from Paused), and only when the engine's throttle is installed. An
+ * area found stopped after a relaunch has no state of its own here: the pane builds a Paused with
+ * [PauseReason.RESTARTED] for the tap on Resume ([PaneDownloadFlow.tapResume]). The caller must stop the engine on any move into [DownloadState.Paused] or
  * [DownloadState.Failed], and call [OfflineRegionEngine.resume] only after a move into
  * [DownloadState.Downloading] that came from a tap.
  *
  * A late [DownloadEvent.Progress] after a pause is [GuardResult.Rejected] and harmless: ignore it.
  */
 object DownloadGuard {
-
-    fun canStart(state: DownloadState, throttleInstalled: Boolean): Boolean =
-        throttleInstalled && (state is DownloadState.Ready || state is DownloadState.ConfirmMetered)
 
     fun canResume(state: DownloadState, throttleInstalled: Boolean): Boolean =
         throttleInstalled && state is DownloadState.Paused && !isOverCap(state.progress)
@@ -193,16 +189,6 @@ object DownloadGuard {
         DownloadEvent.EngineFailed -> when (state) {
             is DownloadState.Downloading -> moved(DownloadState.Failed(FailureReason.ENGINE, state.estimate))
             else -> refuse(state)
-        }
-
-        is DownloadEvent.Restored -> when (state) {
-            DownloadState.Idle -> moved(DownloadState.Paused(event.estimate, event.progress, PauseReason.RESTARTED))
-            else -> refuse(state)
-        }
-
-        DownloadEvent.Dismiss -> when (state) {
-            is DownloadState.Downloading -> refuse(state)
-            else -> moved(DownloadState.Idle)
         }
     }
 

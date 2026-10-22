@@ -24,7 +24,6 @@ class RegionRecordTest {
         lastUsedMillis = lastUsed,
         bytes = bytes,
         tileCount = 140L,
-        bytesMeasured = false,
     )
 
     // ---- the codec ----
@@ -36,12 +35,18 @@ class RegionRecordTest {
     }
 
     @Test
-    fun `a measured size and an antimeridian box survive too`() {
-        val original = record(box = GeoBox.clamped(179.5, -17.0, -179.5, -16.0)!!).copy(bytesMeasured = true)
+    fun `an antimeridian box survives too`() {
+        val original = record(box = GeoBox.clamped(179.5, -17.0, -179.5, -16.0)!!)
         val back = RegionRecord.decode(original.encode())!!
         assertEquals(original, back)
         assertTrue(back.box.crossesAntimeridian)
-        assertTrue(back.bytesMeasured)
+    }
+
+    @Test
+    fun `a record written by an older build with a measured key still decodes and the key is not written again`() {
+        val older = record().encode() + "\nmeasured=1"
+        assertEquals(record(), RegionRecord.decode(older))
+        assertFalse(record().encode().contains("measured"))
     }
 
     @Test
@@ -121,7 +126,6 @@ class RegionRecordTest {
         assertEquals("", decoded.name)
         assertEquals(0L, decoded.bytes)
         assertEquals(0L, decoded.createdAtMillis)
-        assertFalse(decoded.bytesMeasured)
     }
 
     @Test
@@ -184,29 +188,5 @@ class RegionRecordTest {
         val existing = regions(6)
         RegionLedger.checkRoom(existing, 1L)
         assertEquals(6, existing.size)
-    }
-
-    @Test
-    fun `the oldest unused region is listed first for the person to delete`() {
-        val a = record(name = "a", lastUsed = 500L)
-        val b = record(name = "b", lastUsed = 100L)
-        val c = record(name = "c", lastUsed = 900L)
-        assertEquals(listOf("b", "a", "c"), RegionLedger.oldestUnusedFirst(listOf(a, b, c)).map { it.name })
-    }
-
-    @Test
-    fun `ties on last use fall back to creation time then name`() {
-        val a = record(name = "b", lastUsed = 5L, created = 2L)
-        val b = record(name = "a", lastUsed = 5L, created = 2L)
-        val c = record(name = "z", lastUsed = 5L, created = 1L)
-        assertEquals(listOf("z", "a", "b"), RegionLedger.oldestUnusedFirst(listOf(a, b, c)).map { it.name })
-    }
-
-    @Test
-    fun `touching a record moves its last use forward and nothing else`() {
-        val r = record(lastUsed = 5L)
-        val touched = r.touched(9_999L)
-        assertEquals(9_999L, touched.lastUsedMillis)
-        assertEquals(r.copy(lastUsedMillis = 9_999L), touched)
     }
 }
