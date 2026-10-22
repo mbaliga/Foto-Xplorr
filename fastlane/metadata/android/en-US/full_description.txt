@@ -50,6 +50,13 @@ DISCOVER
 • Location metadata extracted from your own files, on demand, on device.
 • An offline coordinate map that downloads no tiles, plus an optional on-device
   compass view.
+• Experimental extras, all optional: draw a fish and watch it swim, and try
+  pictures on a photo of your wall at real print sizes. Save a print-ready JPEG
+  as a new file, without the place, or send it to your printer. It uses a photo
+  of the wall, not the camera, and asks for no permission.
+• In the connect build only: save small map areas to use without a connection.
+  Nothing is downloaded until you tap Download, and the map provider then sees
+  the area and your IP address.
 
 QUIET BY DESIGN
 • No ads, no accounts, no analytics, no tracking, no network permission at all

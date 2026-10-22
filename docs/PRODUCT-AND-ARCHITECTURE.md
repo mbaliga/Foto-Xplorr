@@ -89,7 +89,23 @@ sharing a photo does not silently share where it was taken.
 - **Experimental** — a hub of cards (`experimental/`) that opens one full-screen experiment at a time.
   The host owns the open id (saved when the entry is `restorable`), Back, and the pane ink; a new
   experiment is one `ExperimentEntry` in `builtInExperiments`, and reads photos only through
-  `ExperimentEnv` (the already-filtered list, re-checked at export).
+  `ExperimentEnv` (the already-filtered list, re-checked at export). Cards sit under Make, Explore
+  and Setup. Make holds two experiments that read no pixels they do not draw themselves:
+  - **Draw an aquarium** (`aquarium/`) — a drawing board (strokes, eight colours, three brushes,
+    undo/redo, ready shapes as the non-drawing path; a closed outline is filled by a flood fill) and a
+    tank where each drawing swims by a mesh-warped bitmap (`Canvas.drawBitmapMesh` behind the
+    `CreatureRenderer` seam). The simulation (`TankSimulation`) is pure Kotlin in tank units: wander, wall
+    steering, flee from a finger, food. Creatures are a PNG then a JSON in `filesDir/aquarium` (at most 12).
+    It takes no `ExperimentEnv`: no library photo is listed or read.
+  - **See it on your wall** (`wall/`) — four steps (Wall, Scale, Pictures, Hang). The scale comes from a
+    known length marked on the photo, or a typed distance and the photo's focal length (a rectilinear
+    estimate). Pictures hang as framed prints at standard sizes (12 sizes, mat and three mouldings, set
+    layouts) with drag, pinch, twist and button paths. It reads the library only through
+    `ExperimentEnv.decode`. A selected picture can be saved as a print file (`PrintExporter`: a centred
+    cover crop, up to 300 dpi, the density in both Exif and JFIF, the place removed and proved removed, a
+    new file in `Pictures/Fotoz/Prints`) or sent to the system print dialog as a one-page PDF at real size
+    (`PhotoPrintAdapter`, no dependency). A banded Lanczos resampler (`LanczosResampler`) can enlarge a short
+    photo to 300 dpi, labelled "Enlarged, no new detail". There is no camera and no AR: the wall is a photo.
 - **Photo scenes** — OpenGL-rendered 3D arrangements of the library (`experience/`, `spatial/`),
   including an orientation-driven photo wall.
 
@@ -411,6 +427,9 @@ Two rules hold this together:
 | `recognition/` | On-device ML: face detection and clustering, pet classification, identity heuristics |
 | `spatial/` | Geo metadata, the MapLibre street map (Connect) and stamp map, OpenGL photo scenes |
 | `experimental/` | The Experimental page: `ExperimentEntry` list, host (open id, Back), `ExperimentEnv`, shell-edge insets |
+| `aquarium/` | Draw an aquarium: sketch model, outline fill, swim mesh, tank simulation, creature store, draw and tank screens |
+| `wall/` | See it on your wall: print and wall-scale maths, frames and set layouts, the draft, the canvas, print export, system print, Lanczos enlarge |
+| `spatial/offline/` | Offline map areas: tile and budget maths, region records, suggestions from browsable photos, the download guard and engine seam (`src/main`); the map-library engine, job and pane (`src/connect`); the Offline build's stub pane (`src/offline`) |
 | `experience/` | The 3D photo wall and its renderer/orientation controller |
 | `ai/` | Optional BYOK remote providers, encrypted secret storage, local similarity |
 | `fileops/` | Media file operations and metadata-clean export |
@@ -711,3 +730,22 @@ hard-fail.
   14's "selected photos" access, a photo Fotoz cannot see in MediaStore is refused ("could not be
   checked against your library") rather than opened, because the hidden-photo rules cannot be
   applied to a row nobody can describe. This is a deliberate trade, and its feel is a device check.
+
+- **Batch 6 (October 2026: the Experimental section, Draw an aquarium, See it on your wall with print
+  export and Enlarge, offline map areas in the Connect build) has not run on a device.** The pure rules are
+  unit-tested and the screens are exercised under Robolectric, but every visual and feel question (the tank at
+  12 creatures on a low-end phone, finger drawing under the shell's edge zones, the wall's scale accuracy,
+  printed size on paper, colour of a Display-P3 export) is in `docs/device-test/batch-6-checklist.md`.
+  The offline-map byte and tile figures are reasoned guesses until a device spike replaces them
+  (`RegionBudget`), and whether the map library's downloader obeys the 4-request cap is unverified; if it
+  does not, the download must not ship (ADR-015, ADR-016).
+- **The offline-map seam.** `OfflineRegionEngine` (`src/main`, no library types) is what the pane and the
+  job talk to; `MapLibreRegionEngine` (`src/connect`) implements it over the map library's offline manager,
+  with `MapRequestCap` (in `:feature:ai-remote`, a compile-only declaration) applying the provider's limit.
+  `DownloadGuard` is the only route to Downloading, and only a tap (Download, Resume, Confirm) gets there.
+  The Offline build has the same pane signature and shows "Offline maps need the Connect build."
+- **Wall pictures need `decodeUpright`, which returns null on API 26 and 27** (found above and not fixed), so
+  the wall and print file are unverified on Android 8.0 and 8.1.
+- **Not built, on purpose:** panorama stitching (owner go or no-go; the critic recommended no), a live-camera
+  wall (needs a CAMERA permission decision), an on-device neural upscaler, ARCore, OpenCV.
+

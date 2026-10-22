@@ -59,6 +59,16 @@ Fotoz was previously called Foto Xplorr; the repository name, the `com.fotoxplor
 - Metadata-derived elevation view.
 - Experimental perspective depth timeline ordered by capture time.
 
+### Experimental
+
+One page (the rail's Experimental word, and a card on Discover) of optional extras, one full-screen experiment at a time. The gallery works without any of them.
+
+- **Make:** *Draw an aquarium* (draw a fish with a finger or pick a ready shape and watch it swim; the drawings are kept in the app's own storage) and *See it on your wall* (pick a photo of your wall, give it a scale, hang pictures at real print sizes, and save a print-ready JPEG as a new file or send a PDF to the system print dialog). *See it on your wall* works on a photo of the wall; it is not augmented reality and uses no camera. Neither asks for a permission.
+- **Explore:** Compass view, the 3D photo wall, the gallery preview and look-alike grouping.
+- **Setup:** the on-device model and optional AI keys.
+
+The print file is a new file in `Pictures/Fotoz/Prints`, at up to 300 dpi with the density written in the file, and without the place the photo was taken. A photo short of pixels is saved at its own pixels unless you tick *Enlarged, no new detail*. Photos in locked or hidden folders are never offered and are checked again when a file is written.
+
 ### Privacy and deletion safety
 
 - Sensitive media can be blurred or hidden from the main timeline.
@@ -72,6 +82,8 @@ Fotoz was previously called Foto Xplorr; the repository name, the `com.fotoxplor
 ## Privacy model
 
 Fotoz has no application backend, account, analytics or mandatory cloud service. Location indexing is local and starts only after the user opens the Map or Experimental > Compass view.
+
+The `connect` flavor can also save a small map area for use without a connection (Settings > Data > Offline maps, or the pill on the Map). That is the one place map data is fetched in bulk, and only after a tap on Download: it shows the area and the device's IP address to the map provider (OpenFreeMap), asks first on mobile data, and keeps within the provider's published limits (4 requests at a time, about 3,000 tiles and 50 MB an area, at most 6 areas and 300 MB). The `offline` flavor has no such code and says so. See `docs/adr/ADR-016-offline-map-regions.md`.
 
 Sharing strips metadata before a file ever leaves the app, and every stripped output is re-checked
 clean before it is handed to the receiving app — never trusted on the strength of the stripping
@@ -88,7 +100,7 @@ Another app cannot use Fotoz to see what Fotoz hides: an open-with or share requ
 
 The current private-folder feature is an **in-app access gate**. It does not encrypt or relocate original MediaStore files, so other applications that have photo access may still read them. It must not be described as an encrypted vault.
 
-The offline map is a coordinate visualisation, the elevation view uses only embedded metadata, and the depth timeline is an experimental 2.5D presentation. They are not downloaded map packs, terrain data or a full 3D engine.
+The offline map is a coordinate visualisation, the elevation view uses only embedded metadata, and the depth timeline is an experimental 2.5D presentation. They are not terrain data or a full 3D engine, and the offline map has no downloaded packs; only the `connect` flavor's Offline maps save street-map areas.
 
 ## Metadata backup
 
@@ -140,7 +152,7 @@ what exists today, and `docs/adr/` holds the individual architecture decisions s
 ## Known gaps
 
 Encrypted media-vault storage (private folders are an in-app access gate, not encryption),
-downloaded offline map packs, user-supplied terrain datasets, and a true interactive 3D scene
+downloaded offline map packs in the `offline` flavor (the `connect` flavor saves small street-map areas), live-camera or augmented-reality wall previews, panorama stitching, user-supplied terrain datasets, and a true interactive 3D scene
 engine are not implemented. On-device face/pet/identity recognition and BYOK remote-AI assistance
 (the `connect` flavor only) are implemented; see `docs/PRODUCT-AND-ARCHITECTURE.md` for what each
 covers and does not.
