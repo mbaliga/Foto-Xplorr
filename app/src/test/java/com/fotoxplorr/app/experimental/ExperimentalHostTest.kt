@@ -69,12 +69,33 @@ class ExperimentalHostTest {
     }
 
     @Test
-    fun `only a restorable entry's id is saved`() {
+    fun `the open id is saved with the process it was saved in`() {
+        assertNull(idToSave(null, "p1"))
+        val saved = idToSave("camera", "p1")
+        assertEquals("camera", idToRestore(listOf(entry("camera", restorable = false)), saved, "p1"))
+    }
+
+    @Test
+    fun `in the same process every open id comes back`() {
         val entries = listOf(entry("keep"), entry("camera", restorable = false))
-        assertEquals("keep", idToSave(entries, "keep"))
-        assertNull(idToSave(entries, "camera"))
-        assertNull(idToSave(entries, "unknown"))
-        assertNull(idToSave(entries, null))
+        assertEquals("keep", idToRestore(entries, idToSave("keep", "p1"), "p1"))
+        assertEquals("camera", idToRestore(entries, idToSave("camera", "p1"), "p1"))
+    }
+
+    @Test
+    fun `after the process was killed only a restorable entry comes back`() {
+        val entries = listOf(entry("keep"), entry("camera", restorable = false))
+        assertEquals("keep", idToRestore(entries, idToSave("keep", "p1"), "p2"))
+        assertNull(idToRestore(entries, idToSave("camera", "p1"), "p2"))
+        assertNull(idToRestore(entries, idToSave("unknown", "p1"), "p2"))
+        assertNull(idToRestore(entries, null, "p2"))
+    }
+
+    @Test
+    fun `an id saved without a process is treated as from an earlier process`() {
+        val entries = listOf(entry("keep"), entry("camera", restorable = false))
+        assertEquals("keep", idToRestore(entries, "keep", "p1"))
+        assertNull(idToRestore(entries, "camera", "p1"))
     }
 
     @Test
@@ -135,9 +156,11 @@ class ExperimentalHostTest {
         // The compass starts a location read when it opens and asks for the location permission in
         // context (ExperimentEntry.restorable), so a restored id must not put the person back in it.
         assertEquals(listOf("compass"), builtInExperiments.filter { !it.restorable }.map { it.id })
-        assertNull(idToSave(builtInExperiments, "compass"))
-        assertEquals("aquarium", idToSave(builtInExperiments, "aquarium"))
-        assertEquals("wall-mockup", idToSave(builtInExperiments, "wall-mockup"))
+        assertNull(idToRestore(builtInExperiments, idToSave("compass", "before"), "after"))
+        assertEquals("aquarium", idToRestore(builtInExperiments, idToSave("aquarium", "before"), "after"))
+        assertEquals("wall-mockup", idToRestore(builtInExperiments, idToSave("wall-mockup", "before"), "after"))
+        // The same process (the viewer round trip, leaving the destination) keeps the compass.
+        assertEquals("compass", idToRestore(builtInExperiments, idToSave("compass", "same"), "same"))
     }
 
     @Test

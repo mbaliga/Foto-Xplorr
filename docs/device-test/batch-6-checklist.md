@@ -43,9 +43,10 @@ Sandbox coverage: `ExperimentalHostTest`, `ExperimentalScreenTest`, `ShellEdgesT
       preview still step back inside themselves first. Back on the hub follows the destination's own order.
 - [ ] Back with a left or top room opened while an experiment is open: the room closes before the
       experiment (registration-order caveat; unverified).
-- [ ] Rotate or toggle dark mode with an experiment open, then kill the process from recents: restorable
-      ones (all seven today) reopen to the same experiment, otherwise the hub; nothing inside an experiment
-      is restored by the host.
+- [ ] Rotate or toggle dark mode with an experiment open: it stays open (the compass too). Then kill the
+      process from recents: restorable ones (all but the compass today) reopen to the same experiment,
+      the compass comes back as the hub; nothing inside an experiment is restored by the host.
+- [ ] Compass view > tap a photo > Back from the viewer: you are in the compass again, not the hub.
 - [ ] Compass view: opening it on a never-indexed library starts the location read once (badge
       "Indexing..." then "N located"); closing and reopening does not start a second pass; Map mode in either
       flavour still starts its own.

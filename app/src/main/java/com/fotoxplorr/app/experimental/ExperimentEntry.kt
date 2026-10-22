@@ -25,9 +25,10 @@ enum class ExperimentGroup(val label: String) {
  *   process death, so it is never renamed once shipped; an id this build does not know opens the
  *   hub, not an error.
  * @property blurb the card's one short sentence.
- * @property restorable whether the host reopens this entry after the process was killed or the
- *   activity was recreated. False for anything that must not come back by itself: a camera
- *   screen, a screen that needs a permission asked in context, or one that starts work.
+ * @property restorable whether the host reopens this entry after the process was killed. False
+ *   for anything that must not come back by itself: a camera screen, a screen that needs a
+ *   permission asked in context, or one that starts work. It does not apply while the process
+ *   lives: a rotation, the viewer round trip and leaving the destination keep any open entry.
  * @property available whether this device can run it, asked with an application context. An entry
  *   that says no is drawn dimmed with [ExperimentalCopy.UNAVAILABLE] and is not clickable.
  * @property coverSkip when non-null, the card shows the first still photo after skipping this many

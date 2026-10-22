@@ -27,11 +27,31 @@ internal fun entryToShow(
 ): ExperimentEntry? = id?.let { wanted -> entries.firstOrNull { it.id == wanted } }?.takeIf(isAvailable)
 
 /**
- * What to write into saved state for the open [id]: the id itself when the entry opts into being
- * reopened, otherwise nothing, so a recreation or a process death lands on the hub.
+ * What to write into saved state for the open [id]: the id, tagged with the [processId] it was
+ * saved in. The tag is how a restore tells a process that was killed from one that was not (see
+ * [idToRestore]); saved state cannot tell them apart by itself.
  */
-internal fun idToSave(entries: List<ExperimentEntry>, id: String?): String? =
-    id?.takeIf { wanted -> entries.firstOrNull { it.id == wanted }?.restorable == true }
+internal fun idToSave(id: String?, processId: String): String? = id?.let { "$processId$PROCESS_SEPARATOR$it" }
+
+/**
+ * The id to open again from what [idToSave] wrote. Saved in this same process ([processId] equal:
+ * a rotation, the viewer round trip, leaving the destination and coming back) every id returns.
+ * Saved in another (the process was killed) only the id of an entry that is
+ * [ExperimentEntry.restorable] does, so a camera or a screen that starts work or asks a permission
+ * lands on the hub. A value with no process tag is from an earlier process.
+ */
+internal fun idToRestore(entries: List<ExperimentEntry>, saved: String?, processId: String): String? {
+    if (saved == null) return null
+    val cut = saved.indexOf(PROCESS_SEPARATOR)
+    val id = if (cut < 0) saved else saved.substring(cut + 1)
+    if (cut >= 0 && saved.substring(0, cut) == processId) return id
+    return id.takeIf { wanted -> entries.firstOrNull { it.id == wanted }?.restorable == true }
+}
+
+private const val PROCESS_SEPARATOR = '/'
+
+/** Names this process: new each time the process starts, so saved state from a killed one differs. */
+internal val currentProcessId: String = java.util.UUID.randomUUID().toString()
 
 /** The ids that appear more than once in [entries]; the host refuses a list that has any. */
 internal fun duplicateIds(entries: List<ExperimentEntry>): List<String> =

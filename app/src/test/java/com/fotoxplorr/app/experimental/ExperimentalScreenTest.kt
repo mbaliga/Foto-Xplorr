@@ -89,6 +89,7 @@ class ExperimentalScreenTest {
         sensitiveIds: Set<MediaId> = emptySet(),
         blurSensitive: Boolean = true,
         geoState: GeoIndexState = GeoIndexState(),
+        processId: String = "this-process",
     ) {
         FotoXplorrTheme(GalleryPreferencesState()) {
             CompositionLocalProvider(LocalOnBackPressedDispatcherOwner provides owner) {
@@ -101,6 +102,7 @@ class ExperimentalScreenTest {
                     entries = entries,
                     sensitiveIds = sensitiveIds,
                     blurSensitive = blurSensitive,
+                    processId = processId,
                 )
             }
         }
@@ -240,16 +242,31 @@ class ExperimentalScreenTest {
     }
 
     @Test
-    fun `an experiment that is not restorable comes back as the hub`() {
+    fun `an experiment that is not restorable comes back as the hub after the process was killed`() {
         val tester = StateRestorationTester(compose)
-        tester.setContent { Host(listOf(entry("a"), entry("cam", restorable = false))) }
+        // Read when the content is composed: the first composition saves under one process, the
+        // restored one is a new process.
+        var process = "before"
+        tester.setContent { Host(listOf(entry("a"), entry("cam", restorable = false)), processId = process) }
         compose.onNodeWithText("Title cam").performClick()
         compose.onNodeWithText("inside cam").assertExists()
 
+        process = "after"
         tester.emulateSavedInstanceStateRestore()
 
         compose.onNodeWithText("inside cam").assertDoesNotExist()
         compose.onNodeWithText("Title cam").assertExists()
+    }
+
+    @Test
+    fun `an experiment that is not restorable stays open when only the activity is recreated`() {
+        val tester = StateRestorationTester(compose)
+        tester.setContent { Host(listOf(entry("a"), entry("cam", restorable = false))) }
+        compose.onNodeWithText("Title cam").performClick()
+
+        tester.emulateSavedInstanceStateRestore()
+
+        compose.onNodeWithText("inside cam").assertExists()
     }
 
     @Test
@@ -311,10 +328,11 @@ class ExperimentalScreenTest {
     }
 
     @Test
-    fun `an experiment that is not restorable is the hub again after the destination was left`() {
+    fun `an experiment that is not restorable is still open after the destination was left and came back`() {
+        // The viewer round trip is this case: opening a photo from the compass leaves the gallery
+        // screen, and Back from the viewer must land in the compass, not the hub.
         leaveAndReturn(listOf(drafting("a", restorable = false), entry("b")), holder = true)
-        compose.onNodeWithText("draft 1").assertDoesNotExist()
-        compose.onNodeWithText("Title a").assertExists()
+        compose.onNodeWithText("draft 1").assertExists()
     }
 
     // The shell's room (nav or options) is opened with an edge drag over an open experiment and is

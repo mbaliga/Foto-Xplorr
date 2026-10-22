@@ -58,11 +58,11 @@ import com.fotoxplorr.core.model.MediaId
  * A hub of cards grouped Make, Explore, Setup, and the host of whichever one is open. The host owns
  * three things so no experiment has to:
  *
- *  - **Which one is open**, as one `rememberSaveable` id. Saved: that id, for entries that are
- *    [ExperimentEntry.restorable]. Not saved: anything inside an experiment (its own state is its
- *    own to save), and the id of a non-restorable one -- those reopen as the hub. Rotation,
- *    process death and the viewer round trip keep it; so does leaving the destination, but only
- *    where the caller wraps this in [KeepExperimentalState].
+ *  - **Which one is open**, as one `rememberSaveable` id. Saved: that id, tagged with the process
+ *    it was saved in. Not saved: anything inside an experiment (its own state is its own to save).
+ *    Rotation and the viewer round trip keep every open experiment; so does leaving the
+ *    destination, but only where the caller wraps this in [KeepExperimentalState]. After process
+ *    death only an [ExperimentEntry.restorable] one reopens; the rest come back as the hub.
  *  - **Back**, one handler enabled while something is open. It exists because two of the screens
  *    here (similarity, AI keys) register none of their own. A screen with an inner step registers
  *    its own handler, which is composed after this one and so is asked first. A shell room opened
@@ -78,6 +78,7 @@ import com.fotoxplorr.core.model.MediaId
  *   any experiment (see [assetsForExperiments]).
  * @param indexInput what an indexer covers, trashed included; see [ExperimentEnv.indexInput].
  * @param entries the list to host; a test passes its own.
+ * @param processId names this process (see [idToRestore]); a test passes its own to play a process kill.
  */
 @Composable
 fun ExperimentalScreen(
@@ -90,12 +91,16 @@ fun ExperimentalScreen(
     entries: List<ExperimentEntry> = builtInExperiments,
     sensitiveIds: Set<MediaId> = emptySet(),
     blurSensitive: Boolean = true,
+    processId: String = currentProcessId,
 ) {
     require(duplicateIds(entries).isEmpty()) { "Experiment ids must be unique: ${duplicateIds(entries)}" }
     val context = LocalContext.current.applicationContext
 
     var openId by rememberSaveable(
-        stateSaver = Saver<String?, String>(save = { id -> idToSave(entries, id) }, restore = { it }),
+        stateSaver = Saver<String?, String>(
+            save = { id -> idToSave(id, processId) },
+            restore = { saved -> idToRestore(entries, saved, processId) },
+        ),
     ) { mutableStateOf<String?>(null) }
     val current = entryToShow(entries, openId) { it.available(context) }
 
@@ -140,10 +145,10 @@ fun ExperimentalScreen(
  * the gallery screen) the state is parked when the section leaves and handed back when it returns.
  *
  * What this keeps, exactly: the open experiment and whatever that experiment `rememberSaveable`d,
- * across leaving the destination, rotation, the viewer round trip and process death. What it does
- * not: an experiment that is not [ExperimentEntry.restorable] (the compass) comes back as the hub,
- * the same as after process death, and anything an experiment only `remember`ed. Nothing here has
- * run on a device. A null [holder] (a test, a host without one) keeps nothing extra.
+ * across leaving the destination, rotation and the viewer round trip (the compass too: opening a
+ * photo from it and pressing Back returns to it). Across process death the same holds only for an
+ * entry that is [ExperimentEntry.restorable]; the compass comes back as the hub. Anything an
+ * experiment only `remember`ed is not kept. Nothing here has run on a device. A null [holder] (a test, a host without one) keeps nothing extra.
  */
 @Composable
 internal fun KeepExperimentalState(holder: SaveableStateHolder?, content: @Composable () -> Unit) {

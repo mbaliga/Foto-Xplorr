@@ -109,7 +109,8 @@ internal val builtInExperiments: List<ExperimentEntry> = listOf(
         group = ExperimentGroup.EXPLORE,
         icon = Icons.Outlined.ViewInAr,
         // Not restorable: it starts a location read when it opens and asks for the location
-        // permission in context, so a restored id must not put the person back in it.
+        // permission in context, so after the process was killed a restored id must not put the
+        // person back in it. In a live process it stays open, so Back from a photo returns here.
         restorable = false,
         badge = { env ->
             if (env.geoState.isIndexing) ExperimentalCopy.BADGE_INDEXING else ExperimentalCopy.located(env.geoState.locatedCount)
