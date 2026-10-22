@@ -864,3 +864,98 @@ edge parameter, PR #17).
   grid should be inset instead.
 - **Release housekeeping.** `shared-libraries` PR #17 merges first with a merge commit, then this PR;
   `versionCode` must go to 5 to match `changelogs/5.txt`, which now also covers batch 3.
+
+## Batch 6: the Experimental section, a drawn aquarium, a wall mock-up with print export, offline map areas (22 Oct 2026)
+
+Branch `claude/friendly-lovelace-06dito` (PR #18). **Nothing in this batch has run on a device.** Every
+visual and feel item below is **unverified until run on a device**; the list is
+`docs/device-test/batch-6-checklist.md`. Roborazzi runs in record mode, so no screenshot test counts as
+visual verification. Traps found are TRAPS #78 to #88.
+
+### Owner decisions applied (not re-asked)
+
+- The critic's cuts: no experiment registry or spec machinery (an `ExperimentEntry` list), no aquarium
+  gallery or bucket fill or caustics, the offline-map button on the embedded Map not the (unreachable)
+  header, no `EditedCopyWriter` dpi change (the print has its own exporter), no `ACTION_IMAGE_CAPTURE`.
+- Label-only rename: the destination is still `HyleDestination.PLACES`, shown as "Experimental"; the saved
+  "Open the app on" value is unchanged.
+- "Spatial compass" is "Compass view"; the Photo map and Street map cards are gone (Map mode shows them).
+- Offline maps are not an experiment: a Settings > Data row and a pill on the Map in the Connect build.
+
+### What was built
+
+- **Experimental host** (`experimental/`): hub of cards under Make / Explore / Setup; one saved id, one Back
+  handler, `ExperimentEnv` (browsable list only, `decode` re-checks the live list), `clearOfShellEdges`.
+  Registered: `aquarium`, `wall-mockup` (Make), `similarity`, `wall`, `preview`, `compass` (Explore), `ai`
+  (Setup, last). `ExperimentalHostTest` pins the ids and that each has a title and a one-sentence blurb.
+- **Draw an aquarium** (`aquarium/`): pure core (sketch, flood fill, swim mesh, tank simulation, codec),
+  creature store (PNG then JSON, at most 12), draft saver, rasteriser, draw and tank screens, a frame loop.
+- **See it on your wall** (`wall/`): print maths, scale from a reference or the lens, 12 standard sizes, frames
+  and set layouts, the draft, canvas and four steps; print-ready JPEG with the density in Exif and JFIF and no
+  place; system print at real size; a banded Lanczos Enlarge labelled "Enlarged, no new detail".
+- **Offline map areas** (`spatial/offline/`): budget and tile maths, suggestions from browsable photos,
+  `DownloadGuard`, the engine seam, a request-cap wrapper in `:feature:ai-remote`, a map-library engine, the
+  download job (`ActivityKind.DOWNLOADING_MAP`, data-sync service), the pane, the Settings row and the Map
+  pill; ADR-015 (the request cap) and ADR-016 (source verdicts, limits, which numbers are guesses).
+- Docs: README, store description, PRODUCT-AND-ARCHITECTURE, TRAPS, the batch 6 checklist, this entry.
+
+### What deviated and why
+
+- The host kept `icon`, `coverSkip` and `badge` on `ExperimentEntry` beyond the critic's minimal list because
+  they carry the existing cards' look; the host logic is about 150 lines.
+- The aquarium: "mesh at phase 0 is the identity grid" is false (a travelling sine is never flat); the identity
+  is at wave scale 0. The fixed-step accumulator was not built, so `step(dt)` is not frame-rate independent.
+  The sprite is rendered from the vectors at its final size, not rendered at board size then downsized.
+- The wall: the distance formula uses the image's share of the full-frame diagonal, not `2*atan(12/f35)` (8
+  percent under-read for 4:3). "Size" is the print, not the framed piece. The id is `wall-mockup` because
+  `wall` is the 3D photo wall.
+- The print: the design said to reuse the editor's writer path; its encoder is private and copies GPS, so the
+  print has its own exporter. Pictures/Fotoz became `Pictures/Fotoz/Prints`. `ExifCopier` does carry the
+  source's resolution tags, so the density is written after it.
+- Enlarge: no whole-picture `IntArray` (a 64 MP result is 256 MB), so rows are streamed in bands, single
+  threaded; the editor's mask runs per band with a two-row halo.
+- Offline maps: Switzerland's box is 2,486 tiles to z12 and Greater London's 1,707 to z14 (the investigators
+  said 2,619 and 1,781); Switzerland is refused on bytes. The byte table is conservative. The "throttleInstalled
+  while active" wording could not drive a button enabled before the tap, so it is a probed "can be applied"
+  flag. ADR-015 was already taken, so the source verdicts are ADR-016.
+- The Connect privacy line for the Experimental page no longer names the street map; the map's disclosure is
+  the offline-maps pane's ("Downloading shows the area and your IP address to the map provider.").
+
+### Not built, and why
+
+- **Panorama utility**: an owner go or no-go; the critic recommended no. Nothing prepares it, but the Lanczos
+  reader and sink (`PixelRows`, `RowSink`) are the reuse point if it is wanted.
+- **Live-camera wall**: needs a CAMERA permission decision (TRAPS #83). The wall uses a photo.
+- **On-device neural upscaler** (LiteRT, Real-ESRGAN): deferred; `docs/MODEL_LICENSES.md` does not exist.
+- **ARCore** and **OpenCV**: no dependency was added anywhere in this batch (one compile-only declaration in
+  `:feature:ai-remote`, see `docs/DEPENDENCIES.md`).
+- Aquarium: a fallback renderer, a Calm switch in the UI, keep-screen-on, frame-rate throttling, schools,
+  bubbles, photo cutouts, a gallery sheet, backup of creatures. Wall: perspective correction, per-frame style,
+  automatic orientation, tiling, TIFF, CMYK, bleed, choosing the dpi or crop. Enlarge for the system Print
+  path, a marker in the enlarged file, a cap on the enlarging factor.
+- Offline maps: date-line areas, updates after 90 days, measured sizes written back (no record-rewrite on the
+  engine seam), low-battery confirm, renaming a saved area, the hillshade or dark style offline.
+
+### Found, not fixed
+
+- `decodeUpright` returns null on API 26 and 27 (known): the wall and the print file are unverified there.
+- Back ordering between a shell room opened over an open experiment and the host's handler depends on
+  registration order (same as the old compass and wall handlers).
+- A Compose test that shows the unpaused tank never goes idle (TRAPS #80).
+- A native-test JVM abort on a fresh run of Robolectric-native tests that decode on a worker (TRAPS #88).
+- `changelogs/5.txt` was not updated for this batch.
+
+### Residual, for the owner
+
+- **Decisions to confirm.** The 60 dp edge clearance on the drawing board and the wall (it costs a 360 dp phone
+  120 dp of width; the alternative is to ignore only the first touch in the zone); "Draw an aquarium" and
+  "See it on your wall" as titles; a frame's size meaning the print; the print keeping the camera make, serials
+  and date and dropping only the place; prints in `Pictures/Fotoz/Prints`; Enlarge aiming at 300 dpi with no
+  cap on the factor; one download at a time, at most 6 areas and 300 MB, the 12-fish store, MIN useful zoom 12.
+- **A human read of the new wording** (every string is one short sentence): the Copy objects
+  `AquariumCopy`, `WallCopy` and `OfflineMapsCopy`, the Discover card ("Draw fish, try pictures on your wall,
+  and more"), the store description and README lines.
+- **Release gates.** Do the map spike (checklist section 5) before the Connect build ships the download; if the
+  4-request cap does not hold, do not ship it. Re-read the OpenFreeMap terms before release (read 22 Oct 2026).
+  Whether printing through the system print service counts as "goes online" in the Offline build's privacy
+  line is a wording call: the app has no network code, a print service may.
