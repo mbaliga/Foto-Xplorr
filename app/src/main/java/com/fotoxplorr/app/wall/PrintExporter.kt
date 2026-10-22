@@ -517,11 +517,14 @@ internal class PrintExporter(
         check(!carriesLocation(file)) { WallCopy.LOCATION_NOT_REMOVED }
     }
 
-    /** Last, because writing Exif rewrites the file's header: the JFIF density, then a read-back of it. */
+    /**
+     * Last, because writing Exif rewrites the file's header: the JFIF density, then a read-back of it.
+     * Only the header is read and the five bytes are patched in place ([JfifDensity.stampFile]); the
+     * file, tens of MB at the biggest size, is not held in memory (this runs after the out-of-memory
+     * ladder, which could not step down for a failure here).
+     */
     private fun stampDensity(file: File, plan: PrintPlan) {
-        val patched = JfifDensity.withDpi(file.readBytes(), plan.dpi)
-        check(JfifDensity.readDpi(patched) == plan.dpi to plan.dpi) { WallCopy.FILE_NOT_AS_PLANNED }
-        file.writeBytes(patched)
+        check(JfifDensity.stampFile(file, plan.dpi)) { WallCopy.FILE_NOT_AS_PLANNED }
     }
 
     /** The staged file is a JPEG of the planned size whose Exif says the planned density. */
@@ -532,7 +535,7 @@ internal class PrintExporter(
         val exif = ExifInterface(file.absolutePath)
         check(exif.getAttributeDouble(ExifInterface.TAG_X_RESOLUTION, 0.0).roundToInt() == plan.dpi) { WallCopy.FILE_NOT_AS_PLANNED }
         check(exif.getAttributeInt(ExifInterface.TAG_RESOLUTION_UNIT, 0) == 2) { WallCopy.FILE_NOT_AS_PLANNED }
-        check(JfifDensity.readDpi(file.readBytes()) == plan.dpi to plan.dpi) { WallCopy.FILE_NOT_AS_PLANNED }
+        check(JfifDensity.readDpi(file) == plan.dpi to plan.dpi) { WallCopy.FILE_NOT_AS_PLANNED }
     }
 
     internal companion object {

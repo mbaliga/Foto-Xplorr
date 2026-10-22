@@ -5,7 +5,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import org.junit.runner.RunWith
@@ -23,6 +25,11 @@ import java.io.ByteArrayOutputStream
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34])
 class JfifDensityTest {
+
+    @get:Rule
+    val folder = TemporaryFolder()
+
+    private fun fileOf(bytes: ByteArray) = folder.newFile().also { it.writeBytes(bytes) }
 
     private fun jpeg(w: Int = 24, h: Int = 16): ByteArray {
         val image = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -199,5 +206,36 @@ class JfifDensityTest {
         val patched = JfifDensity.withDpi(ext, 300)
         assertEquals(300 to 300, JfifDensity.readDpi(patched))
         assertEquals(ext.size + 18, patched.size)
+    }
+
+    @Test
+    fun `stamping a file gives the very bytes stamping an array gives, for a header, none, and Exif first`() {
+        val original = jpeg()
+        for (input in listOf(original, withoutJfif(original), exifFirst(original))) {
+            val file = fileOf(input)
+            assertEquals(true, JfifDensity.stampFile(file, 300))
+            assertArrayEquals(JfifDensity.withDpi(input, 300), file.readBytes())
+            assertEquals(300 to 300, JfifDensity.readDpi(file))
+            assertNotNull(decode(file.readBytes()))
+        }
+    }
+
+    @Test
+    fun `stamping a file that is not a JPEG, or is cut off, leaves it as it is and says no`() {
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0)
+        val cut = jpeg().copyOf(10)
+        for (input in listOf(png, cut, ByteArray(0))) {
+            val file = fileOf(input)
+            assertEquals(false, JfifDensity.stampFile(file, 300))
+            assertArrayEquals(input, file.readBytes())
+            assertNull(JfifDensity.readDpi(file))
+        }
+    }
+
+    @Test
+    fun `no staging file is left beside a file that gained a header`() {
+        val file = fileOf(withoutJfif(jpeg()))
+        JfifDensity.stampFile(file, 300)
+        assertEquals(listOf(file.name), file.parentFile!!.list()!!.toList())
     }
 }
