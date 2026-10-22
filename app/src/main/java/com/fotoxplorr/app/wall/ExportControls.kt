@@ -29,7 +29,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import com.fotoxplorr.app.experimental.ExperimentEnv
 import com.fotoxplorr.app.hyle.ActivityKind
-import com.fotoxplorr.app.jobs.JobHandle
 import com.fotoxplorr.app.jobs.RunningJob
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.shell.AppStateViewModel
@@ -52,7 +51,6 @@ internal class PrintActions(
 
 /** What the controls hold between taps and must let go of when the screen is left. */
 private class PrintHolder {
-    var handle: JobHandle? = null
     var adapter: PhotoPrintAdapter? = null
 }
 
@@ -84,9 +82,9 @@ internal fun rememberPrintActions(env: ExperimentEnv, assets: Map<Long, MediaAss
     val exporter = remember { PrintExporter(env.context) }
     val held = remember { PrintHolder() }
     val canPrint = remember(uiContext) { uiContext.packageManager.hasSystemFeature(PackageManager.FEATURE_PRINTING) }
-    DisposableEffect(Unit) {
+    DisposableEffect(runner) {
         onDispose {
-            held.handle?.cancel()
+            runner?.jobs?.value?.filter { it.title == WallCopy.PRINT_JOB_TITLE }?.forEach { it.cancel() }
             held.adapter?.close()
         }
     }
@@ -106,7 +104,7 @@ internal fun rememberPrintActions(env: ExperimentEnv, assets: Map<Long, MediaAss
             val asset = latestAssets[frame.assetId] ?: return@save
             if (runner.jobs.value.any { it.title == WallCopy.PRINT_JOB_TITLE }) return@save
             val size = PrintSize(frame.wCm.toDouble(), frame.hCm.toDouble())
-            held.handle = runner.launch(title = WallCopy.PRINT_JOB_TITLE, kind = ActivityKind.EXPORTING) { onProgress ->
+            runner.launch(title = WallCopy.PRINT_JOB_TITLE, kind = ActivityKind.EXPORTING) { onProgress ->
                 exporter.save(sourceFor(asset), size, onProgress).map { WallCopy.SAVED }
             }
         },
@@ -121,7 +119,7 @@ internal fun rememberPrintActions(env: ExperimentEnv, assets: Map<Long, MediaAss
             held.adapter = adapter
             manager.print(WallCopy.PRINT_DOC_NAME, adapter, null)
         },
-        onCancel = { held.handle?.cancel() },
+        onCancel = { runner.jobs.value.firstOrNull { it.title == WallCopy.PRINT_JOB_TITLE }?.cancel?.invoke() },
     )
 }
 

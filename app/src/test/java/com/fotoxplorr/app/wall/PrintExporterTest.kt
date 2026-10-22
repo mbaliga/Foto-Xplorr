@@ -14,6 +14,7 @@ import com.fotoxplorr.app.editor.carriesLocation
 import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.decodeUpright
+import com.fotoxplorr.app.metadata.ExifCopier
 import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
@@ -151,6 +152,14 @@ class PrintExporterTest {
         // The bands were 300 px wide: the kept 300..900 is the green band, then the blue one.
         assertTrue(near(Color.GREEN, picture.getPixel(100, 450)))
         assertTrue(near(Color.BLUE, picture.getPixel(500, 450)))
+    }
+
+    @Test
+    fun `the metadata copier carries a source's own resolution, which is why the print's is written after it`() {
+        // The premise of the ordering in PrintExporter.writeMetadata: if this stops being true the order stops mattering.
+        assertTrue(ExifInterface.TAG_X_RESOLUTION in ExifCopier.COPIED_TAGS)
+        assertTrue(ExifInterface.TAG_Y_RESOLUTION in ExifCopier.COPIED_TAGS)
+        assertTrue(ExifInterface.TAG_RESOLUTION_UNIT in ExifCopier.COPIED_TAGS)
     }
 
     @Test

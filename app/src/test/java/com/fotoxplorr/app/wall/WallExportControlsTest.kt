@@ -24,14 +24,17 @@ import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.test.core.app.ApplicationProvider
 import com.fotoxplorr.app.experimental.ExperimentEnv
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
+import com.fotoxplorr.app.hyle.ActivityKind
 import com.fotoxplorr.app.jobs.JobOutcome
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.shell.AppStateViewModel
 import com.fotoxplorr.app.spatial.GeoIndexState
 import com.fotoxplorr.app.ui.FotoXplorrTheme
 import com.fotoxplorr.core.model.MediaId
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.junit.After
@@ -189,6 +192,30 @@ class WallExportControlsTest {
         // Whatever the test device's library does with the insert, the outcome is a sentence for the person.
         val message = outcome.result.fold({ it as String }, { it.message.orEmpty() })
         assertTrue(message, message == WallCopy.SAVED || message == WallCopy.CANT_CREATE_FILE)
+    }
+
+    @Test
+    fun `while a file is made the panel shows progress and Cancel, and Cancel stops the job`() {
+        compose.setContent { Host() }
+        hangOnePicture()
+        waitForText(WallCopy.SAVE_PRINT)
+        val runner = ViewModelProvider(storeOwner!!)[AppStateViewModel::class.java].jobRunner
+        scope.launch { runner.outcomes.collect { outcomes += it } }
+
+        // A job of the export's own name that never finishes by itself, standing in for a long export.
+        runner.launch<Unit>(WallCopy.PRINT_JOB_TITLE, ActivityKind.EXPORTING) { onProgress ->
+            onProgress(0.4f)
+            awaitCancellation()
+        }
+        waitForText(WallCopy.MAKING)
+        compose.onNodeWithText(WallCopy.CANCEL).assertExists()
+        assertTrue(compose.onAllNodes(hasText(WallCopy.SAVE_PRINT)).fetchSemanticsNodes().isEmpty())
+
+        compose.onNodeWithText(WallCopy.CANCEL).performClick()
+        compose.waitUntil(15_000) { shadowOf(Looper.getMainLooper()).idle(); outcomes.isNotEmpty() }
+        assertTrue(outcomes.single().result.exceptionOrNull() is CancellationException)
+        waitForText(WallCopy.SAVE_PRINT)
+        assertTrue(runner.jobs.value.isEmpty())
     }
 
     @Test
