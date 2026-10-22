@@ -77,6 +77,22 @@ class OfflineMapsPaneModelTest {
         assertTrue(OfflineMapsPaneModel.options(emptyList(), point).isEmpty())
     }
 
+    // ---- the map's pill ----
+
+    @Test
+    fun `the pill is offered for a view the caps allow, reduced or not`() {
+        assertEquals(paris, OfflineMapsPaneModel.offerableView(paris) { true })
+        assertEquals(london, OfflineMapsPaneModel.offerableView(london) { true })
+    }
+
+    @Test
+    fun `the pill is hidden for no view, a point, a view too big and a view the engine refuses`() {
+        assertNull(OfflineMapsPaneModel.offerableView(null) { true })
+        assertNull(OfflineMapsPaneModel.offerableView(point) { true })
+        assertNull(OfflineMapsPaneModel.offerableView(switzerland) { true })
+        assertNull(OfflineMapsPaneModel.offerableView(paris) { false })
+    }
+
     // ---- names ----
 
     @Test

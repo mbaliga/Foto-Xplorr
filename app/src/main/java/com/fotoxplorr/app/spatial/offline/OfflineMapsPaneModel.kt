@@ -114,6 +114,20 @@ object OfflineMapsPaneModel {
         }
     }
 
+    /**
+     * [view] when the map's pill should be shown for it: an area the caps allow (detail may be
+     * reduced) that the engine will take. Null for no view yet, a point, a view too big for the
+     * caps, and an area over the date line. The pill is the only thing this gates; the pane
+     * re-checks everything when it is opened.
+     */
+    fun offerableView(view: GeoBox?, canDownloadBox: (GeoBox) -> Boolean): GeoBox? {
+        if (view == null || !canDownloadBox(view)) return null
+        return when (RegionBudget.plan(view)) {
+            is BudgetVerdict.Fits, is BudgetVerdict.Reduced -> view
+            is BudgetVerdict.TooLarge, BudgetVerdict.NoArea -> null
+        }
+    }
+
     /** The name to save under: what was typed, trimmed and cut to the record's limit, else the default. */
     fun nameFor(option: AreaOption, typed: String?): String {
         val cleaned = typed.orEmpty().trim().take(RegionRecord.MAX_NAME_LENGTH).trim()

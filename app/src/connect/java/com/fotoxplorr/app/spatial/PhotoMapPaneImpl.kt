@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.spatial.offline.browsablePoints
 
 /**
  * The connect flavour's map pane: the street map, embedded -- but only once the browser has been
@@ -24,9 +25,10 @@ import com.fotoxplorr.app.media.MediaAsset
  * opening a room over the map never tears the view down and rebuilds it (a rebuild is a second
  * style fetch).
  *
- * [frameAssets] is unused: the street map fits its camera once, to what it is first handed, and
- * is then moved by hand, so narrowing [assets] does not move it. Same fully-qualified signature
- * as `src/offline`'s implementation.
+ * [frameAssets] does not frame this map: it fits its camera once, to what it is first handed, and
+ * is then moved by hand, so narrowing [assets] does not move it. It is used for the places the
+ * "Save this area offline" sheet suggests. Same fully-qualified signature as `src/offline`'s
+ * implementation.
  */
 @Composable
 @Suppress("UNUSED_PARAMETER")
@@ -54,5 +56,8 @@ fun PhotoMapPaneImpl(
         onClose = {},
         modifier = modifier,
         embedded = true,
+        // frameAssets is the browser's privacy-filtered list (TRAPS #33), read only when the Offline
+        // maps sheet opens from the pill.
+        offlinePlacePoints = { geoState.browsablePoints(frameAssets.map { it.id }) },
     )
 }

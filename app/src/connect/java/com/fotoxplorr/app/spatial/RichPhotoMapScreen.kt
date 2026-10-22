@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Layers
@@ -51,6 +52,10 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.spatial.offline.GeoBox
+import com.fotoxplorr.app.spatial.offline.GeoPoint
+import com.fotoxplorr.app.spatial.offline.OfflineMapsPill
+import com.fotoxplorr.app.spatial.offline.ViewArea
 import com.fotoxplorr.app.viewer.PlaceMorph
 import com.fotoxplorr.app.viewer.PlacePin
 import com.fotoxplorr.core.model.MediaId
@@ -114,6 +119,12 @@ fun RichPhotoMapScreen(
      * clear of the browser's controls.
      */
     embedded: Boolean = false,
+    /**
+     * Where the person's own browsable photos were taken, read only when the Offline maps sheet is
+     * opened from the embedded map's pill (TRAPS #33: from `browsableAssets`, never the whole
+     * library). Empty offers no suggested places there, only the current view.
+     */
+    offlinePlacePoints: () -> List<GeoPoint> = { emptyList() },
 ) {
     if (!embedded) BackHandler(onBack = onClose)
     val context = LocalContext.current
@@ -149,17 +160,39 @@ fun RichPhotoMapScreen(
     } else {
         0
     }
+    // The ground the embedded map shows, for the Offline maps pill. Updated when the camera comes to
+    // rest, never while it moves, and only from the camera's centre and zoom (see ViewArea).
+    var viewBox by remember { mutableStateOf<GeoBox?>(null) }
+    val mapViewHolder = remember { arrayOfNulls<MapView>(1) }
     val controller = remember(focus, embedded) {
         RichPhotoMapController(
             focus = focus,
             accentArgb = accentArgb,
             lowerChromePx = lowerChromePx,
             upperChromePx = upperChromePx,
+            onCameraIdle = if (embedded) {
+                { latitude, longitude, zoom ->
+                    val view = mapViewHolder[0]
+                    val density = view?.resources?.displayMetrics?.density ?: 0f
+                    viewBox = if (view == null || density <= 0f) {
+                        null
+                    } else {
+                        ViewArea.boxOf(
+                            latitude, longitude, zoom,
+                            widthDp = view.width / density.toDouble(),
+                            heightDp = view.height / density.toDouble(),
+                        )
+                    }
+                }
+            } else {
+                null
+            },
         ) { mediaId -> selectedId = mediaId }
     }
     val mapView = remember(context) {
         MapLibre.getInstance(context.applicationContext)
         MapView(context).also { view ->
+            mapViewHolder[0] = view
             view.onCreate(Bundle())
             view.getMapAsync(controller::attach)
         }
@@ -214,6 +247,18 @@ fun RichPhotoMapScreen(
                 update = { controller.update(filtered, geoState.metadataById) },
                 modifier = Modifier.fillMaxSize(),
             )
+            // Embedded only: the browser's other chrome floats along the bottom and the compass sits
+            // top right, so the pill takes the top left, clear of the status bar.
+            if (embedded) {
+                OfflineMapsPill(
+                    view = viewBox,
+                    placePoints = offlinePlacePoints,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(start = 12.dp, top = 8.dp),
+                )
+            }
             // The focused photo's tile rides the map: its screen position is re-projected on
             // every camera move by the controller and read here as a placement offset, so the
             // tile answers touches where it is drawn and the map pans underneath it.
@@ -302,6 +347,8 @@ private class RichPhotoMapController(
     private val lowerChromePx: Int = 0,
     /** Px to push the compass down from the top edge; 0 leaves it where MapLibre puts it. */
     private val upperChromePx: Int = 0,
+    /** Embedded only: the camera came to rest at (latitude, longitude, zoom). */
+    private val onCameraIdle: ((Double, Double, Double) -> Unit)? = null,
     private val onSelected: (MediaId) -> Unit,
 ) {
     private var map: MapLibreMap? = null
@@ -332,6 +379,12 @@ private class RichPhotoMapController(
             }
             if (upperChromePx > 0) {
                 setCompassMargins(compassMarginLeft, upperChromePx, compassMarginRight, compassMarginBottom)
+            }
+        }
+        onCameraIdle?.let { report ->
+            map.addOnCameraIdleListener {
+                val camera = map.cameraPosition
+                camera.target?.let { centre -> report(centre.latitude, centre.longitude, camera.zoom) }
             }
         }
         val style = if (focus != null) FOCUS_STYLE else OPEN_FREE_MAP_STYLE
