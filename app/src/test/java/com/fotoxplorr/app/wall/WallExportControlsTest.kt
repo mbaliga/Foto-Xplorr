@@ -246,8 +246,16 @@ class WallExportControlsTest {
     @Test
     fun `the label says what enlarging does not do`() {
         assertEquals("Enlarged, no new detail", WallCopy.ENLARGE)
-        assertTrue(WallCopy.SAVED_ENLARGED.contains(WallCopy.ENLARGE))
-        assertTrue(WallCopy.SAVED_ENLARGED.startsWith(WallCopy.SAVED))
+        assertTrue(WallCopy.SAVED_ENLARGED.contains("no new detail"))
+    }
+
+    @Test
+    fun `the saved sentences are one sentence each and name no folder, which is not the same on every Android`() {
+        for (sentence in listOf(WallCopy.SAVED, WallCopy.SAVED_ENLARGED)) {
+            assertEquals(sentence, 1, sentence.count { it == '.' })
+            assertTrue(sentence, sentence.endsWith("."))
+            assertTrue(sentence, !sentence.contains("/"))
+        }
     }
 
     @Test

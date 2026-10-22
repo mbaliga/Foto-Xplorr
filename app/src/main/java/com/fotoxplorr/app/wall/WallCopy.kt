@@ -86,7 +86,8 @@ internal object WallCopy {
 
     /** The job's name in the activity list, and the fallback for "finished" or "could not finish". */
     const val PRINT_JOB_TITLE = "Making a print file"
-    const val SAVED = "Saved in Pictures/Fotoz/Prints."
+    /** Names no folder: below Android 10 the file lands in the default Pictures folder, not the Fotoz/Prints album. */
+    const val SAVED = "Saved to your pictures."
     const val PRINT_DOC_NAME = "Fotoz print"
 
     // Enlarging: more pixels for a lab, not more detail, and every place it shows says so.
@@ -94,7 +95,7 @@ internal object WallCopy {
     const val ENLARGE_WHY = "This size has fewer pixels than a lab likes."
     const val ENLARGING = "Enlarging your picture…"
     const val ENLARGE_JOB_TITLE = "Enlarging a print file"
-    const val SAVED_ENLARGED = "$SAVED $ENLARGE."
+    const val SAVED_ENLARGED = "Saved, enlarged with no new detail."
     const val PRINT_CLOSED = "This print is no longer available."
     const val PRINT_FAILED = "The print could not be prepared."
 

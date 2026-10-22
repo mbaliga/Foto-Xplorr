@@ -266,7 +266,8 @@ internal interface PrintPublisher {
 }
 
 /**
- * Writes into the device's Pictures, in this app's own `Fotoz/Prints` album, the way
+ * Writes into the device's Pictures, in this app's own `Fotoz/Prints` album (Android 10 and later;
+ * below that `RELATIVE_PATH` does not exist and the row lands in the default Pictures folder), the way
  * [com.fotoxplorr.app.lift.StickerExporter.saveToGallery] writes a sticker: a new MediaStore row
  * held `IS_PENDING` until the bytes are in, deleted again if the copy fails. Below Android 10 the
  * `WRITE_EXTERNAL_STORAGE` the manifest already declares (up to API 28) is what allows the insert.
