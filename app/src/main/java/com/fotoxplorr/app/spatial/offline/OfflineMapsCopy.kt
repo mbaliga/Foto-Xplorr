@@ -29,6 +29,60 @@ object OfflineMapsCopy {
 
     const val ROOM_NEEDED = "Delete a saved area to make room."
 
+    // ---- The Data-tab row, the map pill and the pane. Labels first, then one sentence each. ----
+
+    const val ROW_LABEL = "Offline maps"
+
+    /** The Data-tab row's caption in the Connect build; the Offline build's caption is [STUB_ROW]. */
+    const val ROW_CAPTION = "Save a map area for use without a connection."
+
+    /** The pill on the embedded map. */
+    const val PILL = "Save this area offline"
+
+    const val HEADING_THIS_VIEW = "THIS VIEW"
+    const val HEADING_PLACES = "PLACES IN YOUR PHOTOS"
+    const val HEADING_SAVED = "SAVED AREAS"
+
+    const val THIS_VIEW = "This view"
+    const val DOWNLOAD = "Download"
+    const val RESUME = "Resume"
+    const val PAUSE = "Pause"
+    const val DELETE = "Delete"
+    const val KEEP = "Keep"
+    const val RENAME = "Rename"
+    const val DONE = "Done"
+    const val CANCEL = "Cancel"
+    const val NOT_NOW = "Not now"
+    const val NAME_FIELD = "Name"
+
+    const val EMPTY = "Open the map to save the area you are looking at."
+    const val NOTHING_SAVED = "Nothing is saved yet."
+    const val SAVED = "Saved."
+    const val ONE_AT_A_TIME = "One download at a time."
+    const val DATE_LINE = "Areas over the date line cannot be saved yet."
+    const val ALREADY_SAVED = "Already in your saved areas."
+
+    fun downloadWithSize(bytes: Long): String = "$DOWNLOAD, about ${megabytes(bytes)}"
+
+    fun photos(count: Int): String = if (count == 1) "1 photo" else "$count photos"
+
+    fun quota(count: Int, usedBytes: Long): String =
+        "$count of ${OfflineMapLimits.MAX_REGIONS} areas saved, ${megabytesBare(usedBytes)} of " +
+            "${megabytesBare(OfflineMapLimits.MAX_TOTAL_BYTES)} MB used."
+
+    fun meteredBody(bytes: Long): String = "It will use about ${megabytes(bytes)}."
+
+    fun deleteTitle(name: String): String = "Delete $name?"
+
+    fun deleteBody(bytes: Long): String = "This frees about ${megabytes(bytes)}."
+
+    fun downloading(percent: Int?): String = if (percent == null) "Downloading." else "Downloading, $percent%."
+
+    /** A size for a person: whole decimal megabytes, rounded up so the figure never promises less than it takes. */
+    fun megabytes(bytes: Long): String = "${megabytesBare(bytes).coerceAtLeast(1L)} MB"
+
+    private fun megabytesBare(bytes: Long): Long = (bytes.coerceAtLeast(0L) + 999_999L) / 1_000_000L
+
     fun tooLarge(reason: TooLargeReason): String = when (reason) {
         TooLargeReason.TOO_MANY_TILES -> "This area is too big to save."
         TooLargeReason.TOO_MANY_BYTES -> "This area would take too much space."
