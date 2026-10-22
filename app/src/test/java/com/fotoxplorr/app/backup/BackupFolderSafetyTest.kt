@@ -218,4 +218,134 @@ class BackupFolderSafetyTest {
         assertTrue(File(dir, BackupLayout.packName(70)).exists())
         assertFalse(destination.deleted.contains(BackupLayout.packName(70)))
     }
+
+    // ---- 2: a complete pack is never offered for deletion on the strength of a snapshot that was not read ----
+
+    /** A second run, so there are packs (and indexes) that only the second manifest lists. */
+    private fun secondRun(): List<String> {
+        val before = destination.names().filter { BackupLayout.isPackName(it) }.toSet()
+        val (more, moreSource) = JobFixtures.library(10)
+        val keys = newKeys()
+        val prep = runBlocking { BackupPreparer.prepare(destination, keys, more, BackupOptions(), moreSource, JobFixtures.tinyLimits) }
+        keys.close()
+        runBlocking { BackupJob(destination, moreSource, newKeys(), "test", io = Dispatchers.Unconfined).run(prep) }
+        return destination.names().filter { BackupLayout.isPackName(it) && it !in before }.sorted()
+    }
+
+    private fun cutNewestManifest() {
+        val newest = File(dir, BackupLayout.manifestName(2))
+        newest.writeBytes(newest.readBytes().copyOf(BackupFormat.HEADER_SIZE + 40))
+    }
+
+    private fun cutShort(pack: String) {
+        val file = File(dir, pack)
+        file.writeBytes(file.readBytes().copyOf(file.length().toInt() - 10))
+    }
+
+    private fun indexOf(pack: String) = BackupLayout.indexName(BackupLayout.packNumber(pack)!!)
+
+    @Test
+    fun `a pack whose valid index disagrees about its length is neither recovered nor a leftover`() {
+        val pack = secondRun().first()
+        File(dir, BackupLayout.manifestName(2)).delete()
+        cutShort(pack)
+
+        val loaded = load()
+        assertFalse(pack in loaded.recovered.map { it.pack.name })
+        assertTrue("not offered for deletion: ${loaded.leftovers.map { it.name }}", loaded.leftovers.none { it.name == pack || it.name == indexOf(pack) })
+        assertEquals(setOf(pack, indexOf(pack)), loaded.unverified.map { it.name }.toSet())
+        assertTrue(loaded.foreignFiles.isEmpty())
+    }
+
+    @Test
+    fun `removing leftovers never deletes an unverified pack, even when it is named`() {
+        val pack = secondRun().first()
+        File(dir, BackupLayout.manifestName(2)).delete()
+        cutShort(pack)
+        val before = destination.snapshot()
+
+        val keys = newKeys()
+        val removed = runBlocking { LeftoverRemoval.remove(destination, keys, listOf(pack, indexOf(pack))) }
+        keys.close()
+
+        assertTrue(removed.isEmpty())
+        assertEquals(before, destination.snapshot())
+    }
+
+    @Test
+    fun `while the newest snapshot cannot be read the leftovers are reported but nothing is removable`() {
+        val pack = secondRun().first()
+        cutNewestManifest()
+        cutShort(pack)
+        write(BackupLayout.packName(77), BackupTestSupport.seal(ByteArray(300), keys = newKeys(), kind = BackupKind.PACK))
+
+        val loaded = load()
+        assertEquals(1, loaded.skippedManifests)
+        assertTrue("the stray pack is still reported", loaded.leftovers.any { it.name == BackupLayout.packName(77) })
+        assertFalse(loaded.leftoversRemovable)
+        assertTrue(loaded.leftovers.none { it.name == pack })
+
+        val before = destination.snapshot()
+        val keys = newKeys()
+        try {
+            runBlocking { LeftoverRemoval.remove(destination, keys, loaded.leftovers.map { it.name } + pack) }
+            fail("nothing may be removed without a snapshot to prove what is unused")
+        } catch (e: BackupRefused) {
+            // expected
+        } finally {
+            keys.close()
+        }
+        assertEquals(before, destination.snapshot())
+        assertTrue(destination.deleted.isEmpty())
+    }
+
+    @Test
+    fun `when no manifest can be read at all the packs are not removable either`() {
+        // The only manifest is cut short: every pack is "not listed", which proves nothing.
+        cutManifest(1)
+        val loaded = load()
+        assertTrue(loaded.manifest == null)
+        assertFalse(loaded.leftoversRemovable)
+        val before = destination.snapshot()
+        val keys = newKeys()
+        try {
+            runBlocking { LeftoverRemoval.remove(destination, keys, loaded.leftovers.map { it.name }) }
+            fail()
+        } catch (e: BackupRefused) {
+            // expected
+        } finally {
+            keys.close()
+        }
+        assertEquals(before, destination.snapshot())
+    }
+
+    @Test
+    fun `with a whole snapshot the leftovers stay removable`() {
+        write(BackupLayout.packName(70), BackupTestSupport.seal(ByteArray(300), keys = newKeys(), kind = BackupKind.PACK))
+        val loaded = load()
+        assertTrue(loaded.leftoversRemovable)
+        assertTrue(loaded.unverified.isEmpty())
+    }
+
+    @Test
+    fun `the preflight says unverified files are left alone and that leftovers stay while the snapshot is unread`() {
+        val text = BackupCopy.preflight(preflightFacts(unverified = 2, leftoversRemovable = false, leftovers = 1)).map { it.text }
+        assertTrue(text.toString(), text.any { it.startsWith("2 files in this folder do not match the backup that lists them") && it.contains("left alone") })
+        assertTrue(text.toString(), text.any { it.contains("1 leftover file") && !it.contains("unless you remove them") })
+        val plain = BackupCopy.preflight(preflightFacts(unverified = 0, leftoversRemovable = true, leftovers = 1)).map { it.text }
+        assertTrue(plain.toString(), plain.any { it.contains("They stay unless you remove them") })
+        assertTrue(plain.none { it.contains("do not match") })
+    }
+
+    private fun cutManifest(generation: Int) {
+        val file = File(dir, BackupLayout.manifestName(generation))
+        file.writeBytes(file.readBytes().copyOf(BackupFormat.HEADER_SIZE + 40))
+    }
+
+    private fun preflightFacts(unverified: Int, leftoversRemovable: Boolean, leftovers: Int) = BackupCopy.PreflightFacts(
+        newFiles = 3, newSourceBytes = 3_000_000, estimatedBytes = 3_100_000, packs = 1, alreadyBackedUp = 2,
+        tooLargeNames = emptyList(), tooLargeCount = 0, leftoverCount = leftovers, leftoverBytes = 1_000, freeBytes = 64_000_000_000,
+        photosSeen = 5, locationApplicable = true, locationGranted = true, onPhoneStorage = false, managedByAnotherApp = false,
+        batteryLowAndNotCharging = false, newSet = false, unverifiedCount = unverified, leftoversRemovable = leftoversRemovable,
+    )
 }

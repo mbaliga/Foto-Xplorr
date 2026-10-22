@@ -30,7 +30,13 @@ sealed interface SetState {
  * - [recovered]: indexes of closed packs that no manifest lists yet (a run that ended before its
  *   manifest). Their entries are known, so the run carries on from them.
  * - [leftovers]: files Fotoz cannot use: a pack with no index (the run died inside it), an index
- *   that does not open or whose pack is gone. Never deleted by a run; the person can remove them.
+ *   that does not open or whose pack is gone. Never deleted by a run; the person can remove them,
+ *   but only while [leftoversRemovable]: "no snapshot lists it" proves nothing about a file when
+ *   the newest snapshot could not be read (a folder still syncing, a run that died writing it).
+ * - [unverified]: a pack and its index that both open but disagree about the pack's length (a
+ *   pack still being synced, or cut short). Not recovered, because the pack may not hold what the
+ *   index says, and never a leftover, because it may be the only copy of the last run: nothing
+ *   deletes it, and a check says it was not looked at.
  * - [reservedPackNumbers]: numbers in use by a name with no pack beside it.
  * - [foreignFiles]: backup files that belong to some other set, or that this version cannot read
  *   (a newer one's). They are not this run's to use and never leftovers: nothing offers to delete them.
@@ -44,7 +50,11 @@ class LoadedSet(
     val leftovers: List<DestinationFile>,
     val reservedPackNumbers: Set<Int>,
     val foreignFiles: List<DestinationFile> = emptyList(),
+    val unverified: List<DestinationFile> = emptyList(),
 ) {
+    /** False when a newer manifest was skipped or none could be read: what the snapshot does not list is not known to be unused. */
+    val leftoversRemovable: Boolean get() = skippedManifests == 0
+
     val known: List<ManifestEntry> get() = manifest?.entries.orEmpty() + recovered.flatMap { it.entries }
     val nextGeneration: Int get() = highestGeneration + 1
 
@@ -155,6 +165,7 @@ object BackupSetLoader {
         val recovered = ArrayList<PackIndex>()
         val leftovers = ArrayList<DestinationFile>()
         val reserved = HashSet<Int>()
+        val unverified = LinkedHashMap<String, DestinationFile>()
         val indexNames = names.filter { BackupLayout.isIndexName(it) }.sorted()
         for (indexName in indexNames) {
             currentCoroutineContext().ensureActive()
@@ -183,6 +194,11 @@ object BackupSetLoader {
             val packLength = sizes[packName] ?: -1L
             if (index != null && index.pack.name == packName && (packLength < 0 || packLength == index.pack.fileBytes)) {
                 recovered += index
+            } else if (index != null && index.pack.name == packName) {
+                // The index is genuine and names this pack, but the folder's length for the pack is not the
+                // one it recorded: unfinished sync or damage, not junk. Neither used nor offered for deletion.
+                unverified[indexName] = DestinationFile(indexName, sizes[indexName] ?: -1L)
+                unverified[packName] = DestinationFile(packName, packLength)
             } else if (indexName !in foreign) {
                 leftovers += DestinationFile(indexName, sizes[indexName] ?: -1L)
             }
@@ -190,7 +206,7 @@ object BackupSetLoader {
 
         val covered = listedPacks + recovered.map { it.pack.name }
         for (name in names.filter { BackupLayout.isPackName(it) }.sorted()) {
-            if (name in covered) continue
+            if (name in covered || name in unverified) continue
             currentCoroutineContext().ensureActive()
             // A pack with no usable index is a leftover only if it is this set's (or not a backup file
             // at all); one that belongs to another set is that set's data, not ours to offer for deletion.
@@ -235,6 +251,7 @@ object BackupSetLoader {
             leftovers = leftovers,
             reservedPackNumbers = reserved,
             foreignFiles = foreign.values.toList(),
+            unverified = unverified.values.toList(),
         )
     }
 
@@ -303,12 +320,15 @@ object BackupSetLoader {
  * is listed and classified again first: between the preflight and the confirm a cloud-backed
  * folder may have finished syncing, and a file that was a leftover in the first listing can be a
  * pack of the real set in the second. A name that is no longer a leftover is kept, and so is any
- * file of another set ([LoadedSet.foreignFiles]).
+ * file of another set ([LoadedSet.foreignFiles]) and any pack whose index disagrees about its length
+ * ([LoadedSet.unverified]). With no whole newest snapshot to stand on ([LoadedSet.leftoversRemovable])
+ * nothing is deleted: a pack "not listed" by a manifest that could not be read may be the last run.
  */
 object LeftoverRemoval {
-    /** Names actually deleted. Throws what [BackupSetLoader.load] throws, before anything is deleted. */
+    /** Names actually deleted. Throws what [BackupSetLoader.load] throws, or [BackupRefused] when the snapshot was not read, before anything is deleted. */
     suspend fun remove(destination: BackupDestination, keys: BackupKeys, shown: Collection<String>): List<String> {
         val fresh = BackupSetLoader.load(destination, keys)
+        if (!fresh.leftoversRemovable) throw BackupRefused(NOT_READ)
         val stillLeftovers = fresh.leftovers.mapTo(HashSet()) { it.name }
         val removed = ArrayList<String>()
         for (name in shown) {
@@ -317,4 +337,7 @@ object LeftoverRemoval {
         }
         return removed
     }
+
+    const val NOT_READ = "The newest backup file in this folder could not be read, perhaps because the folder is still syncing, " +
+        "so nothing was removed. Wait for it to finish and try again."
 }

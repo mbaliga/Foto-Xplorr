@@ -279,6 +279,8 @@ internal class BackupFlow(
             locationRecopies = plan.locationRecopies,
             foreignCount = prep.loaded.foreignFiles.size,
             sectionsFewer = preflight.sectionsFewer,
+            unverifiedCount = prep.loaded.unverified.size,
+            leftoversRemovable = prep.loaded.leftoversRemovable,
         )
     }
 

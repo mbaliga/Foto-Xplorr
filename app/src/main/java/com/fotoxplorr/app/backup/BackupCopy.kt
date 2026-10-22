@@ -92,6 +92,10 @@ object BackupCopy {
         val foreignCount: Int = 0,
         /** This phone's tags, collections, favourites or locks are fewer than the newest snapshot holds. */
         val sectionsFewer: Boolean = false,
+        /** Files of a pack whose index disagrees about its length; left alone and never offered for deletion. */
+        val unverifiedCount: Int = 0,
+        /** False while the newest backup file could not be read: the leftovers are kept whatever the person chooses. */
+        val leftoversRemovable: Boolean = true,
     )
 
     fun preflight(f: PreflightFacts): List<Line> = buildList {
@@ -154,7 +158,20 @@ object BackupCopy {
                 Line(
                     Severity.INFO,
                     "${count(f.leftoverCount, "leftover file")} (${size(f.leftoverBytes)}) from an interrupted backup cannot be used. " +
-                        "They stay unless you remove them.",
+                        if (f.leftoversRemovable) {
+                            "They stay unless you remove them."
+                        } else {
+                            "They stay: the newest backup file could not be read, so nothing can be told to be unused yet."
+                        },
+                ),
+            )
+        }
+        if (f.unverifiedCount > 0) {
+            add(
+                Line(
+                    Severity.INFO,
+                    "${count(f.unverifiedCount, "file")} in this folder ${if (f.unverifiedCount == 1) "does" else "do"} not match the backup that lists " +
+                        "${if (f.unverifiedCount == 1) "it" else "them"} (a folder still syncing?) and ${if (f.unverifiedCount == 1) "is" else "are"} left alone.",
                 ),
             )
         }
@@ -217,6 +234,12 @@ object BackupCopy {
         }
         if (report.leftovers > 0) {
             add("${count(report.leftovers, "file")} in the folder cannot be used and ${if (report.leftovers == 1) "was" else "were"} not checked.")
+        }
+        if (report.unverified > 0) {
+            add(
+                "${count(report.unverified, "file")} in the folder ${if (report.unverified == 1) "does" else "do"} not match the backup that lists " +
+                    "${if (report.unverified == 1) "it" else "them"} and ${if (report.unverified == 1) "was" else "were"} not checked.",
+            )
         }
     }
 

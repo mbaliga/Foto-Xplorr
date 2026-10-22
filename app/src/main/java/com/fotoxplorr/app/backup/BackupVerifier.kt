@@ -41,11 +41,13 @@ class VerifyReport(
     val recoveredPacks: Int = 0,
     /** Files in the folder Fotoz cannot use (a pack with no index, an index that does not open); they were not checked. */
     val leftovers: Int = 0,
+    /** Files of a pack whose index disagrees about its length (a pack still syncing, or cut short); they were not checked. */
+    val unverified: Int = 0,
 ) {
     val isClean: Boolean get() = problems.isEmpty()
 
     /** True when "everything is intact" would claim more than the check saw: it fell back, covered packs no snapshot lists, or skipped files. */
-    val hasCaveats: Boolean get() = skippedManifests > 0 || recoveredPacks > 0 || leftovers > 0
+    val hasCaveats: Boolean get() = skippedManifests > 0 || recoveredPacks > 0 || leftovers > 0 || unverified > 0
 }
 
 /**
@@ -150,6 +152,7 @@ object BackupVerifier {
             skippedManifests = loaded.skippedManifests,
             recoveredPacks = loaded.recovered.size,
             leftovers = loaded.leftovers.size,
+            unverified = loaded.unverified.size,
         )
     }
 

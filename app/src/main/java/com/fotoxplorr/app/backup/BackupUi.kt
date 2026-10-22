@@ -247,7 +247,7 @@ private fun PreflightDialog(flow: BackupFlow, stage: BackupStage.Preflight, requ
                     )
                 }
                 if (locationMissing) TextButton(onClick = requestLocation) { Text("Allow reading photo locations") }
-                if (leftovers.isNotEmpty()) TextButton(onClick = flow::askRemoveLeftovers) { Text("Remove the leftover files…") }
+                if (leftovers.isNotEmpty() && stage.preparation.loaded.leftoversRemovable) TextButton(onClick = flow::askRemoveLeftovers) { Text("Remove the leftover files…") }
                 Spacer(Modifier.height(4.dp))
             }
         },

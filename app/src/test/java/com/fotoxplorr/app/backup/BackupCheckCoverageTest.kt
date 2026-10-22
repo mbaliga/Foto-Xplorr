@@ -145,4 +145,18 @@ class BackupCheckCoverageTest {
         assertEquals(0, report.generation)
         assertEquals(10, report.filesVerified)
     }
+
+    @Test
+    fun `a pack whose index disagrees about its length is reported as not checked, never as intact`() {
+        File(dir, BackupLayout.manifestName(2)).delete()
+        val pack = secondRunPacks().first()
+        val file = File(dir, pack)
+        file.writeBytes(file.readBytes().copyOf(file.length().toInt() - 10))
+        val report = verify()
+        assertEquals(2, report.unverified)
+        assertTrue(report.hasCaveats)
+        val text = BackupCopy.verifyClean(report)
+        assertFalse(text, text.contains("everything is intact"))
+        assertTrue(text, text.contains("2 files in the folder do not match the backup that lists them and were not checked."))
+    }
 }
