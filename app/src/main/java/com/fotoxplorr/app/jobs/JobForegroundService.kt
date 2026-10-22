@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.fotoxplorr.app.hyle.ActivityKind
 import androidx.lifecycle.LifecycleService
@@ -56,11 +57,8 @@ class JobForegroundService : LifecycleService() {
         }
         val notification = buildNotification(jobs)
         val type = foregroundTypeFor(jobs.map { it.kind }, Build.VERSION.SDK_INT)
-        if (type != 0) {
-            startForeground(NOTIFICATION_ID, notification, type)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        // ServiceCompat drops the type below Android 10, where the three-argument call does not exist.
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
     }
 
     /**
