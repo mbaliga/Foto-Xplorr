@@ -278,6 +278,18 @@ private fun WallAndPanel(
     export: PrintActions?,
 ) {
     val marks = remember { mutableStateListOf<Offset>() }
+    // The reference lives with the marks, not in ScalePanel: that panel is rebuilt on every return from
+    // the hang step, and the marks (kept here) must keep meaning the reference they were made against.
+    var reference by remember { mutableStateOf(ReferenceObject.A4_LONG) }
+    var referenceCm by remember { mutableStateOf(ReferenceObject.A4_LONG.cm) }
+    // The wall width follows two marked ends of the reference, but only when the person marks or
+    // changes the reference: never because the panel came back, which would undo a width typed since.
+    fun calibrateFromMarks(cm: Float) {
+        if (marks.size == 2 && wall != null) {
+            val px = WallScale.lengthPx(marks[0].x, marks[0].y, marks[1].x, marks[1].y)
+            WallScale.fromReference(cm, px, wall.widthPx)?.let { w -> onEdit { it.copy(wallWidthCm = w) } }
+        }
+    }
     val maxPanel = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -289,6 +301,7 @@ private fun WallAndPanel(
                 onMark = { p ->
                     if (marks.size >= 2) marks.clear()
                     marks.add(p)
+                    calibrateFromMarks(referenceCm)
                 },
                 onDraft = { next -> onEdit { next } },
                 modifier = Modifier.fillMaxSize(),
@@ -299,22 +312,35 @@ private fun WallAndPanel(
             Modifier.fillMaxWidth().heightIn(max = maxPanel).verticalScroll(rememberScrollState()).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (draft.step == WallStep.SCALE) ScalePanel(draft, wall, marks, onEdit) else HangPanel(draft, pictures, onEdit, export)
+            if (draft.step == WallStep.SCALE) ScalePanel(
+                    draft = draft,
+                    wall = wall,
+                    marks = marks,
+                    reference = reference,
+                    referenceCm = referenceCm,
+                    onReference = { ref, cm ->
+                        reference = ref ?: reference
+                        referenceCm = cm
+                        calibrateFromMarks(cm)
+                    },
+                    onEdit = onEdit,
+                ) else HangPanel(draft, pictures, onEdit, export)
         }
     }
 }
 
 @Composable
-private fun ScalePanel(draft: WallDraft, wall: WallPhoto?, marks: List<Offset>, onEdit: ((WallDraft) -> WallDraft) -> Unit) {
-    var reference by remember { mutableStateOf(ReferenceObject.A4_LONG) }
-    var referenceCm by remember { mutableStateOf(ReferenceObject.A4_LONG.cm) }
-    // The wall width follows whichever way the person set it last: two marked ends of the reference...
-    LaunchedEffect(marks.toList(), referenceCm, wall) {
-        if (marks.size == 2 && wall != null) {
-            val px = WallScale.lengthPx(marks[0].x, marks[0].y, marks[1].x, marks[1].y)
-            WallScale.fromReference(referenceCm, px, wall.widthPx)?.let { cm -> onEdit { it.copy(wallWidthCm = cm) } }
-        }
-    }
+private fun ScalePanel(
+    draft: WallDraft,
+    wall: WallPhoto?,
+    marks: List<Offset>,
+    reference: ReferenceObject,
+    referenceCm: Float,
+    onReference: (ReferenceObject?, Float) -> Unit,
+    onEdit: ((WallDraft) -> WallDraft) -> Unit,
+) {
+    // The wall width follows whichever way the person set it last: two marked ends of the reference
+    // (worked out where they are marked, in WallAndPanel)...
     // ...or a distance typed before the photo had finished decoding, applied once it has.
     LaunchedEffect(wall) {
         if (wall != null && !draft.isCalibrated && draft.distanceCm > 0f) {
@@ -336,14 +362,11 @@ private fun ScalePanel(draft: WallDraft, wall: WallPhoto?, marks: List<Offset>, 
             WallChip(
                 WallCopy.reference(ref),
                 selected = reference == ref,
-                onClick = {
-                    reference = ref
-                    referenceCm = ref.cm
-                },
+                onClick = { onReference(ref, ref.cm) },
             )
         }
     }
-    NumberField(WallCopy.REFERENCE_LENGTH, referenceCm, { referenceCm = it }, Modifier.fillMaxWidth())
+    NumberField(WallCopy.REFERENCE_LENGTH, referenceCm, { onReference(null, it) }, Modifier.fillMaxWidth())
     NumberField(
         WallCopy.DISTANCE,
         draft.distanceCm,
