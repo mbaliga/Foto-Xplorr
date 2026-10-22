@@ -1013,21 +1013,42 @@ historical and saved as "Open the app on", so only the label changed) is `experi
 It keeps ONE `rememberSaveable` id and ONE `BackHandler(enabled = open != null)`; an experiment calls
 `onClose` and registers no Back handler for "close", because two of them (similarity, AI keys) never had
 one. An experiment with an inner step registers its own: it is composed after the host's, so it is asked
-first, and the host's gets the press after the last step. The id is saved only for `restorable` entries
-and an id this build does not know, or an entry the device cannot run, opens the hub. Everything inside an
-experiment is that experiment's to save; the host saves nothing but the id. The host also provides
+first, and the host's gets the press after the last step. A shell room (the nav or options room) opened
+over an open experiment is closed FIRST: `GalleryBrowser`'s Back handler is `RoomFirstBackHandler`, which
+re-registers itself one frame after a room opens so it is the newest callback, whichever experiment and
+inner step is open. Only a Robolectric stand-in handler has run this; the real shell's room over the real
+browser has no test and nothing has run on a device. The saved id is tagged with a per-process UUID
+(`currentProcessId`), and `restorable` applies to PROCESS DEATH only: in the same process (rotation, the
+viewer round trip, leaving the destination) every open id comes back, after a process kill only a
+`restorable` entry's id does. Without the tag a non-restorable entry would also vanish when the gallery is
+parked for the viewer, because that parking runs the same saver. An id this build does not know, or an
+entry the device cannot run, opens the hub. Everything inside an experiment is that experiment's to save;
+the host saves nothing but the id. The section is composed only while its rail word is the destination, so
+leaving it (Settings, the Map word, a rail scrub that rests on another word, a route) would drop the open
+id and every `rememberSaveable` inside it: `GalleryScreen` owns one `rememberSaveableStateHolder` and
+`DestinationContent` wraps only the PLACES (Experimental) branch in `KeepExperimentalState`, so the open
+experiment and its draft are parked and handed back. Anything only `remember`ed is not kept, and the
+parked drafts ride in the saved-state Bundle (a very large sketch could approach its size limit; not
+measured). The "Experimental" word does not fit the rail at 44 sp (the word measures 274 sp at 44 sp, more
+than the row on the 260 dp rail gives it): `DestinationWordRail` measures each row's label and `railFontSpFor` shrinks only
+the rows that do not fit, down to a 28 sp floor, so the other words stay at 44 sp and a large font scale
+can still ellipsise it. The hub's cards are `Role.Button` with no long-press action, and the hub, privacy
+and group titles are headings. The host also provides
 `LocalContentColor` (#62) for every screen it opens. A full-screen area that takes drags
 (a drawing board, a wall editor) goes inside `Modifier.clearOfShellEdges()` (#72), which keeps it
 `ShellEdges.INSET_DP` (the shell's private 56 dp zone plus 4) from each side and clear of the system bars;
-`ShellEdgesTest` reads the shell's source and fails if its `EDGE_DP` changes. Photos come only from
+`ShellEdgesTest` reads the shell's source (the relative path `../shared-libraries/...` from `app/` must
+exist) and fails if its `EDGE_DP` changes, or if the source or the declaration cannot be found (it no
+longer skips). Photos come only from
 `ExperimentEnv.assets` (the browsable list, #33) and pixels only through `ExperimentEnv.decode`, which asks
 `mayExport` again, so a folder locked again while the experiment is open stops the next read. The location
 index starts from the compass entry when it opens with nothing scanned, and from Map mode (`PhotoMapPane`);
 nowhere else.
 
 A camera screen, a permission prompt, or anything that starts work on open is registered with
-`restorable = false`: after process death or recreation the host then shows the hub, never that
-screen with no permission and no work behind it. Registration is one `ExperimentEntry` appended to
+`restorable = false`: after process death the host then shows the hub, never that screen with no
+permission and no work behind it. The compass is the built-in example (a location read on open, a
+permission in context); `ExperimentalHostTest` pins it as the only one. Registration is one `ExperimentEntry` appended to
 `builtInExperiments`; its id is saved state, so it is never renamed and never reused (`"wall"` is the
 3D photo wall, the room mock-up is `"wall-mockup"`). `ExperimentalHostTest` pins the id list on purpose.
 
@@ -1035,7 +1056,10 @@ screen with no permission and no work behind it. Registration is one `Experiment
 
 The drawing board (aquarium) and the wall editor (wall mock-up) wrap only their TOUCH area in
 `Modifier.clearOfShellEdges()` (#72, #78): the wall photo is still drawn across the full area, and a
-frame wholly inside the 60 dp zone cannot be grabbed by touch and is moved with the buttons. The wall
+frame wholly inside the 60 dp zone cannot be grabbed by touch and is moved with the buttons. For the wall
+this inset applies to the touch layer in the HANG step only: in the SCALE step the tap layer covers the
+whole canvas (a tap is no drag), so a reference end at the photo's border can be marked; whether the
+shell still reads a tap in its edge zone there is a device check. The wall
 screen applies `statusBarsPadding` and `navigationBarsPadding` itself so the helper does not add a second
 system-bar inset. The tank (taps and holds, not drags) is deliberately NOT inset: a tap at the screen
 edge still feeds the fish, and a drag that starts in the zone opening a room is the shell doing its job.
@@ -1069,12 +1093,26 @@ reconciled against `env.assets`: a lost wall photo returns to step 1, lost pictu
 an EMPTY list is "still loading" and never wipes the draft. Creatures live in `filesDir/aquarium` as
 a PNG then a JSON written LAST (a PNG without its JSON is ignored and swept), with UUID-only ids so a
 file name cannot walk out of the folder; a record from a newer version is read for the fields known.
+`SpriteIo.loadAndSweep` decodes every listed pair on open and deletes the ones that are not an image, are
+over 1024 px or are not the size their record says, so a pair that lists but will not decode neither
+counts toward the 12 nor traps the person (a decode that fails only with `OutOfMemoryError` is skipped
+for that run, the files kept). Robolectric's decoder refuses a PNG cut off after its header; a device's
+may return a partial or blank bitmap, which is then kept and deletable: unverified. While Swim saves,
+the board gesture is not installed and the chips are disabled, and `draftAfterSwim` clears the draft only
+if its sketch is the one that was saved. A ready shape is added whole or not at all
+(`ReadyShapes.fits`), mirrored for "Head faces left".
 
 ## 82. A print file is a new file with the place removed, and `ExifCopier` carries the source's resolution
 
 `ExifCopier` copies the source file's own `XResolution`, `YResolution` and `ResolutionUnit` (they are not
 in `EXCLUDED_TAGS`; a test pins it), so the density the print needs must be written AFTER `ExifCopier.copy`,
-then the JFIF density last (`JfifDensity`, which patches only bytes 13..17 of the APP0, or inserts one).
+then the JFIF density last (`JfifDensity`, which patches only bytes 13..17 of the APP0, or inserts one;
+`stampFile` and `readDpi(file)` walk the segments by seeking and stop at SOS, patch in place or stream
+into a `.part` file, so the print is never read whole into memory). The file lands in `Pictures/Fotoz/Prints`
+on Android 10 and later (below that `RELATIVE_PATH` is not set and it is in the default Pictures folder,
+so the saved sentence names no folder). A cancel that arrives during or after `publish` returns the
+saved file, because `withContext` would drop a result when the caller was cancelled; one that arrives
+before it publishes nothing.
 androidx `ExifInterface.saveAttributes` puts the Exif APP1 BEFORE Skia's JFIF APP0, so JFIF is not first
 after SOI; libjpeg-based readers do not mind, a strict sniffer may call it Exif. Both densities are
 written and equal; `PrintExporter` reads them back and refuses to publish otherwise. GPS and XMP location
@@ -1085,7 +1123,10 @@ times: `mayExport` at the start, inside `env.decode`, and again immediately befo
 print path checks on every `onWrite` and closes the adapter when the experiment is left. Wide gamut: the
 bitmap is drawn onto an opaque white sRGB bitmap, which converts Display-P3; only a flat colour is proven
 in tests. `android.print` + `PdfDocument` need no dependency, but Robolectric has no PDF writer, so the
-adapter callbacks are untested (the page maths is pure).
+adapter callbacks are untested (the page maths is pure). The system print page keeps a picture at real
+size only if it fits inside the paper less the margins the dialog reports (`PrintAttributes.minMargins`,
+0 on borderless photo paper; 1 cm only when it reports none): A4 on A4 is shrunk inside the printer's
+edge. What a real dialog reports for a given printer is unverified.
 
 ## 83. No camera intent: `ACTION_IMAGE_CAPTURE` is not used, and declaring CAMERA later would break it
 
@@ -1113,7 +1154,14 @@ From a typed distance the wall width uses the image's SHARE of the 43.27 mm full
 200 cm at 2 m, test pins 199.7). Both ignore lens distortion and a wall that is not square to the camera;
 a reference measured off the wall's plane is wrong by the perspective. A frame's size is the PRINT: mat
 and moulding are drawn outside it and are in neither the file nor the dpi. A photo's real pixels come from
-`DecodedBitmap.sourceWidth/Height`, never `MediaAsset.width/height` (#48).
+`DecodedBitmap.sourceWidth/Height`, never `MediaAsset.width/height` (#48). "Hang them" hangs a landscape
+photo lying down, each picture by its own shape (a mixed set is laid out in square cells); the chosen
+pictures are decoded as soon as they are chosen to know that, and until a decode finishes the library's
+listed size is used, which can be the un-rotated grid for an EXIF-rotated photo. A plain tap on a frame
+changes nothing: the snap to a standard size and level runs only after a gesture that moved, sized or
+turned it. A typed distance that gives no usable width zeroes the wall width ("Set the scale to go on.")
+and a different wall photo resets the distance; the Hang step is still reachable with frames hung and a
+zero width, and the Move buttons are not guarded there (known, unfixed).
 
 ## 86. A map download is its own job kind, and the network library's HTTP hook is global
 
@@ -1124,8 +1172,14 @@ or copies bytes is added to `movesBytes()` or it is declared as media processing
 non-blank String as "<title> finished." and a thrown `CancellationException` as silent, so a download that is
 cancelled must pause and RETHROW; one the person ended returns a blank String. The map library's
 `HttpRequestUtil.setOkHttpClient` is process-global: `MapRequestCap` installs the 4-request cap only while a
-region downloads and restores the library's default when the last one stops, or live panning stays
-throttled. The cap is a hard precondition: the engine probes it once (install then restore, no request) and
+region downloads and restores the library's default after the last one has STOPPED, or live panning stays
+throttled. `setActive(false)` is asynchronous, so the engine marks a region as stopping on pause, delete
+or finish, and takes the cap off only when every running or stopping region has reported itself stopped,
+or 5 s after it was told to stop (`SETTLE_MILLIS`, a guess); a resume of a stopping region supersedes the
+old stop. A stopped region's readings are dropped by the library unless `setDeliverInactiveMessages(true)`
+is set, which `MapLibreOfflineBackend` does while it has a listener (read from bytecode, not run). Pause
+finds the running job by the area's region id, not its title (a process-wide map from region id to job
+id), and a tap on Download or Resume with no connection says so before anything is created. The cap is a hard precondition: the engine probes it once (install then restore, no request) and
 turns `throttleInstalled` off for the process if installing ever fails, which disables the button.
 `create` and `list` fetch nothing and `resume` is the only call that may; a late progress reading after a
 pause is `Rejected` by `DownloadGuard`, so the glue stops the engine on any move into Paused or Failed.
@@ -1136,7 +1190,8 @@ Cancel is pause: nothing deletes except `engine.delete` on the person's request,
 `GeoIndexState.browsablePoints(ids)` takes explicit ids from `browsableAssets` and refuses to read the whole
 geo index (#33): a locked photo's place can never become a suggested area. The map library's visible-region
 bounds on the pitched Map mode span hundreds of kilometres, so "what is on screen" (the pill) is
-`ViewArea.boxOf` from the camera centre, zoom and size, as a flat view. The tile maths follows slippy xyz
+`ViewArea.boxOf` from the camera centre, zoom, size and bearing, as a flat view (the bounding box of
+the rotated screen, width*|cos|+height*|sin| across; pitch is ignored). The tile maths follows slippy xyz
 at the same zoom (512 px tiles, assumed identical to the library's cover, not verified); a box over the date
 line is refused (`ANTIMERIDIAN_VERIFIED = false`). `RegionBudget`'s byte table and overhead are guesses
 until a device spike replaces them. The source scan (#43) still applies: the Offline build's pane is a stub
