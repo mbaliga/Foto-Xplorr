@@ -130,6 +130,17 @@ internal fun rememberTextSelectState(
     return state
 }
 
+/**
+ * Whether the viewer offers Select text (the actions room's row and the details card's line) at
+ * all: the photo can be read ([canLift], a still raster image) and the mode would have something
+ * to show, either a word reader to ask ([hasLayoutProvider]) or whole blocks the index stored
+ * ([storedBlockCount]). With neither, the mode could only open on "No selectable text found", a
+ * dead end for a photo opened from another app that has no index and, without a reader, no way to
+ * get words.
+ */
+internal fun selectTextOffered(canLift: Boolean, hasLayoutProvider: Boolean, storedBlockCount: Int): Boolean =
+    canLift && (hasLayoutProvider || storedBlockCount > 0)
+
 /** The words the mode says, kept here so they are in one place and testable without a screen. */
 internal object TextSelectCopy {
     const val HINT = "Tap a block, or draw over the words you want"

@@ -14,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +40,7 @@ import com.fotoxplorr.app.openwith.lookupUncataloguedRow
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
+import com.fotoxplorr.app.recognition.TextLayoutProvider
 import com.fotoxplorr.app.openwith.syntheticNegativeMediaId
 import com.fotoxplorr.app.openwith.withSafeExtras
 import com.fotoxplorr.app.share.PreparedItem
@@ -101,6 +103,11 @@ class ExternalViewerActivity : ComponentActivity() {
             var asset by remember { mutableStateOf<MediaAsset?>(null) }
             val galleryPreferences = remember { GalleryPreferences(applicationContext) }
             val preferences by galleryPreferences.observe().collectAsStateWithLifecycle()
+            // A photo from another app has no recognition index, so the word reader is the only
+            // source of its text for Select text; released with the composition, as the main
+            // activity does when its viewer closes.
+            val textLayoutProvider = remember { TextLayoutProvider(applicationContext) }
+            DisposableEffect(textLayoutProvider) { onDispose { textLayoutProvider.release() } }
 
             LaunchedEffect(uri) {
                 when (val decision = withContext(Dispatchers.IO) { decideOpen(context, uri) }) {
@@ -168,6 +175,7 @@ class ExternalViewerActivity : ComponentActivity() {
                             // remembered in the same preference.
                             transparencyBackground = preferences.viewerTransparencyBackground,
                             onSetTransparencyBackground = galleryPreferences::setViewerTransparencyBackground,
+                            textLayoutProvider = textLayoutProvider,
                         )
                     }
                 }

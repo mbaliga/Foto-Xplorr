@@ -207,6 +207,25 @@ class TextSelectOverlayTest {
     }
 
     @Test
+    fun `a short drag at high zoom is a stroke over its word, not a tap on the block`() {
+        val counts = Counts()
+        compose.setContent { Harness(wordState(), counts, zoom = 4f) }
+        compose.waitForIdle()
+        // 10 px is under touch slop on screen units undivided (16 px) but 40 px of screen at 4x.
+        swipeLine(Offset(730f, 315f), Offset(740f, 315f))
+        status().assertTextEquals("1 word selected")
+    }
+
+    @Test
+    fun `the same short drag with no zoom is still a tap on the block`() {
+        val counts = Counts()
+        compose.setContent { Harness(wordState(), counts, zoom = 1f) }
+        compose.waitForIdle()
+        swipeLine(Offset(730f, 315f), Offset(740f, 315f))
+        status().assertTextEquals("3 words selected")
+    }
+
+    @Test
     fun `a stroke that touches no word leaves the selection as it was`() {
         val counts = Counts()
         compose.setContent { Harness(wordState(), counts, zoom = 4f) }

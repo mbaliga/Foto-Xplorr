@@ -372,8 +372,10 @@ fun ViewerScreen(
     // Entering Select text, from the chip, the actions room's row or the details card's line. Rooms
     // close first (a no-op from the chip, which only shows at home) so the mode starts on a clean
     // screen; opening the mode replaces Lifting, so the two can never both be on. Offered exactly
-    // where the word reader can read the photo (the same test as lifting: a still raster image).
-    val selectTextEntry: (() -> Unit)? = if (canLift) {
+    // where the word reader can read the photo (the same test as lifting: a still raster image) AND
+    // something can supply its words: a host with no reader and no stored text would open the mode
+    // on "No selectable text found" for a photo that may be full of it.
+    val selectTextEntry: (() -> Unit)? = if (selectTextOffered(canLift, textLayoutProvider != null, liveTextBlocks.size)) {
         { shell.closeAll(); viewerMode = ViewerMode.open(viewerMode, ViewerMode.SelectingText) }
     } else {
         null
@@ -803,11 +805,15 @@ fun ViewerScreen(
                         // own "GESTURES" caption: "Drag the photo down for its details, up from
                         // the bottom for what you can do with it"), so this is a second way IN to
                         // a surface that already exists, not a new one. Pinch IN = the details,
-                        // pinch OUT = the actions.
+                        // pinch OUT = the actions. Nothing while a mode owns the screen: the rooms
+                        // are withdrawn there, and one opened anyway would compose on top of the
+                        // mode, outlive its Back, and let its Lift row swap the mode underneath.
                         onPinch = { direction ->
-                            when (direction) {
-                                PinchDirection.IN -> shell.open(RoomGeography.Details)
-                                PinchDirection.OUT -> shell.open(RoomGeography.Actions)
+                            if (!viewerMode.ownsScreen) {
+                                when (direction) {
+                                    PinchDirection.IN -> shell.open(RoomGeography.Details)
+                                    PinchDirection.OUT -> shell.open(RoomGeography.Actions)
+                                }
                             }
                         },
                         onGestureEnd = {

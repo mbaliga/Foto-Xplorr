@@ -120,6 +120,7 @@ internal fun LiveTextOverlay(
                 var mark: TextSelectState.Held? = null
                 fun touch() = TextSelectTouch(state.layout, size.toSize(), density, currentScale())
                 detectTextSelectGestures(
+                    scale = { currentScale() },
                     onTap = { point ->
                         val layout = state.layout
                         val touch = touch()

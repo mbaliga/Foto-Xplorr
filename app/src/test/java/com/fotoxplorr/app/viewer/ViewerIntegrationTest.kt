@@ -26,12 +26,16 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.pinch
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.swipeDown
 import androidx.test.core.app.ApplicationProvider
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
+import com.fotoxplorr.app.gallery.ViewerPinchMode
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.recognition.TextBlock
+import com.fotoxplorr.app.recognition.TextLayoutProvider
+import com.fotoxplorr.app.textselect.TextLayout
 import com.fotoxplorr.app.render.ViewerFixtures
 import com.fotoxplorr.app.ui.FotoXplorrTheme
 import org.junit.Assert.assertEquals
@@ -100,6 +104,8 @@ class ViewerIntegrationTest {
         manualLongitude: Double? = null,
         animated: Boolean = false,
         liveTextBlocks: List<TextBlock> = emptyList(),
+        textLayoutProvider: TextLayoutProvider? = null,
+        pinchMode: ViewerPinchMode = ViewerPinchMode.OPTICAL_ZOOM,
     ) {
         ViewerScreen(
             asset = asset,
@@ -129,6 +135,8 @@ class ViewerIntegrationTest {
             manualLongitude = manualLongitude,
             animated = animated,
             liveTextBlocks = liveTextBlocks,
+            textLayoutProvider = textLayoutProvider,
+            pinchMode = pinchMode,
             plateMapBackdrop = ViewerFixtures.mapStandIn,
             // Keeps these tests about wiring: no catalogue writes, no key-moment indexing.
             catalogueActions = false,
@@ -399,6 +407,14 @@ class ViewerIntegrationTest {
         compose.waitForIdle()
     }
 
+    /** A word reader that finds nothing, standing in for the host's: what a photo from another app has. */
+    private fun wordReader() = TextLayoutProvider(
+        object : TextLayoutProvider.Engine {
+            override suspend fun read(asset: MediaAsset): TextLayout? = null
+            override fun close() = Unit
+        },
+    )
+
     private fun selectTextIsOn(): Boolean =
         compose.onAllNodesWithText("Select all").fetchSemanticsNodes().isNotEmpty()
 
@@ -441,7 +457,7 @@ class ViewerIntegrationTest {
     @Test
     fun `the actions room's Select text row closes the room and opens the mode, text or no text`() {
         val photos = roll()
-        compose.setContent { themed { Viewer(photos[4], photos) } }
+        compose.setContent { themed { Viewer(photos[4], photos, textLayoutProvider = wordReader()) } }
         compose.waitForIdle()
         openActionsRoom()
         compose.onNodeWithText("Select text").assertExists().performClick()
@@ -450,6 +466,62 @@ class ViewerIntegrationTest {
         assertTrue("the mode's toolbar is up", selectTextIsOn())
         // Nothing stored and nothing read yet: the mode says so rather than pretending.
         compose.onNodeWithText("Done").assertExists()
+        compose.onAllNodesWithText("Open with").assertCountEquals(0)
+    }
+
+    @Test
+    fun `with no word reader and no stored text there is no Select text row to dead-end in`() {
+        val photos = roll()
+        compose.setContent { themed { Viewer(photos[4], photos) } }
+        compose.waitForIdle()
+        openActionsRoom()
+        compose.onNodeWithText("Open with").assertExists()
+        compose.onAllNodesWithText("Select text").assertCountEquals(0)
+    }
+
+    @Test
+    fun `stored text alone is enough to offer the row`() {
+        val photos = roll()
+        compose.setContent { themed { Viewer(photos[4], photos, liveTextBlocks = signText) } }
+        compose.waitForIdle()
+        openActionsRoom()
+        compose.onNodeWithText("Select text").assertExists()
+    }
+
+    @Test
+    fun `with pinch shortcuts on, a pinch while Select text is on opens no room under it`() {
+        val photos = roll()
+        compose.setContent {
+            themed {
+                Viewer(photos[4], photos, liveTextBlocks = signText, pinchMode = ViewerPinchMode.PANEL_SHORTCUTS)
+            }
+        }
+        compose.waitForIdle()
+        revealChrome()
+        compose.onNodeWithText("Select text").performClick()
+        compose.waitForIdle()
+        assertTrue("the mode's toolbar is up", selectTextIsOn())
+
+        for (spread in listOf(true, false)) {
+            compose.onRoot().performTouchInput {
+                val (from, to) = if (spread) 40f to 260f else 260f to 40f
+                pinch(
+                    start0 = Offset(centerX - from, centerY),
+                    end0 = Offset(centerX - to, centerY),
+                    start1 = Offset(centerX + from, centerY),
+                    end1 = Offset(centerX + to, centerY),
+                    durationMillis = 300,
+                )
+            }
+            compose.waitForIdle()
+        }
+        compose.onAllNodesWithText("Open with").assertCountEquals(0)
+        compose.onAllNodesWithContentDescription("Where this photo was taken").assertCountEquals(0)
+        assertTrue("the mode is still on", selectTextIsOn())
+
+        // Back leaves the mode and there is no room left open behind it.
+        pressBack()
+        assertTrue(!selectTextIsOn())
         compose.onAllNodesWithText("Open with").assertCountEquals(0)
     }
 
@@ -470,7 +542,7 @@ class ViewerIntegrationTest {
     @Test
     fun `Done and Back both leave the mode`() {
         val photos = roll()
-        compose.setContent { themed { Viewer(photos[4], photos) } }
+        compose.setContent { themed { Viewer(photos[4], photos, textLayoutProvider = wordReader()) } }
         compose.waitForIdle()
         openActionsRoom()
         compose.onNodeWithText("Select text").performClick()

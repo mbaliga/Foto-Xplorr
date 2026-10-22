@@ -123,10 +123,12 @@ fun ViewerActionsRoom(
     onLiftSubject: (() -> Unit)? = null,
     /**
      * "Select text" -- open the Select text mode over this photo. Null hides the row; the host
-     * passes it for any still raster photo (see [com.fotoxplorr.app.lift.canLiftSubject], the same
-     * test the word reader applies), whether or not the stored index found text in it: the index
-     * reads at a low resolution and can miss small print, and a photo opened from another app has
-     * no index at all. Like Lift, not behind [catalogueActions]: it reads only the photo itself.
+     * passes it for a still raster photo (see [com.fotoxplorr.app.lift.canLiftSubject], the same
+     * test the word reader applies) that it can supply words for (see [selectTextOffered]: a word
+     * reader or stored blocks), whether or not the stored index found text in it: the index reads
+     * at a low resolution and can miss small print, and a photo opened from another app has no
+     * index at all, only the reader. Like Lift, not behind [catalogueActions]: it reads only the
+     * photo itself.
      */
     onSelectText: (() -> Unit)? = null,
     /** Closes the room. Only the quick strip's Favourite needs it: every other handler passed in
