@@ -97,4 +97,30 @@ class SetLayoutsTest {
         assertTrue(poster.hCm > 90f)
         assertTrue(single.hCm <= SetLayouts.SET_MAX_HEIGHT_CM)
     }
+
+    @Test
+    fun `a cell is the preset as it is, turned, or square on its long side`() {
+        val preset = FrameSize("A4", 21f, 29.7f)
+        assertEquals(preset, SetLayouts.cell(preset, SetOrientation.PORTRAIT))
+        assertEquals(29.7f to 21f, SetLayouts.cell(preset, SetOrientation.LANDSCAPE).let { it.wCm to it.hCm })
+        assertEquals(29.7f to 29.7f, SetLayouts.cell(preset, SetOrientation.MIXED).let { it.wCm to it.hCm })
+    }
+
+    @Test
+    fun `the orientation of a set is all upright, all lying, or mixed`() {
+        assertEquals(SetOrientation.PORTRAIT, SetOrientation.of(listOf(false, false)))
+        assertEquals(SetOrientation.PORTRAIT, SetOrientation.of(emptyList()))
+        assertEquals(SetOrientation.LANDSCAPE, SetOrientation.of(listOf(true, true)))
+        assertEquals(SetOrientation.MIXED, SetOrientation.of(listOf(true, false)))
+    }
+
+    @Test
+    fun `what it picks for lying pictures really fits the share of the wall`() {
+        for (orientation in SetOrientation.entries) {
+            val size = SetLayouts.biggestThatFits(SetKind.GRID, 6, 300f, 200f, 3f, orientation)
+            val (w, h) = SetLayouts.extent(SetLayouts.boxes(SetKind.GRID, 6, SetLayouts.cell(size, orientation), 3f), 3f)
+            assertTrue("$orientation $w", w <= 300f * SetLayouts.WALL_SHARE_W)
+            assertTrue("$orientation $h", h <= 200f * SetLayouts.WALL_SHARE_H)
+        }
+    }
 }

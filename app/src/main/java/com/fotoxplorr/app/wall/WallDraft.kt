@@ -70,17 +70,33 @@ internal data class WallDraft(
         }
     }
 
-    /** Hangs [pictures] in the arrangement of [kind], at the biggest size that fits, or nothing if the wall is not calibrated. The step is the caller's. */
-    fun arranged(wallHeightCm: Float): WallDraft {
+    /**
+     * Hangs [pictures] in the arrangement of [kind], at the biggest size that fits, or nothing if the wall is not calibrated. The step is the caller's.
+     *
+     * [sourceSizes] holds a picture's upright size in pixels by id. A picture wider than tall hangs
+     * lying down (the orientation with the smaller crop, so the default frame does not cut about
+     * 45% off a 4:3 photo); one with no size here, or not wider than tall, hangs upright.
+     */
+    fun arranged(wallHeightCm: Float, sourceSizes: Map<Long, Pair<Int, Int>> = emptyMap()): WallDraft {
         if (!isCalibrated || pictures.isEmpty()) return copy(frames = emptyList())
         val n = pictures.size.coerceAtMost(kind.capacity)
-        val size = SetLayouts.biggestThatFits(kind, n, wallWidthCm, wallHeightCm, borderCm)
-        val boxes = SetLayouts.boxes(kind, n, size, borderCm)
+        val landscape = pictures.take(n).map { id -> sourceSizes[id]?.let { (w, h) -> w > h } ?: false }
+        val orientation = SetOrientation.of(landscape)
+        val preset = SetLayouts.biggestThatFits(kind, n, wallWidthCm, wallHeightCm, borderCm, orientation)
+        val cell = SetLayouts.cell(preset, orientation)
+        val boxes = SetLayouts.boxes(kind, n, cell, borderCm)
         val centreX = wallWidthCm / 2
         val centreY = wallHeightCm * 0.45f
         return copy(
             frames = boxes.mapIndexed { i, box ->
-                WallFrame(pictures[i], (centreX + box.dxCm) / wallWidthCm, (centreY + box.dyCm) / wallWidthCm, box.wCm, box.hCm)
+                // A mixed set is laid out in square cells; each picture takes its own shape inside its cell.
+                val (w, h) = if (orientation != SetOrientation.MIXED) {
+                    box.wCm to box.hCm
+                } else {
+                    val share = box.wCm / cell.wCm
+                    (if (landscape[i]) preset.hCm else preset.wCm) * share to (if (landscape[i]) preset.wCm else preset.hCm) * share
+                }
+                WallFrame(pictures[i], (centreX + box.dxCm) / wallWidthCm, (centreY + box.dyCm) / wallWidthCm, w, h)
             },
             selected = 0,
         )

@@ -80,6 +80,53 @@ class WallDraftTest {
         assertTrue(d.frames.all { it.wCm in 20f..61f })
     }
 
+    private fun cropShare(f: WallFrame, srcW: Int, srcH: Int): Float {
+        val crop = PrintMath.coverCrop(srcW, srcH, f.wCm.toDouble(), f.hCm.toDouble())
+        return (crop.keptWidth * crop.keptHeight).toFloat()
+    }
+
+    @Test
+    fun `a landscape photo is hung lying down, so the default frame does not cut about 45 percent off it`() {
+        val wall = WallDraft(wallId = 1, wallWidthCm = 300f, pictures = listOf(5), step = WallStep.PICTURES)
+        val upright = wall.arranged(225f).frames.single()
+        val lying = wall.arranged(225f, mapOf(5L to (4000 to 3000))).frames.single()
+
+        assertTrue("was ${cropShare(upright, 4000, 3000)}", cropShare(upright, 4000, 3000) < 0.6f)
+        assertTrue(lying.wCm > lying.hCm)
+        assertEquals(upright.hCm, lying.wCm, 1e-3f)
+        assertEquals(upright.wCm, lying.hCm, 1e-3f)
+        assertTrue("was ${cropShare(lying, 4000, 3000)}", cropShare(lying, 4000, 3000) > 0.9f)
+    }
+
+    @Test
+    fun `a portrait photo, a square one and a photo of unknown size stay upright`() {
+        val wall = WallDraft(wallId = 1, wallWidthCm = 300f, pictures = listOf(5, 6, 7), kind = SetKind.TRIO, step = WallStep.PICTURES)
+        val frames = wall.arranged(225f, mapOf(5L to (3000 to 4000), 6L to (3000 to 3000))).frames
+        assertTrue(frames.all { it.wCm <= it.hCm })
+    }
+
+    @Test
+    fun `every picture of a pair takes the orientation its own photo suits, and they do not overlap`() {
+        val wall = WallDraft(wallId = 1, wallWidthCm = 300f, kind = SetKind.PAIR, pictures = listOf(5, 6), step = WallStep.PICTURES)
+        val sizes = mapOf(5L to (4000 to 3000), 6L to (3000 to 4000))
+        val (a, b) = wall.arranged(225f, sizes).frames
+        assertTrue(a.wCm > a.hCm)
+        assertTrue(b.wCm < b.hCm)
+        val gap = kotlin.math.abs(a.cx - b.cx) * wall.wallWidthCm - (a.wCm + b.wCm) / 2 - 2 * wall.borderCm
+        assertTrue("gap $gap", gap >= SetLayouts.GAP_CM - 0.01f)
+        assertEquals(a.cy, b.cy, 0f)
+    }
+
+    @Test
+    fun `a trio of landscape photos lies down and still fits the share of the wall`() {
+        val wall = WallDraft(wallId = 1, wallWidthCm = 300f, kind = SetKind.TRIO, pictures = listOf(1, 2, 3), step = WallStep.PICTURES)
+        val frames = wall.arranged(225f, mapOf(1L to (4000 to 3000), 2L to (4000 to 3000), 3L to (4000 to 3000))).frames
+        assertTrue(frames.all { it.wCm > it.hCm })
+        val left = frames.minOf { it.cx * 300f - it.wCm / 2 - wall.borderCm }
+        val right = frames.maxOf { it.cx * 300f + it.wCm / 2 + wall.borderCm }
+        assertTrue(right - left <= 300f * SetLayouts.WALL_SHARE_W + 0.01f)
+    }
+
     @Test
     fun `arranging an uncalibrated wall or with no pictures hangs nothing`() {
         assertTrue(WallDraft(pictures = listOf(1)).arranged(200f).frames.isEmpty())

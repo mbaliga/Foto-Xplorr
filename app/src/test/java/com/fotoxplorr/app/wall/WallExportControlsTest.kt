@@ -133,10 +133,13 @@ class WallExportControlsTest {
         compose.onNodeWithText(WallCopy.HANG_HINT).assertExists()
     }
 
-    /** The size the single picture is hung at, from the pure maths. */
+    /** The size the single picture is hung at, from the pure maths: the 600 x 400 picture is wider than tall, so it lies down. */
     private fun hungSize(): PrintSize {
         val wallCm = WallScale.fromDistance(200f, WallScale.GUESSED_FOCAL_35MM, 800, 600)!!
-        val size = SetLayouts.biggestThatFits(SetKind.SINGLE, 1, wallCm, wallCm * 600 / 800, FrameStyle.THIN_BLACK.moldingCm)
+        val preset = SetLayouts.biggestThatFits(
+            SetKind.SINGLE, 1, wallCm, wallCm * 600 / 800, FrameStyle.THIN_BLACK.moldingCm, SetOrientation.LANDSCAPE,
+        )
+        val size = SetLayouts.cell(preset, SetOrientation.LANDSCAPE)
         return PrintSize(size.wCm.toDouble(), size.hCm.toDouble())
     }
 

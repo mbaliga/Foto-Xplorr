@@ -122,6 +122,14 @@ class WallExperienceTest {
         compose.onNodeWithText(WallCopy.HANG_HINT).assertExists()
     }
 
+    /** The size "Hang them" gives one landscape picture on a 4:3 wall photo [wallCm] wide, as (width, height). */
+    private fun lyingSingle(wallCm: Float): FrameSize {
+        val preset = SetLayouts.biggestThatFits(
+            SetKind.SINGLE, 1, wallCm, wallCm * 600 / 800, FrameStyle.THIN_BLACK.moldingCm, SetOrientation.LANDSCAPE,
+        )
+        return SetLayouts.cell(preset, SetOrientation.LANDSCAPE)
+    }
+
     @Test
     fun `with no photos it says so`() {
         shown = emptyList()
@@ -136,7 +144,8 @@ class WallExperienceTest {
 
         // 4:3 wall photo, 200 cm away, the guessed 26 mm lens.
         val wallCm = WallScale.fromDistance(200f, WallScale.GUESSED_FOCAL_35MM, 800, 600)!!
-        val size = SetLayouts.biggestThatFits(SetKind.SINGLE, 1, wallCm, wallCm * 600 / 800, FrameStyle.THIN_BLACK.moldingCm)
+        // The 600 x 400 picture is wider than tall, so it hangs lying down.
+        val size = lyingSingle(wallCm)
         val label = FramePresets.sizeLabel(size.wCm, size.hCm, inches = false)
         waitForText(label)
         // The picture is 600 x 400: dpi at this size is the pure figure, not a number of the screen's own.
@@ -150,7 +159,7 @@ class WallExperienceTest {
         compose.setContent { Host() }
         hangOnePicture()
         val wallCm = WallScale.fromDistance(200f, WallScale.GUESSED_FOCAL_35MM, 800, 600)!!
-        val size = SetLayouts.biggestThatFits(SetKind.SINGLE, 1, wallCm, wallCm * 600 / 800, FrameStyle.THIN_BLACK.moldingCm)
+        val size = lyingSingle(wallCm)
         waitForText(FramePresets.sizeLabel(size.wCm, size.hCm, false))
 
         compose.onNodeWithContentDescription(WallCopy.BIGGER).performClick()

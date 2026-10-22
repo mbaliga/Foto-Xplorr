@@ -111,7 +111,7 @@ internal fun WallPreviewScreen(
         StepBar(draft = draft, onStep = { target -> onEdit { it.copy(step = target) } })
         when (step) {
             WallStep.WALL -> WallStepContent(draft, stills, onEdit)
-            WallStep.PICTURES -> PicturesStep(draft, stills, wall, onEdit)
+            WallStep.PICTURES -> PicturesStep(draft, stills, wall, pictures, onEdit)
             WallStep.SCALE, WallStep.HANG -> WallAndPanel(draft, wall, pictures, onEdit, export)
         }
     }
@@ -178,7 +178,13 @@ private fun WallStepContent(draft: WallDraft, stills: List<MediaAsset>, onEdit: 
 }
 
 @Composable
-private fun PicturesStep(draft: WallDraft, stills: List<MediaAsset>, wall: WallPhoto?, onEdit: ((WallDraft) -> WallDraft) -> Unit) {
+private fun PicturesStep(
+    draft: WallDraft,
+    stills: List<MediaAsset>,
+    wall: WallPhoto?,
+    pictures: Map<Long, HungPicture?>,
+    onEdit: ((WallDraft) -> WallDraft) -> Unit,
+) {
     Column(Modifier.fillMaxSize()) {
         Text(
             WallCopy.LAYOUT,
@@ -219,7 +225,8 @@ private fun PicturesStep(draft: WallDraft, stills: List<MediaAsset>, wall: WallP
             if (draft.frames.isEmpty()) WallCopy.HANG_THEM else WallCopy.ARRANGE_AGAIN,
             onClick = {
                 val height = wall?.let { draft.wallWidthCm * it.heightPx / it.widthPx } ?: return@WallButton
-                onEdit { d -> d.arranged(height).let { if (it.frames.isEmpty()) it else it.copy(step = WallStep.HANG) } }
+                val sizes = sourceSizes(draft.pictures, stills, pictures)
+                onEdit { d -> d.arranged(height, sizes).let { if (it.frames.isEmpty()) it else it.copy(step = WallStep.HANG) } }
             },
             enabled = draft.pictures.isNotEmpty() && wall != null,
             primary = true,
@@ -227,6 +234,21 @@ private fun PicturesStep(draft: WallDraft, stills: List<MediaAsset>, wall: WallP
         )
     }
 }
+
+/**
+ * The upright size of each of [ids] in pixels: the decode's own (`sourceWidth`/`sourceHeight`, TRAPS
+ * #48) once it is there, else what the library listed, which may be the sensor's un-rotated grid for
+ * an EXIF-rotated photo and so can hang one picture the wrong way up; the person turns it with the
+ * button.
+ */
+private fun sourceSizes(ids: List<Long>, stills: List<MediaAsset>, pictures: Map<Long, HungPicture?>): Map<Long, Pair<Int, Int>> =
+    buildMap {
+        for (id in ids) {
+            val size = pictures[id]?.decoded?.let { it.sourceWidth to it.sourceHeight }
+                ?: stills.firstOrNull { it.id.value == id }?.let { it.width to it.height }
+            if (size != null) put(id, size)
+        }
+    }
 
 /**
  * Thumbnails of [stills]. Those in [order] are chosen and carry their position as a number in a

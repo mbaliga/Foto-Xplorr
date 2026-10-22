@@ -75,10 +75,12 @@ fun WallExperience(env: ExperimentEnv, onClose: () -> Unit, modifier: Modifier =
     }
 
     val pictures = remember { mutableStateMapOf<Long, HungPicture?>() }
-    val hungIds = draft.frames.map { it.assetId }
-    LaunchedEffect(hungIds, byId) {
-        pictures.keys.retainAll(hungIds.toSet())
-        for (id in hungIds) {
+    // The chosen pictures are decoded as soon as they are chosen, not only once hung: "Hang them" needs
+    // each one's real shape to hang it upright or lying down.
+    val wantedIds = (draft.pictures + draft.frames.map { it.assetId }).distinct()
+    LaunchedEffect(wantedIds, byId) {
+        pictures.keys.retainAll(wantedIds.toSet())
+        for (id in wantedIds) {
             if (pictures.containsKey(id)) continue
             val asset = byId[id] ?: continue
             pictures[id] = latestEnv.decodeSafely(asset, PICTURE_PREVIEW_LIMITS)?.let(::HungPicture)

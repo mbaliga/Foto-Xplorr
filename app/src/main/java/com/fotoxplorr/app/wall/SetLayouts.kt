@@ -16,6 +16,27 @@ internal enum class SetKind(val key: String, val capacity: Int) {
     }
 }
 
+/**
+ * How the pictures of a set lie: all upright, all lying down, or some of each. It decides the cell
+ * each picture gets ([SetLayouts.cell]), so a set of landscape photos is spaced for landscape
+ * frames and a mixed one is spaced so that neither shape can touch its neighbour.
+ */
+internal enum class SetOrientation {
+    PORTRAIT,
+    LANDSCAPE,
+    MIXED,
+    ;
+
+    companion object {
+        /** The orientation of a set whose pictures lie down where [landscape] says so. No pictures is upright. */
+        fun of(landscape: List<Boolean>): SetOrientation = when {
+            landscape.none { it } -> PORTRAIT
+            landscape.all { it } -> LANDSCAPE
+            else -> MIXED
+        }
+    }
+}
+
 /** A picture's place in a set: its centre as an offset from the set's centre, and its size, all in cm. */
 internal data class PlacedBox(val dxCm: Float, val dyCm: Float, val wCm: Float, val hCm: Float)
 
@@ -81,9 +102,20 @@ internal object SetLayouts {
     }
 
     /**
+     * The size [boxes] is given for a [preset] (held in portrait) in a set that lies as [orientation]:
+     * the preset itself, turned, or a square on its long side, which holds either shape.
+     */
+    fun cell(preset: FrameSize, orientation: SetOrientation): FrameSize = when (orientation) {
+        SetOrientation.PORTRAIT -> preset
+        SetOrientation.LANDSCAPE -> FrameSize(preset.label, preset.hCm, preset.wCm)
+        SetOrientation.MIXED -> FrameSize(preset.label, preset.hCm, preset.hCm)
+    }
+
+    /**
      * The biggest standard size whose set fits [WALL_SHARE_W] x [WALL_SHARE_H] of a wall photo
      * [wallWidthCm] x [wallHeightCm]; the smallest if none does. Only a poster may be taller than
-     * [SET_MAX_HEIGHT_CM], so a pair or a grid starts at a size that reads as a set.
+     * [SET_MAX_HEIGHT_CM], so a pair or a grid starts at a size that reads as a set. The size
+     * returned is the preset in portrait; the set is spaced for [orientation] ([cell]).
      */
     fun biggestThatFits(
         kind: SetKind,
@@ -91,12 +123,13 @@ internal object SetLayouts {
         wallWidthCm: Float,
         wallHeightCm: Float,
         borderCm: Float,
+        orientation: SetOrientation = SetOrientation.PORTRAIT,
     ): FrameSize {
         val sizes = FramePresets.all
             .filter { kind == SetKind.POSTER || it.hCm <= SET_MAX_HEIGHT_CM }
             .sortedBy { it.wCm * it.hCm }
         return sizes.lastOrNull { size ->
-            val (w, h) = extent(boxes(kind, count, size, borderCm), borderCm)
+            val (w, h) = extent(boxes(kind, count, cell(size, orientation), borderCm), borderCm)
             w <= wallWidthCm * WALL_SHARE_W && h <= wallHeightCm * WALL_SHARE_H
         } ?: sizes.first()
     }
