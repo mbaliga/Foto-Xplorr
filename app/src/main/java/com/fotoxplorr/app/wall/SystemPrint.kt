@@ -34,7 +34,11 @@ internal object PrintPage {
     const val PT_PER_INCH = 72f
     private const val MILS_PER_INCH = 1000f
 
-    /** What a printer cannot reach at a sheet's edge, kept clear when a picture has to shrink to fit: 1 cm. */
+    /**
+     * What a printer cannot reach at a sheet's edge (most cut 3 to 5 mm), kept clear: 1 cm. A picture
+     * counts as fitting only inside the page less this on each side, so one as big as the paper is
+     * shrunk too instead of printed edge to edge.
+     */
     const val FIT_MARGIN_PT = 28.35f
 
     /** A4, for a print dialog that gave no paper size. */
@@ -48,15 +52,15 @@ internal object PrintPage {
     fun ptToCm(pt: Float): Double = pt / PT_PER_INCH * PrintMath.CM_PER_INCH
 
     /**
-     * The picture at its real size, centred, when the page is big enough; otherwise the whole
-     * picture scaled down to fit inside the page less [FIT_MARGIN_PT] on each side, centred. The
+     * The picture at its real size, centred, when it fits inside the page less [FIT_MARGIN_PT] on
+     * each side; otherwise the whole picture scaled down to fit inside that, centred. The
      * shape is kept either way. The picture is never turned: the person picks the paper's
      * orientation in the print dialog.
      */
     fun place(pageWidthPt: Float, pageHeightPt: Float, picture: PrintSize): PagePlacement {
         val w = cmToPt(picture.wCm)
         val h = cmToPt(picture.hCm)
-        val fits = w <= pageWidthPt && h <= pageHeightPt
+        val fits = w <= pageWidthPt - 2 * FIT_MARGIN_PT && h <= pageHeightPt - 2 * FIT_MARGIN_PT
         val scale = if (fits) {
             1f
         } else {

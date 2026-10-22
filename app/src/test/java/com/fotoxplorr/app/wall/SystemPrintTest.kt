@@ -70,4 +70,25 @@ class SystemPrintTest {
         assertTrue(p.heightPt <= a4.first - 2 * PrintPage.FIT_MARGIN_PT + 0.01f)
         assertTrue(p.heightPt > p.widthPt)
     }
+
+    @Test
+    fun `a picture exactly the size of the paper is shrunk inside the margin, not printed edge to edge`() {
+        // A4 on A4: most printers cut 3 to 5 mm at the edge, so the picture backs off the edge.
+        val p = PrintPage.place(a4.first, a4.second, PrintSize(21.0, 29.7))
+        assertTrue(p.shrunk)
+        assertTrue(p.leftPt >= PrintPage.FIT_MARGIN_PT - 0.01f && p.topPt >= PrintPage.FIT_MARGIN_PT - 0.01f)
+        assertTrue(p.leftPt + p.widthPt <= a4.first - PrintPage.FIT_MARGIN_PT + 0.01f)
+        assertTrue(p.topPt + p.heightPt <= a4.second - PrintPage.FIT_MARGIN_PT + 0.01f)
+    }
+
+    @Test
+    fun `a picture that just fits inside the margin keeps its real size, one hair bigger shrinks`() {
+        val innerW = a4.first - 2 * PrintPage.FIT_MARGIN_PT
+        val innerH = a4.second - 2 * PrintPage.FIT_MARGIN_PT
+        val fits = PrintPage.place(a4.first, a4.second, PrintSize(PrintPage.ptToCm(innerW - 0.1f), PrintPage.ptToCm(innerH - 0.1f)))
+        assertFalse(fits.shrunk)
+        assertEquals(PrintPage.FIT_MARGIN_PT + 0.05f, fits.leftPt, 0.05f)
+        val over = PrintPage.place(a4.first, a4.second, PrintSize(PrintPage.ptToCm(innerW + 0.5f), PrintPage.ptToCm(innerH - 0.1f)))
+        assertTrue(over.shrunk)
+    }
 }
