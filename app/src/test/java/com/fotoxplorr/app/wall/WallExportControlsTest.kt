@@ -219,6 +219,78 @@ class WallExportControlsTest {
     }
 
     @Test
+    fun `a photo short of pixels is offered Enlarged, no new detail, and ticking it changes the file line`() {
+        compose.setContent { Host() }
+        hangOnePicture()
+        val size = hungSize()
+        val plain = PrintPlanner.plan(600, 400, size)!!
+        val enlarged = PrintPlanner.plan(600, 400, size, enlarge = true)!!
+        assertTrue(PrintPlanner.canEnlarge(600, 400, size))
+        waitForText(WallCopy.fileWillBe(plain.outW, plain.outH, plain.dpi))
+        compose.onNodeWithText(WallCopy.ENLARGE).assertExists()
+        compose.onNodeWithText(WallCopy.ENLARGE_WHY).assertExists()
+
+        compose.onNodeWithText(WallCopy.ENLARGE).performClick()
+        waitForText(WallCopy.fileWillBe(enlarged.outW, enlarged.outH, enlarged.dpi))
+        assertTrue(enlarged.outW > plain.outW)
+        // The offer's reason is only for the unticked state.
+        assertTrue(compose.onAllNodes(hasText(WallCopy.ENLARGE_WHY)).fetchSemanticsNodes().isEmpty())
+
+        compose.onNodeWithText(WallCopy.ENLARGE).performClick()
+        waitForText(WallCopy.fileWillBe(plain.outW, plain.outH, plain.dpi))
+    }
+
+    @Test
+    fun `the label says what enlarging does not do`() {
+        assertEquals("Enlarged, no new detail", WallCopy.ENLARGE)
+        assertTrue(WallCopy.SAVED_ENLARGED.contains(WallCopy.ENLARGE))
+        assertTrue(WallCopy.SAVED_ENLARGED.startsWith(WallCopy.SAVED))
+    }
+
+    @Test
+    fun `Save with Enlarge ticked runs as the enlarging job and reports what was done`() {
+        compose.setContent { Host() }
+        hangOnePicture()
+        waitForText(WallCopy.ENLARGE)
+        val runner = ViewModelProvider(storeOwner!!)[AppStateViewModel::class.java].jobRunner
+        scope.launch { runner.outcomes.collect { outcomes += it } }
+
+        compose.onNodeWithText(WallCopy.ENLARGE).performClick()
+        compose.onNodeWithText(WallCopy.SAVE_PRINT).performClick()
+        compose.waitUntil(30_000) { shadowOf(Looper.getMainLooper()).idle(); outcomes.isNotEmpty() }
+
+        val outcome = outcomes.single()
+        assertEquals(WallCopy.ENLARGE_JOB_TITLE, outcome.title)
+        assertEquals(ActivityKind.EXPORTING, outcome.kind)
+        val message = outcome.result.fold({ it as String }, { it.message.orEmpty() })
+        assertTrue(message, message == WallCopy.SAVED_ENLARGED || message == WallCopy.CANT_CREATE_FILE)
+    }
+
+    @Test
+    fun `while an enlargement runs the panel says so, shows Cancel, and hides the offer`() {
+        compose.setContent { Host() }
+        hangOnePicture()
+        waitForText(WallCopy.ENLARGE)
+        val runner = ViewModelProvider(storeOwner!!)[AppStateViewModel::class.java].jobRunner
+        scope.launch { runner.outcomes.collect { outcomes += it } }
+
+        runner.launch<Unit>(WallCopy.ENLARGE_JOB_TITLE, ActivityKind.EXPORTING) { onProgress ->
+            onProgress(0.3f)
+            awaitCancellation()
+        }
+        waitForText(WallCopy.ENLARGING)
+        compose.onNodeWithText(WallCopy.CANCEL).assertExists()
+        assertTrue(compose.onAllNodes(hasText(WallCopy.ENLARGE)).fetchSemanticsNodes().isEmpty())
+        assertTrue(compose.onAllNodes(hasText(WallCopy.SAVE_PRINT)).fetchSemanticsNodes().isEmpty())
+
+        compose.onNodeWithText(WallCopy.CANCEL).performClick()
+        compose.waitUntil(15_000) { shadowOf(Looper.getMainLooper()).idle(); outcomes.isNotEmpty() }
+        assertTrue(outcomes.single().result.exceptionOrNull() is CancellationException)
+        waitForText(WallCopy.SAVE_PRINT)
+        assertTrue(runner.jobs.value.isEmpty())
+    }
+
+    @Test
     fun `the privacy line no longer promises nothing is ever saved`() {
         compose.setContent { Host() }
         hangOnePicture()
