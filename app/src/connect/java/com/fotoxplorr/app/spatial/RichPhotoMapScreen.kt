@@ -19,20 +19,15 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Layers
-import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text as ComposeText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -96,25 +91,18 @@ import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-private enum class MapTimeFilter(val label: String, val windowMillis: Long?) {
-    ALL("All time", null),
-    THIRTY_DAYS("30 days", 30L * 24L * 60L * 60L * 1_000L),
-    ONE_YEAR("1 year", 365L * 24L * 60L * 60L * 1_000L),
-}
-
 @Composable
 fun RichPhotoMapScreen(
     assets: List<MediaAsset>,
     geoState: GeoIndexState,
-    tagsByMediaId: Map<MediaId, Set<String>> = emptyMap(),
     onIndexLocations: () -> Unit,
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
     onClose: () -> Unit,
     /**
      * Opened from one photo's details room: the camera starts on that photo at street zoom, it is
      * drawn as its white-bordered tile riding the map, and every other located photo is a filled
-     * dot in its own colour with no clustering -- see [MapFocus]. Null is the Places map exactly as
-     * it always was.
+     * dot in its own colour with no clustering -- see [MapFocus]. Null is the map of the whole view,
+     * which is only ever drawn [embedded] now (Map mode).
      */
     focus: MapFocus? = null,
     modifier: Modifier = Modifier,
@@ -130,34 +118,12 @@ fun RichPhotoMapScreen(
     if (!embedded) BackHandler(onBack = onClose)
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    var query by remember { mutableStateOf("") }
-    var timeFilter by remember { mutableStateOf(MapTimeFilter.ALL) }
-    var selectedAlbum by remember { mutableStateOf<String?>(null) }
     var selectedId by remember { mutableStateOf<MediaId?>(null) }
 
     val assetsById = remember(assets) { assets.associateBy { it.id } }
     val selectedAsset = selectedId?.let(assetsById::get)
-    val albums = remember(assets) {
-        assets.mapNotNull { it.bucketName?.trim()?.takeIf(String::isNotEmpty) }
-            .distinct()
-            .sortedBy(String::lowercase)
-            .take(MAX_ALBUM_FILTERS)
-    }
-    val now = System.currentTimeMillis()
-    val filtered = remember(assets, geoState.metadataById, tagsByMediaId, query, timeFilter, selectedAlbum) {
-        val normalized = query.trim().lowercase()
-        assets.filter { asset ->
-            val afterCutoff = timeFilter.windowMillis?.let { asset.dateTakenMillis >= now - it } ?: true
-            val matchesQuery = normalized.isEmpty() ||
-                asset.displayName.lowercase().contains(normalized) ||
-                asset.bucketName?.lowercase()?.contains(normalized) == true ||
-                tagsByMediaId[asset.id].orEmpty().any { it.lowercase().contains(normalized) }
-            asset.id in geoState.metadataById &&
-                !asset.isTrashed &&
-                afterCutoff &&
-                (selectedAlbum == null || asset.bucketName == selectedAlbum) &&
-                matchesQuery
-        }
+    val filtered = remember(assets, geoState.metadataById) {
+        assets.filter { asset -> asset.id in geoState.metadataById && !asset.isTrashed }
     }
     // The focused photo may be located by its own EXIF and absent from the geo index (the index
     // is built on demand); it is still what this map is about, so its coordinate comes from the
@@ -241,45 +207,6 @@ fun RichPhotoMapScreen(
         }
 
         if (geoState.isIndexing) LinearProgressIndicator(Modifier.fillMaxWidth())
-
-        // The search and the filters are the Places map's own tools; a map opened for ONE photo
-        // is about that photo's place, and the chrome would only push the map down.
-        if (focus == null && !embedded) OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-            singleLine = true,
-            leadingIcon = { Icon(Icons.Outlined.Map, contentDescription = null) },
-            placeholder = { ComposeText("Search filename, album or tag") },
-        )
-
-        if (focus == null && !embedded) LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(MapTimeFilter.entries, key = { it.name }) { filter ->
-                FilterChip(
-                    selected = filter == timeFilter,
-                    onClick = { timeFilter = filter },
-                    label = { ComposeText(filter.label) },
-                )
-            }
-            item {
-                FilterChip(
-                    selected = selectedAlbum == null,
-                    onClick = { selectedAlbum = null },
-                    label = { ComposeText("All albums") },
-                )
-            }
-            items(albums, key = { it }) { album ->
-                FilterChip(
-                    selected = selectedAlbum == album,
-                    onClick = { selectedAlbum = if (selectedAlbum == album) null else album },
-                    label = { ComposeText(album) },
-                )
-            }
-        }
 
         Box(Modifier.weight(1f)) {
             AndroidView(
@@ -685,8 +612,6 @@ private class RichPhotoMapController(
             "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
     }
 }
-
-private const val MAX_ALBUM_FILTERS = 16
 
 /** Clears a 48dp disc raised 20dp from the bottom edge, plus a gap. */
 private const val EMBEDDED_LOWER_CHROME_DP = 80
