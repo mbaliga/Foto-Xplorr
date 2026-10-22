@@ -70,6 +70,51 @@ class WallDraftTest {
     }
 
     @Test
+    fun `choosing a different wall photo starts the scale again, the distance with the width`() {
+        val next = hung.withWall(8)
+        assertEquals(8L, next.wallId)
+        assertEquals(0f, next.wallWidthCm, 0f)
+        assertEquals(0f, next.distanceCm, 0f)
+        assertTrue(next.frames.isEmpty())
+        assertEquals(WallStep.SCALE, next.step)
+        assertEquals(hung.pictures, next.pictures)
+    }
+
+    @Test
+    fun `choosing the same wall photo again keeps what is set`() {
+        assertEquals(hung.copy(step = WallStep.PICTURES), hung.withWall(7))
+        assertEquals(WallStep.SCALE, hung.copy(wallWidthCm = 0f).withWall(7).step)
+        assertEquals(210f, hung.withWall(7).distanceCm, 0f)
+    }
+
+    @Test
+    fun `a lost wall photo takes its distance with it`() {
+        val r = hung.reconciled(setOf(11L, 12L, 13L))
+        assertEquals(0f, r.wallWidthCm, 0f)
+        assertEquals(0f, r.distanceCm, 0f)
+    }
+
+    @Test
+    fun `a typed distance that gives a usable width sets it, and one that gives none clears the old width`() {
+        val referenced = WallDraft(wallId = 1, wallWidthCm = 300f)
+        assertEquals(250f, referenced.withDistance(200f, 250f).wallWidthCm, 0f)
+        assertEquals(200f, referenced.withDistance(200f, 250f).distanceCm, 0f)
+
+        val tooShort = referenced.withDistance(5f, null)
+        assertEquals(5f, tooShort.distanceCm, 0f)
+        assertEquals(0f, tooShort.wallWidthCm, 0f)
+        assertFalse(tooShort.isCalibrated)
+    }
+
+    @Test
+    fun `an emptied distance field leaves a width set another way alone`() {
+        val referenced = WallDraft(wallId = 1, wallWidthCm = 300f, distanceCm = 200f)
+        val cleared = referenced.withDistance(0f, null)
+        assertEquals(0f, cleared.distanceCm, 0f)
+        assertEquals(300f, cleared.wallWidthCm, 0f)
+    }
+
+    @Test
     fun `arranging hangs each picture in its box, centred on the wall, at a size that fits`() {
         val d = WallDraft(
             wallId = 1, wallWidthCm = 300f, kind = SetKind.PAIR, pictures = listOf(5, 6), step = WallStep.PICTURES,

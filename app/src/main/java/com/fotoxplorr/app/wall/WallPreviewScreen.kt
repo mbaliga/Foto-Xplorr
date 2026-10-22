@@ -167,11 +167,7 @@ private fun WallStepContent(draft: WallDraft, stills: List<MediaAsset>, onEdit: 
         order = listOfNotNull(draft.wallId),
         onTap = { asset ->
             val id = asset.id.value
-            onEdit { d ->
-                // A different wall starts again from the scale; the same one keeps what is set.
-                if (d.wallId == id) d.copy(step = if (d.isCalibrated) WallStep.PICTURES else WallStep.SCALE)
-                else d.copy(wallId = id, wallWidthCm = 0f, frames = emptyList(), step = WallStep.SCALE)
-            }
+            onEdit { it.withWall(id) }
         },
         modifier = Modifier.fillMaxSize(),
     )
@@ -393,10 +389,13 @@ private fun ScalePanel(
         WallCopy.DISTANCE,
         draft.distanceCm,
         { cm ->
-            onEdit { it.copy(distanceCm = cm) }
-            if (wall != null) {
+            if (wall == null) {
+                // Not decoded yet: the width is worked out from this once it is (see above).
+                onEdit { it.copy(distanceCm = cm) }
+            } else {
                 val focal = wall.focal35mm ?: WallScale.GUESSED_FOCAL_35MM
-                WallScale.fromDistance(cm, focal, wall.widthPx, wall.heightPx)?.let { w -> onEdit { it.copy(wallWidthCm = w) } }
+                val width = WallScale.fromDistance(cm, focal, wall.widthPx, wall.heightPx)
+                onEdit { it.withDistance(cm, width) }
             }
         },
         Modifier.fillMaxWidth(),

@@ -50,6 +50,27 @@ internal data class WallDraft(
         if (index !in frames.indices) this else copy(frames = frames.toMutableList().also { it[index] = change(frames[index]) })
 
     /**
+     * The draft after the wall photo [id] is chosen. A different photo starts again from the scale,
+     * and the distance goes with the width (it was the distance to the old wall); the same one keeps
+     * what is set.
+     */
+    fun withWall(id: Long): WallDraft =
+        if (wallId == id) {
+            copy(step = if (isCalibrated) WallStep.PICTURES else WallStep.SCALE)
+        } else {
+            copy(wallId = id, wallWidthCm = 0f, distanceCm = 0f, frames = emptyList(), step = WallStep.SCALE)
+        }
+
+    /**
+     * The draft after a camera distance of [cm] is typed, [widthCm] being the wall width it gives
+     * (null when the figure gives none: out of range, or no lens to work from). A width the distance
+     * does not give clears the old one, so the two fields never disagree silently and the screen
+     * says the scale is not set; an emptied field leaves a width set another way alone.
+     */
+    fun withDistance(cm: Float, widthCm: Float?): WallDraft =
+        copy(distanceCm = cm, wallWidthCm = widthCm ?: if (cm > 0f) 0f else wallWidthCm)
+
+    /**
      * Drops what is no longer in [visible] (a photo moved to a locked folder, trashed, or deleted
      * since the draft was saved). A lost wall photo sends the person back to choose another.
      */
@@ -59,6 +80,7 @@ internal data class WallDraft(
         val next = copy(
             wallId = if (wallGone) null else wallId,
             wallWidthCm = if (wallGone) 0f else wallWidthCm,
+            distanceCm = if (wallGone) 0f else distanceCm,
             pictures = pictures.filter { it in visible },
             frames = kept,
             selected = selected.coerceIn(0, maxOf(0, kept.lastIndex)),

@@ -105,4 +105,18 @@ class WallScaleStepTest {
         compose.waitForIdle()
         assertEquals(a4 * ReferenceObject.DOOR.cm / ReferenceObject.A4_LONG.cm, draft.wallWidthCm, 0.5f)
     }
+
+    @Test
+    fun `a typed distance that gives no usable width clears the width the marks gave, and says the scale is not set`() {
+        show()
+        markTwoEnds()
+        assertNotEquals(0f, draft.wallWidthCm)
+
+        compose.onNode(hasText(WallCopy.DISTANCE) and hasSetTextAction()).performTextInput("5")
+        compose.waitForIdle()
+
+        assertEquals(5f, draft.distanceCm, 0f)
+        assertEquals(0f, draft.wallWidthCm, 0f)
+        compose.onNodeWithText(WallCopy.NEED_SCALE).assertExists()
+    }
 }
