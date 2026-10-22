@@ -53,7 +53,7 @@ import androidx.compose.ui.unit.sp
  * ([MapToggleFab]) at the left.
  *
  * @param caption what the middle reads. Empty renders nothing rather than an empty gap, so a
- *   destination with no timeline (Places, Protected) gets a two-button pill instead of a hole.
+ *   destination with no timeline (Experimental, Protected) gets a two-button pill instead of a hole.
  * @param onToggleDensity the grid-density stepper, which wraps round the zoom rungs (1..6 columns,
  *   then the stamps); null leaves the button out (the map has no density).
  * @param densityState where the grid is now, in words ("3 columns", "Stamps"). A screen reader

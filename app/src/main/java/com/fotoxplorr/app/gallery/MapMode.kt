@@ -19,8 +19,8 @@ internal const val MAP_RAIL_LABEL = "Map"
 
 /**
  * The rail's words top to bottom as (id, label): the destinations in their own order with Map
- * added before Places. Additive on purpose -- Places (the hub of the immersive views) is still
- * its own word until the experimental features are re-homed.
+ * added before Experimental (the destination still named PLACES, whose label is "Experimental" --
+ * the hub of the immersive views).
  */
 internal fun railWords(): List<Pair<String, String>> = buildList {
     HyleDestination.entries.forEach { destination ->
@@ -45,7 +45,7 @@ internal data class RailChoice(
 
 /**
  * Choosing [id] while [current] is the destination. Map keeps the destination -- unless it is one
- * with no photos to put on a map (Places has its own panes, Protected must never feed a map), when
+ * with no photos to put on a map (Experimental has its own panes, Protected must never feed a map), when
  * it falls back to Photos. Any real word leaves the map.
  */
 internal fun railChoice(id: String, current: HyleDestination): RailChoice =
@@ -64,7 +64,7 @@ internal fun railSelectedId(mapOpen: Boolean, destination: HyleDestination): Str
     if (mapOpen) MAP_RAIL_ID else destination.name
 
 /**
- * Whether the bottom-left disc (and so the map) is offered on [destination]. Places and Protected
+ * Whether the bottom-left disc (and so the map) is offered on [destination]. Experimental and Protected
  * draw their own panes rather than a grid of photos, so there is nothing to toggle, and the
  * protected folders must not be handed to a map at all.
  */

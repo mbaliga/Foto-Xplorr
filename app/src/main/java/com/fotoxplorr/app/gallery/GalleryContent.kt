@@ -43,8 +43,8 @@ import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AssistChip
@@ -94,7 +94,6 @@ import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.organize.LibraryState
 import com.fotoxplorr.app.organize.MediaCollection
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
-import com.fotoxplorr.app.spatial.PlacesScreen
 import com.fotoxplorr.core.model.MediaId
 import kotlin.math.exp
 import kotlinx.coroutines.Job
@@ -846,31 +845,19 @@ private fun AlbumCard(
     }
 }
 
+/**
+ * The smart albums, and a card that opens the Experimental destination. The card used to embed a
+ * second copy of the hub under a "Back to Discover" row; one hub, reached by its own rail word, is
+ * the whole of it now.
+ */
 @Composable
 fun DiscoverScreen(
     summaries: List<SmartAlbumSummary>,
     onOpen: (SmartAlbumSummary) -> Unit,
+    /** Opens the Experimental destination (the rail word of the same name). */
+    onOpenExperimental: () -> Unit = {},
 ) {
     val spatial = LocalSpatialExperience.current
-    var showingPlaces by remember { mutableStateOf(false) }
-
-    if (showingPlaces && spatial != null) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            RoomRow(
-                label = "Back to Discover",
-                onClick = { showingPlaces = false },
-                modifier = Modifier.padding(horizontal = RoomStyle.GutterStart),
-            )
-            PlacesScreen(
-                assets = spatial.assets,
-                indexInput = spatial.indexInput,
-                geoState = spatial.geoState,
-                onIndexLocations = spatial.onIndexLocations,
-                onOpenAsset = spatial.onOpenAsset,
-            )
-        }
-        return
-    }
 
     LazyVerticalGrid(
         columns = GridCells.Adaptive(160.dp),
@@ -880,11 +867,11 @@ fun DiscoverScreen(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (spatial != null) {
-            item(key = "places") {
+            item(key = "experimental") {
                 Card(
                     modifier = Modifier.combinedClickable(
-                        onClick = { showingPlaces = true },
-                        onLongClick = { showingPlaces = true },
+                        onClick = onOpenExperimental,
+                        onLongClick = onOpenExperimental,
                     ),
                     colors = paneCardColors(),
                 ) {
@@ -892,7 +879,7 @@ fun DiscoverScreen(
                         modifier = Modifier.fillMaxWidth().aspectRatio(1.35f),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Outlined.Map, contentDescription = null, modifier = Modifier.size(40.dp))
+                        Icon(Icons.Outlined.Science, contentDescription = null, modifier = Modifier.size(40.dp))
                         if (spatial.geoState.locatedCount > 0) {
                             Text(
                                 spatial.geoState.locatedCount.toString(),
@@ -907,9 +894,9 @@ fun DiscoverScreen(
                         }
                     }
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text("Places", style = MaterialTheme.typography.titleSmall)
+                        Text("Experimental", style = MaterialTheme.typography.titleSmall)
                         Text(
-                            HelpCopy.Hint.PLACES_CARD,
+                            HelpCopy.Hint.EXPERIMENTAL_CARD,
                             style = MaterialTheme.typography.bodySmall,
                             color = RoomStyle.InkFaint,
                             maxLines = 2,

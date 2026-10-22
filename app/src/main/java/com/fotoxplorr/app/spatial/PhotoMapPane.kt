@@ -19,9 +19,9 @@ import com.fotoxplorr.app.media.MediaAsset
  * handed the photos the browser already filtered, so the destination, the route, the search, the
  * time range and the privacy filter all apply without this knowing any of them.
  *
- * The one thing it does for itself is read locations. The Places hub starts the index when a map
- * experience opens with nothing indexed, and this is the other door onto the same maps, so it
- * does the same.
+ * The one thing it does for itself is read locations: Map mode is the only door onto the maps now,
+ * so it starts the index when it opens with nothing indexed. (The Experimental section's compass
+ * view starts its own, for its own screen.)
  *
  * Which map it is, is the flavour's: `src/offline` draws the local stamp map and `src/connect`
  * the street map ([PhotoMapPaneImpl], same signature in both).

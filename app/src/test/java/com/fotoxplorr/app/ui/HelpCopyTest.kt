@@ -145,45 +145,46 @@ class HelpCopyTest {
     }
 
     @Test
-    fun `the places paragraph in the offline build says nothing here goes online`() {
-        val places = HelpCopy.placesPrivacy(networkFeatures = false)
-        assertTrue(places, places.contains("runs on this device"))
-        assertTrue(places, places.contains("goes online"))
-        assertTrue(places, places.contains("uploads your photos"))
+    fun `the experimental paragraph in the offline build says nothing here goes online`() {
+        val paragraph = HelpCopy.experimentalPrivacy(networkFeatures = false)
+        assertTrue(paragraph, paragraph.contains("runs on this device"))
+        assertTrue(paragraph, paragraph.contains("goes online"))
+        assertTrue(paragraph, paragraph.contains("uploads your photos"))
         // The offline build has no network at all, so it must not name anything that can use it.
-        assertFalse(places, places.contains("AI services"))
-        assertFalse(places, places.contains("Street map"))
-        assertFalse(places, places.contains("download"))
-        assertTrue(places, places.length <= NOTE_MAX)
+        assertFalse(paragraph, paragraph.contains("AI services"))
+        assertFalse(paragraph, paragraph.contains("Street map"))
+        assertFalse(paragraph, paragraph.contains("download"))
+        assertTrue(paragraph, paragraph.length <= NOTE_MAX)
     }
 
     @Test
-    fun `the places paragraph in the connect build lists everything that uses the network`() {
-        val places = HelpCopy.placesPrivacy(networkFeatures = true)
-        assertTrue(places, places.contains("Nothing here uploads your photos"))
-        assertTrue(places, places.contains("Street map tiles"))
-        assertTrue(places, places.contains("one-time similarity model download"))
-        assertTrue(places, places.contains("AI services you add"))
-        assertTrue(places, places.length <= NOTE_MAX)
+    fun `the experimental paragraph in the connect build lists everything that uses the network`() {
+        val paragraph = HelpCopy.experimentalPrivacy(networkFeatures = true)
+        assertTrue(paragraph, paragraph.contains("Nothing here uploads your photos"))
+        // The street map is Map mode's, not this screen's: the paragraph must not claim it here.
+        assertFalse(paragraph, paragraph.contains("Street map"))
+        assertTrue(paragraph, paragraph.contains("one-time similarity model download"))
+        assertTrue(paragraph, paragraph.contains("AI services you add"))
+        assertTrue(paragraph, paragraph.length <= NOTE_MAX)
         // Not the exhaustive-sounding "Only the Street map and AI services" it replaced.
-        assertFalse(places, places.contains("Connect build"))
+        assertFalse(paragraph, paragraph.contains("Connect build"))
     }
 
     @Test
-    fun `the places paragraph follows the flavour this build was compiled as`() {
+    fun `the experimental paragraph follows the flavour this build was compiled as`() {
         assertEquals(
-            HelpCopy.placesPrivacy(BuildConfig.NETWORK_FEATURES),
-            if (BuildConfig.NETWORK_FEATURES) HelpCopy.Note.PLACES_PRIVACY_CONNECT else HelpCopy.Note.PLACES_PRIVACY_OFFLINE,
+            HelpCopy.experimentalPrivacy(BuildConfig.NETWORK_FEATURES),
+            if (BuildConfig.NETWORK_FEATURES) HelpCopy.Note.EXPERIMENTAL_PRIVACY_CONNECT else HelpCopy.Note.EXPERIMENTAL_PRIVACY_OFFLINE,
         )
         if (!BuildConfig.NETWORK_FEATURES) {
             // The Offline build also says remote AI is unavailable; the paragraph must not contradict it.
-            assertFalse(HelpCopy.placesPrivacy(BuildConfig.NETWORK_FEATURES).contains("AI services"))
+            assertFalse(HelpCopy.experimentalPrivacy(BuildConfig.NETWORK_FEATURES).contains("AI services"))
         }
     }
 
     @Test
-    fun `the places paragraphs keep every boundary they state`() {
-        assertTrue(HelpCopy.Note.PLACES_LOCATION.contains("only by Spatial compass"))
+    fun `the experimental paragraphs keep every boundary they state`() {
+        assertTrue(HelpCopy.Note.EXPERIMENTAL_LOCATION.contains("only by Compass view"))
 
         val ai = HelpCopy.Note.AI_SERVICE
         assertTrue(ai, ai.contains("Nothing is sent until you turn it on and ask"))

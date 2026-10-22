@@ -54,7 +54,7 @@ import com.fotoxplorr.app.spatial.PlateMapBackdrop
  * once the room is fully open AND settled ([settled]) does the connect flavour fade a real map in
  * under the pin — a one-shot static snapshot, cached per photo, never a live tile-fetching view —
  * through [PlateMapBackdrop], whose offline implementation draws nothing at all, so that build
- * keeps the graticule look and performs no network I/O. That is the `PhotoMapEntry` seam again:
+ * keeps the graticule look and performs no network I/O. That is the `PhotoMapPane` flavour seam again:
  * one call, two flavours.
  *
  * The pin sits at the plate's centre because the plate is centred on the photo. The *graticule*

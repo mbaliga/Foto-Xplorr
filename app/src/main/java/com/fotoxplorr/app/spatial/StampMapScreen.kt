@@ -89,7 +89,7 @@ fun StampMapScreen(
     /**
      * Opened from one photo's details room: that photo is drawn as its white-bordered tile, and
      * every other located photo as a filled colour dot rather than a stamp -- see [MapFocus].
-     * Null is the Places map exactly as it always was.
+     * Null is the whole-view map.
      */
     focus: MapFocus? = null,
     /**
@@ -305,7 +305,7 @@ fun StampMapScreen(
             )
             Column(Modifier.padding(start = 4.dp)) {
                 Text(
-                    if (focus != null) "WHERE THIS WAS TAKEN" else "PLACES",
+                    if (focus != null) "WHERE THIS WAS TAKEN" else "MAP",
                     color = Color.White.copy(alpha = 0.6f),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,

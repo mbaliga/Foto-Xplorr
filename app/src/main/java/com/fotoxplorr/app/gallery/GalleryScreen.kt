@@ -363,11 +363,11 @@ fun GalleryScreen(
     // reversing P0-01's own trashed exclusion here) -- a photo trashed before its location was
     // ever indexed must not sit permanently unindexed while trashed, and a still-locked or hidden
     // photo's location is already indexed so unlocking the folder never needs a re-index of its
-    // own. Display filtering (what Places/the map/the 3D scenes actually draw) stays entirely in
+    // own. Display filtering (what the Experimental section/the map/the 3D scenes actually draw) stays entirely in
     // `spatialDisplayAssets` below, per the same decision's own "display filtering stays in the
     // UI" instruction -- this list is never rendered directly.
     val spatialIndexInput = state.assets
-    // Display list: what Places, the map, the compass and the 3D scenes actually draw. Must go
+    // Display list: what the Experimental section, the map, the compass and the 3D scenes actually draw. Must go
     // through the one visibility filter, or a locked, archived or hidden photo leaks onto them.
     val spatialDisplayAssets = remember(
         state.assets,
@@ -461,7 +461,7 @@ private data class PasswordRequest(
  * The app shell, on the constellation's spatial navigation.
  *
  * The primary IA is the nine-category rail (Pets / People / Identity / Screenshots / Photos /
- * Videos / Favourites / Places / Protected), and it is a **room**: a surface parked off the
+ * Videos / Favourites / Experimental / Protected), and it is a **room**: a surface parked off the
  * left edge that the grid lifts and parts to reveal. The other three edges are rooms too, by
  * [com.fotoxplorr.app.ui.RoomGeography]: the view's details at the top, its actions at the bottom (a short pull stops on a strip of
  * quick actions, a longer one opens them all), its view options at the right. None of them is a screen — opening one pushes no back-stack entry, the grid stays
@@ -1029,7 +1029,7 @@ private fun GalleryBrowser(
     // The Trash has no use for a held favourite, share or edit (restore and delete live there).
     chromeBridge.gridLongPress = LongPressResolver.effectiveFor(state.preferences.gridLongPress, inTrash)
 
-    // The destinations, with Map before Places (see MapMode.kt).
+    // The destinations, with Map before Experimental (see MapMode.kt).
     val railItems = remember {
         railWords().map { (id, label) -> dev.aarso.cellshell.WheelItem(id, label) }
     }
@@ -1874,7 +1874,7 @@ private fun GalleryBrowser(
  * The map pane: [assets] on a map, in the grid's place (see [PhotoMapPane]).
  *
  * What it is framed to, and how a photo opens from it, come from the [SpatialExperience] that
- * [GalleryScreen] already provides to [DiscoverScreen]'s Places card: that is the privacy-filtered
+ * [GalleryScreen] already provides to [DiscoverScreen]'s Experimental card: that is the privacy-filtered
  * list of browsable photos, the geo index and the way to open the viewer, all reachable through
  * composition with nothing new to thread past a file boundary. [assets] is NOT read from there --
  * the map shows what the grid was showing, with the search, the route and the time range applied.

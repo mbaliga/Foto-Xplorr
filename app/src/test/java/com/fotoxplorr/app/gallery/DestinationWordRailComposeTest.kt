@@ -192,7 +192,7 @@ class DestinationWordRailComposeTest {
         advance(100)
         val pitch = pitchPx()
 
-        // Three rows up: Photos -> Places. Finger stays down.
+        // Three rows up: Photos -> Experimental. Finger stays down.
         compose.onRoot().performTouchInput {
             down(center)
             moveBy(Offset(0f, -3 * pitch))
@@ -208,7 +208,7 @@ class DestinationWordRailComposeTest {
         // After the pause the hovered word is committed, with the finger still down.
         advance(RAIL_COMMIT_DEBOUNCE_MS * 3)
         compose.runOnIdle { assertEquals(listOf(HyleDestination.PLACES.name), host.selections) }
-        compose.onNodeWithText("Places").assertIsSelected()
+        compose.onNodeWithText("Experimental").assertIsSelected()
         compose.onNodeWithText("Photos").assertIsNotSelected()
         assertEquals(wordY(HyleDestination.PLACES), markerY(), 2f)
 

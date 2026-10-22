@@ -13,7 +13,7 @@ import org.junit.Test
 class MapModeTest {
 
     @Test
-    fun `the rail lists every destination in order with Map added before Places`() {
+    fun `the rail lists every destination in order with Map added before Experimental`() {
         val words = railWords()
         val destinations = HyleDestination.entries.map { it.name to it.label }
         assertEquals("Map is additive", destinations.size + 1, words.size)
@@ -39,7 +39,7 @@ class MapModeTest {
     }
 
     @Test
-    fun `choosing Map from Places or Protected falls back to Photos`() {
+    fun `choosing Map from Experimental or Protected falls back to Photos`() {
         assertEquals(HyleDestination.PHOTOS, railChoice(MAP_RAIL_ID, HyleDestination.PLACES).destination)
         assertEquals(HyleDestination.PHOTOS, railChoice(MAP_RAIL_ID, HyleDestination.PROTECTED).destination)
         assertTrue(railChoice(MAP_RAIL_ID, HyleDestination.PROTECTED).mapOpen)

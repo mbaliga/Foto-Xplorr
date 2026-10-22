@@ -121,7 +121,7 @@ class HyleDestinationTest {
         assertEquals(
             listOf(
                 "Pets", "People", "Identity", "Screenshots", "Photos",
-                "Videos", "Favourites", "Places", "Protected",
+                "Videos", "Favourites", "Experimental", "Protected",
             ),
             HyleDestination.entries.map { it.label },
         )

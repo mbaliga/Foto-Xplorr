@@ -8,7 +8,7 @@ import com.fotoxplorr.core.model.MediaId
  *
  * One value shared by both flavours' map screens (`RichPhotoMapScreen` in connect,
  * `StampMapScreen` in offline), so the viewer can hand either the same description of what to
- * show without knowing which one compiles in -- the `PhotoMapEntry` seam, extended.
+ * show without knowing which one compiles in -- the `PhotoMapPane` seam, extended.
  *
  * @param dotColors a photo's dominant palette colour (ARGB), for the photos whose palette has
  *   already been computed -- see [com.fotoxplorr.app.palette.PaletteMemo]. Any photo not in the

@@ -39,10 +39,10 @@ import dev.aarso.cellshell.WheelItem
 import com.fotoxplorr.app.curate.ArchiveAdvisor
 import com.fotoxplorr.app.curate.ArchiveReviewItem
 import com.fotoxplorr.app.curate.ArchiveSuggestionsReview
+import com.fotoxplorr.app.experimental.ExperimentalScreen
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
-import com.fotoxplorr.app.spatial.PlacesScreen
 import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.PaneScaffold
 import com.fotoxplorr.app.ui.RoomStyle
@@ -74,7 +74,11 @@ enum class HyleDestination(val label: String) {
     PHOTOS("Photos"),
     VIDEOS("Videos"),
     FAVOURITES("Favourites"),
-    PLACES("Places"),
+    /**
+     * The Experimental section (compass view, 3D wall, ...). The constant is still PLACES because
+     * the name is saved ("Open the app on") and pinned by the goldens; only the label changed.
+     */
+    PLACES("Experimental"),
     PROTECTED("Protected"),
 }
 
@@ -257,7 +261,7 @@ private fun RailSettingsRow(onClick: () -> Unit) {
 private const val RAIL_INSET = 16
 
 /**
- * What a destination actually renders: the zoomable grid, Places, or the protected-folder list.
+ * What a destination actually renders: the zoomable grid, the Experimental section, or the protected-folder list.
  *
  * [layout] is the grid's groups and headers, built once by the screen over these same [assets] so
  * the scrubber, pill and arrow keys count the positions the grid draws; [rung] is how zoomed it is.
@@ -282,7 +286,7 @@ internal fun DestinationContent(
         HyleDestination.PLACES -> {
             val spatial = LocalSpatialExperience.current
             if (spatial != null) {
-                PlacesScreen(
+                ExperimentalScreen(
                     assets = spatial.assets,
                     indexInput = spatial.indexInput,
                     geoState = spatial.geoState,
@@ -290,7 +294,7 @@ internal fun DestinationContent(
                     onOpenAsset = spatial.onOpenAsset,
                 )
             } else {
-                DestinationMessage("Places is unavailable here")
+                DestinationMessage("Experimental is unavailable here")
             }
         }
         HyleDestination.PROTECTED -> ProtectedFoldersPane(
@@ -543,6 +547,7 @@ fun LegacyScreenHost(
                     animatedIds = state.animatedIds,
                 ),
                 onOpen = { onOpenRoute(BrowserRoute.Smart(it.album)) },
+                onOpenExperimental = { onOpenDestination(HyleDestination.PLACES) },
             )
             LegacyScreen.LIBRARY -> LibraryScreen(
                 library = state.library,

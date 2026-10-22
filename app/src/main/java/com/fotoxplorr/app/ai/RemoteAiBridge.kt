@@ -14,7 +14,7 @@ import com.fotoxplorr.app.ui.HelpCopy
  * The three members are the app's complete network surface as of WP1: BYOK provider
  * calls (test + generate) and the similarity-embedder model download. The street map is
  * the fourth network feature and is handled at the source-set level instead
- * (`PhotoMapExperience`), because MapLibre does its own fetching internally and cannot be
+ * (`PhotoMapPane`), because MapLibre does its own fetching internally and cannot be
  * routed through a suspend function.
  */
 interface RemoteAiBridge {

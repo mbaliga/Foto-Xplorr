@@ -267,7 +267,7 @@ fun SpatialPhotoSceneScreen(
                     IconButton(onClick = onClose) {
                         Icon(
                             Icons.Outlined.Close,
-                            contentDescription = "Close spatial compass",
+                            contentDescription = "Close compass view",
                             tint = ComposeColor.White,
                         )
                     }

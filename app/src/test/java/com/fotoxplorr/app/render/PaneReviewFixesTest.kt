@@ -16,12 +16,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.BuildConfig
+import com.fotoxplorr.app.experimental.ExperimentalScreen
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.SettingsTab
 import com.fotoxplorr.app.gallery.SettingsTabsRoom
 import com.fotoxplorr.app.gallery.ThemeMode
 import com.fotoxplorr.app.spatial.GeoIndexState
-import com.fotoxplorr.app.spatial.PlacesScreen
 import com.fotoxplorr.app.ui.FotoXplorrTheme
 import com.fotoxplorr.app.ui.PaneScaffold
 import com.fotoxplorr.app.ui.RoomStyle
@@ -38,7 +38,7 @@ import kotlin.math.max
 
 /**
  * Three defects from the review of the pane work, held where a picture or the semantics tree can
- * see them: the Immersive and AI header in light theme, a disabled switch row's legibility, and
+ * see them: the Experimental header in light theme, a disabled switch row's legibility, and
  * the size of a settings chip's touch target.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -88,11 +88,11 @@ class PaneReviewFixesTest {
     // ---- 3: the header over the pane's black ground in light theme ----
 
     @Test
-    fun `the Immersive and AI header is pane ink on a dark ground in light theme`() {
+    fun `the Experimental header is pane ink on a dark ground in light theme`() {
         compose.setContent {
             FotoXplorrTheme(GalleryPreferencesState(themeMode = ThemeMode.LIGHT)) {
                 PaneScaffold(title = "Discover", onBack = {}) {
-                    PlacesScreen(
+                    ExperimentalScreen(
                         assets = emptyList(),
                         indexInput = emptyList(),
                         geoState = GeoIndexState(),
@@ -102,7 +102,7 @@ class PaneReviewFixesTest {
                 }
             }
         }
-        val title = compose.onNodeWithText("Immersive and AI")
+        val title = compose.onNodeWithText("Experimental")
         title.assertIsDisplayed()
         assertEquals("the title sets its own colour", RoomStyle.Ink.toArgb(), textColorOf(title).toArgb())
         val body = compose.onNodeWithText("Optional extras", substring = true)

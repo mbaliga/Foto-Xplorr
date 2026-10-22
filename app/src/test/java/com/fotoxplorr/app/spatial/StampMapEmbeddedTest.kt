@@ -143,7 +143,7 @@ class StampMapEmbeddedTest {
         val owner = BackOwner()
         mount(embedded = true, frame = all, owner = owner)
         assertFalse(owner.onBackPressedDispatcher.hasEnabledCallbacks())
-        compose.onNodeWithText("PLACES").assertDoesNotExist()
+        compose.onNodeWithText("MAP").assertDoesNotExist()
         compose.onNodeWithText("✕").assertDoesNotExist()
     }
 
@@ -152,7 +152,7 @@ class StampMapEmbeddedTest {
         val owner = BackOwner()
         mount(embedded = false, frame = null, owner = owner)
         assertTrue(owner.onBackPressedDispatcher.hasEnabledCallbacks())
-        compose.onNodeWithText("PLACES").assertExists()
+        compose.onNodeWithText("MAP").assertExists()
         compose.onNodeWithText("✕").assertExists()
     }
 }

@@ -112,8 +112,6 @@ internal object HelpCopy {
         const val EXPLORE_SIMILARITY = "Group look-alike photos"
         const val EXPLORE_WALL = "Walk through a 3D wall of your photos"
         const val EXPLORE_PREVIEW = "Browse photos in depth"
-        const val EXPLORE_STAMP_MAP = "Your located photos as stamps on a map. Works offline."
-        const val EXPLORE_STREET_MAP = "Street map with 3D buildings. Connect build only."
         const val EXPLORE_COMPASS = "Turn toward photos around you"
         const val EXPLORE_AI = "On-device model and optional AI keys"
         const val WALL_GESTURES = "Drag to look · pinch for depth · tap a photo"
@@ -144,7 +142,7 @@ internal object HelpCopy {
         const val PICKED_ONLY = "Showing only the photos you picked."
         const val PICKER_PERMISSION = "Allow access to pick photos."
         const val NO_MATCHES = "Nothing matches your filters"
-        const val PLACES_CARD = "Map and compass, offline"
+        const val EXPERIMENTAL_CARD = "Compass view and other extras"
         const val TAG_FIRST = "Select photos, then Add tag."
         const val SCANNING_DESTINATION = "Scanning on this device…"
         const val NO_PETS = "No pets found"
@@ -191,16 +189,17 @@ internal object HelpCopy {
         const val BATTERY_FLOOR = "Charging always counts. Android won't run background work below about 15-20% battery."
 
         /**
-         * The Places screen's privacy boundary, one per flavour (see [placesPrivacy]). Neither may
-         * claim more than its build does: the Connect list is every network use reachable from
-         * that screen (the similarity model download is offered there too), and the Offline build
-         * names nothing that could go online.
+         * The Experimental screen's privacy boundary, one per flavour (see [experimentalPrivacy]).
+         * Neither may claim more than its build does: the Connect list is every network use
+         * reachable from that screen (the similarity model download is offered there; the street
+         * map is Map mode's, not this screen's), and the Offline build names nothing that could go
+         * online.
          */
-        const val PLACES_PRIVACY_OFFLINE = "Everything here runs on this device. Nothing here goes online or " +
+        const val EXPERIMENTAL_PRIVACY_OFFLINE = "Everything here runs on this device. Nothing here goes online or " +
             "uploads your photos."
-        const val PLACES_PRIVACY_CONNECT = "Nothing here uploads your photos. Only Street map tiles, the one-time " +
-            "similarity model download and AI services you add go online."
-        const val PLACES_LOCATION = "Location is used only by Spatial compass."
+        const val EXPERIMENTAL_PRIVACY_CONNECT = "Nothing here uploads your photos. Only the one-time similarity " +
+            "model download and AI services you add go online."
+        const val EXPERIMENTAL_LOCATION = "Location is used only by Compass view."
 
         /**
          * What a protected folder is. It is an in-app gate; the files stay where they were, readable
@@ -230,9 +229,9 @@ internal object HelpCopy {
             "details, up for actions, from the right for view options."
     }
 
-    /** The Places privacy paragraph for this build ([networkFeatures] is `BuildConfig.NETWORK_FEATURES`). */
-    fun placesPrivacy(networkFeatures: Boolean): String =
-        if (networkFeatures) Note.PLACES_PRIVACY_CONNECT else Note.PLACES_PRIVACY_OFFLINE
+    /** The Experimental privacy paragraph for this build ([networkFeatures] is `BuildConfig.NETWORK_FEATURES`). */
+    fun experimentalPrivacy(networkFeatures: Boolean): String =
+        if (networkFeatures) Note.EXPERIMENTAL_PRIVACY_CONNECT else Note.EXPERIMENTAL_PRIVACY_OFFLINE
 
     /** "3 protected · in-app lock only": the destination card, short form of [Note.PROTECTED_NOT_ENCRYPTED]. */
     fun protectedCount(count: Int): String = "$count protected · in-app lock only"
