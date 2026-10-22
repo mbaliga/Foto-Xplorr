@@ -26,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +41,7 @@ import com.fotoxplorr.app.curate.ArchiveAdvisor
 import com.fotoxplorr.app.curate.ArchiveReviewItem
 import com.fotoxplorr.app.curate.ArchiveSuggestionsReview
 import com.fotoxplorr.app.experimental.ExperimentalScreen
+import com.fotoxplorr.app.experimental.KeepExperimentalState
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
@@ -266,6 +268,9 @@ private const val RAIL_INSET = 16
  * [layout] is the grid's groups and headers, built once by the screen over these same [assets] so
  * the scrubber, pill and arrow keys count the positions the grid draws; [rung] is how zoomed it is.
  * A photo tapped here opens the viewer on [ZoomLayout.renderedAssets], the order on screen.
+ *
+ * [experimentalState] is the one holder, above this call, that keeps the Experimental section's open
+ * experiment and drafts while another pane or word has the place (see [KeepExperimentalState]).
  */
 @Composable
 internal fun DestinationContent(
@@ -281,20 +286,23 @@ internal fun DestinationContent(
     anchor: LayoutAnchor,
     onRequestUnlock: (String, String) -> Unit,
     horizontal: Boolean = false,
+    experimentalState: SaveableStateHolder? = null,
 ) {
     when (destination) {
         HyleDestination.PLACES -> {
             val spatial = LocalSpatialExperience.current
             if (spatial != null) {
-                ExperimentalScreen(
-                    assets = spatial.assets,
-                    indexInput = spatial.indexInput,
-                    geoState = spatial.geoState,
-                    onIndexLocations = spatial.onIndexLocations,
-                    onOpenAsset = spatial.onOpenAsset,
-                    sensitiveIds = state.sensitiveIds,
-                    blurSensitive = state.preferences.blurSensitive,
-                )
+                KeepExperimentalState(experimentalState) {
+                    ExperimentalScreen(
+                        assets = spatial.assets,
+                        indexInput = spatial.indexInput,
+                        geoState = spatial.geoState,
+                        onIndexLocations = spatial.onIndexLocations,
+                        onOpenAsset = spatial.onOpenAsset,
+                        sensitiveIds = state.sensitiveIds,
+                        blurSensitive = state.preferences.blurSensitive,
+                    )
+                }
             } else {
                 DestinationMessage("Experimental is unavailable here")
             }

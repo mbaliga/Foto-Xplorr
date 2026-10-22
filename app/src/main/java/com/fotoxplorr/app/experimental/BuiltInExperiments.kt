@@ -39,8 +39,10 @@ import com.fotoxplorr.app.wall.WallExperience
  */
 internal val builtInExperiments: List<ExperimentEntry> = listOf(
     // Make. Neither of these starts work or asks a permission on open, so both are restorable: the
-    // aquarium reloads its creatures from files and keeps its draft, and the wall keeps its draft
-    // and checks it against the photos the gallery shows now.
+    // aquarium reloads its creatures from files and the wall checks its draft against the photos
+    // the gallery shows now. Each keeps its draft through rotation, process death, the viewer round
+    // trip and leaving the Experimental destination (KeepExperimentalState); closing the
+    // experiment ends it.
     ExperimentEntry(
         id = "aquarium",
         title = AquariumCopy.TITLE,

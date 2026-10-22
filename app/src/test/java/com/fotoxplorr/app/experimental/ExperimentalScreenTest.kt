@@ -12,6 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
@@ -266,6 +268,53 @@ class ExperimentalScreenTest {
         compose.onNodeWithText("inside b").assertDoesNotExist()
         compose.onNodeWithText("Title a").assertExists()
         assertFalse(owner.onBackPressedDispatcher.hasEnabledCallbacks())
+    }
+
+    // The Experimental destination leaves composition when Settings, the Map word or another rail
+    // word takes the pane. Without a holder the open id and the experiment's own saved draft went
+    // with it; KeepExperimentalState (one holder, above the destination) keeps both.
+
+    /** An experiment with a draft the person has typed into: one counter, saved like a real draft. */
+    private fun drafting(id: String, restorable: Boolean = true) = entry(id, restorable = restorable) { _, _ ->
+        var taps by rememberSaveable { mutableStateOf(0) }
+        Text("draft $taps", Modifier.clickable { taps += 1 })
+    }
+
+    private fun leaveAndReturn(entries: List<ExperimentEntry>, holder: Boolean) {
+        var shown by mutableStateOf(true)
+        compose.setContent {
+            val saved = rememberSaveableStateHolder()
+            if (shown) KeepExperimentalState(if (holder) saved else null) { Host(entries) }
+        }
+        compose.onNodeWithText("Title a").performClick()
+        compose.onNodeWithText("draft 0").performClick()
+        compose.onNodeWithText("draft 1").assertExists()
+
+        compose.runOnUiThread { shown = false }
+        compose.waitForIdle()
+        compose.onNodeWithText("draft 1").assertDoesNotExist()
+        compose.runOnUiThread { shown = true }
+        compose.waitForIdle()
+    }
+
+    @Test
+    fun `leaving the destination and coming back keeps the open experiment and its draft`() {
+        leaveAndReturn(listOf(drafting("a"), entry("b")), holder = true)
+        compose.onNodeWithText("draft 1").assertExists()
+    }
+
+    @Test
+    fun `without a holder, leaving the destination drops the open experiment`() {
+        leaveAndReturn(listOf(drafting("a"), entry("b")), holder = false)
+        compose.onNodeWithText("draft 1").assertDoesNotExist()
+        compose.onNodeWithText("Title a").assertExists()
+    }
+
+    @Test
+    fun `an experiment that is not restorable is the hub again after the destination was left`() {
+        leaveAndReturn(listOf(drafting("a", restorable = false), entry("b")), holder = true)
+        compose.onNodeWithText("draft 1").assertDoesNotExist()
+        compose.onNodeWithText("Title a").assertExists()
     }
 
     // The shell's room (nav or options) is opened with an edge drag over an open experiment and is

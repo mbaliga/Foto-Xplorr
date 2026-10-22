@@ -71,6 +71,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.ui.Alignment
@@ -518,6 +519,9 @@ private fun GalleryBrowser(
     // with [legacyScreen]: opening either clears the other.
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     val paneTakenOver = paneTakenOver(settingsOpen, legacyScreen != null)
+    // Parks the Experimental section's open experiment and drafts while Settings, the Map word, a
+    // rail scrub resting elsewhere or a route has the place (see KeepExperimentalState).
+    val experimentalState = rememberSaveableStateHolder()
     // The map is a MODE of the browser: the same photos on a map in the grid's place (see
     // MapMode.kt). Plain `remember`, deliberately NOT saveable: a cold start always lands on the
     // grid, so the Connect build can never reopen straight onto a map that fetches tiles. A
@@ -1527,6 +1531,7 @@ private fun GalleryBrowser(
                                                         PasswordAction.UNLOCK, key, name,
                                                     )
                                                 },
+                                                experimentalState = experimentalState,
                                             )
                                         }
                                     }

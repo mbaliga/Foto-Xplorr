@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -59,7 +60,9 @@ import com.fotoxplorr.core.model.MediaId
  *
  *  - **Which one is open**, as one `rememberSaveable` id. Saved: that id, for entries that are
  *    [ExperimentEntry.restorable]. Not saved: anything inside an experiment (its own state is its
- *    own to save), and the id of a non-restorable one -- those reopen as the hub.
+ *    own to save), and the id of a non-restorable one -- those reopen as the hub. Rotation,
+ *    process death and the viewer round trip keep it; so does leaving the destination, but only
+ *    where the caller wraps this in [KeepExperimentalState].
  *  - **Back**, one handler enabled while something is open. It exists because two of the screens
  *    here (similarity, AI keys) register none of their own. A screen with an inner step registers
  *    its own handler, which is composed after this one and so is asked first. A shell room opened
@@ -126,6 +129,28 @@ fun ExperimentalScreen(
         }
     }
 }
+
+/**
+ * Keeps the Experimental section's saved state while its destination is not on screen.
+ *
+ * The section is composed only while its rail word is the destination: Settings, the Map word, a
+ * rail scrub that rests on another word, or a collection route each replace it, and everything it
+ * had `rememberSaveable`d went with it -- the open experiment's id and the drawing or wall draft
+ * inside it. With a [holder] that lives above the destination (one `rememberSaveableStateHolder` in
+ * the gallery screen) the state is parked when the section leaves and handed back when it returns.
+ *
+ * What this keeps, exactly: the open experiment and whatever that experiment `rememberSaveable`d,
+ * across leaving the destination, rotation, the viewer round trip and process death. What it does
+ * not: an experiment that is not [ExperimentEntry.restorable] (the compass) comes back as the hub,
+ * the same as after process death, and anything an experiment only `remember`ed. Nothing here has
+ * run on a device. A null [holder] (a test, a host without one) keeps nothing extra.
+ */
+@Composable
+internal fun KeepExperimentalState(holder: SaveableStateHolder?, content: @Composable () -> Unit) {
+    if (holder == null) content() else holder.SaveableStateProvider(EXPERIMENTAL_STATE_KEY, content)
+}
+
+private const val EXPERIMENTAL_STATE_KEY = "experimental"
 
 @Composable
 private fun ExperimentalHub(
