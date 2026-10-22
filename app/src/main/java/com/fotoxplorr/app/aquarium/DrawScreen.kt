@@ -75,7 +75,9 @@ private val PAPER_INK = Color(0xFF6B665C)
  * stroke, undo, redo and start over are buttons. No finger (or no wish to draw): the Shapes row
  * adds a ready-made fish, which can then be recoloured and added to. Every control is a 48 dp
  * target with a spoken name, the chosen colour and brush are marked with a tick as well as a ring,
- * and the board itself announces how many strokes it holds.
+ * and the board itself announces how many strokes it holds. While a Swim save is in flight the board,
+ * the colours, the brushes and the shapes are disabled (a stroke added then would be wiped when the
+ * save ends). A ready shape is added whole or, when the strokes do not all fit, refused with a line.
  *
  * The part that takes drags is inset with [clearOfShellEdges] (TRAPS #72), so a stroke that starts
  * near the screen edge is not taken by the shell as a room opening; the paper is only that part.
@@ -95,11 +97,13 @@ internal fun DrawScreen(
 ) {
     var confirmClear by rememberSaveable { mutableStateOf(false) }
     val sketch = draft.sketch
+    // A shape that did not fit was refused: said under the board until the sketch changes.
+    var shapeRefused by remember(sketch) { mutableStateOf(false) }
     val controls: @Composable () -> Unit = {
-        DrawControls(draft = draft, onDraft = onDraft)
+        DrawControls(draft = draft, onDraft = onDraft, enabled = !busy, onShapeRefused = { shapeRefused = true })
     }
     val swimBar: @Composable () -> Unit = {
-        SwimBar(draft = draft, tankFull = tankFull, busy = busy, message = message, onSwim = onSwim)
+        SwimBar(draft = draft, tankFull = tankFull, busy = busy, strokesFull = sketch.isFull || shapeRefused, message = message, onSwim = onSwim)
     }
     Column(modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -117,7 +121,7 @@ internal fun DrawScreen(
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             if (maxWidth > maxHeight) {
                 Row(Modifier.fillMaxSize()) {
-                    Board(draft, onDraft, tall = true, modifier = Modifier.weight(1f).fillMaxHeight())
+                    Board(draft, onDraft, enabled = !busy, tall = true, modifier = Modifier.weight(1f).fillMaxHeight())
                     Column(Modifier.width(260.dp).fillMaxHeight().padding(end = 8.dp)) {
                         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) { controls() }
                         swimBar()
@@ -128,7 +132,7 @@ internal fun DrawScreen(
                     // The board is as tall as the width gives it and the controls follow; the whole
                     // block scrolls on a short screen, and Swim stays below it, always in view.
                     Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
-                        Board(draft, onDraft, tall = false, modifier = Modifier.fillMaxWidth())
+                        Board(draft, onDraft, enabled = !busy, tall = false, modifier = Modifier.fillMaxWidth())
                         Column(Modifier.padding(horizontal = 12.dp)) { controls() }
                     }
                     Column(Modifier.padding(horizontal = 12.dp)) { swimBar() }
@@ -152,26 +156,35 @@ internal fun DrawScreen(
 }
 
 @Composable
-private fun DrawControls(draft: DrawDraft, onDraft: ((DrawDraft) -> DrawDraft) -> Unit) {
+private fun DrawControls(
+    draft: DrawDraft,
+    onDraft: ((DrawDraft) -> DrawDraft) -> Unit,
+    enabled: Boolean,
+    onShapeRefused: () -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Label(AquariumCopy.COLOUR)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             SketchPalette.swatches.forEachIndexed { i, swatch ->
-                SwatchButton(swatch, selected = i == draft.colorIndex, onClick = { onDraft { it.copy(colorIndex = i) } })
+                SwatchButton(swatch, selected = i == draft.colorIndex, enabled = enabled, onClick = { onDraft { it.copy(colorIndex = i) } })
             }
         }
         Label(AquariumCopy.BRUSH)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             BrushSize.entries.forEach { brush ->
-                AquariumChip(brush.label, selected = brush == draft.brush, onClick = { onDraft { it.copy(brush = brush) } })
+                AquariumChip(brush.label, selected = brush == draft.brush, enabled = enabled, onClick = { onDraft { it.copy(brush = brush) } })
             }
-            AquariumChip(AquariumCopy.HEAD_LEFT, selected = draft.headLeft, onClick = { onDraft { it.copy(headLeft = !it.headLeft) } })
+            AquariumChip(AquariumCopy.HEAD_LEFT, selected = draft.headLeft, enabled = enabled, onClick = { onDraft { it.copy(headLeft = !it.headLeft) } })
         }
         Label(AquariumCopy.SHAPES)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ReadyShape.entries.forEach { shape ->
-                AquariumChip(shape.label, selected = false, onClick = {
-                    onDraft { it.copy(sketch = ReadyShapes.addTo(it.sketch, shape, it.argb, it.brush.width)) }
+                AquariumChip(shape.label, selected = false, enabled = enabled, onClick = {
+                    if (ReadyShapes.fits(draft.sketch, shape)) {
+                        onDraft { it.copy(sketch = ReadyShapes.addTo(it.sketch, shape, it.argb, it.brush.width, it.headLeft)) }
+                    } else {
+                        onShapeRefused()
+                    }
                 })
             }
         }
@@ -180,8 +193,8 @@ private fun DrawControls(draft: DrawDraft, onDraft: ((DrawDraft) -> DrawDraft) -
 
 /** What stands in the way of Swim, said in one sentence, and the button. Always on screen. */
 @Composable
-private fun SwimBar(draft: DrawDraft, tankFull: Boolean, busy: Boolean, message: String?, onSwim: () -> Unit) {
-    val note = swimNote(busy = busy, tankFull = tankFull, strokesFull = draft.sketch.isFull, message = message)
+private fun SwimBar(draft: DrawDraft, tankFull: Boolean, busy: Boolean, strokesFull: Boolean, message: String?, onSwim: () -> Unit) {
+    val note = swimNote(busy = busy, tankFull = tankFull, strokesFull = strokesFull, message = message)
     Column(Modifier.padding(vertical = 6.dp)) {
         if (note != null) {
             Text(note, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkMuted, modifier = Modifier.padding(bottom = 4.dp))
@@ -217,7 +230,7 @@ private fun Label(text: String) {
  * clear of the shell's edge zones, so every stroke starts inside it.
  */
 @Composable
-private fun Board(draft: DrawDraft, onDraft: ((DrawDraft) -> DrawDraft) -> Unit, tall: Boolean, modifier: Modifier) {
+private fun Board(draft: DrawDraft, onDraft: ((DrawDraft) -> DrawDraft) -> Unit, enabled: Boolean, tall: Boolean, modifier: Modifier) {
     val latest by rememberUpdatedState(draft)
     val latestEdit by rememberUpdatedState(onDraft)
     val live = remember { mutableStateListOf<Offset>() }
@@ -230,7 +243,9 @@ private fun Board(draft: DrawDraft, onDraft: ((DrawDraft) -> DrawDraft) -> Unit,
                 .aspectRatio(Sketch.BOARD_ASPECT)
                 .background(PAPER)
                 .semantics { contentDescription = AquariumCopy.board(strokes.size) }
-                .pointerInput(minSpacing) {
+                .pointerInput(minSpacing, enabled) {
+                    // Locked while a save runs: a stroke added now would be wiped by it.
+                    if (!enabled) return@pointerInput
                     awaitEachGesture {
                         val down = awaitFirstDown()
                         down.consume()

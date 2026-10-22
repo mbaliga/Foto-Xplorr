@@ -214,6 +214,9 @@ class AquariumExperienceTest {
         compose.setContent { Host() }
         waitForText(AquariumCopy.EMPTY_PROMPT)
         compose.onNodeWithContentDescription(AquariumCopy.tank(0)).assertExists()
+        // Not shown, and not left behind to count toward the cap either.
+        compose.waitUntil(10_000) { !File(dir, "$id.json").exists() }
+        assertFalse(File(dir, "$id.png").exists())
     }
 
     @Test

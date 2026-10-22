@@ -34,7 +34,9 @@ import kotlinx.coroutines.withContext
  * board is open, so the host's is asked after it, never swallowed.
  *
  * Storage: each creature is a PNG and a JSON under `filesDir/aquarium` ([CreatureStore]), at most
- * [CreatureStore.MAX_CREATURES]; nothing leaves the device and no library photo is involved.
+ * [CreatureStore.MAX_CREATURES]; nothing leaves the device and no library photo is involved. A pair
+ * whose picture will not decode is deleted when the tank opens ([SpriteIo.loadAndSweep]), so it can
+ * neither hide nor count toward the cap.
  * Deleting a creature from the list removes its files at once, without a question: it is a small
  * doodle and the list shows exactly which one.
  *
@@ -70,10 +72,10 @@ fun AquariumExperience(onClose: () -> Unit, modifier: Modifier = Modifier) {
     LaunchedEffect(store) {
         val found = withContext(Dispatchers.IO) {
             store.sweepIncomplete()
-            store.list().mapNotNull { stored -> SpriteIo.decode(stored)?.let { stored.record to it } }
+            SpriteIo.loadAndSweep(store)
         }
-        for ((record, bitmap) in found) sprites[record.id] = bitmap
-        creatures = found.map { it.first }
+        for (c in found) sprites[c.record.id] = c.sprite
+        creatures = found.map { it.record }
     }
     // The tank follows the list; the first read places creatures at random, later additions swim in.
     var placedFirst by remember { mutableStateOf(false) }
@@ -114,8 +116,11 @@ fun AquariumExperience(onClose: () -> Unit, modifier: Modifier = Modifier) {
                             is MadeCreature.Done -> {
                                 sprites[outcome.record.id] = outcome.sprite
                                 creatures = creatures.orEmpty() + outcome.record
-                                draft = latestDraft.copy(sketch = Sketch())
-                                drawing = false
+                                // Only the drawing that was saved is cleared; one changed since is the person's.
+                                draftAfterSwim(taken, latestDraft)?.let {
+                                    draft = it
+                                    drawing = false
+                                }
                             }
                             MadeCreature.Full -> message = AquariumCopy.TANK_FULL
                             MadeCreature.Failed -> message = AquariumCopy.SAVE_FAILED

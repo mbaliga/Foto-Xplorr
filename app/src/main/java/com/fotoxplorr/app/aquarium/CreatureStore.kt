@@ -24,7 +24,8 @@ class StoredSprite(val record: StoredCreature, val png: ByteArray)
  * only a creature whose JSON exists is listed. A write that stops half way (the process dies, the
  * disk fills) therefore leaves either nothing or an unlisted PNG, never a creature without a
  * picture; [sweepIncomplete] removes such leftovers. A creature whose JSON or PNG is damaged, or
- * whose PNG is missing, is skipped, not an error. Deleting removes the JSON first, for the same reason.
+ * whose PNG is missing, is skipped, not an error (a PNG that is listed but will not decode is
+ * removed on load by [SpriteIo.loadAndSweep], since this class never decodes). Deleting removes the JSON first, for the same reason.
  *
  * File names are `CreatureId.generate()` UUIDs and nothing from user input; every id that comes
  * in from outside is checked with [CreatureId.isValid] before it is used in a path. The whole

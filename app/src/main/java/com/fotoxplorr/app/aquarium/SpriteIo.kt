@@ -35,11 +35,41 @@ internal object SpriteIo {
         return store.save(png, sprite.width, sprite.height, headLeft)
     }
 
+    /** A creature read back: its record and its decoded picture. */
+    class LoadedCreature(val record: StoredCreature, val sprite: Bitmap)
+
+    /**
+     * Every creature in [store] whose picture decodes, and the removal of the ones that do not: a
+     * pair that lists but is not an image (a power cut can leave a cut-off or empty PNG, since the
+     * write is not synced) would otherwise be hidden from the person yet count toward
+     * [CreatureStore.MAX_CREATURES], with nothing visible to remove. A picture that fails only for
+     * lack of memory is skipped for this run and kept. Reads and deletes files; call off the main thread.
+     */
+    fun loadAndSweep(store: CreatureStore): List<LoadedCreature> {
+        val loaded = ArrayList<LoadedCreature>()
+        for (stored in store.list()) {
+            try {
+                val bitmap = decodeOrNull(stored)
+                if (bitmap != null) loaded.add(LoadedCreature(stored.record, bitmap)) else store.delete(stored.record.id)
+            } catch (e: OutOfMemoryError) {
+                // Not the file's fault: leave it for the next run.
+            }
+        }
+        return loaded
+    }
+
     /**
      * The picture of [stored] as an ARGB bitmap, or null when the PNG is not an image, is bigger
      * than [MAX_LOAD_SIDE], or is not the size its record says (a pair that does not belong together).
      */
-    fun decode(stored: StoredSprite): Bitmap? {
+    fun decode(stored: StoredSprite): Bitmap? = try {
+        decodeOrNull(stored)
+    } catch (e: OutOfMemoryError) {
+        null
+    }
+
+    /** [decode], except that running out of memory is thrown, so a caller can tell it from a damaged file. */
+    private fun decodeOrNull(stored: StoredSprite): Bitmap? {
         val record = stored.record
         if (record.widthPx > MAX_LOAD_SIDE || record.heightPx > MAX_LOAD_SIDE) return null
         return try {
@@ -49,8 +79,6 @@ internal object SpriteIo {
             val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
             BitmapFactory.decodeByteArray(stored.png, 0, stored.png.size, opts)
         } catch (e: Exception) {
-            null
-        } catch (e: OutOfMemoryError) {
             null
         }
     }

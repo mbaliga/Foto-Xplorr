@@ -33,6 +33,14 @@ data class DrawDraft(
 }
 
 /**
+ * The draft once a Swim that started from [taken] has saved its creature: [now] with an empty
+ * sketch, or null when the sketch is no longer the one that was saved (the board is locked while a
+ * save runs, but a drawing changed in that window is the person's and is never wiped).
+ */
+internal fun draftAfterSwim(taken: DrawDraft, now: DrawDraft): DrawDraft? =
+    if (now.sketch === taken.sketch) now.copy(sketch = Sketch()) else null
+
+/**
  * [DrawDraft] to and from a string. Format: `1~color~brush~headLeft~stroke|stroke|...`, a stroke
  * being `argbHex,widthIn1e4,points` and a point 6 hex digits (x and y, 12 bits each, so the board
  * is cut into 4096 steps, finer than a fingertip). The reader is tolerant: a damaged stroke is
@@ -141,9 +149,21 @@ object ReadyShapes {
         )
     }
 
-    /** [sketch] with [shape] added on top (strokes beyond the sketch's limit are dropped, as for a finger). */
-    fun addTo(sketch: Sketch, shape: ReadyShape, argb: Int, width: Float): Sketch =
-        strokes(shape, argb, width).fold(sketch) { s, st -> s.add(st.points, st.argb, st.width) }
+    /** True when every stroke of [shape] fits in [sketch]; a shape is whole or not added. */
+    fun fits(sketch: Sketch, shape: ReadyShape): Boolean =
+        sketch.strokes.size + strokes(shape, 0, 0f).size <= Sketch.MAX_STROKES
+
+    /**
+     * [sketch] with [shape] added on top, mirrored left to right when [headLeft] so that it faces
+     * the way the person ticked; [sketch] itself when [shape] does not [fit][fits].
+     */
+    fun addTo(sketch: Sketch, shape: ReadyShape, argb: Int, width: Float, headLeft: Boolean = false): Sketch {
+        if (!fits(sketch, shape)) return sketch
+        return strokes(shape, argb, width).fold(sketch) { s, st ->
+            val pts = if (headLeft) st.points.map { NormPoint(1f - it.x, it.y) } else st.points
+            s.add(pts, st.argb, st.width)
+        }
+    }
 
     private fun ellipse(cx: Float, cy: Float, rx: Float, ry: Float, n: Int = 48): List<NormPoint> =
         List(n + 1) { i ->

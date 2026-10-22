@@ -143,6 +143,58 @@ class DrawDraftTest {
         assertEquals(Sketch.MAX_STROKES, s.strokes.size)
     }
 
+    private fun filler(n: Int): Sketch {
+        var s = Sketch()
+        repeat(n) { s = s.add(line(5, y = 0.1f + 0.01f * it), 0xFF000000.toInt(), 0.02f) }
+        return s
+    }
+
+    @Test
+    fun `a ready shape comes out head left when the head is ticked left`() {
+        for (shape in ReadyShape.entries) {
+            val right = ReadyShapes.addTo(Sketch(), shape, 0xFFFB8C00.toInt(), 0.025f, headLeft = false)
+            val left = ReadyShapes.addTo(Sketch(), shape, 0xFFFB8C00.toInt(), 0.025f, headLeft = true)
+            assertEquals(shape.name, right.strokes.size, left.strokes.size)
+            // The eye is the last stroke: on the right for a head on the right, mirrored for the left.
+            val eyeRight = right.strokes.last().points.single()
+            val eyeLeft = left.strokes.last().points.single()
+            assertTrue(shape.name, eyeRight.x > 0.5f)
+            assertEquals(shape.name, 1f - eyeRight.x, eyeLeft.x, 1e-6f)
+            assertEquals(shape.name, eyeRight.y, eyeLeft.y, 1e-6f)
+            // The body keeps its loop and its fill.
+            assertTrue(shape.name, left.strokes[0].filled)
+        }
+    }
+
+    @Test
+    fun `a ready shape is added whole or not at all`() {
+        val room = Sketch.MAX_STROKES - 3
+        val fits = ReadyShapes.addTo(filler(room), ReadyShape.ROUND_FISH, 0xFF000000.toInt(), 0.02f)
+        assertEquals(Sketch.MAX_STROKES, fits.strokes.size)
+        for (used in room + 1..Sketch.MAX_STROKES) {
+            val before = filler(used)
+            assertFalse("$used strokes", ReadyShapes.fits(before, ReadyShape.TADPOLE))
+            val after = ReadyShapes.addTo(before, ReadyShape.TADPOLE, 0xFF000000.toInt(), 0.02f)
+            assertEquals("$used strokes: nothing added", used, after.strokes.size)
+        }
+        assertTrue(ReadyShapes.fits(filler(room), ReadyShape.TADPOLE))
+    }
+
+    @Test
+    fun `the finished Swim clears the draft only when the sketch is the one that was taken`() {
+        val taken = draft(line(10)).copy(headLeft = true)
+        val cleared = draftAfterSwim(taken, taken)!!
+        assertTrue(cleared.sketch.isEmpty)
+        assertEquals(taken.colorIndex, cleared.colorIndex)
+        assertTrue("head direction is kept", cleared.headLeft)
+        // A stroke added since, or a start over and a new drawing, is left alone.
+        val edited = taken.copy(sketch = taken.sketch.add(line(6, y = 0.2f), 0xFF000000.toInt(), 0.02f))
+        assertEquals(null, draftAfterSwim(taken, edited))
+        assertEquals(null, draftAfterSwim(taken, taken.copy(sketch = Sketch())))
+        // Only the colour changed: the sketch is still the one saved.
+        assertTrue(draftAfterSwim(taken, taken.copy(colorIndex = 0))!!.sketch.isEmpty)
+    }
+
     @Test
     fun `shape labels are the copy names`() {
         assertEquals(AquariumCopy.SHAPE_TADPOLE, ReadyShape.TADPOLE.label)

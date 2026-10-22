@@ -83,11 +83,12 @@ internal fun AquariumButton(
 
 /** A choice. The tick on a chosen one is the cue besides colour. */
 @Composable
-internal fun AquariumChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun AquariumChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     FilterChip(
         selected = selected,
         onClick = onClick,
         modifier = modifier,
+        enabled = enabled,
         label = { Text(label) },
         leadingIcon = if (selected) {
             { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
@@ -102,7 +103,7 @@ internal fun AquariumChip(label: String, selected: Boolean, onClick: () -> Unit,
             selectedLeadingIconColor = Color.Black,
         ),
         border = FilterChipDefaults.filterChipBorder(
-            enabled = true,
+            enabled = enabled,
             selected = selected,
             borderColor = RoomStyle.InkFaint,
             selectedBorderColor = Color.White,
@@ -115,12 +116,12 @@ internal fun AquariumChip(label: String, selected: Boolean, onClick: () -> Unit,
  * a tick, and the name is the accessibility label, so colour is never the only cue.
  */
 @Composable
-internal fun SwatchButton(swatch: Swatch, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun SwatchButton(swatch: Swatch, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val color = Color(swatch.argb)
     Box(
         modifier = modifier
             .size(48.dp)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
             .semantics { contentDescription = swatch.name },
         contentAlignment = Alignment.Center,
     ) {
