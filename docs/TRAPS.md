@@ -958,12 +958,19 @@ records `u64 id, u64 size, bytes, sha256`), `pack-NNNN.fzbx` (the encrypted inde
 - **A manifest's sections are the phone's current stores, so they are carried forward** (`SectionMerge`).
   Without it a run made on a wiped phone writes empty tags, locks and pins over a full backup, and a
   restore then puts protected photos back unlocked. The price of additive: a tag or lock removed since
-  the last run comes back at a restore. Photo ids are one phone's row numbers; the tags file renumbers
-  a clashing id by its identity block, pins and recipes cannot (they merge by id as they stand).
+  the last run comes back at a restore. Photo ids are one phone's row numbers; the tags file and each
+  pin and recipe record carry an identity (name, size, date taken, folder), a clashing id is renumbered
+  on the previous side, and a restore finds a pin's photo by that identity (a record without one is the
+  same phone's, by id).
 - **"Backed up" includes whether the GPS was readable.** A copy made without `ACCESS_MEDIA_LOCATION` has
   no `ORIGINAL_LOCATION` flag and is copied again once the location is readable
   (`BackupPlanner` `locationReadable`); a file whose original read falls back every time would be
-  copied on every run.
+  copied on every run. The re-copy's manifest no longer lists the old pack, but it stays in the folder
+  with a valid index, so every later run reads it back as a recovered record BESIDE the newer one: the
+  planner must look at all same-bytes records of a path and take the one with the location (and not
+  carry the replaced one), or it re-copies the file forever. Likewise "not listed" proves nothing while
+  the newest manifest could not be read, and a pack whose index disagrees about its length may be the
+  only copy of the last run: neither is ever offered for deletion (`unverified`, `leftoversRemovable`).
 - **The device self-check covers the cipher** (`BackupGoldenVector`): opening the embedded golden file,
   a fresh seal and open, and a flipped bit that must fail, on top of PBKDF2. Keep the embedded bytes
   equal to `BackupFormatTest`'s (a test pins it).

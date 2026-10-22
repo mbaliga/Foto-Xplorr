@@ -44,6 +44,29 @@ class BackupSectionsTest {
     }
 
     @Test
+    fun `a pin and a recipe carry who the photo is, and one without it reads back as none`() {
+        val who = MediaIdentity("IMG_1.jpg", 1_234, 5_000, "DCIM/Camera/")
+        val sections = BackupSections.build(
+            metadata = parseJson("""{"kind":"x"}""")!!,
+            locks = emptyList(),
+            pins = listOf(BackupSections.Pin(1, 1.0, 2.0, who), BackupSections.Pin(2, 3.0, 4.0)),
+            recipes = listOf(BackupSections.Recipe(1, 9, recipe, who), BackupSections.Recipe(2, 9, recipe)),
+        ).associate { it.name to it.data }
+        val pins = BackupSections.pins(sections[BackupSections.PINS])
+        assertEquals(who, pins[0].identity)
+        assertNull(pins[1].identity)
+        val recipes = BackupSections.recipes(sections[BackupSections.RECIPES])
+        assertEquals(who, recipes[0].identity)
+        assertNull(recipes[1].identity)
+        // A record from before the field has the same shape as one written without it.
+        assertTrue("identity" !in (sections.getValue(BackupSections.PINS) as JsonValue.JsonArray).items[1].toString())
+        // A damaged identity is no identity, and the record is still read.
+        val damaged = parseJson("""[{"id":4,"lat":1,"lon":2,"identity":{"name":""}},{"id":5,"lat":1,"lon":2,"identity":"x"}]""")
+        assertEquals(listOf(4L, 5L), BackupSections.pins(damaged).map { it.mediaId })
+        assertTrue(BackupSections.pins(damaged).all { it.identity == null })
+    }
+
+    @Test
     fun `a section survives the manifest codec`() {
         val out = StringBuilder()
         val writer = ManifestWriter(out)

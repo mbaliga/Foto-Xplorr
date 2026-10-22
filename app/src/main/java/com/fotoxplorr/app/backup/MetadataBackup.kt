@@ -116,7 +116,7 @@ object MetadataBackup {
         val catalogueMissing: Boolean get() = photos > 0 && withIdentity == 0
     }
 
-    private fun identityJson(identity: MediaIdentity): JsonValue {
+    internal fun identityJson(identity: MediaIdentity): JsonValue {
         val fields = linkedMapOf<String, JsonValue>(
             "name" to identity.displayName.toJson(),
             "size" to identity.sizeBytes.toJson(),
@@ -220,16 +220,21 @@ object MetadataBackup {
         val out = LinkedHashMap<Long, MediaIdentity>()
         for ((key, value) in block.entries) {
             val id = key.toLongOrNull()?.takeIf { it >= 0 } ?: continue
-            if (value !is JsonValue.JsonObject) continue
-            val name = (value["name"] as? JsonValue.JsonString)?.value?.takeIf { it.isNotBlank() } ?: continue
-            out[id] = MediaIdentity(
-                displayName = name,
-                sizeBytes = value["size"].asLong(-1L),
-                dateTakenMillis = value["dateTaken"].asLong(0L),
-                relativePath = (value["path"] as? JsonValue.JsonString)?.value?.takeIf { it.isNotEmpty() },
-            )
+            out[id] = identityFrom(value) ?: continue
         }
         return out
+    }
+
+    /** One identity as [identityJson] wrote it, or null when [value] is not one (no usable name). */
+    internal fun identityFrom(value: JsonValue?): MediaIdentity? {
+        if (value !is JsonValue.JsonObject) return null
+        val name = (value["name"] as? JsonValue.JsonString)?.value?.takeIf { it.isNotBlank() } ?: return null
+        return MediaIdentity(
+            displayName = name,
+            sizeBytes = value["size"].asLong(-1L),
+            dateTakenMillis = value["dateTaken"].asLong(0L),
+            relativePath = (value["path"] as? JsonValue.JsonString)?.value?.takeIf { it.isNotEmpty() },
+        )
     }
 
     private fun wholeNumber(value: JsonValue): Long? {

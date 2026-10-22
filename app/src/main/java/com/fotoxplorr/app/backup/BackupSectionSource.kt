@@ -42,13 +42,13 @@ class BackupSectionSource(
             if (revisions[stored.mediaId] != stored.dateModifiedSeconds) {
                 null
             } else {
-                BackupSections.recipeFromStored(stored.mediaId, stored.dateModifiedSeconds, stored.json)
+                BackupSections.recipeFromStored(stored.mediaId, stored.dateModifiedSeconds, stored.json, catalogue[stored.mediaId])
             }
         }
         BackupSections.build(
             metadata = metadata,
             locks = privateFolderStore.lockRecords().map { BackupSections.Lock(it.folderKey, it.saltBase64, it.hashBase64) },
-            pins = geoRepository.manualPins().map { BackupSections.Pin(it.mediaId.value, it.latitude, it.longitude) },
+            pins = geoRepository.manualPins().map { BackupSections.Pin(it.mediaId.value, it.latitude, it.longitude, catalogue[it.mediaId.value]) },
             recipes = recipes,
         )
     }

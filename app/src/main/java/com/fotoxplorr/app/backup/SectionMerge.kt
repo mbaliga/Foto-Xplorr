@@ -19,16 +19,18 @@ import com.fotoxplorr.app.editor.toJson
  * The price of "only ever adds": a tag, favourite, lock or pin the person removed since the last
  * backup is still in the next snapshot, and comes back at a restore.
  *
- * Photo ids in these sections are MediaStore ids, which are row numbers on one phone. Pins and
- * recipes are merged by that id as they stand (the backup has nothing else to tell their photos
- * apart by). The tags file has an identity block, so there an id that means two different photos
- * in the two snapshots is renumbered on the previous side instead of being merged into one.
+ * Photo ids in these sections are MediaStore ids, which are row numbers on one phone. The tags file
+ * has an identity block, and so does each pin and recipe record (name, size, date taken, folder): an
+ * id that means two different photos in the two snapshots is renumbered on the previous side instead
+ * of being merged into one, so a wiped phone's pin for id 7 never overwrites the backup's pin for
+ * another photo that had id 7, and one photo seen under two ids is one record. A record without an
+ * identity (from before the field) is taken to be the same phone's photo, as it always was.
  */
 object SectionMerge {
     /**
      * [previous] folded into [current], section by section: metadata through
      * [MetadataBackup.mergeLibraries] (current wins a conflict), locks by folder key, pins and
-     * recipes by id (current wins). A section only one side has is carried. [avoidIdsAbove] is the
+     * recipes by photo (current wins). A section only one side has is carried. [avoidIdsAbove] is the
      * highest photo id the caller already uses elsewhere (the entries'), so a renumbered id cannot meet it.
      */
     fun union(previous: List<ManifestSection>, current: List<ManifestSection>, avoidIdsAbove: Long = 0): List<ManifestSection> {
@@ -49,8 +51,8 @@ object SectionMerge {
     private fun mergeOne(name: String, old: JsonValue, new: JsonValue, avoidIdsAbove: Long): JsonValue = when (name) {
         BackupSections.METADATA -> mergeMetadata(old, new, avoidIdsAbove) ?: new
         BackupSections.LOCKS -> mergeLocks(old, new)
-        BackupSections.PINS -> mergeById(old, new)
-        BackupSections.RECIPES -> mergeById(old, new)
+        BackupSections.PINS -> mergeByPhoto(old, new, avoidIdsAbove)
+        BackupSections.RECIPES -> mergeByPhoto(old, new, avoidIdsAbove)
         else -> new
     }
 
@@ -63,16 +65,57 @@ object SectionMerge {
         )
     }
 
-    /** Pins and recipes are arrays of objects with a numeric `id`; the current one replaces an old one with the same id. */
-    private fun mergeById(old: JsonValue, new: JsonValue): JsonValue {
-        val byId = LinkedHashMap<Long, JsonValue>()
-        val order = ArrayList<Long>()
-        for (item in old.asArray() + new.asArray()) {
-            val id = (item["id"] as? JsonValue.JsonNumber)?.value?.takeIf { it >= 0 && it == Math.floor(it) }?.toLong() ?: continue
-            if (id !in byId) order += id
-            byId[id] = item
+    /**
+     * Pins and recipes are arrays of objects with a numeric `id` and, in newer files, an `identity`.
+     * The current record replaces an old one for the same photo: the same id with a compatible
+     * identity (or none, which is the same phone's), or the same identity under another id. An old
+     * record whose id the current side uses for a different photo keeps its place under a fresh id
+     * above every id in use, so it is neither lost nor attached to the wrong photo.
+     */
+    private fun mergeByPhoto(old: JsonValue, new: JsonValue, avoidIdsAbove: Long): JsonValue {
+        val current = recordsOf(new)
+        val previous = recordsOf(old)
+        val kept = LinkedHashMap<Long, Record>()
+        current.forEach { kept[it.id] = it }
+        val identities = current.mapNotNull { it.identity }.groupBy { it.displayName to it.sizeBytes }
+        var next = maxOf(avoidIdsAbove, current.maxOfOrNull { it.id } ?: 0L, previous.maxOfOrNull { it.id } ?: 0L) + 1
+        for (record in previous) {
+            val who = record.identity
+            if (who != null && identities[who.displayName to who.sizeBytes].orEmpty().any { IdRemap.sameFile(it, who) }) continue
+            val holder = kept[record.id]
+            when {
+                holder == null -> kept[record.id] = record
+                sameOwner(holder.identity, who) -> Unit
+                else -> {
+                    val id = next++
+                    kept[id] = record.copy(id = id)
+                }
+            }
         }
-        return JsonValue.JsonArray(order.sorted().map { byId.getValue(it) })
+        return JsonValue.JsonArray(kept.toSortedMap().values.map { it.item })
+    }
+
+    /** Whether two records under one id are about one photo; a record that does not say is the same phone's. */
+    private fun sameOwner(a: MediaIdentity?, b: MediaIdentity?): Boolean = a == null || b == null || IdRemap.sameFile(a, b)
+
+    private class Record(val id: Long, val identity: MediaIdentity?, val item: JsonValue) {
+        /** The record under another id, every other field as it was. */
+        fun copy(id: Long): Record {
+            val fields = LinkedHashMap((item as JsonValue.JsonObject).entries)
+            fields["id"] = id.toJson()
+            return Record(id, identity, JsonValue.JsonObject(fields))
+        }
+    }
+
+    /** The usable records of a pins or recipes section; later ones of the same id replace earlier ones. */
+    private fun recordsOf(section: JsonValue): List<Record> {
+        val byId = LinkedHashMap<Long, Record>()
+        for (item in section.asArray()) {
+            val fields = (item as? JsonValue.JsonObject)?.entries ?: continue
+            val id = (fields["id"] as? JsonValue.JsonNumber)?.value?.takeIf { it >= 0 && it == Math.floor(it) }?.toLong() ?: continue
+            byId[id] = Record(id, BackupSections.identityOf(fields), item)
+        }
+        return byId.values.toList()
     }
 
     /**

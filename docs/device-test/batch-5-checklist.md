@@ -388,5 +388,17 @@ provider's `EXTRA_LOADING`/`EXTRA_ERROR` behaviour and timing, which is why thes
       back up again: the preflight says "N files were backed up without their location and will be copied
       again", the second run copies them, and a restored photo has its GPS (open its info). A third run says
       everything is already backed up (it must not copy them every time; if it does, note which files, they
-      are ones whose original cannot be read).
+      are ones whose original cannot be read). Run it a **fourth** time: still nothing to copy, and no new
+      `pack-*.fzbp` appears in the folder (the first run's pack stays there; that is expected).
+- [ ] **A folder that is still syncing must not offer to delete the last run.** Back up twice, then make
+      the provider hide or cut the newest `manifest-NNNN.fzbm` and shorten its newest pack by a few bytes
+      (or stop the cloud app mid-upload of a second run). Start **Back up everything, encrypted**: the
+      preflight says the files "do not match the backup that lists them ... and are left alone" (or that
+      the leftovers stay because the newest backup file could not be read) and shows **no** "Remove the
+      leftover files" button; **Check a backup** says "... were not checked", never "everything is intact".
+      After the provider finishes syncing, the same folder opens normally.
+- [ ] **A wiped phone's pins and edits.** Back up on phone A with a hand-placed map pin and a saved edit,
+      restore onto a fresh phone B, place a different pin on another photo and back up into the same
+      folder before restoring everything. Restore on a third phone (or wiped B): both photos get their own
+      pin and edit; neither pin is on the other photo.
 

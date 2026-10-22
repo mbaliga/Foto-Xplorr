@@ -113,7 +113,8 @@ object IdRemap {
         return IdentityMatch(oldToNew, order.filter { it !in oldToNew }.toSet())
     }
 
-    private fun sameFile(a: MediaIdentity, b: MediaIdentity): Boolean =
+    /** The same file by name, size and date taken (a folder it moved to does not make it another file). */
+    internal fun sameFile(a: MediaIdentity, b: MediaIdentity): Boolean =
         a.displayName == b.displayName && a.sizeBytes == b.sizeBytes && datesCompatible(a.dateTakenMillis, b.dateTakenMillis)
 
     /** A date of zero or less means "unknown" and agrees with anything. */

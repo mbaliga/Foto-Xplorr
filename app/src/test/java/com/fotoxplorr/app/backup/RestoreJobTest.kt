@@ -441,6 +441,37 @@ class RestoreJobTest {
     }
 
     @Test
+    fun `a pin or edit finds its photo by who it is, even under a renumbered id, and is dropped when it names another photo`() {
+        val recipe = parseJson("""{"quarterTurns":1}""")!!
+        val made = RestoreFixtures.backup(
+            dir = dir,
+            count = 3,
+            sections = { list ->
+                fun who(n: Int) = list[n - 1].let { MediaIdentity(it.displayName, it.sizeBytes, it.dateTakenMillis, it.relativePath) }
+                RestoreFixtures.sections(
+                    list,
+                    pins = listOf(
+                        BackupSections.Pin(9_001, 51.5, -0.12, who(2)), // photo 2 under a renumbered id
+                        BackupSections.Pin(3, 1.0, 1.0, MediaIdentity("Elsewhere.jpg", 77, 5, null)), // id 3, but another photo
+                    ),
+                    recipes = listOf(
+                        BackupSections.Recipe(9_002, list[0].dateModifiedSeconds, recipe, who(1)),
+                        BackupSections.Recipe(3, list[2].dateModifiedSeconds, recipe, MediaIdentity("Elsewhere.jpg", 77, 5, null)),
+                    ),
+                )
+            },
+        )
+        val phone = FakePhone()
+        val applier = RecordingApplier(phone.events)
+        val outcome = RestoreFixtures.restore(made, phone, applier)
+
+        assertEquals(listOf(phone.find("IMG_2.jpg").single().id), applier.pins.map { it.mediaId })
+        assertEquals(1, outcome.pins)
+        val one = phone.find("IMG_1.jpg").single()
+        assertEquals(listOf(one.id to one.modified), applier.recipes.map { it.mediaId to it.dateModifiedSeconds })
+    }
+
+    @Test
     fun `a sensitive photo is marked as soon as it has its new id, long before the tags arrive`() {
         val made = backup(count = 6) { list -> list.map { if (it.mediaId == 1L || it.mediaId == 2L) it.copy(isSensitive = true) else it } }
         val phone = FakePhone()

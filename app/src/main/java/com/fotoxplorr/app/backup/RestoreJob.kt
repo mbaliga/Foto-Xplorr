@@ -574,10 +574,38 @@ class RestoreJob(
         override fun close() = Unit
     }
 
-    private fun remappedPins(set: RestoreSet, settled: Map<Long, Long>): List<BackupSections.Pin> =
-        BackupSections.pins(set.section(BackupSections.PINS)).mapNotNull { pin ->
-            settled[pin.mediaId]?.let { BackupSections.Pin(it, pin.latitude, pin.longitude) }
+    private fun remappedPins(set: RestoreSet, settled: Map<Long, Long>): List<BackupSections.Pin> {
+        val photos = BackupPhotos(set.entries)
+        return BackupSections.pins(set.section(BackupSections.PINS)).mapNotNull { pin ->
+            val backupId = photos.idOf(pin.mediaId, pin.identity) ?: return@mapNotNull null
+            settled[backupId]?.let { BackupSections.Pin(it, pin.latitude, pin.longitude) }
         }
+    }
+
+    /**
+     * The backup's own id for the photo a pin or recipe record is about. A record that says who it
+     * is (name, size, date taken) is matched to the entry of that photo, which a merge of two
+     * phones' snapshots may have given another id than the one the record carries; one that does
+     * not is the id as written. A photo the backup has no file for, or two it cannot tell apart, is null.
+     */
+    private class BackupPhotos(entries: List<ManifestEntry>) {
+        private val byNameAndSize = HashMap<Pair<String, Long>, MutableList<Pair<Long, MediaIdentity>>>()
+
+        init {
+            for (entry in entries) {
+                val who = MediaIdentity(entry.displayName, entry.sizeBytes, entry.dateTakenMillis, entry.relativePath.ifEmpty { null })
+                byNameAndSize.getOrPut(entry.displayName to entry.sizeBytes) { ArrayList() } += entry.mediaId to who
+            }
+        }
+
+        fun idOf(id: Long, identity: MediaIdentity?): Long? {
+            if (identity == null) return id
+            val ids = byNameAndSize[identity.displayName to identity.sizeBytes].orEmpty()
+                .filter { IdRemap.sameFile(it.second, identity) }
+                .mapTo(sortedSetOf()) { it.first }
+            return if (id in ids) id else ids.singleOrNull()
+        }
+    }
 
     /**
      * Edit recipes of the photos this run wrote. A recipe is stored against the file's revision, and
@@ -593,10 +621,12 @@ class RestoreJob(
             val revision = prep.localRevisions[here] ?: continue
             revisionByOld.putIfAbsent(item.entry.mediaId, here to revision)
         }
+        val photos = BackupPhotos(prep.set.entries)
         return BackupSections.recipes(prep.set.section(BackupSections.RECIPES)).mapNotNull { recipe ->
-            val entry = entryByOld[recipe.mediaId] ?: return@mapNotNull null
+            val backupId = photos.idOf(recipe.mediaId, recipe.identity) ?: return@mapNotNull null
+            val entry = entryByOld[backupId] ?: return@mapNotNull null
             if (entry.dateModifiedSeconds != recipe.dateModifiedSeconds) return@mapNotNull null
-            val (newId, revision) = revisionByOld[recipe.mediaId] ?: return@mapNotNull null
+            val (newId, revision) = revisionByOld[backupId] ?: return@mapNotNull null
             if (revision <= 0) null else RestoredRecipe(newId, revision, recipe.recipe)
         }
     }

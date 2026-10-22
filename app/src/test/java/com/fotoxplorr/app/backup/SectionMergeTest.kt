@@ -6,6 +6,7 @@ import com.fotoxplorr.app.editor.asLong
 import com.fotoxplorr.app.editor.asString
 import com.fotoxplorr.app.editor.get
 import com.fotoxplorr.app.editor.parseJson
+import com.fotoxplorr.app.editor.stringify
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -142,6 +143,98 @@ class SectionMergeTest {
         val now = sections(tags = mapOf("new" to listOf(5L)), identities = mapOf(5L to identity(5, "Z.jpg")))
         val file = metadata(SectionMerge.union(before, now, avoidIdsAbove = 9_000))
         assertTrue(tagIds(file, "old").single() > 9_000)
+    }
+
+    // ---- pins and recipes are merged by photo, not by row number ----
+
+    private fun who(name: String, size: Long = 2_000, taken: Long = 7_000, path: String? = "DCIM/Camera/") = MediaIdentity(name, size, taken, path)
+
+    private val recipeOld = checkNotNull(parseJson("""{"look":"old"}"""))
+    private val recipeNew = checkNotNull(parseJson("""{"look":"new"}"""))
+
+    private fun pinsOf(result: List<ManifestSection>) = BackupSections.pins(result.named(BackupSections.PINS))
+
+    private fun recipesOf(result: List<ManifestSection>) = BackupSections.recipes(result.named(BackupSections.RECIPES))
+
+    @Test
+    fun `after a wipe the new phone's pin for an id does not overwrite the backup's pin for another photo with that id`() {
+        val before = sections(pins = listOf(BackupSections.Pin(7, 10.0, 20.0, who("A.jpg"))))
+        val now = sections(pins = listOf(BackupSections.Pin(7, 50.0, 60.0, who("Z.jpg", size = 3_000))))
+        val pins = pinsOf(SectionMerge.union(before, now, avoidIdsAbove = 9_000))
+
+        assertEquals(2, pins.size)
+        val here = pins.single { it.identity?.displayName == "Z.jpg" }
+        assertEquals("this phone's photo keeps its id and its place", 7L, here.mediaId)
+        assertEquals(50.0, here.latitude, 1e-9)
+        val old = pins.single { it.identity?.displayName == "A.jpg" }
+        assertTrue("the old photo's pin moved clear of every id in use: ${old.mediaId}", old.mediaId > 9_000)
+        assertEquals("and kept its own place", 10.0, old.latitude, 1e-9)
+        assertEquals(20.0, old.longitude, 1e-9)
+    }
+
+    @Test
+    fun `after a wipe the new phone's edit for an id does not overwrite the backup's edit for another photo`() {
+        val before = sections(recipes = listOf(BackupSections.Recipe(7, 100, recipeOld, who("A.jpg"))))
+        val now = sections(recipes = listOf(BackupSections.Recipe(7, 100, recipeNew, who("Z.jpg", size = 3_000))))
+        val recipes = recipesOf(SectionMerge.union(before, now, avoidIdsAbove = 50))
+
+        assertEquals(2, recipes.size)
+        assertEquals("""{"look":"new"}""", recipes.single { it.mediaId == 7L }.recipe.stringify())
+        val old = recipes.single { it.mediaId != 7L }
+        assertEquals("A.jpg", old.identity!!.displayName)
+        assertEquals("""{"look":"old"}""", old.recipe.stringify())
+        assertTrue(old.mediaId > 50)
+        assertEquals(100L, old.dateModifiedSeconds)
+    }
+
+    @Test
+    fun `one photo under two ids is one record and the phone's own value wins`() {
+        // The restored copy of photo A has a new row number on this phone.
+        val before = sections(
+            pins = listOf(BackupSections.Pin(7, 10.0, 20.0, who("A.jpg"))),
+            recipes = listOf(BackupSections.Recipe(7, 100, recipeOld, who("A.jpg"))),
+        )
+        val now = sections(
+            pins = listOf(BackupSections.Pin(31, 50.0, 60.0, who("A.jpg"))),
+            recipes = listOf(BackupSections.Recipe(31, 120, recipeNew, who("A.jpg"))),
+        )
+        val merged = SectionMerge.union(before, now)
+        assertEquals(listOf(31L), pinsOf(merged).map { it.mediaId })
+        assertEquals(50.0, pinsOf(merged).single().latitude, 1e-9)
+        assertEquals(listOf(31L), recipesOf(merged).map { it.mediaId })
+        assertEquals(120L, recipesOf(merged).single().dateModifiedSeconds)
+    }
+
+    @Test
+    fun `the same photo under the same id merges as before, and a folder it moved to does not make it another`() {
+        val before = sections(pins = listOf(BackupSections.Pin(7, 10.0, 20.0, who("A.jpg", path = "DCIM/Camera/"))))
+        val now = sections(pins = listOf(BackupSections.Pin(7, 50.0, 60.0, who("A.jpg", path = "Pictures/Trip/"))))
+        val pins = pinsOf(SectionMerge.union(before, now))
+        assertEquals(1, pins.size)
+        assertEquals(50.0, pins.single().latitude, 1e-9)
+    }
+
+    @Test
+    fun `records without an identity are the same phone's and merge by id as they always did`() {
+        val before = sections(pins = listOf(BackupSections.Pin(7, 10.0, 20.0)), recipes = listOf(BackupSections.Recipe(7, 1, recipeOld)))
+        val now = sections(pins = listOf(BackupSections.Pin(7, 50.0, 60.0, who("Z.jpg"))), recipes = listOf(BackupSections.Recipe(8, 2, recipeNew)))
+        val merged = SectionMerge.union(before, now)
+        assertEquals(listOf(7L), pinsOf(merged).map { it.mediaId })
+        assertEquals(50.0, pinsOf(merged).single().latitude, 1e-9)
+        assertEquals(listOf(7L, 8L), recipesOf(merged).map { it.mediaId })
+        // And an old record with an identity meeting a current one without: nothing says they differ.
+        val withWho = sections(pins = listOf(BackupSections.Pin(7, 10.0, 20.0, who("A.jpg"))))
+        val withoutWho = sections(pins = listOf(BackupSections.Pin(7, 50.0, 60.0)))
+        assertEquals(1, pinsOf(SectionMerge.union(withWho, withoutWho)).size)
+    }
+
+    @Test
+    fun `a renumbered record is carried again unchanged by the next merge`() {
+        val before = sections(pins = listOf(BackupSections.Pin(7, 10.0, 20.0, who("A.jpg"))))
+        val now = sections(pins = listOf(BackupSections.Pin(7, 50.0, 60.0, who("Z.jpg", size = 3_000))))
+        val first = SectionMerge.union(before, now, avoidIdsAbove = 100)
+        val again = SectionMerge.union(first, now, avoidIdsAbove = 100)
+        assertEquals(pinsOf(first).map { it.mediaId to it.identity }, pinsOf(again).map { it.mediaId to it.identity })
     }
 
     @Test
