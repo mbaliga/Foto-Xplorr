@@ -30,16 +30,30 @@ class MapLibreRegionEngineTest {
     private val backend = FakeOfflineBackend()
     private val cap = FakeRequestCap()
 
+    /** The delays the engine asked for and has not yet been given, in the order asked. */
+    private val timers = mutableListOf<Pair<Long, () -> Unit>>()
+
     private fun engine(
         b: FakeOfflineBackend = backend,
         c: FakeRequestCap = cap,
         verified: Boolean = true,
-    ) = MapLibreRegionEngine(b, c, dispatcher = Dispatchers.Unconfined, releaseGateOpen = verified)
-
-    private fun status(done: Long, bytes: Long = done * 100_000, complete: Boolean = false) = BackendStatus(
-        completedResourceCount = done, completedResourceSize = bytes, completedTileCount = done / 2,
-        requiredResourceCount = 100, requiredCountIsPrecise = true, complete = complete,
+    ) = MapLibreRegionEngine(
+        b, c, dispatcher = Dispatchers.Unconfined, releaseGateOpen = verified,
+        later = { delay, block -> timers += delay to block },
     )
+
+    /** Lets every delay the engine asked for run out. */
+    private fun settle() {
+        val due = timers.toList()
+        timers.clear()
+        due.forEach { it.second() }
+    }
+
+    private fun status(done: Long, bytes: Long = done * 100_000, complete: Boolean = false, stopped: Boolean = false) =
+        BackendStatus(
+            completedResourceCount = done, completedResourceSize = bytes, completedTileCount = done / 2,
+            requiredResourceCount = 100, requiredCountIsPrecise = true, complete = complete, stopped = stopped,
+        )
 
     private suspend fun MapLibreRegionEngine.createOne(rec: RegionRecord = record): Long =
         (create(rec) as EngineResult.Ok).value.id
@@ -184,7 +198,7 @@ class MapLibreRegionEngineTest {
     }
 
     @Test
-    fun `resume puts the cap in force and starts the region, pause takes the cap off`() = runTest {
+    fun `resume puts the cap in force and starts the region, pause takes the cap off once the region has stopped`() = runTest {
         val engine = engine()
         val id = engine.createOne()
 
@@ -194,9 +208,10 @@ class MapLibreRegionEngineTest {
         assertTrue((engine.list() as EngineResult.Ok).value.single().running)
 
         assertTrue(engine.pause(id) is EngineResult.Ok)
-        assertFalse(cap.inForce)
         assertFalse(backend.isActive(id))
         assertFalse((engine.list() as EngineResult.Ok).value.single().running)
+        backend.emit(id, status(0, stopped = true))
+        assertFalse(cap.inForce)
     }
 
     @Test
@@ -211,21 +226,25 @@ class MapLibreRegionEngineTest {
         assertEquals(installsBefore + 1, cap.installCalls)
 
         engine.pause(a)
+        backend.emit(a, status(0, stopped = true))
         assertTrue("one region is still downloading", cap.inForce)
         engine.pause(b)
+        backend.emit(b, status(0, stopped = true))
         assertFalse(cap.inForce)
     }
 
     @Test
-    fun `the cap is removed when a region completes by itself`() = runTest {
+    fun `the cap is removed when a region completes by itself and says it stopped`() = runTest {
         val engine = engine()
         val id = engine.createOne()
         engine.resume(id)
 
         backend.emit(id, status(100, complete = true))
 
-        assertFalse(cap.inForce)
         assertFalse(backend.isActive(id))
+        assertTrue("held until the library says the region stopped", cap.inForce)
+        backend.emit(id, status(100, complete = true, stopped = true))
+        assertFalse(cap.inForce)
         assertNull(backend.regions.getValue(id).listener)
         assertTrue(engine.progress(id).first().complete)
     }
@@ -252,6 +271,104 @@ class MapLibreRegionEngineTest {
 
         assertEquals(EngineFailure.NO_SUCH_REGION, (result as EngineResult.Failure).reason)
         assertEquals(installsBefore, cap.installCalls)
+    }
+
+    // ---- the cap outlives the stop request ----
+
+    @Test
+    fun `pause keeps the cap in force until the region reports stopped, and listens before it asks`() = runTest {
+        val engine = engine()
+        val id = engine.createOne()
+        engine.resume(id)
+        val restoresBefore = cap.restoreCalls
+        backend.calls.clear()
+
+        engine.pause(id)
+
+        assertTrue("the cap is not put back with the request", cap.inForce)
+        assertEquals(restoresBefore, cap.restoreCalls)
+        val calls = backend.calls
+        assertTrue(
+            "the stop is listened for before it is asked: $calls",
+            calls.indexOf("listen:$id") in 0 until calls.indexOf("setActive:$id:false"),
+        )
+
+        backend.emit(id, status(10, stopped = false)) // a reading that was already on its way
+        assertTrue(cap.inForce)
+
+        backend.emit(id, status(10, stopped = true))
+        assertFalse(cap.inForce)
+        assertEquals(restoresBefore + 1, cap.restoreCalls)
+        assertNull(backend.regions.getValue(id).listener)
+
+        settle() // the timer that was armed finds nothing left to do
+        assertEquals(restoresBefore + 1, cap.restoreCalls)
+    }
+
+    @Test
+    fun `a region that never reports stopped gets its client back after the bounded delay`() = runTest {
+        val engine = engine()
+        val id = engine.createOne()
+        engine.resume(id)
+
+        engine.pause(id)
+
+        assertTrue(cap.inForce)
+        assertEquals(listOf(MapLibreRegionEngine.SETTLE_MILLIS), timers.map { it.first })
+        assertEquals(5_000L, MapLibreRegionEngine.SETTLE_MILLIS)
+        settle()
+        assertFalse(cap.inForce)
+        assertNull(backend.regions.getValue(id).listener)
+    }
+
+    @Test
+    fun `a pause the library refuses to carry out still ends with the cap taken off`() = runTest {
+        val engine = engine()
+        val id = engine.createOne()
+        engine.resume(id)
+        backend.failStop = true
+
+        val result = engine.pause(id)
+
+        assertEquals(EngineFailure.ENGINE_ERROR, (result as EngineResult.Failure).reason)
+        assertTrue("not put back on the spot", cap.inForce)
+        settle()
+        assertFalse(cap.inForce)
+    }
+
+    @Test
+    fun `the cap stays while any region is still stopping, whatever order they report in`() = runTest {
+        val engine = engine()
+        val a = engine.createOne()
+        val b = engine.createOne(record.copy(name = "Lyon"))
+        engine.resume(a)
+        engine.resume(b)
+        engine.pause(a)
+        engine.pause(b)
+
+        backend.emit(b, status(1, stopped = true))
+        assertTrue("a has not reported", cap.inForce)
+        backend.emit(a, status(1, stopped = true))
+        assertFalse(cap.inForce)
+    }
+
+    @Test
+    fun `resuming a region that is still stopping keeps the cap and the old timer does not stop it`() = runTest {
+        val engine = engine()
+        val id = engine.createOne()
+        engine.resume(id)
+        engine.pause(id)
+        val installsBefore = cap.installCalls
+
+        assertTrue(engine.resume(id) is EngineResult.Ok)
+        settle() // the first pause's timer runs out while the region downloads again
+
+        assertEquals("the cap was never off, so it is not installed twice", installsBefore, cap.installCalls)
+        assertTrue(cap.inForce)
+        assertTrue(backend.isActive(id))
+        assertTrue(backend.regions.getValue(id).listener != null)
+        backend.emit(id, status(5))
+        assertEquals(5L, engine.progress(id).first().completedResources)
     }
 
     // ---- pause keeps, delete removes ----
@@ -297,6 +414,7 @@ class MapLibreRegionEngineTest {
         assertTrue(engine.pause(id) is EngineResult.Ok)
 
         assertFalse(backend.isActive(id))
+        settle()
         assertFalse(cap.inForce)
     }
 
@@ -318,6 +436,8 @@ class MapLibreRegionEngineTest {
         assertTrue(ended)
         collector.cancel()
         assertTrue(backend.regions.isEmpty())
+        assertTrue("a deleted region reports nothing, so the timer ends the wait", cap.inForce)
+        settle()
         assertFalse(cap.inForce)
         assertEquals(10L, seen.last().completedResources)
         assertEquals(emptyList<RegionProgress>(), engine.progress(id).toList())

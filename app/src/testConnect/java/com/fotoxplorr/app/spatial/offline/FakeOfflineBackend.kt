@@ -20,6 +20,9 @@ internal class FakeOfflineBackend : OfflineBackend {
 
     var failList = false
     var failSetActive = false
+
+    /** setActive(false) throws, as a library that cannot reach its native side would. */
+    var failStop = false
     var failStatus = false
     var failDelete = false
 
@@ -77,6 +80,7 @@ internal class FakeOfflineBackend : OfflineBackend {
     override fun setActive(id: Long, active: Boolean) {
         calls += "setActive:$id:$active"
         if (failSetActive && active) throw BackendException("cannot start")
+        if (failStop && !active) throw BackendException("cannot stop")
         regions[id]?.active = active
     }
 

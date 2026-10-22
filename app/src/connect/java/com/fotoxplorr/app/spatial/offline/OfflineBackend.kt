@@ -20,7 +20,10 @@ internal interface OfflineBackend {
     /** The current counts for region [id]. */
     suspend fun status(id: Long): BackendStatus
 
-    /** Sends status and error readings for region [id] to [listener]; null stops them. */
+    /**
+     * Sends status and error readings for region [id] to [listener]; null stops them. Readings
+     * must also arrive once the region is inactive: the engine waits for the one that says so.
+     */
     fun listen(id: Long, listener: BackendListener?)
 
     /** Starts ([active] true) or stops fetching for region [id]. The only call that uses the network. */
@@ -51,6 +54,8 @@ internal data class BackendStatus(
     val requiredResourceCount: Long,
     val requiredCountIsPrecise: Boolean,
     val complete: Boolean,
+    /** The library says the region is not downloading (after a stop request has been acted on). */
+    val stopped: Boolean = false,
 ) {
     fun toProgress(error: DownloadErrorKind? = null): RegionProgress = RegionProgress(
         completedResources = completedResourceCount,

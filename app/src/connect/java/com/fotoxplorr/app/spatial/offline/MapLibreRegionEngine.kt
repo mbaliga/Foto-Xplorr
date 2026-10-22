@@ -1,6 +1,8 @@
 package com.fotoxplorr.app.spatial.offline
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import com.fotoxplorr.app.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -26,14 +28,19 @@ import kotlinx.coroutines.withContext
  *   network, and the caller makes it only from an explicit tap (TRAPS #61, #71). [list] and
  *   [progress] never start a download.
  * - The provider's limit of four requests in flight is installed by [resume], for as long as any
- *   region is downloading, and removed again when the last one stops, pauses, completes or is
- *   deleted. Live panning is never throttled. If installing fails, [resume] refuses and fetches
- *   nothing, and [throttleInstalled] turns false so the button disables.
+ *   region is downloading or has been told to stop and has not yet said so. It is taken off again
+ *   only after the last such region has reported itself stopped, or after [SETTLE_MILLIS] if it
+ *   never does: [OfflineBackend.setActive] with false only posts the request to the library's own
+ *   thread, and a request the downloader still starts in that window must not go out uncapped.
+ *   Live panning is not throttled outside a download and those few seconds after it. If
+ *   installing fails, [resume] refuses and fetches nothing, and [throttleInstalled] turns false so
+ *   the button disables.
  * - [pause] keeps the region and everything it fetched. Only [delete] removes data.
  * - Regions persist in the library's database across process death. After a relaunch [list] returns
- *   them, none running; the caller turns each unfinished one into a paused, resumable entry (see
- *   [OfflineRegionReconcile]). A region whose stored metadata this app cannot read is left alone
- *   and not listed: it may belong to something else, and it was never shown to the person (TRAPS #64).
+ *   them, none running; the pane shows each unfinished one as paused and resumable (a stopped area
+ *   with no recorded reason reads as [PauseReason.RESTARTED]). A region whose stored metadata this
+ *   app cannot read is left alone and not listed: it may belong to something else, and it was never
+ *   shown to the person (TRAPS #64).
  *
  * [throttleInstalled] here means "the limit can be applied and [resume] will apply it": the cap is
  * deliberately NOT left installed between downloads, so it is probed once when the engine is built
@@ -55,6 +62,8 @@ internal class MapLibreRegionEngine(
     private val dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
     private val styleUrl: String = LIBERTY_STYLE_URL,
     private val releaseGateOpen: Boolean = downloadsAllowed(CAP_VERIFIED_ON_DEVICE, BuildConfig.DEBUG),
+    /** Runs a block on the main thread after a delay; a test replaces it with a clock it controls. */
+    private val later: (delayMillis: Long, block: () -> Unit) -> Unit = ::postOnMainThread,
 ) : OfflineRegionEngine {
 
     private sealed interface FeedItem {
@@ -74,6 +83,14 @@ internal class MapLibreRegionEngine(
     private val lock = Any()
     private val feeds = HashMap<Long, Feed>()
     private val running = HashSet<Long>()
+
+    /**
+     * Regions told to stop that have not yet said so, each with the number of that stop. A later
+     * stop or a resume of the same region changes the number, which turns an earlier stop's reading
+     * and its timer into no-ops.
+     */
+    private val stopping = HashMap<Long, Int>()
+    private var stopCount = 0
     private var capApplied = false
 
     @Volatile
@@ -140,10 +157,14 @@ internal class MapLibreRegionEngine(
                     backend.listen(id, listenerFor(id))
                     backend.setActive(id, true)
                 } catch (e: Exception) {
+                    // Nothing was started: listen is the first call and setActive the last, and a
+                    // refused setActive started no download. So the cap can go at once, unless an
+                    // earlier stop of this region is still being waited for.
                     runCatching { backend.listen(id, null) }
                     release(id)
                     throw e
                 }
+                synchronized(lock) { stopping -= id } // running again: that stop no longer applies
                 EngineResult.Ok(Unit)
             }
         }
@@ -153,15 +174,13 @@ internal class MapLibreRegionEngine(
         if (synchronized(lock) { id !in feeds }) return EngineResult.Failure(EngineFailure.NO_SUCH_REGION)
         return guarded {
             withContext(dispatcher) {
-                try {
-                    backend.setActive(id, false)
-                    backend.listen(id, null)
-                    // The numbers the pause stopped at, without the error that came with the last
-                    // reading, so what the person sees on Resume starts from the truth.
-                    runCatching { backend.status(id) }.getOrNull()?.let { publish(id, it.toProgress()) }
-                } finally {
-                    release(id)
-                }
+                // Waiting for the stop is armed first, so every way out of here, a throw included,
+                // ends with the cap taken off at the latest after SETTLE_MILLIS.
+                beginStop(id)
+                backend.setActive(id, false)
+                // The numbers the pause stopped at, without the error that came with the last
+                // reading, so what the person sees on Resume starts from the truth.
+                runCatching { backend.status(id) }.getOrNull()?.let { publish(id, it.toProgress()) }
                 EngineResult.Ok(Unit)
             }
         }
@@ -171,13 +190,11 @@ internal class MapLibreRegionEngine(
         if (synchronized(lock) { id !in feeds }) return EngineResult.Failure(EngineFailure.NO_SUCH_REGION)
         return guarded {
             withContext(dispatcher) {
-                try {
-                    runCatching { backend.setActive(id, false) }
-                    backend.listen(id, null)
-                    backend.delete(id)
-                } finally {
-                    release(id)
-                }
+                // A deleted region reports nothing more, so the cap comes off on the timer; the
+                // library's delete callback is not taken as proof that its downloader has stopped.
+                beginStop(id)
+                runCatching { backend.setActive(id, false) }
+                backend.delete(id)
                 val feed = synchronized(lock) { feeds.remove(id) }
                 feed?.items?.tryEmit(FeedItem.End)
                 EngineResult.Ok(Unit)
@@ -221,18 +238,65 @@ internal class MapLibreRegionEngine(
         }
     }
 
-    /** Region [id] is no longer downloading; the last one out puts the library's own client back. */
+    /**
+     * Region [id] never started downloading, or no longer counts as running: the last one out puts
+     * the library's own client back, unless a region is still being waited for ([beginStop]).
+     */
     private fun release(id: Long) {
         synchronized(lock) {
             running -= id
-            if (running.isEmpty() && capApplied) {
-                capApplied = false
-                try {
-                    cap.restore()
-                } catch (_: Exception) {
-                }
+            restoreIfIdle()
+        }
+    }
+
+    /** Puts the library's own client back when nothing is downloading and nothing is still stopping. Holds [lock]. */
+    private fun restoreIfIdle() {
+        if (running.isEmpty() && stopping.isEmpty() && capApplied) {
+            capApplied = false
+            try {
+                cap.restore()
+            } catch (_: Exception) {
             }
         }
+    }
+
+    /**
+     * Region [id] is about to be told to stop. Its late readings are ignored from here on, the cap
+     * stays in force, and the stop ends ([finishStop]) when the library reports the region stopped
+     * or [SETTLE_MILLIS] pass, whichever comes first. Call before [OfflineBackend.setActive], so a
+     * reading that comes back at once is not missed.
+     */
+    private fun beginStop(id: Long) {
+        val number = synchronized(lock) {
+            running -= id
+            (++stopCount).also { stopping[id] = it }
+        }
+        try {
+            // The library delivers readings of a stopped region only to a listener asked for them.
+            backend.listen(id, stoppedListener(id, number))
+        } catch (_: Exception) {
+            // Nothing will listen; the timer below ends the stop.
+        }
+        later(SETTLE_MILLIS) { finishStop(id, number) }
+    }
+
+    /** Ends stop [number] of region [id] unless a newer stop or a resume replaced it. */
+    private fun finishStop(id: Long, number: Int) {
+        synchronized(lock) {
+            if (stopping[id] != number) return
+            stopping -= id
+            runCatching { backend.listen(id, null) }
+            restoreIfIdle()
+        }
+    }
+
+    /** Waits for the reading that says region [id] has stopped; everything else is ignored. */
+    private fun stoppedListener(id: Long, number: Int) = object : BackendListener {
+        override fun onStatus(status: BackendStatus) {
+            if (status.stopped) finishStop(id, number)
+        }
+
+        override fun onError(kind: DownloadErrorKind) = Unit
     }
 
     private fun listenerFor(id: Long) = object : BackendListener {
@@ -240,12 +304,10 @@ internal class MapLibreRegionEngine(
             if (synchronized(lock) { id !in running }) return // a reading that arrived after the pause
             publish(id, status.toProgress())
             if (status.complete) {
-                // The library stops by itself when a region is complete; make that explicit and let go of the cap.
-                runCatching {
-                    backend.setActive(id, false)
-                    backend.listen(id, null)
-                }
-                release(id)
+                // The library stops by itself when a region is complete; make that explicit, and let
+                // go of the cap once it says so, as for a pause.
+                beginStop(id)
+                runCatching { backend.setActive(id, false) }
             }
         }
 
@@ -295,6 +357,18 @@ internal class MapLibreRegionEngine(
         fun downloadsAllowed(verified: Boolean, debugBuild: Boolean): Boolean = verified || debugBuild
 
         private const val FEED_BUFFER = 64
+
+        /**
+         * How long the cap is kept after a region was told to stop and has not said it stopped. Long
+         * enough for the library's own thread to act on the request (it normally answers within a
+         * moment), short enough that the live map is throttled for only a few seconds. A guess,
+         * never measured.
+         */
+        const val SETTLE_MILLIS: Long = 5_000L
+
+        private fun postOnMainThread(delayMillis: Long, block: () -> Unit) {
+            Handler(Looper.getMainLooper()).postDelayed(block, delayMillis)
+        }
 
         @Volatile
         private var shared: MapLibreRegionEngine? = null

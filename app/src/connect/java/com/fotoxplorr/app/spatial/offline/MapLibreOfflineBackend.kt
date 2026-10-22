@@ -96,6 +96,10 @@ internal class MapLibreOfflineBackend(context: Context) : OfflineBackend {
 
     override fun listen(id: Long, listener: BackendListener?) {
         val region = known(id)
+        // The library drops a stopped region's readings unless asked to deliver them (read from its
+        // bytecode: a region delivers while active, or when this is set). The engine needs the reading
+        // that follows setActive(false), so a listener always asks.
+        region.setDeliverInactiveMessages(listener != null)
         region.setObserver(
             if (listener == null) {
                 SILENT
@@ -162,6 +166,7 @@ internal class MapLibreOfflineBackend(context: Context) : OfflineBackend {
         requiredResourceCount = requiredResourceCount,
         requiredCountIsPrecise = isRequiredResourceCountPrecise,
         complete = isComplete,
+        stopped = downloadState != OfflineRegion.STATE_ACTIVE,
     )
 
     private fun kindOf(reason: String?): DownloadErrorKind = when (reason) {
