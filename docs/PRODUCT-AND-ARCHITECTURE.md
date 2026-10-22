@@ -43,15 +43,14 @@ on Photos, and the old audio database and scan preferences are deleted on first 
 | **Photos** | All still images |
 | **Videos** | All video |
 | **Favourites** | User-marked favourites |
-| **Places** | A map of geotagged media |
+| **Experimental** | The extras page (`experimental/`): compass view, 3D wall, gallery preview, look-alike grouping, AI keys. The enum constant is still `PLACES`; only the label changed |
 | **Protected** | Password-protected folders |
 
 The map is not a tenth destination. It is a **mode of the browser**: a black disc at the bottom
 left (`MapToggleFab`, "Show map" / "Show grid") and an extra **Map** word on the rail, placed before
-Places, swap the grid for the same photos on a map, with the album, search and time range you were
-in (`gallery/MapMode.kt`). Places (the hub of the immersive views) is unchanged, and neither Places
-nor Protected offers the disc or the Map word's effect: choosing Map from either falls back to
-Photos. So the rail has nine destination words plus Map.
+Experimental, swap the grid for the same photos on a map, with the album, search and time range you
+were in (`gallery/MapMode.kt`). Neither Experimental nor Protected offers the disc or the Map word's
+effect: choosing Map from either falls back to Photos. So the rail has nine destination words plus Map.
 
 ### Smart albums and organisation
 
@@ -84,8 +83,13 @@ sharing a photo does not silently share where it was taken.
 
 ### Spatial and 3D experiences
 
-- **Places** — a native vector map (MapLibre) with clustering, pitch/bearing, hillshade and 3D
-  building extrusions, populated from geotags read locally by `GeoMetadataRepository`.
+- **Map** — in Map mode, a native vector map (MapLibre, Connect build) with clustering, pitch/bearing,
+  hillshade and 3D building extrusions, or the tile-free stamp map (Offline build), populated from
+  geotags read locally by `GeoMetadataRepository`.
+- **Experimental** — a hub of cards (`experimental/`) that opens one full-screen experiment at a time.
+  The host owns the open id (saved when the entry is `restorable`), Back, and the pane ink; a new
+  experiment is one `ExperimentEntry` in `builtInExperiments`, and reads photos only through
+  `ExperimentEnv` (the already-filtered list, re-checked at export).
 - **Photo scenes** — OpenGL-rendered 3D arrangements of the library (`experience/`, `spatial/`),
   including an orientation-driven photo wall.
 
@@ -274,7 +278,7 @@ month-granular and judged on the same date the headers and the scrubber use (dat
 modified). An always-visible chip shows the range and the count with a 48 dp clear button; the panel
 offers year chips and a month slider applied on release. It is held across the viewer round trip and
 process death but not across launches, is not reset by a destination or route change, and is hidden
-on Places and Protected, where it does not apply. A selection's count text does not mention it.
+on Experimental and Protected, where it does not apply. A selection's count text does not mention it.
 
 ### Selection
 
@@ -405,7 +409,8 @@ Two rules hold this together:
 | `core/*` | Pure Kotlin modules shared with other targets (`model`, `formats`, `metadata`, `search`, `organize`, `db`, `index`). `core:formats` holds the byte sniffers `AnimationSniffer` and `AlphaSniffer`; commonMain stays free of Android and `java.*` imports (`scripts/verify-core-purity.sh`) |
 | `picker/` | `PhotoPickerActivity`: other apps' GET_CONTENT / PICK, over the same `browsableAssets` filter as every screen |
 | `recognition/` | On-device ML: face detection and clustering, pet classification, identity heuristics |
-| `spatial/` | Geo metadata, the MapLibre Places map, OpenGL photo scenes |
+| `spatial/` | Geo metadata, the MapLibre street map (Connect) and stamp map, OpenGL photo scenes |
+| `experimental/` | The Experimental page: `ExperimentEntry` list, host (open id, Back), `ExperimentEnv`, shell-edge insets |
 | `experience/` | The 3D photo wall and its renderer/orientation controller |
 | `ai/` | Optional BYOK remote providers, encrypted secret storage, local similarity |
 | `fileops/` | Media file operations and metadata-clean export |

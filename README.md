@@ -8,7 +8,7 @@ Fotoz was previously called Foto Xplorr; the repository name, the `com.fotoxplor
 
 ### Browse and view
 
-- Nine destinations on a word-only navigation rail: Pets, People, Identity, Screenshots, Photos, Videos, Favourites, Places, Protected, plus a Map word that shows the current view on a map (also a round button at the bottom left). (Fotoz no longer has an Audio destination: it is a photo and video app.)
+- Nine destinations on a word-only navigation rail: Pets, People, Identity, Screenshots, Photos, Videos, Favourites, Experimental, Protected, plus a Map word that shows the current view on a map (also a round button at the bottom left). (Fotoz no longer has an Audio destination: it is a photo and video app.)
 - Four rooms, one geography, in the gallery and the viewer alike: **left** is where you can go (the rail), **top** is details (the view's counts, or the open photo's facts), **bottom** is actions (pull up a little for a strip of quick actions, further for all of them) and **right** is view options (zoom, order, timeline and scroll direction in the gallery; filmstrip, slideshow, autoplay and the like in the viewer). Settings is not a room: it takes over the page, with a back chevron, from the rail's Settings row.
 - A timeline you can switch off and put on any edge (left, right, top or bottom), with a month scrubber and a gutter so the photos never sit under it; month or day headers on the grid, or none. The photos can scroll down or sideways, and the order reads as where the latest photo sits (top, bottom, left or right).
 - A time range (month to month) that narrows the grid and the map together.
@@ -71,7 +71,7 @@ Fotoz was previously called Foto Xplorr; the repository name, the `com.fotoxplor
 
 ## Privacy model
 
-Fotoz has no application backend, account, analytics or mandatory cloud service. Location indexing is local and starts only after the user opens Places and requests it.
+Fotoz has no application backend, account, analytics or mandatory cloud service. Location indexing is local and starts only after the user opens the Map or Experimental > Compass view.
 
 Sharing strips metadata before a file ever leaves the app, and every stripped output is re-checked
 clean before it is handed to the receiving app — never trusted on the strength of the stripping

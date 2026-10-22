@@ -1005,3 +1005,22 @@ icon-only target now misses the row; click the word. The source language for Tra
 for Listen come from the recogniser's tag on the selected words (`TextSelection.dominantLanguage`),
 with English and the device language as the fallbacks; text already in the device language is not sent
 to a translator.
+
+## 75. The Experimental host owns Back and the open id; an experiment owns only its inner steps
+
+The Experimental destination (`HyleDestination.PLACES`, labelled "Experimental"; the constant is
+historical and saved as "Open the app on", so only the label changed) is `experimental/ExperimentalScreen`.
+It keeps ONE `rememberSaveable` id and ONE `BackHandler(enabled = open != null)`; an experiment calls
+`onClose` and registers no Back handler for "close", because two of them (similarity, AI keys) never had
+one. An experiment with an inner step registers its own: it is composed after the host's, so it is asked
+first, and the host's gets the press after the last step. The id is saved only for `restorable` entries
+and an id this build does not know, or an entry the device cannot run, opens the hub. Everything inside an
+experiment is that experiment's to save; the host saves nothing but the id. The host also provides
+`LocalContentColor` (#62) for every screen it opens. A full-screen area that takes drags
+(a drawing board, a wall editor) goes inside `Modifier.clearOfShellEdges()` (#72), which keeps it
+`ShellEdges.INSET_DP` (the shell's private 56 dp zone plus 4) from each side and clear of the system bars;
+`ShellEdgesTest` reads the shell's source and fails if its `EDGE_DP` changes. Photos come only from
+`ExperimentEnv.assets` (the browsable list, #33) and pixels only through `ExperimentEnv.decode`, which asks
+`mayExport` again, so a folder locked again while the experiment is open stops the next read. The location
+index starts from the compass entry when it opens with nothing scanned, and from Map mode (`PhotoMapPane`);
+nowhere else.

@@ -3,7 +3,7 @@ not want an account, and it never uploads anything.
 
 BROWSE
 • Nine destinations: Pets, People, Identity, Screenshots, Photos, Videos,
-  Favourites, Places and Protected, plus a Map button that shows the current
+  Favourites, Experimental and Protected, plus a Map button that shows the current
   view on a map.
 • Drag from an edge: left for where to go, top for details, bottom for actions
   (a little for quick ones, further for all), right for view options.
