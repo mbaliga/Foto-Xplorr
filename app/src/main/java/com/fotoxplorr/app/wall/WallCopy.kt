@@ -88,6 +88,13 @@ internal object WallCopy {
     const val PRINT_JOB_TITLE = "Making a print file"
     const val SAVED = "Saved in Pictures/Fotoz/Prints."
     const val PRINT_DOC_NAME = "Fotoz print"
+
+    // Enlarging: more pixels for a lab, not more detail, and every place it shows says so.
+    const val ENLARGE = "Enlarged, no new detail"
+    const val ENLARGE_WHY = "This size has fewer pixels than a lab likes."
+    const val ENLARGING = "Enlarging your picture…"
+    const val ENLARGE_JOB_TITLE = "Enlarging a print file"
+    const val SAVED_ENLARGED = "$SAVED $ENLARGE."
     const val PRINT_CLOSED = "This print is no longer available."
     const val PRINT_FAILED = "The print could not be prepared."
 
@@ -134,6 +141,9 @@ internal object WallCopy {
     }
 
     fun wallIs(wallWidthCm: Float): String = "The photo shows about ${FramePresets.number((wallWidthCm / 10).roundToInt() / 10f)} m of wall."
+
+    /** Whether a job in the activity list is a print export (plain or enlarged): only one runs at a time. */
+    fun isExportJob(title: String): Boolean = title == PRINT_JOB_TITLE || title == ENLARGE_JOB_TITLE
 
     fun fileWillBe(widthPx: Int, heightPx: Int, dpi: Int): String = "Saves a JPEG, $widthPx x $heightPx px, $dpi dpi."
 

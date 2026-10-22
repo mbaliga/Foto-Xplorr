@@ -64,8 +64,19 @@ internal enum class PrintLimit {
     SIZE_LIMIT,
 }
 
-/** The file to make: [outW] x [outH] pixels, [dpi] in its density tags, from the [crop] of the upright photo. */
-internal data class PrintPlan(val outW: Int, val outH: Int, val dpi: Int, val crop: PixelRect, val limitedBy: PrintLimit)
+/**
+ * The file to make: [outW] x [outH] pixels, [dpi] in its density tags, from the [crop] of the upright
+ * photo. [enlarged]: the file has more pixels than the crop holds, so it is made by enlarging
+ * ([lanczosResample]) and says so.
+ */
+internal data class PrintPlan(
+    val outW: Int,
+    val outH: Int,
+    val dpi: Int,
+    val crop: PixelRect,
+    val limitedBy: PrintLimit,
+    val enlarged: Boolean = false,
+)
 
 /**
  * The part of a [srcW] x [srcH] photo that fills a frame of [aspect] (width over height), centred:
@@ -98,6 +109,11 @@ internal object PrintPlanner {
      * up to size: no pixel is invented here) or the export limits are lower; either way the
      * density tag is what the pixels really give at that size, so file and tag together still say
      * the printed size. Uniform scale, so the shape stays the frame's.
+     *
+     * With [enlarge] the photo's own pixel count no longer holds the file back: it is made up to
+     * [wantDpi] by enlarging, held only by [maxEdge] and [maxPixels] (the editor's 8192 px and 64 MP).
+     * [PrintPlan.enlarged] is true only when that really means more pixels than the crop has; a photo
+     * with enough pixels plans exactly as it would without.
      */
     fun plan(
         srcW: Int,
@@ -106,12 +122,13 @@ internal object PrintPlanner {
         wantDpi: Int = TARGET_DPI,
         maxEdge: Int = MAX_EXPORT_EDGE,
         maxPixels: Long = MAX_EXPORT_PIXELS,
+        enlarge: Boolean = false,
     ): PrintPlan? {
         if (srcW <= 0 || srcH <= 0 || !(size.wCm > 0.0) || !(size.hCm > 0.0) || wantDpi <= 0 || maxEdge <= 0 || maxPixels <= 0) return null
         val crop = coverRect(srcW, srcH, size.aspect)
         val wantW = size.wCm / PrintMath.CM_PER_INCH * wantDpi
         val wantH = size.hCm / PrintMath.CM_PER_INCH * wantDpi
-        val byPhoto = min(crop.width / wantW, crop.height / wantH)
+        val byPhoto = if (enlarge) Double.POSITIVE_INFINITY else min(crop.width / wantW, crop.height / wantH)
         val byLimit = min(maxEdge / max(wantW, wantH), sqrt(maxPixels / (wantW * wantH)))
         val scale = min(1.0, min(byPhoto, byLimit))
         val limit = when {
@@ -125,11 +142,23 @@ internal object PrintPlanner {
             w = max(1, floor(wantW * scale).toInt())
             h = max(1, floor(wantH * scale).toInt())
         }
-        // Rounding must not take the file past the part of the photo it comes from, or the limits.
-        w = min(w, min(crop.width, maxEdge))
-        h = min(h, min(crop.height, maxEdge))
+        // Rounding must not take the file past the part of the photo it comes from (unless it is
+        // being enlarged), or the limits.
+        w = min(w, if (enlarge) maxEdge else min(crop.width, maxEdge))
+        h = min(h, if (enlarge) maxEdge else min(crop.height, maxEdge))
         val dpi = (w / (size.wCm / PrintMath.CM_PER_INCH)).roundToInt().coerceIn(1, JfifDensity.MAX_DPI)
-        return PrintPlan(w, h, dpi, crop, limit)
+        return PrintPlan(w, h, dpi, crop, limit, enlarged = enlarge && (w > crop.width || h > crop.height))
+    }
+
+    /**
+     * Whether the file for [size] could be enlarged, and the picture is worth offering it for: the
+     * photo gives less than [PrintQuality.GOOD] dots per inch at that size (cover crop included)
+     * and enlarging really adds pixels. Not offered for a photo that is already fine.
+     */
+    fun canEnlarge(srcW: Int, srcH: Int, size: PrintSize): Boolean {
+        if (srcW <= 0 || srcH <= 0 || !(size.wCm > 0.0) || !(size.hCm > 0.0)) return false
+        if (PrintMath.effectiveDpi(srcW, srcH, size.wCm, size.hCm) >= PrintQuality.GOOD.minDpi) return false
+        return plan(srcW, srcH, size, enlarge = true)?.enlarged == true
     }
 }
 
@@ -217,8 +246,15 @@ internal class PrintSource(
     val decode: suspend (DecodeLimits) -> DecodedBitmap?,
 )
 
-/** A saved print file. */
-internal class PrintSaved(val uri: Uri, val displayName: String, val widthPx: Int, val heightPx: Int, val dpi: Int)
+/** A saved print file. [enlarged]: its pixels were made up to size by enlarging, with no new detail. */
+internal class PrintSaved(
+    val uri: Uri,
+    val displayName: String,
+    val widthPx: Int,
+    val heightPx: Int,
+    val dpi: Int,
+    val enlarged: Boolean = false,
+)
 
 /** Where a finished file goes, and what names are already there. Separate so the pipeline can be run without a MediaStore. */
 internal interface PrintPublisher {
@@ -293,7 +329,9 @@ internal class MediaStorePrintPublisher(context: Context) : PrintPublisher {
  *     (EXIF orientation baked in, within the editor's 8192 px / 64 MP limits).
  *  3. Crop, resample (in halves for a big reduction, bilinear) and convert to sRGB by drawing onto
  *     an opaque white sRGB bitmap, so a Display-P3 photo is not written with colours a lab will
- *     read as sRGB, and transparency never turns black.
+ *     read as sRGB, and transparency never turns black. When the person asked to enlarge and the
+ *     photo has fewer pixels than the size needs, [enlargeBitmap] does this step instead: Lanczos
+ *     band by band into an sRGB bitmap, a little unsharp mask after. It adds pixels, not detail.
  *  4. Encode to a staging JPEG under the cache. Copy the photo's Exif/XMP onto it WITHOUT location
  *     ([ExifCopier], `keepLocation = false`), then overwrite the resolution tags and the pixel
  *     size, and set the JFIF density ([JfifDensity]). [ExifCopier] copies a source's own
@@ -302,9 +340,10 @@ internal class MediaStorePrintPublisher(context: Context) : PrintPublisher {
  *  5. Prove no location is in the file, ask [PrintSource.mayExport] once more, and only then
  *     publish a NEW file ([PrintPublisher]). The photo is never opened for writing.
  *
- * Out of memory steps the file down [exportEdgeLadder] (the density tag follows the real pixels);
- * if every rung fails the person gets a sentence, not a crash. Cancellation is honoured between
- * the steps; a single decode, resample or encode call is not interrupted.
+ * Out of memory steps the file down [exportEdgeLadder] (the density tag follows the real pixels,
+ * and an enlargement steps down to fewer made-up pixels); if every rung fails the person gets a
+ * sentence, not a crash. Cancellation is honoured between the steps and between an enlargement's
+ * bands; a single decode, draw, band or encode call is not interrupted.
  *
  * Nothing here has run on a device: the colour conversion, the JPEG's marker order after Exif is
  * written, and memory on a 48 MP photo are device checks.
@@ -316,11 +355,15 @@ internal class PrintExporter(
     private val app = context.applicationContext
     private val stagingDir get() = File(app.cacheDir, STAGING_DIRECTORY)
 
-    /** Saves a print file for [source] at [size]. Cancellation is rethrown; every other failure is in the [Result]. */
-    suspend fun save(source: PrintSource, size: PrintSize, onProgress: (Float?) -> Unit = {}): Result<PrintSaved> =
+    /**
+     * Saves a print file for [source] at [size]. Cancellation is rethrown; every other failure is in the [Result].
+     * With [enlarge], a photo short of pixels is enlarged to the size ([lanczosResample]) instead of
+     * being saved at its own pixels; a photo that has enough is saved as it always was.
+     */
+    suspend fun save(source: PrintSource, size: PrintSize, enlarge: Boolean = false, onProgress: (Float?) -> Unit = {}): Result<PrintSaved> =
         withContext(Dispatchers.IO) {
             try {
-                Result.success(saveNow(source, size, onProgress))
+                Result.success(saveNow(source, size, enlarge, onProgress))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -335,7 +378,7 @@ internal class PrintExporter(
      */
     suspend fun <T : Any> render(source: PrintSource, size: PrintSize, dpi: Int, use: suspend (Bitmap, PrintPlan) -> T): T =
         withContext(Dispatchers.IO) {
-            renderedPrint(source, size, dpi, {}) { bitmap, plan ->
+            renderedPrint(source, size, dpi, enlarge = false, {}) { bitmap, plan ->
                 if (!source.mayExport()) throw PrintRefusedException()
                 use(bitmap, plan)
             }.second
@@ -346,11 +389,11 @@ internal class PrintExporter(
         pruneStaleFiles(stagingDir, System.currentTimeMillis(), maxAgeMillis)
     }
 
-    private suspend fun saveNow(source: PrintSource, size: PrintSize, onProgress: (Float?) -> Unit): PrintSaved {
+    private suspend fun saveNow(source: PrintSource, size: PrintSize, enlarge: Boolean, onProgress: (Float?) -> Unit): PrintSaved {
         pruneCache()
         val staging = File(stagingDir.apply { mkdirs() }, "print-${UUID.randomUUID()}.jpg")
         try {
-            val (plan, _) = renderedPrint(source, size, PrintPlanner.TARGET_DPI, onProgress) { bitmap, _ ->
+            val (plan, _) = renderedPrint(source, size, PrintPlanner.TARGET_DPI, enlarge, onProgress) { bitmap, _ ->
                 FileOutputStream(staging).buffered().use { out ->
                     check(bitmap.compress(Bitmap.CompressFormat.JPEG, OutputFormat.JPEG.exportQuality(), out)) { WallCopy.CANT_CREATE_FILE }
                 }
@@ -366,20 +409,22 @@ internal class PrintExporter(
             if (!source.mayExport()) throw PrintRefusedException()
             val uri = publisher.publish(staging, name, source.asset.dateTakenMillis)
             onProgress(1f)
-            return PrintSaved(uri, name, plan.outW, plan.outH, plan.dpi)
+            return PrintSaved(uri, name, plan.outW, plan.outH, plan.dpi, plan.enlarged)
         } finally {
             staging.delete()
         }
     }
 
     /**
-     * Decode, plan, resample, hand the finished bitmap to [consume]; down the memory ladder when a
-     * rung runs out. Returns the plan that worked with [consume]'s result.
+     * Decode, plan, resample (or, for [enlarge] on a photo short of pixels, enlarge), hand the
+     * finished bitmap to [consume]; down the memory ladder when a rung runs out. Returns the plan
+     * that worked (its [PrintPlan.enlarged] says what was really done) with [consume]'s result.
      */
     private suspend fun <T : Any> renderedPrint(
         source: PrintSource,
         size: PrintSize,
         wantDpi: Int,
+        enlarge: Boolean,
         onProgress: (Float?) -> Unit,
         consume: suspend (Bitmap, PrintPlan) -> T,
     ): Pair<PrintPlan, T> {
@@ -389,20 +434,30 @@ internal class PrintExporter(
         val srcH = probe.sourceHeight
         probe.bitmap.recycle()
         onProgress(0.05f)
-        val first = PrintPlanner.plan(srcW, srcH, size, wantDpi) ?: throw PrintFailedException(WallCopy.CANT_READ_PHOTO)
+        val first = PrintPlanner.plan(srcW, srcH, size, wantDpi, enlarge = enlarge) ?: throw PrintFailedException(WallCopy.CANT_READ_PHOTO)
         val outcome = renderDownTheLadder(exportEdgeLadder(max(first.outW, first.outH))) { edge ->
-            val plan = PrintPlanner.plan(srcW, srcH, size, wantDpi, maxEdge = edge) ?: return@renderDownTheLadder null
-            coroutineContext.ensureActive()
-            val decoded = source.decode(DecodeLimits(decodeEdgeFor(srcW, srcH, plan, MAX_EXPORT_EDGE), MAX_EXPORT_PIXELS))
+            val planned = PrintPlanner.plan(srcW, srcH, size, wantDpi, maxEdge = edge, enlarge = enlarge) ?: return@renderDownTheLadder null
+            val running = coroutineContext
+            running.ensureActive()
+            val decoded = source.decode(DecodeLimits(decodeEdgeFor(srcW, srcH, planned, MAX_EXPORT_EDGE), MAX_EXPORT_PIXELS))
                 ?: throw PrintFailedException(WallCopy.CANT_READ_PHOTO)
             onProgress(0.25f)
+            // Judged on the pixels actually decoded (a photo over the decode limits is held to them),
+            // not on the plan's guess: only a result bigger than what it comes from is an enlargement.
+            val from = coverRect(decoded.bitmap.width, decoded.bitmap.height, size.aspect)
+            val enlarging = enlarge && (planned.outW > from.width || planned.outH > from.height)
+            val plan = planned.copy(enlarged = enlarging)
             val rendered = try {
-                resample(decoded.bitmap, size.aspect, plan.outW, plan.outH)
+                if (enlarging) {
+                    enlargeBitmap(decoded.bitmap, size.aspect, plan.outW, plan.outH, { running.ensureActive() }, { onProgress(0.25f + 0.25f * it) })
+                } else {
+                    resample(decoded.bitmap, size.aspect, plan.outW, plan.outH)
+                }
             } finally {
                 decoded.bitmap.recycle()
             }
             try {
-                coroutineContext.ensureActive()
+                running.ensureActive()
                 onProgress(0.5f)
                 plan to consume(rendered, plan)
             } finally {

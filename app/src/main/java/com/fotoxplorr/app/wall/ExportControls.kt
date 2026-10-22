@@ -16,8 +16,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -38,15 +41,17 @@ import kotlinx.coroutines.flow.MutableStateFlow
 /**
  * What the hang panel can do about a print, and what it is doing now. [running] and [progress]
  * come from the app's job list, so the same job shows in the activity shade and the notification
- * with its Cancel; [canPrint] is whether this device has system printing at all.
+ * with its Cancel; [enlarging] is whether that job is an enlargement; [canPrint] is whether this
+ * device has system printing at all. `onSave`'s second argument asks for the file to be enlarged.
  */
 internal class PrintActions(
     val running: Boolean,
     val progress: Float?,
     val canPrint: Boolean,
-    val onSave: (WallFrame) -> Unit,
+    val onSave: (WallFrame, Boolean) -> Unit,
     val onPrint: (WallFrame) -> Unit,
     val onCancel: () -> Unit,
+    val enlarging: Boolean = false,
 )
 
 /** What the controls hold between taps and must let go of when the screen is left. */
@@ -76,7 +81,7 @@ internal fun rememberPrintActions(env: ExperimentEnv, assets: Map<Long, MediaAss
     val uiContext = LocalContext.current
     val runner = remember(owner) { runCatching { owner?.let { ViewModelProvider(it)[AppStateViewModel::class.java].jobRunner } }.getOrNull() }
     val jobs by (runner?.jobs ?: NO_JOBS).collectAsState()
-    val job = jobs.firstOrNull { it.title == WallCopy.PRINT_JOB_TITLE }
+    val job = jobs.firstOrNull { WallCopy.isExportJob(it.title) }
     val latestEnv by rememberUpdatedState(env)
     val latestAssets by rememberUpdatedState(assets)
     val exporter = remember { PrintExporter(env.context) }
@@ -84,7 +89,7 @@ internal fun rememberPrintActions(env: ExperimentEnv, assets: Map<Long, MediaAss
     val canPrint = remember(uiContext) { uiContext.packageManager.hasSystemFeature(PackageManager.FEATURE_PRINTING) }
     DisposableEffect(runner) {
         onDispose {
-            runner?.jobs?.value?.filter { it.title == WallCopy.PRINT_JOB_TITLE }?.forEach { it.cancel() }
+            runner?.jobs?.value?.filter { WallCopy.isExportJob(it.title) }?.forEach { it.cancel() }
             held.adapter?.close()
         }
     }
@@ -99,13 +104,16 @@ internal fun rememberPrintActions(env: ExperimentEnv, assets: Map<Long, MediaAss
     return PrintActions(
         running = job != null,
         progress = job?.progress,
+        enlarging = job?.title == WallCopy.ENLARGE_JOB_TITLE,
         canPrint = canPrint,
-        onSave = save@{ frame ->
+        onSave = save@{ frame, enlarge ->
             val asset = latestAssets[frame.assetId] ?: return@save
-            if (runner.jobs.value.any { it.title == WallCopy.PRINT_JOB_TITLE }) return@save
+            if (runner.jobs.value.any { WallCopy.isExportJob(it.title) }) return@save
             val size = PrintSize(frame.wCm.toDouble(), frame.hCm.toDouble())
-            runner.launch(title = WallCopy.PRINT_JOB_TITLE, kind = ActivityKind.EXPORTING) { onProgress ->
-                exporter.save(sourceFor(asset), size, onProgress).map { WallCopy.SAVED }
+            val title = if (enlarge) WallCopy.ENLARGE_JOB_TITLE else WallCopy.PRINT_JOB_TITLE
+            runner.launch(title = title, kind = ActivityKind.EXPORTING) { onProgress ->
+                // Said by what was really done: a photo that already had the pixels was not enlarged.
+                exporter.save(sourceFor(asset), size, enlarge, onProgress).map { if (it.enlarged) WallCopy.SAVED_ENLARGED else WallCopy.SAVED }
             }
         },
         onPrint = print@{ frame ->
@@ -119,7 +127,7 @@ internal fun rememberPrintActions(env: ExperimentEnv, assets: Map<Long, MediaAss
             held.adapter = adapter
             manager.print(WallCopy.PRINT_DOC_NAME, adapter, null)
         },
-        onCancel = { runner.jobs.value.firstOrNull { it.title == WallCopy.PRINT_JOB_TITLE }?.cancel?.invoke() },
+        onCancel = { runner.jobs.value.firstOrNull { WallCopy.isExportJob(it.title) }?.cancel?.invoke() },
     )
 }
 
@@ -128,19 +136,33 @@ internal fun rememberPrintActions(env: ExperimentEnv, assets: Map<Long, MediaAss
  * button, a Print button where the device can print, and while a file is being made a progress bar
  * and Cancel. The picture the numbers are for is the selected one. Every control is a button with
  * words, so there is nothing to reach by touch gesture alone.
+ *
+ * When the photo gives less than a good print's dots per inch at this size ([PrintPlanner.canEnlarge])
+ * a chip offers "Enlarged, no new detail": ticked, the line above it and Save use the enlarged plan.
+ * The tick is remembered across rotation and process death while this screen stays on the Hang
+ * step, and starts off again after leaving it. It only counts while the offer still stands: after
+ * the picture or size is changed to one that does not need it, the file is made as usual.
  */
 @Composable
 internal fun ExportControls(frame: WallFrame, picture: HungPicture?, actions: PrintActions) {
     val decoded = picture?.decoded
-    val plan = decoded?.let { PrintPlanner.plan(it.sourceWidth, it.sourceHeight, PrintSize(frame.wCm.toDouble(), frame.hCm.toDouble())) }
+    val size = PrintSize(frame.wCm.toDouble(), frame.hCm.toDouble())
+    var enlargeChosen by rememberSaveable { mutableStateOf(false) }
+    val offered = decoded != null && PrintPlanner.canEnlarge(decoded.sourceWidth, decoded.sourceHeight, size)
+    val enlarge = enlargeChosen && offered
+    val plan = decoded?.let { PrintPlanner.plan(it.sourceWidth, it.sourceHeight, size, enlarge = enlarge) }
     Text(
         WallCopy.PRINT_HEADER,
         style = MaterialTheme.typography.labelLarge,
         modifier = Modifier.semantics { heading() },
     )
     if (plan != null) Text(WallCopy.fileWillBe(plan.outW, plan.outH, plan.dpi), style = MaterialTheme.typography.bodySmall)
+    if (offered && !actions.running) {
+        WallChip(WallCopy.ENLARGE, selected = enlargeChosen, onClick = { enlargeChosen = !enlargeChosen })
+        if (!enlargeChosen) Text(WallCopy.ENLARGE_WHY, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkMuted)
+    }
     if (actions.running) {
-        val making = WallCopy.MAKING
+        val making = if (actions.enlarging) WallCopy.ENLARGING else WallCopy.MAKING
         if (actions.progress != null) {
             LinearProgressIndicator(
                 progress = { actions.progress.coerceIn(0f, 1f) },
@@ -159,7 +181,7 @@ internal fun ExportControls(frame: WallFrame, picture: HungPicture?, actions: Pr
         WallButton(WallCopy.CANCEL, actions.onCancel)
     } else {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            WallButton(WallCopy.SAVE_PRINT, { actions.onSave(frame) }, enabled = plan != null, primary = true)
+            WallButton(WallCopy.SAVE_PRINT, { actions.onSave(frame, enlarge) }, enabled = plan != null, primary = true)
             if (actions.canPrint) WallButton(WallCopy.PRINT, { actions.onPrint(frame) }, enabled = plan != null)
         }
     }
