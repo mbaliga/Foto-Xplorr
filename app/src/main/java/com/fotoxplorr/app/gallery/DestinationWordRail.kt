@@ -41,6 +41,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -373,20 +374,54 @@ private fun DestinationRow(
         // A fixed gutter so every word sits on one optical left edge whether or not the marker
         // is beside it — the words must not shuffle sideways when selection moves.
         Spacer(Modifier.width(RAIL_GUTTER_DP.dp))
-        BasicText(
-            text = item.label,
-            style = TextStyle(
+        // The room left for the word is what decides its size: "Experimental" is about 274 sp at
+        // the reference's 44, more than the 260 dp pinned rail or a 360 dp phone's pull-out room
+        // leaves, so a word that does not fit is drawn smaller (down to RAIL_MIN_FONT_SP) before
+        // it is ever cut. Every other word keeps the reference size.
+        BoxWithConstraints(Modifier.weight(1f)) {
+            val measurer = rememberTextMeasurer()
+            val density = LocalDensity.current
+            val availablePx = constraints.maxWidth.toFloat()
+            val baseStyle = TextStyle(
                 color = Color.White,
                 fontFamily = HyleGrotesk,
                 fontSize = RAIL_FONT_SP.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = RAIL_LETTER_SPACING_SP.sp,
-            ),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+            )
+            val fontSp = remember(item.label, availablePx, density.density, density.fontScale) {
+                val natural = measurer.measure(
+                    text = item.label,
+                    style = baseStyle,
+                    softWrap = false,
+                    maxLines = 1,
+                ).size.width.toFloat()
+                railFontSpFor(naturalPx = natural, availablePx = availablePx)
+            }
+            BasicText(
+                text = item.label,
+                style = baseStyle.copy(fontSize = fontSp.sp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
+
+/**
+ * The font size, in sp, to draw a rail word at: the reference's [baseSp] when its natural width
+ * [naturalPx] (measured at [baseSp]) fits in [availablePx], otherwise scaled down to fit, with a
+ * 2% margin for kerning the measure does not see, and never below [minSp]. Pure so the rule is
+ * asserted, not eyeballed. A word that cannot fit even at the floor is ellipsised by the text.
+ */
+internal fun railFontSpFor(
+    naturalPx: Float,
+    availablePx: Float,
+    baseSp: Float = RAIL_FONT_SP.toFloat(),
+    minSp: Float = RAIL_MIN_FONT_SP.toFloat(),
+): Float =
+    if (naturalPx <= 0f || naturalPx <= availablePx) baseSp
+    else (baseSp * availablePx / naturalPx * 0.98f).coerceAtLeast(minSp)
 
 /**
  * The reference's word greys, by whole rows from the selected one, as alphas of white on black:
@@ -486,6 +521,9 @@ internal fun markerStretch(current: Float, from: Float, to: Float): Float {
 
 /** The reference's type: 44sp bold on an 80dp pitch, tracked a touch tight as display type is. */
 internal const val RAIL_FONT_SP = 44
+
+/** The smallest a long word is shrunk to by [railFontSpFor]: 28 keeps "Experimental" whole on 196 dp. */
+internal const val RAIL_MIN_FONT_SP = 28
 internal const val RAIL_ROW_PITCH_SP = 80
 private const val RAIL_LETTER_SPACING_SP = -0.5f
 
