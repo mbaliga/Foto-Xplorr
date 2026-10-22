@@ -164,6 +164,9 @@ internal val MUTED_TEXT = Color(0xFF6A6A6A)
  *   [exif] is. Blank hides the "Search inside this photo" card entirely.
  * @param onSearchLibrary hands recognised text to the library search. Null leaves that one action
  *   visibly disabled rather than wired to nothing.
+ * @param onSelectText opens the Select text mode on this photo, from the card's "Select text from
+ *   the image" line. Null leaves the line plain (the photo cannot be read for words). The card's
+ *   "Copy text" still copies everything; choosing words is the mode's job.
  */
 @Composable
 fun PhotoDetailRoom(
@@ -188,6 +191,7 @@ fun PhotoDetailRoom(
     onWriteLocationIntoFile: (() -> Unit)? = null,
     recognizedText: String = "",
     onSearchLibrary: ((String) -> Unit)? = null,
+    onSelectText: (() -> Unit)? = null,
     /**
      * This photo's stored palette, off the recognition index (`RecognitionIndex.paletteFor`).
      * Empty for a photo the indexer has not sampled yet, in which case the row decodes it once
@@ -356,7 +360,13 @@ fun PhotoDetailRoom(
         // Everything below is this app's own, beyond the reference: kept, after the reference's
         // content, so nothing is lost and nothing displaces the layout the owner drew.
         StatusBlock(asset = asset, isFavorite = isFavorite, isSensitive = isSensitive, reveal = reveal)
-        TextLensBlock(asset = asset, recognizedText = recognizedText, onSearchLibrary = onSearchLibrary, reveal = reveal)
+        TextLensBlock(
+            asset = asset,
+            recognizedText = recognizedText,
+            onSearchLibrary = onSearchLibrary,
+            onSelectText = onSelectText,
+            reveal = reveal,
+        )
         MetadataBlock(
             photoId = asset.id,
             metadata = exif.professionalMetadata,
@@ -671,6 +681,7 @@ private fun TextLensBlock(
     asset: MediaAsset,
     recognizedText: String,
     onSearchLibrary: ((String) -> Unit)?,
+    onSelectText: (() -> Unit)?,
     reveal: () -> Float,
 ) {
     if (recognizedText.isBlank()) return
@@ -679,6 +690,7 @@ private fun TextLensBlock(
             asset = asset,
             recognizedText = recognizedText,
             onSearchLibrary = onSearchLibrary,
+            onSelectText = onSelectText,
         )
     }
 }

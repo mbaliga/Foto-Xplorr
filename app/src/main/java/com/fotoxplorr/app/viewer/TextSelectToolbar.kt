@@ -2,13 +2,15 @@ package com.fotoxplorr.app.viewer
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
@@ -44,6 +46,9 @@ import com.fotoxplorr.app.ui.HyleGrotesk
 /** Id of the toolbar's status line, for tests. */
 internal const val TEXT_SELECT_STATUS_TAG = "textSelectStatus"
 
+/** Id of the toolbar's notes (a translation, why an action did not happen), for tests. */
+internal const val TEXT_SELECT_NOTES_TAG = "textSelectNotes"
+
 /**
  * One button on the Select text toolbar. [label] is what the button says and what a screen reader
  * reads, so there is no icon-only target; [enabled] false dims it and tells assistive technology it
@@ -70,6 +75,9 @@ internal class TextSelectAction(
  *
  * @param extraActions further buttons after Copy, in order: the actions that need the text but not
  *   this file's clipboard (share, search, listen, translate) are supplied by the caller.
+ * @param notes lines under the status line: a translation, or why an action could not happen. Also
+ *   a polite live region, and scrollable past a few lines so a long translation cannot push the
+ *   buttons off the screen.
  * @param onDone leaves the mode.
  */
 @Composable
@@ -78,6 +86,7 @@ internal fun TextSelectToolbar(
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
     extraActions: List<TextSelectAction> = emptyList(),
+    notes: List<String> = emptyList(),
 ) {
     val layout = state.layout
     val selection = state.selection
@@ -109,10 +118,33 @@ internal fun TextSelectToolbar(
                 .testTag(TEXT_SELECT_STATUS_TAG)
                 .semantics { liveRegion = LiveRegionMode.Polite },
         )
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        if (notes.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = NOTES_MAX_HEIGHT)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp)
+                    .testTag(TEXT_SELECT_NOTES_TAG)
+                    .semantics { liveRegion = LiveRegionMode.Polite },
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                notes.forEach {
+                    Text(
+                        text = it,
+                        color = Color.White.copy(alpha = 0.85f),
+                        style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+        // Wraps onto a second line rather than scrolling: seven labelled buttons are wider than a
+        // phone, and a button that has to be swiped to is one nobody finds (the lesson of the
+        // details card's tile row). Every button is whole and reachable without a gesture.
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             ToolbarButton(
                 action = TextSelectAction(
@@ -166,6 +198,8 @@ private fun ToolbarButton(action: TextSelectAction) {
 }
 
 private const val DISABLED_ALPHA = 0.4f
+
+private val NOTES_MAX_HEIGHT = 120.dp
 
 // Fixed on purpose: a neutral scrim behind the toolbar, no accent role (as the old action pill was).
 private val PANEL_FILL = Color(0xE6121216)

@@ -982,3 +982,19 @@ overlay abandons its stroke the moment a second pointer appears (`onCancel`). St
 the lasso-close distance are dp divided by the zoom, because the overlay sits inside the zoom layer.
 The arbitration is pinned in `TextSelectOverlayTest` with the real `detectViewerGestures`, but a real
 finger on a real screen is still a device check.
+
+## 77. Text actions have one implementation and read the host's callback live, not from a plain var
+
+The details card and the Select text toolbar share `LensTextActions` (`rememberLensTextActions`); each
+call passes the text to act on, so "Copy text" stays copy-everything while the toolbar acts on the
+selected words only. Three things found while wiring it. (1) The library-search callback is read at
+use time through `rememberUpdatedState`. A first version stored it in a plain `var` from a
+`SideEffect`: nothing observes a plain var, so the first frame had no Search button (or a disabled
+tile) and nothing ever recomposed it. (2) The translator's `getClient` sat outside the `try` in the
+connect flavor, so an ML Kit that was not initialised threw out of the coroutine instead of falling
+back to the hand-off; creation is now inside the failure path. (3) Making a whole `ActionRow` the
+button merges its icon and word into one node, so a test that aimed "left of the label" to hit the old
+icon-only target now misses the row; click the word. The source language for Translate and the voice
+for Listen come from the recogniser's tag on the selected words (`TextSelection.dominantLanguage`),
+with English and the device language as the fallbacks; text already in the device language is not sent
+to a translator.

@@ -228,4 +228,17 @@ class ViewerChromePolicyTest {
         // A bad embedded fix does not hide a good hand-placed one, matching the room.
         assertTrue(ViewerChromePolicy.placeKnown(Double.NaN, 78.4, 17.4, 78.4))
     }
+
+    // ── the Select text chip ───────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `the Select text chip needs the chrome, a readable photo and text the index found`() {
+        fun shown(chrome: Boolean = true, canSelect: Boolean = true, blocks: Int = 3) =
+            ViewerChromePolicy.selectTextChipShown(chrome, canSelect, blocks)
+
+        assertTrue(shown())
+        assertFalse("immersive, picture-in-picture and a mode on screen hide it with the chrome", shown(chrome = false))
+        assertFalse("a video, SVG, RAW or animated image cannot be read for words", shown(canSelect = false))
+        assertFalse("nothing found: the actions room's row is the way in, not a chip promising text", shown(blocks = 0))
+    }
 }

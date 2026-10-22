@@ -10,10 +10,12 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.statusBars
@@ -39,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -48,6 +51,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -68,6 +72,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.ui.input.pointer.PointerInputScope
@@ -364,6 +369,15 @@ fun ViewerScreen(
     // once the sniff lands -- is read through this (TRAPS 50).
     val liftable by rememberUpdatedState(canLift)
     val shell = rememberSpatialController()
+    // Entering Select text, from the chip, the actions room's row or the details card's line. Rooms
+    // close first (a no-op from the chip, which only shows at home) so the mode starts on a clean
+    // screen; opening the mode replaces Lifting, so the two can never both be on. Offered exactly
+    // where the word reader can read the photo (the same test as lifting: a still raster image).
+    val selectTextEntry: (() -> Unit)? = if (canLift) {
+        { shell.closeAll(); viewerMode = ViewerMode.open(viewerMode, ViewerMode.SelectingText) }
+    } else {
+        null
+    }
     // Picture-in-picture shrinks the whole window to a small video: nothing drawn over the photo
     // (the position chip, the filmstrip) belongs in it. VideoPlayer hides its own transport the
     // same way; the host's chrome has to ask for itself because it is not inside that composition.
@@ -616,6 +630,7 @@ fun ViewerScreen(
                 // the overlay and the details card must never disagree about what the photo says.
                 recognizedText = liveTextBlocks.joinToString("\n") { it.text },
                 onSearchLibrary = onSearchLibrary,
+                onSelectText = selectTextEntry,
                 palette = palette,
                 tags = if (catalogueActions) tags else emptySet(),
                 autoTags = if (catalogueActions) autoTags else emptySet(),
@@ -673,6 +688,9 @@ fun ViewerScreen(
                 // sticker file only when asked, so it is as valid on a photo opened from another
                 // app. Closing the room first hands the screen to the editor cleanly.
                 onLiftSubject = if (canLift) ({ shell.closeAll(); viewerMode = ViewerMode.open(viewerMode, ViewerMode.Lifting) }) else null,
+                // Any readable still photo, with or without text in the stored index (which reads
+                // small and can miss print), and one opened from another app, which has none.
+                onSelectText = selectTextEntry,
             )
         },
         // RIGHT = how the photo is shown: the viewing options, in from the side.
@@ -952,8 +970,10 @@ fun ViewerScreen(
             // the photo, and on top of the text overlay so a press on a button reaches the button
             // and not the stroke detector beneath it.
             if (viewerMode.isSelectingText) {
-                TextSelectToolbar(
+                TextSelectBar(
                     state = textSelect,
+                    assetKey = asset.id,
+                    onSearchLibrary = onSearchLibrary,
                     onDone = { viewerMode = ViewerMode.leave(viewerMode) },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -995,6 +1015,11 @@ fun ViewerScreen(
                         ViewerChromePolicy.transparencyControlShown(chromeShown, asset.isVideo, hasAlpha)
                     },
                     onCycleTransparency = { onSetTransparencyBackground(transparencyBackground.next()) },
+                    // Only where the index already found text: the chip says "this photo has some".
+                    // The actions room's row is the way in for the rest.
+                    onSelectText = selectTextEntry.takeIf {
+                        ViewerChromePolicy.selectTextChipShown(chromeShown, canLift, liveTextBlocks.size)
+                    },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .statusBarsPadding()
@@ -1319,6 +1344,7 @@ private fun ViewerPositionChip(
     onToggleFavorite: (() -> Unit)?,
     transparency: TransparencyBackground?,
     onCycleTransparency: () -> Unit,
+    onSelectText: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -1351,8 +1377,41 @@ private fun ViewerPositionChip(
         if (transparency != null) {
             TransparencyButton(current = transparency, onCycle = onCycleTransparency)
         }
+        if (onSelectText != null) {
+            // The word goes when the transparency button is also here, to keep the row inside a
+            // narrow phone; the icon still carries the label for a screen reader.
+            SelectTextChip(labelled = transparency == null, onClick = onSelectText)
+        }
     }
 }
+
+/** The chip that opens Select text: an icon and, where the row has room, its name. */
+@Composable
+private fun SelectTextChip(labelled: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.55f))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+    ) {
+        Icon(
+            Icons.Outlined.TextFields,
+            contentDescription = if (labelled) null else SELECT_TEXT_LABEL,
+            tint = Color.White,
+            modifier = Modifier.size(20.dp),
+        )
+        if (labelled) {
+            Text(text = SELECT_TEXT_LABEL, color = Color.White, style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+/** What the chip, the room's row and the toolbar's entry are called. */
+internal const val SELECT_TEXT_LABEL = "Select text"
 
 /**
  * The heart that marks the photo on view: filled and in the accent when it is a favourite,

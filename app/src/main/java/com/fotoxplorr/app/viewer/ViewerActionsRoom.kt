@@ -1,14 +1,16 @@
 package com.fotoxplorr.app.viewer
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.Delete
@@ -21,18 +23,20 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.SwapHoriz
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.ui.ActionsRoomFrame
 import com.fotoxplorr.app.ui.QuickActionItem
@@ -117,6 +121,14 @@ fun ViewerActionsRoom(
      * photo opened from another app as on one from the library.
      */
     onLiftSubject: (() -> Unit)? = null,
+    /**
+     * "Select text" -- open the Select text mode over this photo. Null hides the row; the host
+     * passes it for any still raster photo (see [com.fotoxplorr.app.lift.canLiftSubject], the same
+     * test the word reader applies), whether or not the stored index found text in it: the index
+     * reads at a low resolution and can miss small print, and a photo opened from another app has
+     * no index at all. Like Lift, not behind [catalogueActions]: it reads only the photo itself.
+     */
+    onSelectText: (() -> Unit)? = null,
     /** Closes the room. Only the quick strip's Favourite needs it: every other handler passed in
      *  closes the room itself. */
     onCloseRoom: () -> Unit = {},
@@ -168,6 +180,9 @@ fun ViewerActionsRoom(
         if (!isVideo && onLiftSubject != null) {
             ActionRow(Icons.Outlined.ContentCut, "Lift subject", onLiftSubject)
         }
+        if (!isVideo && onSelectText != null) {
+            ActionRow(Icons.Outlined.TextFields, "Select text", onSelectText)
+        }
         ActionRow(Icons.Outlined.OpenInNew, "Open with", onOpenWith)
         if (catalogueActions && !isExternal && onRename != null) {
             ActionRow(Icons.Outlined.DriveFileRenameOutline, "Rename", onRename)
@@ -205,6 +220,11 @@ fun ViewerActionsRoom(
     }
 }
 
+/**
+ * One row of the room: an icon and its word. The WHOLE row is the button (it used to be only the
+ * 22 dp icon inside an [IconButton], so a tap on the word did nothing), at least 48 dp tall, and
+ * reads to a screen reader as one control named by its label.
+ */
 @Composable
 private fun ActionRow(
     icon: ImageVector,
@@ -216,18 +236,21 @@ private fun ActionRow(
     val alpha = if (enabled) 1f else 0.38f
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.minimumInteractiveComponentSize(),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier
+            .defaultMinSize(minHeight = 48.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 13.dp, vertical = 4.dp),
     ) {
-        IconButton(onClick = onClick, enabled = enabled) {
-            Icon(
-                imageVector = icon,
-                // Null, not the label: the Text beside it is already read out, and a described
-                // icon next to its own caption makes every action announce itself twice.
-                contentDescription = null,
-                tint = tint.copy(alpha = alpha),
-                modifier = Modifier.size(22.dp),
-            )
-        }
+        Icon(
+            imageVector = icon,
+            // Null, not the label: the Text beside it is already read out, and a described
+            // icon next to its own caption makes every action announce itself twice.
+            contentDescription = null,
+            tint = tint.copy(alpha = alpha),
+            modifier = Modifier.size(22.dp),
+        )
         Text(
             text = label,
             color = Color.White.copy(alpha = alpha),

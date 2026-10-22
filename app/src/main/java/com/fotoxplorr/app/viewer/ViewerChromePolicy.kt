@@ -241,6 +241,19 @@ internal object ViewerChromePolicy {
      */
     fun longPressStartsLift(canLift: Boolean, modeActive: Boolean = false): Boolean = canLift && !modeActive
 
+    // ── selecting text ────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Whether the "Select text" chip is in the chrome row: the chrome is up, the photo can be read
+     * for words at all ([canSelectText], the same test as lifting: a still raster image) and the
+     * recognition index already found [storedBlockCount] pieces of text in it. The chip says
+     * "this photo has text"; a photo the index found nothing in gets no chip, so it does not
+     * advertise a mode that would open on "No selectable text found". The actions room's row is
+     * the way in for those, and for photos opened from another app, which have no index.
+     */
+    fun selectTextChipShown(chromeShown: Boolean, canSelectText: Boolean, storedBlockCount: Int): Boolean =
+        chromeShown && canSelectText && storedBlockCount > 0
+
     /**
      * Whether a one-finger drag, a double tap and a plain tap on the photo are the viewer's (page
      * turn, pan, zoom, toggle the chrome) or belong to the mode on screen. Text selection reads a

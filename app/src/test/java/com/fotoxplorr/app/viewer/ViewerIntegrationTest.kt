@@ -24,6 +24,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.swipeDown
@@ -360,11 +361,9 @@ class ViewerIntegrationTest {
         }
         compose.waitForIdle()
         openActionsRoom()
-        // The row's button is the icon to the LEFT of the label: the label itself is not clickable
-        // (a quirk of ViewerActionsRoom.ActionRow, reported with this change), so click where the
-        // icon is, on the label's own line.
-        val label = compose.onNodeWithText("Lift subject").fetchSemanticsNode().boundsInRoot
-        compose.onRoot().performTouchInput { click(Offset(label.left - 48f, label.center.y)) }
+        // The whole row is the button now (it used to be only the icon to the left of the label,
+        // which this test had to aim at), so a tap on the word itself is the natural one.
+        compose.onNodeWithText("Lift subject").performClick()
         compose.waitForIdle()
         // The editor is up: its loading, ready and failed states all carry Cancel or Close.
         compose.waitUntil(timeoutMillis = 10_000) {
@@ -390,6 +389,102 @@ class ViewerIntegrationTest {
         compose.onRoot().performTouchInput { swipeDown(startY = 20f, endY = centerY + 300f, durationMillis = 300) }
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Where this photo was taken").assertExists()
+    }
+
+    // ── (c2) the ways into Select text ─────────────────────────────────────────────────────────
+
+    private fun revealChrome() {
+        compose.onRoot().performTouchInput { click(center) }
+        compose.mainClock.advanceTimeBy(500L)
+        compose.waitForIdle()
+    }
+
+    private fun selectTextIsOn(): Boolean =
+        compose.onAllNodesWithText("Select all").fetchSemanticsNodes().isNotEmpty()
+
+    @Test
+    fun `a photo with recognised text gets a Select text chip that opens the mode and clears the chrome`() {
+        val photos = roll()
+        compose.setContent { themed { Viewer(photos[4], photos, liveTextBlocks = signText) } }
+        compose.waitForIdle()
+        revealChrome()
+        compose.onNodeWithContentDescription("Close").assertExists()
+        compose.onNodeWithText("Select text").assertExists().performClick()
+        compose.waitForIdle()
+
+        assertTrue("the mode's toolbar is up", selectTextIsOn())
+        // The chip row is chrome, and the mode owns the screen: the way out is its Done.
+        compose.onAllNodesWithContentDescription("Close").assertCountEquals(0)
+        compose.onAllNodesWithText("Select text").assertCountEquals(0)
+        compose.onNodeWithText("Done").assertExists()
+    }
+
+    @Test
+    fun `a photo the index found no text in has no chip`() {
+        val photos = roll()
+        compose.setContent { themed { Viewer(photos[4], photos) } }
+        compose.waitForIdle()
+        revealChrome()
+        compose.onNodeWithContentDescription("Close").assertExists()
+        compose.onAllNodesWithText("Select text").assertCountEquals(0)
+    }
+
+    @Test
+    fun `a video has no chip even with stored text`() {
+        val items = roll(videoAt = 4)
+        compose.setContent { themed { Viewer(items[4], items, liveTextBlocks = signText) } }
+        compose.waitForIdle()
+        revealChrome()
+        compose.onAllNodesWithText("Select text").assertCountEquals(0)
+    }
+
+    @Test
+    fun `the actions room's Select text row closes the room and opens the mode, text or no text`() {
+        val photos = roll()
+        compose.setContent { themed { Viewer(photos[4], photos) } }
+        compose.waitForIdle()
+        openActionsRoom()
+        compose.onNodeWithText("Select text").assertExists().performClick()
+        compose.waitForIdle()
+
+        assertTrue("the mode's toolbar is up", selectTextIsOn())
+        // Nothing stored and nothing read yet: the mode says so rather than pretending.
+        compose.onNodeWithText("Done").assertExists()
+        compose.onAllNodesWithText("Open with").assertCountEquals(0)
+    }
+
+    @Test
+    fun `the details card's line closes the room and opens the mode`() {
+        val photos = roll()
+        compose.setContent { themed { Viewer(photos[4], photos, liveTextBlocks = signText) } }
+        compose.waitForIdle()
+        pullDetails()
+        val line = compose.onNodeWithText("Select text from the image")
+        line.performScrollTo()
+        line.performClick()
+        compose.waitForIdle()
+        assertTrue("the mode's toolbar is up", selectTextIsOn())
+        compose.onAllNodesWithText("Select text from the image").assertCountEquals(0)
+    }
+
+    @Test
+    fun `Done and Back both leave the mode`() {
+        val photos = roll()
+        compose.setContent { themed { Viewer(photos[4], photos) } }
+        compose.waitForIdle()
+        openActionsRoom()
+        compose.onNodeWithText("Select text").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Done").performClick()
+        compose.waitForIdle()
+        assertTrue(!selectTextIsOn())
+
+        openActionsRoom()
+        compose.onNodeWithText("Select text").performClick()
+        compose.waitForIdle()
+        assertTrue(selectTextIsOn())
+        pressBack()
+        assertTrue(!selectTextIsOn())
     }
 
     // ── (d) the shrink-to-map flight ───────────────────────────────────────────────────────────

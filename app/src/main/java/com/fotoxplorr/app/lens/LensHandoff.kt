@@ -6,10 +6,10 @@ import android.content.Context
 import android.content.Intent
 
 /**
- * The two off-device hand-offs this card can offer, and the reason both are safe to fire from
- * EVERY flavor, including `offline`.
+ * The hand-offs this card and the Select text toolbar can offer, and the reason all of them are
+ * safe to fire from EVERY flavor, including `offline`.
  *
- * Both build IMPLICIT intents: this app describes what it wants done and hands that description
+ * All build IMPLICIT intents: this app describes what it wants done and hands that description
  * to the system, which resolves it to whatever app the person has installed and launches THAT
  * app's own activity -- this process never opens a socket to do it. The offline flavor's
  * manifest already relies on exactly this distinction for the app's existing share sheet
@@ -18,6 +18,10 @@ import android.content.Intent
  * app's own business once it has the data, under that other app's own permissions. See
  * [com.fotoxplorr.app.lens.TranslatorUnavailableException]'s callers for why the offline flavor
  * needs this at all -- it has no translator of its own to run.
+ *
+ * Package visibility: the main manifest's `<queries>` declares `ACTION_PROCESS_TEXT`,
+ * `ACTION_WEB_SEARCH` and `ACTION_SEND` (text/plain), so [Intent.resolveActivity] sees the apps
+ * installed for each on Android 11 and later; a new kind of hand-off needs its own entry there.
  */
 object LensHandoff {
 
@@ -29,17 +33,6 @@ object LensHandoff {
      * entry -- it is what a translator app registers for to appear there, Google Translate
      * included -- so it is tried first. `ACTION_SEND` is the broader, near-universal fallback for
      * when nothing on the device answers the more specific one.
-     *
-     * KNOWN LIMITATION: the preference check below uses [Intent.resolveActivity], which on
-     * Android 11+ can under-report matches for a package this app's manifest has not declared
-     * visibility of via a `<queries>` element -- and this app's manifest does not currently
-     * declare one for `ACTION_PROCESS_TEXT` or `ACTION_SEND`. In practice this only ever costs
-     * the MORE SPECIFIC entry point: most translator apps (Google Translate included) also
-     * register for plain `ACTION_SEND`, so on a device where the check under-reports, the
-     * hand-off still reaches the same app through its general "Share" surface rather than its
-     * dedicated translate one -- a real but minor degradation, not a broken feature. Fixing it
-     * precisely needs a `<queries>` addition to `app/src/main/AndroidManifest.xml`, which is
-     * outside this package's ownership this round; see this feature's own integration notes.
      */
     fun translateIntent(context: Context, text: String): Intent {
         val processText = Intent(Intent.ACTION_PROCESS_TEXT).apply {
@@ -48,10 +41,14 @@ object LensHandoff {
             putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
         }
         val resolves = processText.resolveActivity(context.packageManager) != null
-        return if (resolves) processText else sendIntent(text)
+        return if (resolves) processText else shareTextIntent(text)
     }
 
-    private fun sendIntent(text: String): Intent = Intent(Intent.ACTION_SEND).apply {
+    /**
+     * An intent that shares [text] as plain text, for the system share sheet. Used by the Select
+     * text toolbar to send the selected words on, and as the broad fallback of [translateIntent].
+     */
+    fun shareTextIntent(text: String): Intent = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
         putExtra(Intent.EXTRA_TEXT, text)
     }
