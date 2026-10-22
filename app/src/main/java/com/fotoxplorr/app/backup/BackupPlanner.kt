@@ -276,14 +276,16 @@ object BackupPlanner {
         val unmatched = ArrayList<BackupCandidate>()
         var locationRecopies = 0
         for (c in eligible) {
-            val same = byKey[c.fileKey]?.firstOrNull { it.entryId !in claimed && sameBytesProbably(it, c) }
+            // All the records of these bytes, not the first: the pack of a copy that was replaced is still
+            // in the folder and its index brings the old record back beside the newer one.
+            val sameBytes = byKey[c.fileKey]?.filter { it.entryId !in claimed && sameBytesProbably(it, c) }.orEmpty()
             // A copy made without the location is the right bytes with the GPS cut out: not "the same" once it can be read.
-            val record = same?.takeUnless { locationReadable && it.lacksLocation }
+            val record = sameBytes.firstOrNull { !it.lacksLocation } ?: sameBytes.firstOrNull { !locationReadable }
             if (record != null) {
                 claimed += record.entryId
                 unchanged += refreshed(record, c, c.relativePath.orEmpty())
             } else {
-                if (same != null) locationRecopies++
+                if (sameBytes.isNotEmpty()) locationRecopies++
                 unmatched += c
             }
         }
@@ -293,7 +295,13 @@ object BackupPlanner {
         // supersedes it, but only once that copy is written (BackupPlan.nextEntries).
         val phoneKeys = eligible.mapTo(HashSet()) { it.fileKey }
         val vanished = usable.filter { it.entryId !in claimed && it.fileKey !in phoneKeys }
-        val supersededUsable = usable.filter { it.entryId !in claimed && it.fileKey in phoneKeys }
+        // A record a newer one of the same path has already replaced (its pack came back through its
+        // index) is not carried on: the run that replaced it dropped it from the snapshot too.
+        val newestClaimed = HashMap<String, Long>()
+        usable.filter { it.entryId in claimed }.forEach { newestClaimed.merge(it.fileKey, it.entryId, ::maxOf) }
+        val supersededUsable = usable.filter {
+            it.entryId !in claimed && it.fileKey in phoneKeys && (newestClaimed[it.fileKey] ?: -1L) < it.entryId
+        }
         val flaggedLost = lost.map { if (it.isMissing) it else it.copy(flags = it.flags + EntryFlag.MISSING) }
         val (supersededLost, missing) = flaggedLost.partition { it.fileKey in phoneKeys }
         val movable = HashMap<Triple<String, Long, Long>, MutableList<ManifestEntry>>()

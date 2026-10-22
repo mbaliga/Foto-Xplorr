@@ -81,6 +81,81 @@ class BackupPlannerLocationTest {
         assertEquals(1, withLocation.moved.size)
     }
 
+    /**
+     * What a folder looks like from run 3 on: the manifest lists only the packs its entries still
+     * use, so the pack of the first run is out of it but still in the folder with its valid index,
+     * and the loader hands its records back as recovered ones.
+     */
+    private fun nextRun(manifest: List<ManifestEntry>, recovered: List<ManifestEntry>, candidates: List<BackupCandidate>): BackupPlan {
+        val known = manifest + recovered
+        return BackupPlanner.plan(known, candidates, BackupOptions(), known.map { it.packName }.toSet(), limits, locationReadable = true)
+    }
+
+    private fun written(plan: BackupPlan, withLocation: Boolean) = plan.copies.map { it.toEntry(sha, withLocation) }
+
+    @Test
+    fun `a location copy converges over runs even when the old pack comes back as a recovered one`() {
+        val a = photo(1)
+        val b = photo(2)
+        // Run 1: the location could not be read.
+        val run1 = BackupPlanner.plan(emptyList(), listOf(a, b), BackupOptions(), emptySet(), limits, locationReadable = false)
+        val first = written(run1, withLocation = false)
+        assertEquals(2, first.size)
+
+        // Run 2: it can be, so both are copied again into a new pack, and the manifest drops the old records.
+        val run2 = nextRun(first, emptyList(), listOf(a, b))
+        assertEquals(2, run2.copies.size)
+        assertEquals(2, run2.locationRecopies)
+        val second = written(run2, withLocation = true)
+        val manifest2 = run2.nextEntries(second)
+        assertEquals(second, manifest2)
+        assertTrue("the new pack is not the old one", run2.packs.none { pack -> pack.name in first.map { it.packName } })
+
+        // Run 3 and 4: the old pack is still in the folder, its index is read back, and nothing is copied.
+        val run3 = nextRun(manifest2, first, listOf(a, b))
+        assertTrue("run 3: ${run3.copies.map { it.candidate.mediaId }}", run3.isUpToDate)
+        assertEquals(0, run3.locationRecopies)
+        assertEquals(second.map { it.entryId }, run3.unchanged.map { it.entryId }.sorted())
+        val manifest3 = run3.nextEntries(emptyList())
+        assertEquals("the superseded copies do not come back into the snapshot", second, manifest3.sortedBy { it.entryId })
+        val run4 = nextRun(manifest3, first, listOf(a, b))
+        assertTrue("run 4", run4.isUpToDate)
+        assertEquals(second, run4.nextEntries(emptyList()).sortedBy { it.entryId })
+    }
+
+    @Test
+    fun `a newer record with the location is used even when an older one without it comes first`() {
+        val a = photo(1)
+        val old = PlannedCopy(0, a, "pack-0001.fzbp").toEntry(sha, false)
+        val fresh = PlannedCopy(1, a, "pack-0002.fzbp").toEntry(sha, true)
+        val plan = plan(listOf(old, fresh), listOf(a), locationReadable = true)
+        assertTrue(plan.isUpToDate)
+        assertEquals(0, plan.locationRecopies)
+        assertEquals(listOf(1L), plan.unchanged.map { it.entryId })
+    }
+
+    @Test
+    fun `a file is counted as a location copy only when every record of it lacks the location`() {
+        val a = photo(1)
+        val one = PlannedCopy(0, a, "pack-0001.fzbp").toEntry(sha, false)
+        val two = PlannedCopy(1, a, "pack-0002.fzbp").toEntry(sha, false)
+        val plan = plan(listOf(one, two), listOf(a), locationReadable = true)
+        assertEquals(1, plan.copies.size)
+        assertEquals("one file, one copy, however many records it had", 1, plan.locationRecopies)
+        assertEquals(listOf(0L, 1L), plan.superseded.map { it.entryId })
+    }
+
+    @Test
+    fun `without the permission the record that has the location is the one kept`() {
+        val a = photo(1)
+        val old = PlannedCopy(0, a, "pack-0001.fzbp").toEntry(sha, false)
+        val fresh = PlannedCopy(1, a, "pack-0002.fzbp").toEntry(sha, true)
+        val plan = plan(listOf(old, fresh), listOf(a), locationReadable = false)
+        assertTrue(plan.isUpToDate)
+        assertEquals(listOf(1L), plan.unchanged.map { it.entryId })
+        assertEquals("the weaker copy of the same file is not carried on", listOf(fresh), plan.nextEntries(emptyList()))
+    }
+
     @Test
     fun `the preflight says how many files will be copied again`() {
         val text = BackupCopy.preflight(facts(locationRecopies = 3)).map { it.text }
