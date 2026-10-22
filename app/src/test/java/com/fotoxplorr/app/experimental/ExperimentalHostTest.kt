@@ -116,12 +116,34 @@ class ExperimentalHostTest {
         assertTrue(duplicateIds(builtInExperiments).isEmpty())
         // These are saved state and the "Open the app on"-style stable names: a rename is a break.
         assertEquals(
-            listOf("similarity", "wall", "preview", "compass", "ai"),
+            listOf("aquarium", "wall-mockup", "similarity", "wall", "preview", "compass", "ai"),
             builtInExperiments.map { it.id },
         )
         assertEquals("ai", builtInExperiments.last().id)
         assertEquals(ExperimentGroup.SETUP, builtInExperiments.last().group)
         assertEquals("Compass view", builtInExperiments.first { it.id == "compass" }.title)
+        assertEquals(
+            listOf("aquarium", "wall-mockup"),
+            builtInExperiments.filter { it.group == ExperimentGroup.MAKE }.map { it.id },
+        )
         assertTrue("the old street and photo map cards are gone", builtInExperiments.none { it.title.contains("map", ignoreCase = true) })
+    }
+
+    @Test
+    fun `every registered entry has a stable id, a title and a one-sentence blurb`() {
+        val idShape = Regex("[a-z][a-z0-9-]*")
+        builtInExperiments.forEach { e ->
+            assertTrue("id '${e.id}' is lower-case words joined by hyphens", idShape.matches(e.id))
+            assertTrue("${e.id} has a title", e.title.isNotBlank() && e.title == e.title.trim())
+            assertTrue("${e.id} has a blurb", e.blurb.isNotBlank() && e.blurb == e.blurb.trim())
+            assertTrue("${e.id} blurb is short: ${e.blurb}", e.blurb.length <= 80)
+            assertTrue("${e.id} blurb is not a paragraph: ${e.blurb}", e.blurb.count { it == '.' } <= 1)
+        }
+        assertEquals(
+            "titles are the cards' names and must not repeat",
+            builtInExperiments.size,
+            builtInExperiments.map { it.title }.toSet().size,
+        )
+        assertTrue(duplicateIds(builtInExperiments).isEmpty())
     }
 }

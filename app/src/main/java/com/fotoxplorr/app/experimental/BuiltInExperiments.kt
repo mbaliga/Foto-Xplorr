@@ -2,10 +2,12 @@ package com.fotoxplorr.app.experimental
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesomeMosaic
+import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.PermMedia
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.ViewInAr
+import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -14,10 +16,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.fotoxplorr.app.ai.AiSettingsScreen
 import com.fotoxplorr.app.ai.SimilarityExplorerScreen
+import com.fotoxplorr.app.aquarium.AquariumCopy
+import com.fotoxplorr.app.aquarium.AquariumExperience
 import com.fotoxplorr.app.experience.GalleryPreviewScreen
 import com.fotoxplorr.app.experience.PhotoWallScreen
 import com.fotoxplorr.app.spatial.SpatialPhotoSceneScreen
 import com.fotoxplorr.app.ui.HelpCopy
+import com.fotoxplorr.app.wall.WallCopy
+import com.fotoxplorr.app.wall.WallExperience
 
 /**
  * Every experiment the Experimental section offers, in the order the cards appear within a group.
@@ -32,6 +38,30 @@ import com.fotoxplorr.app.ui.HelpCopy
  * The ids below are saved state: never rename one.
  */
 internal val builtInExperiments: List<ExperimentEntry> = listOf(
+    // Make. Neither of these starts work or asks a permission on open, so both are restorable: the
+    // aquarium reloads its creatures from files and keeps its draft, and the wall keeps its draft
+    // and checks it against the photos the gallery shows now.
+    ExperimentEntry(
+        id = "aquarium",
+        title = AquariumCopy.TITLE,
+        blurb = AquariumCopy.BLURB,
+        group = ExperimentGroup.MAKE,
+        icon = Icons.Outlined.Brush,
+    ) { _, onClose ->
+        // Reads no library photo, so it takes nothing from the environment.
+        AquariumExperience(onClose)
+    },
+    ExperimentEntry(
+        // Not "wall": that id is the 3D photo wall below, and a saved id is never reused.
+        id = "wall-mockup",
+        title = WallCopy.TITLE,
+        blurb = WallCopy.BLURB,
+        group = ExperimentGroup.MAKE,
+        icon = Icons.Outlined.Wallpaper,
+    ) { env, onClose ->
+        WallExperience(env, onClose)
+    },
+    // Explore.
     ExperimentEntry(
         id = "similarity",
         title = "Organise by similarity",
@@ -89,6 +119,7 @@ internal val builtInExperiments: List<ExperimentEntry> = listOf(
             onClose = onClose,
         )
     },
+    // Setup, always last.
     ExperimentEntry(
         id = "ai",
         title = "AI and provider keys",

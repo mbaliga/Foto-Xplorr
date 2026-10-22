@@ -142,7 +142,7 @@ internal object HelpCopy {
         const val PICKED_ONLY = "Showing only the photos you picked."
         const val PICKER_PERMISSION = "Allow access to pick photos."
         const val NO_MATCHES = "Nothing matches your filters"
-        const val EXPERIMENTAL_CARD = "Compass view and other extras"
+        const val EXPERIMENTAL_CARD = "Draw fish, try pictures on your wall, and more"
         const val TAG_FIRST = "Select photos, then Add tag."
         const val SCANNING_DESTINATION = "Scanning on this device…"
         const val NO_PETS = "No pets found"
