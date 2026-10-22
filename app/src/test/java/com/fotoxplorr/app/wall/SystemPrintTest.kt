@@ -91,4 +91,45 @@ class SystemPrintTest {
         val over = PrintPage.place(a4.first, a4.second, PrintSize(PrintPage.ptToCm(innerW + 0.5f), PrintPage.ptToCm(innerH - 0.1f)))
         assertTrue(over.shrunk)
     }
+
+    @Test
+    fun `a 10 x 15 print on borderless 4x6 paper keeps its real size`() {
+        // 4 x 6 in is 288 x 432 pt; a borderless sheet reports no margin of its own.
+        val p = PrintPage.place(288f, 432f, PrintSize(10.0, 15.0), PageMargins.NONE)
+        assertFalse(p.shrunk)
+        assertEquals(PrintPage.cmToPt(10.0), p.widthPt, 0.01f)
+        assertEquals(PrintPage.cmToPt(15.0), p.heightPt, 0.01f)
+    }
+
+    @Test
+    fun `a margin the printer reports shrinks a print that reaches into it, and no further`() {
+        // 0.12 in (8.64 pt) on each side of 4 x 6 paper: 10 x 15 cm no longer fits.
+        val m = PageMargins.ofMils(120, 120, 120, 120)
+        assertEquals(8.64f, m.leftPt, 0.001f)
+        val p = PrintPage.place(288f, 432f, PrintSize(10.0, 15.0), m)
+        assertTrue(p.shrunk)
+        assertTrue(p.leftPt >= 8.64f - 0.01f && p.topPt >= 8.64f - 0.01f)
+        assertTrue(p.leftPt + p.widthPt <= 288f - 8.64f + 0.01f)
+        assertTrue(p.topPt + p.heightPt <= 432f - 8.64f + 0.01f)
+        // 9 x 13 cm does fit inside it.
+        assertFalse(PrintPage.place(288f, 432f, PrintSize(9.0, 13.0), m).shrunk)
+    }
+
+    @Test
+    fun `margins differ per side and are kept per side`() {
+        val m = PageMargins.ofMils(0, 500, 0, 0)
+        val p = PrintPage.place(a4.first, a4.second, PrintSize(21.0, 29.7), m)
+        assertTrue(p.shrunk)
+        assertTrue(p.topPt >= 36f - 0.01f)
+        assertTrue(p.leftPt >= -0.01f)
+        assertTrue(p.leftPt + p.widthPt <= a4.first + 0.01f)
+    }
+
+    @Test
+    fun `without a reported margin the default one is 1 cm on every side`() {
+        val d = PageMargins.DEFAULT
+        assertEquals(PrintPage.FIT_MARGIN_PT, d.leftPt, 0f)
+        assertEquals(PrintPage.FIT_MARGIN_PT, d.bottomPt, 0f)
+        assertTrue(PrintPage.place(a4.first, a4.second, PrintSize(21.0, 29.7)).shrunk)
+    }
 }

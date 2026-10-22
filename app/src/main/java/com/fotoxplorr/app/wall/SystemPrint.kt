@@ -29,16 +29,31 @@ import kotlin.math.roundToInt
 /** Where a picture goes on a page, in PDF points (1/72 in) from the page's top left. [shrunk] when it did not fit at real size. */
 internal data class PagePlacement(val leftPt: Float, val topPt: Float, val widthPt: Float, val heightPt: Float, val shrunk: Boolean)
 
+/** What the printer cannot reach at each edge of the sheet, in PDF points. */
+internal data class PageMargins(val leftPt: Float, val topPt: Float, val rightPt: Float, val bottomPt: Float) {
+    companion object {
+        /** A borderless sheet: the printer reports no margin of its own. */
+        val NONE = PageMargins(0f, 0f, 0f, 0f)
+
+        /** For a print dialog that reported none: 1 cm, since most printers cut 3 to 5 mm at the edge. */
+        val DEFAULT = PageMargins(PrintPage.FIT_MARGIN_PT, PrintPage.FIT_MARGIN_PT, PrintPage.FIT_MARGIN_PT, PrintPage.FIT_MARGIN_PT)
+
+        /** From the print framework's [android.print.PrintAttributes.Margins], which are in mils. */
+        fun ofMils(leftMils: Int, topMils: Int, rightMils: Int, bottomMils: Int) = PageMargins(
+            PrintPage.milsToPt(leftMils),
+            PrintPage.milsToPt(topMils),
+            PrintPage.milsToPt(rightMils),
+            PrintPage.milsToPt(bottomMils),
+        )
+    }
+}
+
 /** The page maths of the system print path. Pure. */
 internal object PrintPage {
     const val PT_PER_INCH = 72f
     private const val MILS_PER_INCH = 1000f
 
-    /**
-     * What a printer cannot reach at a sheet's edge (most cut 3 to 5 mm), kept clear: 1 cm. A picture
-     * counts as fitting only inside the page less this on each side, so one as big as the paper is
-     * shrunk too instead of printed edge to edge.
-     */
+    /** The margin used when the print dialog reports none ([PageMargins.DEFAULT]): 1 cm. */
     const val FIT_MARGIN_PT = 28.35f
 
     /** A4, for a print dialog that gave no paper size. */
@@ -52,23 +67,22 @@ internal object PrintPage {
     fun ptToCm(pt: Float): Double = pt / PT_PER_INCH * PrintMath.CM_PER_INCH
 
     /**
-     * The picture at its real size, centred, when it fits inside the page less [FIT_MARGIN_PT] on
-     * each side; otherwise the whole picture scaled down to fit inside that, centred. The
-     * shape is kept either way. The picture is never turned: the person picks the paper's
-     * orientation in the print dialog.
+     * The picture at its real size when it fits inside the page less [margins], otherwise the whole
+     * picture scaled down to fit inside that, so one as big as an ordinary sheet is kept off the
+     * edge the printer cannot reach, while one on borderless photo paper (no margin) keeps its
+     * size. Centred in what is left, shape kept. The picture is never turned: the person picks
+     * the paper's orientation in the print dialog.
      */
-    fun place(pageWidthPt: Float, pageHeightPt: Float, picture: PrintSize): PagePlacement {
+    fun place(pageWidthPt: Float, pageHeightPt: Float, picture: PrintSize, margins: PageMargins = PageMargins.DEFAULT): PagePlacement {
         val w = cmToPt(picture.wCm)
         val h = cmToPt(picture.hCm)
-        val fits = w <= pageWidthPt - 2 * FIT_MARGIN_PT && h <= pageHeightPt - 2 * FIT_MARGIN_PT
-        val scale = if (fits) {
-            1f
-        } else {
-            min((pageWidthPt - 2 * FIT_MARGIN_PT) / w, (pageHeightPt - 2 * FIT_MARGIN_PT) / h).coerceAtLeast(MIN_SCALE)
-        }
+        val innerW = pageWidthPt - margins.leftPt - margins.rightPt
+        val innerH = pageHeightPt - margins.topPt - margins.bottomPt
+        val fits = w <= innerW && h <= innerH
+        val scale = if (fits) 1f else min(innerW / w, innerH / h).coerceAtLeast(MIN_SCALE)
         val pw = w * scale
         val ph = h * scale
-        return PagePlacement((pageWidthPt - pw) / 2, (pageHeightPt - ph) / 2, pw, ph, shrunk = !fits)
+        return PagePlacement(margins.leftPt + (innerW - pw) / 2, margins.topPt + (innerH - ph) / 2, pw, ph, shrunk = !fits)
     }
 
     private const val MIN_SCALE = 0.01f
@@ -76,7 +90,7 @@ internal object PrintPage {
 
 /**
  * Hands one photo to the platform's print dialog as a one-page PDF at the real paper size, with
- * the picture on it at its real size when the paper is big enough ([PrintPage.place]). The PDF is
+ * the picture on it at its real size when the paper is big enough inside the margins the dialog reports ([PrintPage.place]). The PDF is
  * made in [onWrite], once per time the dialog asks for it, on a worker thread; nothing is kept
  * between asks, and no file is left behind (the system gives a descriptor to write into).
  *
@@ -85,7 +99,8 @@ internal object PrintPage {
  * checks again that the photo may still be exported on every ask. After [close] (the screen was
  * left) every ask fails with a sentence instead of reading a photo whose live check is gone.
  *
- * Nothing here has run on a device: the PDF's size, the preview and the output of a real printer
+ * Nothing here has run on a device: the PDF's size, the preview, whether a real dialog reports
+ * `minMargins` as assumed here (and 0 on borderless photo paper) and the output of a real printer
  * are device checks.
  */
 internal class PhotoPrintAdapter(
@@ -100,6 +115,8 @@ internal class PhotoPrintAdapter(
     @Volatile private var pageWidthPt = PrintPage.A4_WIDTH_PT
 
     @Volatile private var pageHeightPt = PrintPage.A4_HEIGHT_PT
+
+    @Volatile private var margins = PageMargins.DEFAULT
 
     /** Stops any work in flight and refuses further asks. */
     fun close() {
@@ -126,6 +143,9 @@ internal class PhotoPrintAdapter(
             pageWidthPt = PrintPage.milsToPt(it.widthMils)
             pageHeightPt = PrintPage.milsToPt(it.heightMils)
         }
+        // What this printer and paper cannot reach, as the dialog reports it (0 on borderless photo paper).
+        margins = newAttributes.minMargins?.let { PageMargins.ofMils(it.leftMils, it.topMils, it.rightMils, it.bottomMils) }
+            ?: PageMargins.DEFAULT
         val info = PrintDocumentInfo.Builder(jobName)
             .setContentType(PrintDocumentInfo.CONTENT_TYPE_PHOTO)
             .setPageCount(1)
@@ -161,7 +181,7 @@ internal class PhotoPrintAdapter(
     private suspend fun writePage(destination: ParcelFileDescriptor) {
         val pageW = pageWidthPt
         val pageH = pageHeightPt
-        val placement = PrintPage.place(pageW, pageH, size)
+        val placement = PrintPage.place(pageW, pageH, size, margins)
         val placed = PrintSize(PrintPage.ptToCm(placement.widthPt), PrintPage.ptToCm(placement.heightPt))
         renderPicture(placed) { bitmap ->
             // The descriptor is the system's: flushed, not closed.
