@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.aquarium
 
+import androidx.compose.runtime.snapshots.Snapshot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -377,5 +378,40 @@ class TankSimulationTest {
         }
         assertTrue(abs(SeededRng(1L).next() - SeededRng(2L).next()) > 0f)
         assertTrue(SeededRng(0L).next() in 0f..1f)
+    }
+
+    @Test
+    fun `adding or removing a creature is a change the screen can observe, and a no-op is not`() {
+        val sim = TankSimulation(seed = 3, aspect = 1.5f)
+        var applied = 0
+        val handle = Snapshot.registerApplyObserver { _, _ -> applied++ }
+        try {
+            val before = sim.revision
+            sim.addCreature("a", params)
+            Snapshot.sendApplyNotifications()
+            assertEquals(1, applied)
+            assertTrue(sim.revision != before)
+
+            val afterAdd = sim.revision
+            assertFalse(sim.removeCreature("not there"))
+            Snapshot.sendApplyNotifications()
+            assertEquals("removing nothing changes nothing", 1, applied)
+            assertEquals(afterAdd, sim.revision)
+
+            assertTrue(sim.removeCreature("a"))
+            Snapshot.sendApplyNotifications()
+            assertEquals(2, applied)
+            assertTrue(sim.revision != afterAdd)
+        } finally {
+            handle.dispose()
+        }
+    }
+
+    @Test
+    fun `a full tank refusing a creature is not a change`() {
+        val sim = simWith(TankSimulation.MAX_CREATURES)
+        val before = sim.revision
+        assertNull(sim.addCreature("one too many", params))
+        assertEquals(before, sim.revision)
     }
 }

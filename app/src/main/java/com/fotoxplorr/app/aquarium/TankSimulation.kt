@@ -1,5 +1,8 @@
 package com.fotoxplorr.app.aquarium
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -102,8 +105,8 @@ class Creature internal constructor(val key: String, val params: CreatureParams,
 
 /**
  * The aquarium's world: up to [MAX_CREATURES] creatures wandering a tank 1.0 tall and [aspect]
- * wide, a touch that scares them, and food that sinks and gets eaten. Pure Kotlin and seeded, so a
- * test run is reproducible; nothing here knows about Android.
+ * wide, a touch that scares them, and food that sinks and gets eaten. Seeded, so a test run is
+ * reproducible; nothing here knows about Android (the only Compose it holds is [revision]).
  *
  * [step] clamps its time step, so a stalled frame (a 500 ms hitch, the app returning from the
  * background) advances at most [MAX_DT]; the result for a given sequence of steps is deterministic,
@@ -117,6 +120,14 @@ class TankSimulation(seed: Long = 1L, aspect: Float = DEFAULT_ASPECT) {
 
     /** Back to front. Do not modify. */
     val creatures: List<Creature> get() = list
+
+    /**
+     * Bumped whenever a creature is added or removed. Compose state, so a drawing that reads it is
+     * redrawn when the tank's population changes even though no frame follows (paused, animations off).
+     * Positions are not observable and need the frame loop.
+     */
+    var revision by mutableIntStateOf(0)
+        private set
 
     /** The fixed pool of pellets; those with [FoodPellet.active] are in the water. */
     val food: Array<FoodPellet> get() = world.food
@@ -192,11 +203,16 @@ class TankSimulation(seed: Long = 1L, aspect: Float = DEFAULT_ASPECT) {
         var at = list.size
         while (at > 0 && list[at - 1].z > c.z) at--
         list.add(at, c)
+        revision++
         return c
     }
 
     /** Takes every creature with [key] out of the tank. */
-    fun removeCreature(key: String): Boolean = list.removeAll { it.key == key }
+    fun removeCreature(key: String): Boolean {
+        val removed = list.removeAll { it.key == key }
+        if (removed) revision++
+        return removed
+    }
 
     /** Drops a pellet at ([x], [y]); false when the pool is full or the spot is not a number. */
     fun dropFood(x: Float, y: Float): Boolean {

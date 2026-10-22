@@ -181,7 +181,7 @@ internal fun AquariumScreen(
                     }
                 },
         ) {
-            if (frame < 0) return@Canvas
+            if (frame < 0 || sim.revision < 0) return@Canvas
             drawRect(Brush.verticalGradient(listOf(WATER_TOP, WATER_BOTTOM)))
             drawRect(SAND.copy(alpha = 0.55f), topLeft = Offset(0f, size.height * 0.985f))
             val unit = size.height
