@@ -118,4 +118,26 @@ class WallViewTest {
         assertEquals(35f, far.wCm, 0f)
         assertEquals(8f, far.rotationDeg, 0f)
     }
+
+    @Test
+    fun `the buttons move a frame by shares of the photo's width and keep its centre on the photo`() {
+        // A 4:3 photo is 0.75 of its width tall.
+        val f = WallFrame(1, 0.5f, 0.7f, 40f, 50f)
+        val down = WallView.nudged(f, 0f, 0.1f, 0.75f)
+        assertEquals(0.75f, down.cy, 1e-6f)
+        assertEquals(0.5f, down.cx, 0f)
+        assertEquals(0.75f, WallView.nudged(down, 0f, 0.1f, 0.75f).cy, 1e-6f)
+        assertEquals(0f, WallView.nudged(f, 0f, -5f, 0.75f).cy, 0f)
+        assertEquals(1f, WallView.nudged(f, 5f, 0f, 0.75f).cx, 0f)
+        assertEquals(0f, WallView.nudged(f, -5f, 0f, 0.75f).cx, 0f)
+        // Size and turn are untouched.
+        assertEquals(f.copy(cy = 0.75f), down)
+    }
+
+    @Test
+    fun `without a photo's height the buttons only keep a frame from going above it`() {
+        val f = WallFrame(1, 0.5f, 0.2f, 40f, 50f)
+        assertEquals(0f, WallView.nudged(f, 0f, -1f, 0f).cy, 0f)
+        assertEquals(3.2f, WallView.nudged(f, 0f, 3f, 0f).cy, 1e-6f)
+    }
 }

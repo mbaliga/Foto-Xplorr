@@ -342,7 +342,7 @@ private fun WallAndPanel(
                         calibrateFromMarks(cm)
                     },
                     onEdit = onEdit,
-                ) else HangPanel(draft, pictures, onEdit, export)
+                ) else HangPanel(draft, pictures, wall?.let { it.heightPx.toFloat() / it.widthPx } ?: 0f, onEdit, export)
         }
     }
 }
@@ -418,13 +418,19 @@ private fun ScalePanel(
 }
 
 @Composable
-private fun HangPanel(draft: WallDraft, pictures: Map<Long, HungPicture?>, onEdit: ((WallDraft) -> WallDraft) -> Unit, export: PrintActions?) {
+private fun HangPanel(
+    draft: WallDraft,
+    pictures: Map<Long, HungPicture?>,
+    wallHeightShare: Float,
+    onEdit: ((WallDraft) -> WallDraft) -> Unit,
+    export: PrintActions?,
+) {
     if (draft.frames.isEmpty()) return
     val index = draft.selected.coerceIn(0, draft.frames.lastIndex)
     val frame = draft.frames[index]
     val unit = if (draft.inches) PrintMath.CM_PER_INCH.toFloat() else 1f
     fun edit(change: (WallFrame) -> WallFrame) = onEdit { it.withFrame(index, change) }
-    fun nudge(dx: Float, dy: Float) = edit { it.copy(cx = (it.cx + dx * unit * 2 / draft.wallWidthCm).coerceIn(0f, 1f), cy = (it.cy + dy * unit * 2 / draft.wallWidthCm).coerceAtLeast(0f)) }
+    fun nudge(dx: Float, dy: Float) = edit { WallView.nudged(it, dx * unit * 2 / draft.wallWidthCm, dy * unit * 2 / draft.wallWidthCm, wallHeightShare) }
 
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         draft.frames.forEachIndexed { i, _ ->
