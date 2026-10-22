@@ -17,7 +17,6 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -120,11 +119,33 @@ class WallCanvasTest {
     }
 
     @Test
-    fun `a tap outside the photo's edge zone inset marks nothing`() {
+    fun `in the scale step a tap near the photo's border marks it, the layer is not inset`() {
         show(step = WallStep.SCALE)
+        // 40 px from the left border: inside the 120 px edge zone the Hang step keeps clear of.
         compose.onNodeWithTag(WALL_CANVAS_TAG).performTouchInput { click(Offset(40f, 300f)) }
         compose.waitForIdle()
-        assertTrue(marks.isEmpty())
-        assertNull(marks.firstOrNull())
+        assertEquals(1, marks.size)
+        assertEquals(40f, marks[0].x, 1.5f)
+        assertEquals(300f, marks[0].y, 1.5f)
+    }
+
+    @Test
+    fun `a plain tap on a frame leaves its tilt and size as they were`() {
+        val tilted = WallFrame(1, 0.5f, 0.375f, 21.4f, 30.2f, rotationDeg = 2f)
+        show(frames = listOf(tilted))
+        compose.onNodeWithTag(WALL_CANVAS_TAG).performTouchInput { click(Offset(400f, 300f)) }
+        compose.waitForIdle()
+        assertEquals(tilted, draft.frames[0])
+    }
+
+    @Test
+    fun `a drag that ends near a standard size and level still settles onto them`() {
+        show(frames = listOf(WallFrame(1, 0.5f, 0.375f, 21.4f, 30.2f, rotationDeg = 2f)))
+        compose.onNodeWithTag(WALL_CANVAS_TAG).performTouchInput { swipe(Offset(400f, 300f), Offset(500f, 300f), durationMillis = 200) }
+        compose.waitForIdle()
+        val f = draft.frames[0]
+        assertEquals(0f, f.rotationDeg, 0f)
+        assertEquals(21f, f.wCm, 1e-3f)
+        assertEquals(29.7f, f.hCm, 1e-3f)
     }
 }

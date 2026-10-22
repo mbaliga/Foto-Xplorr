@@ -50,15 +50,18 @@ private const val GRAB_SLOP_DP = 24f
 /**
  * The wall photo with the frames hung on it, and the touch layer over them.
  *
- * The photo and frames are drawn across the whole area; only the TOUCH layer is inset with
- * [clearOfShellEdges] (TRAPS #72), because it is what takes drags: a drag that starts within the
- * shell's edge zone would open a room instead. A frame hanging wholly inside an edge zone cannot
- * be grabbed, and the person selects it from the list of pictures and moves it with the buttons.
+ * The photo and frames are drawn across the whole area. In [WallStep.HANG] only the TOUCH layer is
+ * inset with [clearOfShellEdges] (TRAPS #72), because it is what takes drags: a drag that starts
+ * within the shell's edge zone would open a room instead. A frame hanging wholly inside an edge zone
+ * cannot be grabbed, and the person selects it from the list of pictures and moves it with the buttons.
  *
- * In [WallStep.SCALE] a tap marks an end of the reference ([onMark] gets the photo's own pixel).
+ * In [WallStep.SCALE] a tap marks an end of the reference ([onMark] gets the photo's own pixel), and
+ * the layer covers the whole canvas: a tap is no drag, and a door or sheet at the photo's border has
+ * to be markable. (Whether the shell still reads a tap on its edge zone is a device check.)
  * In [WallStep.HANG] one finger drags the frame it lands on, and two fingers pinch and twist the
- * selected frame wherever they are; a gesture ends on a standard size and level when close to them
- * ([WallView.settled]). Nothing here has been tried on a device.
+ * selected frame wherever they are; a gesture that moved, sized or turned a frame ends with it on a
+ * standard size and level when close to them ([WallView.settled]), a plain tap changes nothing.
+ * Nothing here has been tried on a device.
  */
 @Composable
 internal fun WallCanvas(
@@ -109,7 +112,7 @@ internal fun WallCanvas(
         Box(
             Modifier
                 .fillMaxSize()
-                .clearOfShellEdges()
+                .then(if (draft.step == WallStep.HANG) Modifier.clearOfShellEdges() else Modifier)
                 .onGloballyPositioned { layerRoot = it.positionInRoot() }
                 .pointerInput(draft.step) {
                     val shift = { layerRoot - boxRoot }
@@ -128,6 +131,7 @@ internal fun WallCanvas(
                             draft = { latestDraft },
                             shift = shift,
                             slopPx = GRAB_SLOP_DP * density,
+                            touchSlopPx = viewConfiguration.touchSlop,
                             onDraft = { latestOnDraft(it) },
                         )
                     }
@@ -142,6 +146,7 @@ private suspend fun PointerInputScope.hangGestures(
     draft: () -> WallDraft,
     shift: () -> Offset,
     slopPx: Float,
+    touchSlopPx: Float,
     onDraft: (WallDraft) -> Unit,
 ) {
     awaitEachGesture {
@@ -156,6 +161,10 @@ private suspend fun PointerInputScope.hangGestures(
             onDraft(d)
         }
         var target: Int? = null
+        // Whether the person really moved, sized or turned a frame, as against a tap with a finger that
+        // wobbled: only then does the gesture end on a standard size and level.
+        var travelled = Offset.Zero
+        var changed = false
         do {
             val event = awaitPointerEvent()
             val pressed = event.changes.count { it.pressed }
@@ -167,10 +176,12 @@ private suspend fun PointerInputScope.hangGestures(
             if (moving != null && (pan != Offset.Zero || zoom != 1f || twist != 0f)) {
                 d = d.withFrame(moving) { v.transformed(it, pan.x, pan.y, zoom, twist) }
                 onDraft(d)
+                travelled += pan
+                if (zoom != 1f || twist != 0f || travelled.getDistance() > touchSlopPx) changed = true
                 event.changes.forEach { if (it.positionChanged()) it.consume() }
             }
         } while (event.changes.any { it.pressed })
-        target?.let { done -> onDraft(d.withFrame(done) { WallView.settled(it) }) }
+        target?.let { done -> if (changed) onDraft(d.withFrame(done) { WallView.settled(it) }) }
     }
 }
 
