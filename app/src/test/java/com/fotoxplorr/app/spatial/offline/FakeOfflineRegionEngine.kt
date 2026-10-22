@@ -30,10 +30,14 @@ class FakeOfflineRegionEngine(override var throttleInstalled: Boolean = true) : 
 
     fun isRunning(id: Long): Boolean = entries[id]?.running == true
 
-    /** Pretends the downloader reported [progress] for region [id]. */
+    /**
+     * Pretends the downloader reported [progress] for region [id]. A complete reading also stops
+     * the region, as the real downloader does by itself.
+     */
     fun emit(id: Long, progress: RegionProgress) {
         val entry = entries[id] ?: return
         entry.progress = progress
+        if (progress.complete) entry.running = false
         entry.feed.tryEmit(progress)
     }
 

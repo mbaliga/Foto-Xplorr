@@ -61,6 +61,8 @@ object OfflineMapsCopy {
     const val ONE_AT_A_TIME = "One download at a time."
     const val DATE_LINE = "Areas over the date line cannot be saved yet."
     const val ALREADY_SAVED = "Already in your saved areas."
+    const val DELETE_FAILED = "That area could not be deleted."
+    const val LIST_FAILED = "Saved areas could not be read."
 
     fun downloadWithSize(bytes: Long): String = "$DOWNLOAD, about ${megabytes(bytes)}"
 

@@ -22,6 +22,8 @@ class OfflineMapsCopyTest {
         add(OfflineMapsCopy.ONE_AT_A_TIME)
         add(OfflineMapsCopy.DATE_LINE)
         add(OfflineMapsCopy.ALREADY_SAVED)
+        add(OfflineMapsCopy.DELETE_FAILED)
+        add(OfflineMapsCopy.LIST_FAILED)
         add(OfflineMapsCopy.quota(6, 300_000_000L))
         add(OfflineMapsCopy.meteredBody(45_000_000L))
         add(OfflineMapsCopy.deleteTitle("A".repeat(10)))

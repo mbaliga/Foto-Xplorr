@@ -12,13 +12,7 @@ package com.fotoxplorr.app.spatial.offline
 internal object OfflineRegionReconcile {
 
     /** The size the region was planned at, as the guard's state wants it. */
-    fun estimateOf(record: RegionRecord): RegionEstimate = RegionEstimate(
-        box = record.box,
-        minZoom = record.minZoom,
-        maxZoom = record.maxZoom,
-        tileCount = record.tileCount,
-        bytes = record.bytes,
-    )
+    fun estimateOf(record: RegionRecord): RegionEstimate = PaneDownloadFlow.estimateOf(record)
 
     /** The event for [region] after a relaunch, or null when it is finished or is downloading right now. */
     fun restoredEvent(region: StoredRegion): DownloadEvent.Restored? =

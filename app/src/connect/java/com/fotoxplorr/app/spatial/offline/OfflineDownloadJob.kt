@@ -53,7 +53,9 @@ internal class DownloadFailedException(message: String) : Exception(message)
  *   stopped; the engine takes the request limit off when its last region stops.
  * - A late reading after that is rejected by the guard and ignored.
  *
- * State and progress are reported through callbacks; where they are kept is the pane's decision. The
+ * State and progress are reported through callbacks; where they are kept is the pane's decision.
+ * [onStarted] is called once with the region's id, after the engine accepted the start, so a pane
+ * can list the region as downloading from then on (before it, the region may exist but fetches nothing). The
  * job outlives the pane, so a pane opened mid-download picks up from [OfflineRegionEngine.list]
  * (`running`) and [OfflineRegionEngine.progress].
  */
@@ -65,6 +67,7 @@ internal object OfflineDownloadJob {
         target: DownloadTarget,
         from: DownloadState.Downloading,
         nowMillis: () -> Long,
+        onStarted: (Long) -> Unit = {},
         onState: (DownloadState) -> Unit,
     ): JobHandle {
         val name = when (target) {
@@ -73,7 +76,7 @@ internal object OfflineDownloadJob {
         }
         return runner.launch(OfflineJobCopy.title(name), ActivityKind.DOWNLOADING_MAP) { onProgress ->
             // A cancellation is thrown, not returned: run() has already paused the region.
-            outcomeOf(run(engine, target, from, nowMillis, onState, onProgress), name)
+            outcomeOf(run(engine, target, from, nowMillis, onState, onProgress, onStarted), name)
         }
     }
 
@@ -108,6 +111,7 @@ internal object OfflineDownloadJob {
         nowMillis: () -> Long,
         onState: (DownloadState) -> Unit,
         onProgress: (Float?) -> Unit,
+        onStarted: (Long) -> Unit = {},
     ): DownloadEnd {
         var state: DownloadState = from
         fun move(event: DownloadEvent): Boolean {
@@ -147,7 +151,7 @@ internal object OfflineDownloadJob {
                     move(if (started.reason == EngineFailure.ENGINE_ERROR) DownloadEvent.EngineFailed else DownloadEvent.Cancel)
                     return DownloadEnd(state, region.id, refused = started.reason)
                 }
-                is EngineResult.Ok -> Unit
+                is EngineResult.Ok -> onStarted(region.id)
             }
 
             engine.progress(region.id)
