@@ -70,7 +70,7 @@ internal data class WallDraft(
         }
     }
 
-    /** Hangs [pictures] in the arrangement of [kind], at the biggest size that fits, or nothing if the wall is not calibrated. */
+    /** Hangs [pictures] in the arrangement of [kind], at the biggest size that fits, or nothing if the wall is not calibrated. The step is the caller's. */
     fun arranged(wallHeightCm: Float): WallDraft {
         if (!isCalibrated || pictures.isEmpty()) return copy(frames = emptyList())
         val n = pictures.size.coerceAtMost(kind.capacity)

@@ -26,6 +26,7 @@ internal object WallCopy {
     const val LOADING = "Loading…"
     const val CANT_SHOW = "This picture can't be shown."
 
+    const val SCALE_HEADER = "Tell us how big the wall is."
     const val MARK_FIRST = "Tap one end of something you know the size of."
     const val MARK_SECOND = "Now tap its other end."
     const val MARK_DONE = "Tap again to mark it anew."
@@ -58,7 +59,7 @@ internal object WallCopy {
     const val STANDARD_SIZES = "Standard sizes"
     const val SMALLER = "Smaller"
     const val BIGGER = "Bigger"
-    const val TURN = "Turn to other way up"
+    const val TURN = "Switch portrait and landscape"
     const val TILT_LEFT = "Tilt left"
     const val TILT_RIGHT = "Tilt right"
     const val LEVEL = "Level"
