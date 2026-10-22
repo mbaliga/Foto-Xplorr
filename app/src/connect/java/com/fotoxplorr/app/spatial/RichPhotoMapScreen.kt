@@ -161,7 +161,7 @@ fun RichPhotoMapScreen(
         0
     }
     // The ground the embedded map shows, for the Offline maps pill. Updated when the camera comes to
-    // rest, never while it moves, and only from the camera's centre and zoom (see ViewArea).
+    // rest, never while it moves, and only from the camera's centre, zoom and bearing (see ViewArea).
     var viewBox by remember { mutableStateOf<GeoBox?>(null) }
     val mapViewHolder = remember { arrayOfNulls<MapView>(1) }
     val controller = remember(focus, embedded) {
@@ -171,7 +171,7 @@ fun RichPhotoMapScreen(
             lowerChromePx = lowerChromePx,
             upperChromePx = upperChromePx,
             onCameraIdle = if (embedded) {
-                { latitude, longitude, zoom ->
+                { latitude, longitude, zoom, bearing ->
                     val view = mapViewHolder[0]
                     val density = view?.resources?.displayMetrics?.density ?: 0f
                     viewBox = if (view == null || density <= 0f) {
@@ -181,6 +181,7 @@ fun RichPhotoMapScreen(
                             latitude, longitude, zoom,
                             widthDp = view.width / density.toDouble(),
                             heightDp = view.height / density.toDouble(),
+                            bearingDegrees = bearing,
                         )
                     }
                 }
@@ -347,8 +348,8 @@ private class RichPhotoMapController(
     private val lowerChromePx: Int = 0,
     /** Px to push the compass down from the top edge; 0 leaves it where MapLibre puts it. */
     private val upperChromePx: Int = 0,
-    /** Embedded only: the camera came to rest at (latitude, longitude, zoom). */
-    private val onCameraIdle: ((Double, Double, Double) -> Unit)? = null,
+    /** Embedded only: the camera came to rest at (latitude, longitude, zoom) turned by bearing degrees. */
+    private val onCameraIdle: ((Double, Double, Double, Double) -> Unit)? = null,
     private val onSelected: (MediaId) -> Unit,
 ) {
     private var map: MapLibreMap? = null
@@ -384,7 +385,7 @@ private class RichPhotoMapController(
         onCameraIdle?.let { report ->
             map.addOnCameraIdleListener {
                 val camera = map.cameraPosition
-                camera.target?.let { centre -> report(centre.latitude, centre.longitude, camera.zoom) }
+                camera.target?.let { centre -> report(centre.latitude, centre.longitude, camera.zoom, camera.bearing) }
             }
         }
         val style = if (focus != null) FOCUS_STYLE else OPEN_FREE_MAP_STYLE
