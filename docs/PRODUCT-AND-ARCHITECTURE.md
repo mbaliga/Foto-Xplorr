@@ -87,7 +87,10 @@ sharing a photo does not silently share where it was taken.
   hillshade and 3D building extrusions, or the tile-free stamp map (Offline build), populated from
   geotags read locally by `GeoMetadataRepository`.
 - **Experimental** — a hub of cards (`experimental/`) that opens one full-screen experiment at a time.
-  The host owns the open id (saved when the entry is `restorable`), Back, and the pane ink; a new
+  The host owns the open id (saved after a process kill only when the entry is `restorable`; the compass
+  is not), Back (a shell room opened over an experiment is closed first), and the pane ink. The open
+  experiment and its drafts are kept while the destination is left (`KeepExperimentalState`), and the
+  privacy line says printing uses the printer the person chooses. A new
   experiment is one `ExperimentEntry` in `builtInExperiments`, and reads photos only through
   `ExperimentEnv` (the already-filtered list, re-checked at export). Cards sit under Make, Explore
   and Setup. Make holds two experiments that read no pixels they do not draw themselves:
@@ -95,15 +98,20 @@ sharing a photo does not silently share where it was taken.
     undo/redo, ready shapes as the non-drawing path; a closed outline is filled by a flood fill) and a
     tank where each drawing swims by a mesh-warped bitmap (`Canvas.drawBitmapMesh` behind the
     `CreatureRenderer` seam). The simulation (`TankSimulation`) is pure Kotlin in tank units: wander, wall
-    steering, flee from a finger, food. Creatures are a PNG then a JSON in `filesDir/aquarium` (at most 12).
+    steering, flee from a finger, food. Creatures are a PNG then a JSON in `filesDir/aquarium` (at most 12);
+    a pair whose picture does not decode is deleted when the tank opens, and while a Swim save runs the
+    board and chips are locked.
     It takes no `ExperimentEnv`: no library photo is listed or read.
   - **See it on your wall** (`wall/`) — four steps (Wall, Scale, Pictures, Hang). The scale comes from a
     known length marked on the photo, or a typed distance and the photo's focal length (a rectilinear
     estimate). Pictures hang as framed prints at standard sizes (12 sizes, mat and three mouldings, set
-    layouts) with drag, pinch, twist and button paths. It reads the library only through
+    layouts; a landscape photo hangs lying down, each picture by its own shape) with drag, pinch, twist
+    and button paths. It reads the library only through
     `ExperimentEnv.decode`. A selected picture can be saved as a print file (`PrintExporter`: a centred
     cover crop, up to 300 dpi, the density in both Exif and JFIF, the place removed and proved removed, a
-    new file in `Pictures/Fotoz/Prints`) or sent to the system print dialog as a one-page PDF at real size
+    new file in `Pictures/Fotoz/Prints` on Android 10 and later, the default Pictures folder below that) or
+    sent to the system print dialog as a one-page PDF at real size when it fits inside the paper less the
+    margins the dialog reports (otherwise shrunk to fit inside them)
     (`PhotoPrintAdapter`, no dependency). A banded Lanczos resampler (`LanczosResampler`) can enlarge a short
     photo to 300 dpi, labelled "Enlarged, no new detail". There is no camera and no AR: the wall is a photo.
 - **Photo scenes** — OpenGL-rendered 3D arrangements of the library (`experience/`, `spatial/`),
@@ -738,7 +746,8 @@ hard-fail.
   printed size on paper, colour of a Display-P3 export) is in `docs/device-test/batch-6-checklist.md`.
   The offline-map byte and tile figures are reasoned guesses until a device spike replaces them
   (`RegionBudget`), and whether the map library's downloader obeys the 4-request cap is unverified; if it
-  does not, the download must not ship (ADR-015, ADR-016).
+  does not, the download must not ship (ADR-015, ADR-016). Until someone runs the logging-proxy check and
+  sets `MapLibreRegionEngine.CAP_VERIFIED_ON_DEVICE`, a release build offers no download (debug builds do).
 - **The offline-map seam.** `OfflineRegionEngine` (`src/main`, no library types) is what the pane and the
   job talk to; `MapLibreRegionEngine` (`src/connect`) implements it over the map library's offline manager,
   with `MapRequestCap` (in `:feature:ai-remote`, a compile-only declaration) applying the provider's limit.

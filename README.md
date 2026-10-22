@@ -67,7 +67,7 @@ One page (the rail's Experimental word, and a card on Discover) of optional extr
 - **Explore:** Compass view, the 3D photo wall, the gallery preview and look-alike grouping.
 - **Setup:** the on-device model and optional AI keys.
 
-The print file is a new file in `Pictures/Fotoz/Prints`, at up to 300 dpi with the density written in the file, and without the place the photo was taken. A photo short of pixels is saved at its own pixels unless you tick *Enlarged, no new detail*. Photos in locked or hidden folders are never offered and are checked again when a file is written.
+The print file is a new file in `Pictures/Fotoz/Prints` (Android 10 and later; the default Pictures folder before that), at up to 300 dpi with the density written in the file, and without the place the photo was taken. A photo short of pixels is saved at its own pixels unless you tick *Enlarged, no new detail*. Photos in locked or hidden folders are never offered and are checked again when a file is written.
 
 ### Privacy and deletion safety
 
@@ -83,7 +83,7 @@ The print file is a new file in `Pictures/Fotoz/Prints`, at up to 300 dpi with t
 
 Fotoz has no application backend, account, analytics or mandatory cloud service. Location indexing is local and starts only after the user opens the Map or Experimental > Compass view.
 
-The `connect` flavor can also save a small map area for use without a connection (Settings > Data > Offline maps, or the pill on the Map). That is the one place map data is fetched in bulk, and only after a tap on Download: it shows the area and the device's IP address to the map provider (OpenFreeMap), asks first on mobile data, and keeps within the provider's published limits (4 requests at a time, about 3,000 tiles and 50 MB an area, at most 6 areas and 300 MB). The `offline` flavor has no such code and says so. See `docs/adr/ADR-016-offline-map-regions.md`.
+The `connect` flavor can also save a small map area for use without a connection (Settings > Data > Offline maps, or the pill on the Map). That is the one place map data is fetched in bulk, and only after a tap on Download: it shows the area and the device's IP address to the map provider (OpenFreeMap), asks first on mobile data, says so when there is no connection, and keeps within the provider's published limits (4 requests at a time, about 3,000 tiles and 50 MB an area, at most 6 areas and 300 MB). Until that 4-request limit has been checked on a device, a release build does not offer the download. The `offline` flavor has no such code and says so. See `docs/adr/ADR-016-offline-map-regions.md`.
 
 Sharing strips metadata before a file ever leaves the app, and every stripped output is re-checked
 clean before it is handed to the receiving app — never trusted on the strength of the stripping
