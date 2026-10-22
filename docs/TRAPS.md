@@ -1006,7 +1006,7 @@ for Listen come from the recogniser's tag on the selected words (`TextSelection.
 with English and the device language as the fallbacks; text already in the device language is not sent
 to a translator.
 
-## 75. The Experimental host owns Back and the open id; an experiment owns only its inner steps
+## 78. The Experimental host owns Back and the open id; an experiment owns only its inner steps
 
 The Experimental destination (`HyleDestination.PLACES`, labelled "Experimental"; the constant is
 historical and saved as "Open the app on", so only the label changed) is `experimental/ExperimentalScreen`.
@@ -1024,3 +1024,131 @@ experiment is that experiment's to save; the host saves nothing but the id. The 
 `mayExport` again, so a folder locked again while the experiment is open stops the next read. The location
 index starts from the compass entry when it opens with nothing scanned, and from Map mode (`PhotoMapPane`);
 nowhere else.
+
+A camera screen, a permission prompt, or anything that starts work on open is registered with
+`restorable = false`: after process death or recreation the host then shows the hub, never that
+screen with no permission and no work behind it. Registration is one `ExperimentEntry` appended to
+`builtInExperiments`; its id is saved state, so it is never renamed and never reused (`"wall"` is the
+3D photo wall, the room mock-up is `"wall-mockup"`). `ExperimentalHostTest` pins the id list on purpose.
+
+## 79. The wall and aquarium take drags at the edge: inset the touch layer only, and say what is lost
+
+The drawing board (aquarium) and the wall editor (wall mock-up) wrap only their TOUCH area in
+`Modifier.clearOfShellEdges()` (#72, #78): the wall photo is still drawn across the full area, and a
+frame wholly inside the 60 dp zone cannot be grabbed by touch and is moved with the buttons. The wall
+screen applies `statusBarsPadding` and `navigationBarsPadding` itself so the helper does not add a second
+system-bar inset. The tank (taps and holds, not drags) is deliberately NOT inset: a tap at the screen
+edge still feeds the fish, and a drag that starts in the zone opening a room is the shell doing its job.
+The inset costs a 360 dp phone 120 dp of width; a vertical scroller can still lose a drag that starts in
+the bottom 56 dp to the actions room (as the timeline strip does). The owner may prefer "ignore only the
+first touch inside the zone" (`inShellEdgeZone`) over an inset: that is a decision, not a bug.
+
+## 80. The aquarium's simulation is single-threaded state on one frame loop; the renderer is a seam
+
+`TankSimulation`, `Creature` and `FoodPellet` are mutable and are read by the draw lambda: call `step()`
+and draw from the same `withFrameNanos` loop on the main thread, never from `Dispatchers.Default`. The
+loop runs only while the lifecycle is RESUMED and stops on ON_STOP, so a locked app does not animate
+behind the lock; the first step after a resume is 0 s, so fish do not jump. `step(dt)` clamps dt to 0.05 s
+and integrates once: runs are deterministic for a dt sequence but NOT frame-rate independent; assert no such
+thing. The mesh is the identity grid at `waveScale` 0 (paused and reduce-motion), not at phase 0, because a
+travelling sine is never flat. Drawing goes through the `CreatureRenderer` interface; the only
+implementation is `Canvas.drawBitmapMesh`, and the fallback (per-segment `drawBitmap`, or `drawVertices`
+with a bitmap shader) is NOT written. A Compose test that shows the tank unpaused never goes idle (the
+loop asks for a frame forever): set `mainClock.autoAdvance = false` and drive the clock, or open it paused
+with `Settings.Global.ANIMATOR_DURATION_SCALE` 0. When the tank canvas is first measured `setAspect`
+clamps creatures into the real, narrower tank, so a test that records a position waits for layout first.
+
+## 81. A draft goes through a bounded string, and a restored draft is reconciled, not trusted
+
+`rememberSaveable` lands in the activity's size-limited saved-state Bundle. The aquarium draft is saved as
+a quantised string, thinned to 300 points a stroke and 6000 in all (about 40 KB at most; the redo stack,
+a half-drawn stroke and the open list are not saved); the wall's draft is ONE versioned string (step,
+wall id, calibration, distance, layout, picture ids, frames, style, mat, units). Decoded bitmaps, the
+two taps of a reference in progress and typed-but-unsent text are not saved. A restored wall draft is
+reconciled against `env.assets`: a lost wall photo returns to step 1, lost pictures to the pictures step;
+an EMPTY list is "still loading" and never wipes the draft. Creatures live in `filesDir/aquarium` as
+a PNG then a JSON written LAST (a PNG without its JSON is ignored and swept), with UUID-only ids so a
+file name cannot walk out of the folder; a record from a newer version is read for the fields known.
+
+## 82. A print file is a new file with the place removed, and `ExifCopier` carries the source's resolution
+
+`ExifCopier` copies the source file's own `XResolution`, `YResolution` and `ResolutionUnit` (they are not
+in `EXCLUDED_TAGS`; a test pins it), so the density the print needs must be written AFTER `ExifCopier.copy`,
+then the JFIF density last (`JfifDensity`, which patches only bytes 13..17 of the APP0, or inserts one).
+androidx `ExifInterface.saveAttributes` puts the Exif APP1 BEFORE Skia's JFIF APP0, so JFIF is not first
+after SOI; libjpeg-based readers do not mind, a strict sniffer may call it Exif. Both densities are
+written and equal; `PrintExporter` reads them back and refuses to publish otherwise. GPS and XMP location
+are removed with `ExifCopier(keepLocation = false)` and PROVED with `carriesLocation` before publishing
+(camera make, serials, owner and date stay: an owner decision). `EditedCopyWriter` is untouched: its
+encoder is private, copies the place and writes no density. A protected or hidden photo is checked three
+times: `mayExport` at the start, inside `env.decode`, and again immediately before `publish`; the system
+print path checks on every `onWrite` and closes the adapter when the experiment is left. Wide gamut: the
+bitmap is drawn onto an opaque white sRGB bitmap, which converts Display-P3; only a flat colour is proven
+in tests. `android.print` + `PdfDocument` need no dependency, but Robolectric has no PDF writer, so the
+adapter callbacks are untested (the page maths is pure).
+
+## 83. No camera intent: `ACTION_IMAGE_CAPTURE` is not used, and declaring CAMERA later would break it
+
+The wall mock-up takes a photo that is ALREADY in the library; it neither launches `ACTION_IMAGE_CAPTURE`
+nor declares `CAMERA`. Do not add either casually: an app whose manifest declares `CAMERA` without holding
+the grant makes `ACTION_IMAGE_CAPTURE` throw a `SecurityException`, so a later live-camera feature must
+bring the permission flow with it (and `restorable = false`, #78) instead of mixing the two. Nothing
+about this was tried on a device.
+
+## 84. Enlarging is banded, honest, and tied to the editor's mask by a two-row halo
+
+`lanczosResample` streams rows through `PixelRows` and `RowSink` (a 64 MP result as ints is 256 MB), so
+nothing holds a whole picture as an `IntArray`. The editor's `applyUnsharpMask` has a private radius of 1
+and full-image scratch buffers, so it runs per band with a halo of `LanczosBand.HALO_ROWS` = 2; if the
+editor's radius ever exceeds 2, the test that pins band-wise equals whole-picture fails and the halo must
+grow. The caps (8192 px an edge, 64 MP) are checked with Long arithmetic before allocating and the plan
+is fuzzed on absurd sizes. Lanczos adds pixels, not detail: the chip, the notice and the KDoc say
+"Enlarged, no new detail", and the file keeps the honest density. `Bitmap.getPixels` converts to sRGB
+(and clips), so a wide-gamut photo is converted on read.
+
+## 85. The wall's scale is a rectilinear estimate, and "size" means the picture
+
+From a typed distance the wall width uses the image's SHARE of the 43.27 mm full-frame diagonal, not
+`2*atan(12/f35)` (which assumes 36 x 24 and under-reads a 4:3 phone portrait by about 8 percent; 185 vs
+200 cm at 2 m, test pins 199.7). Both ignore lens distortion and a wall that is not square to the camera;
+a reference measured off the wall's plane is wrong by the perspective. A frame's size is the PRINT: mat
+and moulding are drawn outside it and are in neither the file nor the dpi. A photo's real pixels come from
+`DecodedBitmap.sourceWidth/Height`, never `MediaAsset.width/height` (#48).
+
+## 86. A map download is its own job kind, and the network library's HTTP hook is global
+
+`ActivityKind.DOWNLOADING_MAP` needs its own foreground-service type mapping: `JobForegroundService`
+treats `DOWNLOADING_MAP` (like `BACKING_UP`) as data sync on every version (Android 15 and later give every other
+kind media processing, and a mix asks for both), and `JobForegroundTypeTest` pins it; a new job kind that fetches
+or copies bytes is added to `movesBytes()` or it is declared as media processing on Android 15. `JobRunner` treats a job that returns a
+non-blank String as "<title> finished." and a thrown `CancellationException` as silent, so a download that is
+cancelled must pause and RETHROW; one the person ended returns a blank String. The map library's
+`HttpRequestUtil.setOkHttpClient` is process-global: `MapRequestCap` installs the 4-request cap only while a
+region downloads and restores the library's default when the last one stops, or live panning stays
+throttled. The cap is a hard precondition: the engine probes it once (install then restore, no request) and
+turns `throttleInstalled` off for the process if installing ever fails, which disables the button.
+`create` and `list` fetch nothing and `resume` is the only call that may; a late progress reading after a
+pause is `Rejected` by `DownloadGuard`, so the glue stops the engine on any move into Paused or Failed.
+Cancel is pause: nothing deletes except `engine.delete` on the person's request, naming the area (#64).
+
+## 87. Offline-map suggestions use the browsable list; the on-screen area is a flat view
+
+`GeoIndexState.browsablePoints(ids)` takes explicit ids from `browsableAssets` and refuses to read the whole
+geo index (#33): a locked photo's place can never become a suggested area. The map library's visible-region
+bounds on the pitched Map mode span hundreds of kilometres, so "what is on screen" (the pill) is
+`ViewArea.boxOf` from the camera centre, zoom and size, as a flat view. The tile maths follows slippy xyz
+at the same zoom (512 px tiles, assumed identical to the library's cover, not verified); a box over the date
+line is refused (`ANTIMERIDIAN_VERIFIED = false`). `RegionBudget`'s byte table and overhead are guesses
+until a device spike replaces them. The source scan (#43) still applies: the Offline build's pane is a stub
+with the same FQN and signature, all library, HTTP and connectivity code is in `src/connect` and
+`feature/ai-remote` (a compile-only map-library line, ADR-015), and the package's KDoc says "network" and
+"map library" only. Tests for Connect-only code live in `src/testConnect`. A new optional callback on
+`JobRunner.launch`-style helpers goes BEFORE the trailing lambda or every trailing-lambda caller breaks.
+
+## 88. Robolectric-native compose tests that decode on a worker can abort a fresh test JVM
+
+When such a test (wall, export) is the first thing in a fresh JVM the process can exit 134 with
+"Class not found: java/nio/FloatBuffer" and no result file: the first native image decode on an IO worker
+races the main thread. `NativeWarmUp.warmUpNativeImageDecoder()` in `@Before` fixes the two wall classes
+that hit it; any new test that decodes on a worker (aquarium, panorama) needs the same line. Read test
+results inside the same `flock` hold: other agents' runs overwrite the shared results directory.
