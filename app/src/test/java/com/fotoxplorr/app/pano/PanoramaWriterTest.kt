@@ -169,6 +169,42 @@ class PanoramaWriterTest {
     }
 
     @Test
+    fun `a write that fails on a nearly full phone says there is no space, and leaves nothing`() {
+        PanoramaStore.failOpen = true
+        try {
+            runBlocking { PanoramaWriter(context, freeSpace = { 1_000_000L }).publish(canvas(), AutoCrop.CropRect(0, 0, 120, 80), taken, "a.jpg", { true }, {}) }
+            fail("expected a failure")
+        } catch (expected: PanoramaNoSpaceException) {
+            assertTrue("the job reads it as a full phone", PanoramaJob.isOutOfSpace(expected))
+        }
+        assertTrue("the pending row is gone: ${PanoramaStore.rows}", PanoramaStore.rows.isEmpty())
+        assertTrue(stagedFiles().isEmpty())
+    }
+
+    @Test
+    fun `a write that fails on a phone with room is a plain failure, not a space problem`() {
+        PanoramaStore.failOpen = true
+        try {
+            runBlocking { PanoramaWriter(context, freeSpace = { 5_000_000_000L }).publish(canvas(), AutoCrop.CropRect(0, 0, 120, 80), taken, "a.jpg", { true }, {}) }
+            fail("expected a failure")
+        } catch (expected: java.io.IOException) {
+            assertFalse(expected is PanoramaNoSpaceException)
+            assertFalse(PanoramaJob.isOutOfSpace(expected))
+        }
+        assertTrue(PanoramaStore.rows.isEmpty())
+    }
+
+    @Test
+    fun `a photo that became protected is still protected on a nearly full phone`() {
+        try {
+            runBlocking { PanoramaWriter(context, freeSpace = { 0L }).publish(canvas(), AutoCrop.CropRect(0, 0, 120, 80), taken, "a.jpg", { false }, {}) }
+            fail("expected the protected exception")
+        } catch (expected: PanoramaProtectedException) {
+            // the refusal is not a save failure
+        }
+    }
+
+    @Test
     fun `a row the system will not make visible is deleted`() {
         PanoramaStore.failUnpend = true
         try {
@@ -223,6 +259,23 @@ class PanoramaWriterTest {
             assertTrue(job.isCancelled)
         }
         assertEquals("no insert was ever made", 0, PanoramaStore.insertedInto.size)
+        assertTrue(stagedFiles().isEmpty())
+    }
+
+    @Test
+    fun `cancelling just after the row was made visible removes it, so Cancelled never has a file behind it`() {
+        runBlocking {
+            val job = CoroutineScope(Dispatchers.Default).launch(start = CoroutineStart.LAZY) {
+                writer().publish(canvas(), AutoCrop.CropRect(0, 0, 120, 80), taken, "IMG_0001.jpg", { true }, {})
+            }
+            // The cancel lands while IS_PENDING is being cleared: after the last check, before publish returns.
+            PanoramaStore.onUnpend = { job.cancel() }
+            job.start()
+            withTimeout(30_000) { job.join() }
+            assertTrue("the caller sees a cancel", job.isCancelled)
+        }
+        assertEquals("the row had been made visible", 1, PanoramaStore.insertedInto.size)
+        assertTrue("and was deleted again: ${PanoramaStore.rows}", PanoramaStore.rows.isEmpty())
         assertTrue(stagedFiles().isEmpty())
     }
 
@@ -412,6 +465,7 @@ class PanoramaStore : ContentProvider() {
         row.putAll(values)
         if (values?.getAsInteger(MediaStore.MediaColumns.IS_PENDING) == 0) {
             rewriteDateTakenOnPublish?.let { row.put(MediaStore.Images.ImageColumns.DATE_TAKEN, it) }
+            onUnpend()
         }
         return 1
     }
@@ -460,6 +514,7 @@ class PanoramaStore : ContentProvider() {
         var failUnpend = false
         var rewriteDateTakenOnPublish: Long? = null
         var onOpen: () -> Unit = {}
+        var onUnpend: () -> Unit = {}
         private var directory: File = File(".")
 
         fun reset(cache: File) {
@@ -472,6 +527,7 @@ class PanoramaStore : ContentProvider() {
             failUnpend = false
             rewriteDateTakenOnPublish = null
             onOpen = {}
+            onUnpend = {}
             directory = File(cache, "fake-panorama-store").apply { deleteRecursively(); mkdirs() }
         }
 

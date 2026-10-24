@@ -8,7 +8,9 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import com.fotoxplorr.app.lift.pruneStaleFiles
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -66,7 +68,11 @@ class BitmapPanoCanvas(val bitmap: Bitmap) : PanoramaCanvas {
  * two canvases; an [OutOfMemoryError] there is the job's cue to take a smaller rung. Quality is
  * [JPEG_QUALITY], the editor's default. Nothing here has run on a device.
  */
-class PanoramaWriter(context: Context) : PanoramaSink {
+class PanoramaWriter(
+    context: Context,
+    /** The bytes free on the volume of a directory; the tests say how full the phone is. */
+    private val freeSpace: (File) -> Long = { it.usableSpace },
+) : PanoramaSink {
     private val appContext = context.applicationContext
 
     override fun newCanvas(width: Int, height: Int): PanoramaCanvas = BitmapPanoCanvas(width, height)
@@ -78,21 +84,52 @@ class PanoramaWriter(context: Context) : PanoramaSink {
         sourceName: String,
         stillAllowed: () -> Boolean,
         onProgress: (Float) -> Unit,
-    ): String = withContext(Dispatchers.IO) {
-        val bitmap = (canvas as? BitmapPanoCanvas)?.bitmap ?: throw IllegalArgumentException("not a bitmap canvas")
-        pruneStaging()
-        val staged = encodeToStaging(bitmap, crop)
+    ): String {
+        // The row made visible by the last step of the copy, kept outside the block below: a cancel
+        // that lands after it makes withContext throw its result away, and the row must not outlive it.
+        var visible: Uri? = null
         try {
-            onProgress(ENCODED)
-            currentCoroutineContext().ensureActive()
-            if (!stillAllowed()) throw PanoramaProtectedException()
-            currentCoroutineContext().ensureActive()
-            val uri = insertFrom(staged, sourceName, dateTakenMillis)
-            onProgress(1f)
-            uri.toString()
-        } finally {
-            staged.delete()
+            return withContext(Dispatchers.IO) {
+                val bitmap = (canvas as? BitmapPanoCanvas)?.bitmap ?: throw IllegalArgumentException("not a bitmap canvas")
+                pruneStaging()
+                val staged = try {
+                    encodeToStaging(bitmap, crop)
+                } catch (e: IOException) {
+                    throw explain(e)
+                }
+                try {
+                    onProgress(ENCODED)
+                    currentCoroutineContext().ensureActive()
+                    if (!stillAllowed()) throw PanoramaProtectedException()
+                    currentCoroutineContext().ensureActive()
+                    val uri = try {
+                        insertFrom(staged, sourceName, dateTakenMillis)
+                    } catch (e: IOException) {
+                        throw explain(e)
+                    }
+                    visible = uri
+                    onProgress(1f)
+                    uri.toString()
+                } finally {
+                    staged.delete()
+                }
+            }
+        } catch (e: CancellationException) {
+            // Cancelled means nothing is left: also when the cancel came after the row was visible.
+            visible?.let { uri -> withContext(NonCancellable) { runCatching { appContext.contentResolver.delete(uri, null, null) } } }
+            throw e
         }
+    }
+
+    /**
+     * A failed save as the job should hear it: [PanoramaNoSpaceException] when the phone is nearly
+     * full (the encode and the copy both fail with an error that does not say why, or with ENOSPC),
+     * otherwise [failure] itself. A refusal for protection is not a save failure and passes through.
+     */
+    private fun explain(failure: IOException): IOException {
+        if (failure is PanoramaProtectedException || failure is PanoramaNoSpaceException) return failure
+        val low = runCatching { freeSpace(appContext.cacheDir) < LOW_SPACE_BYTES }.getOrDefault(false)
+        return if (low) PanoramaNoSpaceException(failure) else failure
     }
 
     /** Delete staging files left by a run the system killed. Cheap; called at the start of every save. */
@@ -201,6 +238,9 @@ class PanoramaWriter(context: Context) : PanoramaSink {
 
         /** An hour: longer than any save, shorter than anything worth keeping. */
         const val STAGING_MAX_AGE_MILLIS = 60L * 60 * 1000
+
+        /** Under this much free space a failed write is called "no space": the encode cannot say why it failed. */
+        const val LOW_SPACE_BYTES = 8L * 1024 * 1024
 
         private const val ENCODED = 0.7f
         private const val COPY_CHUNK = 64 * 1024

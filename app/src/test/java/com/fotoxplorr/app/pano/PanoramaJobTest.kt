@@ -280,6 +280,23 @@ class PanoramaJobTest {
         assertTrue(sink.canvases.all { it.released })
     }
 
+    @Test
+    fun `a full phone is told so, whichever way the sink reports it`() {
+        val rig = CylinderRig()
+        for (failure in listOf<Exception>(
+            PanoramaNoSpaceException(),
+            java.io.IOException("write failed: ENOSPC (No space left on device)"),
+            RuntimeException("wrapped", java.io.IOException("No space left on device")),
+        )) {
+            val sink = FakeSink().also { it.failWith = failure }
+            assertEquals(failure.toString(), PanoCopy.NO_SPACE, failed(run(rig, rigHost(rig), sink)))
+            assertTrue(sink.published.isEmpty())
+        }
+        assertFalse(PanoramaJob.isOutOfSpace(java.io.IOException("disk full")))
+        assertFalse(PanoramaJob.isOutOfSpace(RuntimeException("No space left")))
+        assertFalse(PanoramaJob.isOutOfSpace(null))
+    }
+
     // ---- the lens ---------------------------------------------------------------------------
 
     @Test
@@ -296,6 +313,34 @@ class PanoramaJobTest {
     }
 
     @Test
+    fun `a photo that lost its lens tag takes the lens of the others instead of failing the sweep`() {
+        // The guess (78 degrees, about 27 mm) is 11% off a 24 mm phone: it used to make the sweep "mixed".
+        for ((mm, missing) in listOf(22 to 0, 24 to 2, 24 to 0, 28 to 4)) {
+            val rig = CylinderRig(f35 = mm)
+            val sink = FakeSink()
+            val outcome = run(rig, rigHost(rig, focal35 = { if (it == missing) null else mm }), sink)
+            val result = done(outcome)
+            assertTrue("$mm mm, photo ${missing + 1} untagged: the note is kept", result.notes.contains(PanoCopy.LENS_GUESSED))
+            // The warp used the shared lens, not the guess, so the picture is still the scene.
+            val error = errorAgainstScene(rig, sink)
+            println("PANO-JOB $mm mm sweep, photo ${missing + 1} without its tag: canvas $error")
+            assertTrue("$mm mm, photo ${missing + 1} untagged: the picture is the scene: $error", error.mean <= 1.5)
+        }
+    }
+
+    @Test
+    fun `an untagged photo does not hide a real difference between the tagged ones, or in size`() {
+        val rig = CylinderRig()
+        // Photo 4 is through another lens, photo 2 has no tag: still mixed, and still before the full-size pass.
+        val tele = rigHost(rig, focal35 = { when (it) { 3 -> 56; 1 -> null; else -> 28 } })
+        assertEquals(PanoCopy.MIXED, failed(run(rig, tele, FakeSink())))
+        assertTrue(tele.calls.all { it.limits.maxLongEdge == PanoramaJob.WORKING_EDGE })
+        // A portrait among landscapes is a size problem whatever its tag says.
+        val portrait = FakeHost(rig.assets(), { if (it == 2) PanoSize(480, 640) else PanoSize(640, 480) }, { if (it == 2) null else 28 }) { i, w, h -> rig.render(i, w, h) }
+        assertEquals(PanoCopy.MIXED, failed(run(rig, portrait, FakeSink())))
+    }
+
+    @Test
     fun `the lens is guessed when the tag is missing or implausible, not when it is a real lens`() {
         assertTrue(PanoramaJob.lensWasGuessed(null, 4000, 3000))
         assertTrue("0 is no lens", PanoramaJob.lensWasGuessed(0, 4000, 3000))
@@ -304,6 +349,55 @@ class PanoramaJobTest {
         assertFalse(PanoramaJob.lensWasGuessed(26, 4000, 3000))
         assertFalse(PanoramaJob.lensWasGuessed(13, 4000, 3000))
         assertFalse(PanoramaJob.lensWasGuessed(120, 4000, 3000))
+    }
+
+    @Test
+    fun `a photo without a believable tag borrows the median of the believable ones`() {
+        assertEquals(24, PanoramaJob.sharedFocal35(listOf(24, null, 24, 28)))
+        assertEquals("the lower middle of an even count", 24, PanoramaJob.sharedFocal35(listOf(28, 24, 26, 24)))
+        assertEquals(26, PanoramaJob.sharedFocal35(listOf(null, 22, 26, 28)))
+        assertEquals("bad tags are not lenses", 26, PanoramaJob.sharedFocal35(listOf(0, 5000, 3, 26)))
+        assertNull("no tag anywhere", PanoramaJob.sharedFocal35(listOf(null, null)))
+
+        val own = PanoGeometry.focalPixels(28, 4000, 3000)
+        assertEquals("a tagged photo keeps its own", own, PanoramaJob.focalFor(28, 24, 4000, 3000), 1e-9)
+        assertEquals("an untagged one takes the shared", PanoGeometry.focalPixels(24, 4000, 3000), PanoramaJob.focalFor(null, 24, 4000, 3000), 1e-9)
+        assertEquals("and a bad tag too", PanoGeometry.focalPixels(24, 4000, 3000), PanoramaJob.focalFor(5000, 24, 4000, 3000), 1e-9)
+        assertEquals("with nothing to borrow, the field-of-view guess", PanoGeometry.focalPixels(null, 4000, 3000), PanoramaJob.focalFor(null, null, 4000, 3000), 1e-9)
+        // The sweep that used to be refused: two 24 mm photos and one re-saved without its tag.
+        val sizes = List(3) { PanoSize(4000, 3000) }
+        val shared = PanoramaJob.sharedFocal35(listOf(24, 24, null))
+        val focals = listOf(24, 24, null).mapIndexed { i, t -> PanoramaJob.focalFor(t, shared, sizes[i].width, sizes[i].height) }
+        assertTrue(PanoramaJob.sameCamera(sizes, focals))
+        val guessed = listOf(24, 24, null).map { PanoGeometry.focalPixels(it, 4000, 3000) }
+        assertFalse("the guess alone would have been another lens", PanoramaJob.sameCamera(sizes, guessed))
+    }
+
+    @Test
+    fun `only a 4 to 3 or 3 to 2 frame counts as the whole frame of the lens`() {
+        assertFalse(PanoramaJob.looksCropped(4000, 3000))
+        assertFalse("portrait", PanoramaJob.looksCropped(3000, 4000))
+        assertFalse(PanoramaJob.looksCropped(6000, 4000))
+        assertFalse("a pixel of rounding", PanoramaJob.looksCropped(4000, 2999))
+        assertFalse(PanoramaJob.looksCropped(640, 480))
+        assertTrue("16:9", PanoramaJob.looksCropped(4000, 2250))
+        assertTrue("square", PanoramaJob.looksCropped(3000, 3000))
+        assertTrue("2:1", PanoramaJob.looksCropped(4000, 2000))
+        assertTrue("5:4", PanoramaJob.looksCropped(2500, 2000))
+    }
+
+    @Test
+    fun `a sweep of 16 to 9 photos is joined and the note says the lines may bend`() {
+        val rig = CylinderRig(photoH = 360)
+        val result = done(run(rig, rigHost(rig), FakeSink()))
+        assertTrue(result.notes.contains(PanoCopy.CROPPED))
+        assertFalse("the tag was there", result.notes.contains(PanoCopy.LENS_GUESSED))
+        assertTrue(result.message.contains("straight lines may look curved"))
+        val whole = CylinderRig()
+        assertFalse(done(run(whole, rigHost(whole), FakeSink())).notes.contains(PanoCopy.CROPPED))
+        val untagged = done(run(rig, rigHost(rig, focal35 = { null }), FakeSink()))
+        assertTrue(untagged.notes.contains(PanoCopy.LENS_GUESSED))
+        assertFalse("one note about curved lines is enough", untagged.notes.contains(PanoCopy.CROPPED))
     }
 
     @Test

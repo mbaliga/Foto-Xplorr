@@ -18,6 +18,7 @@ internal object PanoCopy {
     const val SAVED = "Panorama saved."
     const val SAVED_SMALLER = "Saved smaller, to fit the memory."
     const val LENS_GUESSED = "Some photos did not say their lens, so straight lines may look curved."
+    const val CROPPED = "Some photos look cropped, so straight lines may look curved."
     const val DRIFTING = "The photos drift up or down, so some of the top and bottom is cut."
 
     // What the job reports when it cannot.
@@ -27,6 +28,7 @@ internal object PanoCopy {
     const val MIXED = "These photos do not share one size and lens."
     const val NO_PICTURE = "The photos leave no clean picture to save."
     const val OUT_OF_MEMORY = "There is not enough memory to join these."
+    const val NO_SPACE = "There is not enough space on the phone."
     const val SAVE_FAILED = "The panorama could not be saved."
     const val FAILED = "The panorama could not be made."
 

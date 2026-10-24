@@ -33,11 +33,14 @@ import kotlin.math.tan
  * ## The steps
  * 1. **Refuse** fewer than two or more than twelve photos, and any photo [PanoramaHost.mayExport]
  *    says no to (protected, sensitive, locked since the picker opened), before a pixel is read.
- * 2. **Read small.** Each photo is decoded once at about [WORKING_EDGE] px through the host (which
- *    is [com.fotoxplorr.app.media.decodeUpright], TRAPS #34: upright pixels, never upscaled), its
- *    35 mm focal length is read from EXIF, and it is warped onto the cylinder as a grey picture
- *    ([warpToGrey]) for the aligner. A photo with no usable focal length gets a guessed field of
- *    view and the result carries [PanoCopy.LENS_GUESSED].
+ * 2. **Read small.** Every photo's 35 mm focal length is read from EXIF first; then each photo is
+ *    decoded once at about [WORKING_EDGE] px through the host (which is
+ *    [com.fotoxplorr.app.media.decodeUpright], TRAPS #34: upright pixels, never upscaled) and warped
+ *    onto the cylinder as a grey picture ([warpToGrey]) for the aligner. A photo with no usable
+ *    focal length borrows the median of the others' ([sharedFocal35]); only when none has one is a
+ *    field of view guessed. Either way the result carries [PanoCopy.LENS_GUESSED]. A photo that is
+ *    not a 4:3 or 3:2 frame ([looksCropped]) gets [PanoCopy.CROPPED] instead, because the tag
+ *    describes the lens's whole frame.
  * 3. **Align and lay out.** Neighbouring pairs go through [PairAligner]; any pair that is not
  *    [Offset.confident] stops the job with a sentence that names the photo (the first photo after the
  *    break, or "no two matched"). Nothing is joined on a guess.
@@ -79,6 +82,9 @@ object PanoramaJob {
     /** Photo sizes may differ by this fraction (rounding, a crop of a pixel or two) and still be one camera. */
     private const val SIZE_TOLERANCE = 0.01
 
+    /** A photo's long over short edge may be this fraction off 4:3 or 3:2 and still count as a whole frame. */
+    private const val ASPECT_TOLERANCE = 0.02
+
     /** Focal length over the diagonal may differ by this fraction between photos and still be one lens. */
     private const val LENS_TOLERANCE = 0.05
 
@@ -109,7 +115,7 @@ object PanoramaJob {
         } catch (e: PanoramaProtectedException) {
             PanoramaOutcome.Failed(PanoCopy.PROTECTED)
         } catch (e: PanoramaSaveException) {
-            PanoramaOutcome.Failed(PanoCopy.SAVE_FAILED)
+            PanoramaOutcome.Failed(if (isOutOfSpace(e)) PanoCopy.NO_SPACE else PanoCopy.SAVE_FAILED)
         } catch (e: OutOfMemoryError) {
             PanoramaOutcome.Failed(PanoCopy.OUT_OF_MEMORY)
         } catch (e: Exception) {
@@ -133,6 +139,23 @@ object PanoramaJob {
     // ---- the pure decisions ------------------------------------------------------------------
 
     /**
+     * True when [failure] or something it was caused by is the phone running out of space: the
+     * sink's own [PanoramaNoSpaceException], or an I/O error whose text is the system's
+     * `ENOSPC (No space left on device)`. Anything else, "disk full" in a message included, is a plain save failure.
+     */
+    internal fun isOutOfSpace(failure: Throwable?): Boolean {
+        var t = failure
+        var depth = 0
+        while (t != null && depth++ < 8) {
+            if (t is PanoramaNoSpaceException) return true
+            val text = t.message.orEmpty()
+            if (t is IOException && (text.contains("ENOSPC") || text.contains("No space left", ignoreCase = true))) return true
+            t = t.cause
+        }
+        return false
+    }
+
+    /**
      * True when the lens had to be guessed: [focal35mm] is missing, or [PanoGeometry.focalPixels]
      * did not believe it (it falls back to a field of view, which is exactly what asking for no
      * focal length gives, so the two answers are equal only then).
@@ -140,6 +163,39 @@ object PanoramaJob {
     internal fun lensWasGuessed(focal35mm: Int?, width: Int, height: Int): Boolean =
         focal35mm == null ||
             PanoGeometry.focalPixels(focal35mm, width, height) == PanoGeometry.focalPixels(null, width, height)
+
+    /**
+     * The 35 mm tag a photo without a believable one borrows: the MEDIAN of the believable tags
+     * ([lensWasGuessed] false) of the sweep, the lower middle one for an even count, or null when no
+     * photo has one. A photo re-saved by an editor or a messenger loses its EXIF while the lens did
+     * not change, and the 78 degree guess is 11% off a 24 mm phone, which [sameCamera] would read as
+     * another lens and refuse the sweep for.
+     */
+    internal fun sharedFocal35(tags: List<Int?>): Int? {
+        val believed = tags.filterNotNull().filter { !lensWasGuessed(it, 4, 3) }.sorted()
+        return believed.getOrNull((believed.size - 1) / 2)
+    }
+
+    /**
+     * The focal length in pixels of a [width] x [height] photo whose own tag is [own]: from the tag
+     * when it is believable, otherwise from [shared] (see [sharedFocal35]), otherwise the field-of-view
+     * guess [PanoGeometry.focalPixels] makes for no tag.
+     */
+    internal fun focalFor(own: Int?, shared: Int?, width: Int, height: Int): Double =
+        PanoGeometry.focalPixels(if (lensWasGuessed(own, width, height)) shared else own, width, height)
+
+    /**
+     * True when a photo of this size is not the 4:3 or 3:2 frame a phone or camera lens covers (16:9
+     * video-like modes, a square, a photo cropped in an editor with its EXIF kept). The 35 mm tag is
+     * relative to the lens's whole frame, [PanoGeometry.focalPixels] applies it to the diagonal of the
+     * photo as stored, and for a crop that diagonal is smaller: the pixel focal length comes out too
+     * short (about 8% for 16:9), lines bend a little and the overlaps do not fit exactly. Unmeasured
+     * on a real photo; the person is told.
+     */
+    internal fun looksCropped(width: Int, height: Int): Boolean {
+        val ratio = max(width, height).toDouble() / min(width, height)
+        return abs(ratio / (4.0 / 3.0) - 1.0) > ASPECT_TOLERANCE && abs(ratio / 1.5 - 1.0) > ASPECT_TOLERANCE
+    }
 
     /**
      * Whether photos of [sizes] with focal lengths [focals] (all in their own pixels) can share one
@@ -272,16 +328,23 @@ object PanoramaJob {
             if (!assets.all(host::mayExport)) return PanoramaOutcome.Failed(PanoCopy.PROTECTED)
             progress.report(0f)
 
-            // 2. read small
+            // 2. read small. The tags are read first: a photo without one borrows the lens of the
+            // others, and the warp of its grey copy needs that.
+            val tags = ArrayList<Int?>(assets.size)
+            for (asset in assets) {
+                job?.ensureActive()
+                tags += host.focal35mm(asset)
+            }
+            val shared = sharedFocal35(tags)
             val shots = ArrayList<Shot>(assets.size)
             for ((i, asset) in assets.withIndex()) {
                 job?.ensureActive()
                 val decoded = host.decode(asset, DecodeLimits(WORKING_EDGE, WORKING_PIXELS))
                     ?: return PanoramaOutcome.Failed(unreadable(i))
-                val focal35 = host.focal35mm(asset)
+                val focal35 = tags[i]
                 val width = decoded.sourceWidth
                 val height = decoded.sourceHeight
-                val focal = PanoGeometry.focalPixels(focal35, width, height)
+                val focal = focalFor(focal35, shared, width, height)
                 val scale = decoded.pixels.width.toDouble() / width
                 shots += Shot(asset, width, height, focal, lensWasGuessed(focal35, width, height), scale, warpToGrey(decoded.pixels, focal * scale))
                 progress.between(0f, READ_END, (i + 1f) / assets.size)
@@ -313,6 +376,7 @@ object PanoramaJob {
             // 5 and 6. compose and publish, one rung at a time
             val notes = ArrayList<String>()
             if (shots.any { it.guessed }) notes += PanoCopy.LENS_GUESSED
+            else if (shots.any { looksCropped(it.width, it.height) }) notes += PanoCopy.CROPPED
             if (layout.drifting) notes += PanoCopy.DRIFTING
             for ((rung, plan) in ladder.withIndex()) {
                 var canvas: PanoramaCanvas? = null
@@ -393,6 +457,9 @@ class PanoramaFailure(message: String) : Exception(message)
 
 /** The sink found, right before creating the file, that a photo may no longer be exported. */
 class PanoramaProtectedException : IOException("a photo became protected before the panorama was saved")
+
+/** The sink could not save the file because the phone is full (or says so: ENOSPC). */
+class PanoramaNoSpaceException(cause: Throwable? = null) : IOException("the phone has no space left for the panorama", cause)
 
 /** The sink could not save the file. */
 internal class PanoramaSaveException(cause: Throwable) : Exception(cause)
