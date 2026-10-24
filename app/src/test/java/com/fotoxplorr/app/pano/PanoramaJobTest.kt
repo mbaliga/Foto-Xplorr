@@ -445,8 +445,16 @@ class PanoramaJobTest {
         val ladder = PanoGeometry.ladder(PanoCompositor.nativeSizes(sources), positions, PanoGeometry.DEFAULT_MAX_PIXELS)
         val need = ladder.map { PanoramaJob.sourceHeapBytes(it, sources) }
         println("PANO-JOB heap need per rung for 3 x 12 MP: ${need.map { it shr 20 }} MB")
-        // Two live sources of about 8.5 MP at 4 bytes a pixel: about 68 MB at the first rung.
-        assertTrue("two live copies of the larger decode: ${need[0]}", need[0] in 60L * 1024 * 1024..80L * 1024 * 1024)
+        // Two live sources of about 8.5 MP at 4 bytes a pixel: about 68 MB at the first rung, plus the band buffers.
+        val scratch = PanoCompositor.scratchBytes(sources, ladder[0])
+        assertTrue("two live copies of the larger decode: ${need[0] - scratch}", need[0] - scratch in 60L * 1024 * 1024..80L * 1024 * 1024)
+        assertTrue("the band buffers are counted: $scratch", scratch > 4L * 1024 * 1024)
+        assertEquals("the buffers scale with the workers", 4 * PanoCompositor.scratchBytes(sources, ladder[0], 1), PanoCompositor.scratchBytes(sources, ladder[0], 4))
+        assertEquals(
+            "and the estimate counts them",
+            PanoCompositor.scratchBytes(sources, ladder[0], 4) - PanoCompositor.scratchBytes(sources, ladder[0], 1),
+            PanoramaJob.sourceHeapBytes(ladder[0], sources, 4) - PanoramaJob.sourceHeapBytes(ladder[0], sources, 1),
+        )
         assertTrue("strictly smaller down the ladder", need.zipWithNext().all { (a, b) -> b < a })
 
         assertEquals("a big heap keeps the plan", 0, PanoramaJob.startRung(ladder, sources, 4096L shl 20))

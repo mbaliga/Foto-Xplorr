@@ -53,7 +53,11 @@ object PanoGeometry {
     private const val MIN_PLAUSIBLE_F35 = 8
     private const val MAX_PLAUSIBLE_F35 = 1200
 
-    /** The compositor holds one band of rows at a time: about this many pixels (4 bytes each). */
+    /**
+     * A band of rows is about this many pixels (4 bytes each). The compositor keeps two band buffers
+     * per worker thread (up to [PanoCompositor.MAX_WORKERS]), so its Java heap is up to 8 of these,
+     * about 64 MB at most and about 16 MB for a typical sweep.
+     */
     private const val BAND_PIXELS = 2_000_000L
     private const val MIN_BAND_ROWS = 8
     private const val MAX_BAND_ROWS = 256

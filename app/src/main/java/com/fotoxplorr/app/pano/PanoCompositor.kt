@@ -84,7 +84,8 @@ class IntArrayCanvas(override val width: Int, override val height: Int) : PanoCa
  * the left) and the result is written back. Only two sources are alive at any moment: the one being
  * drawn and the one being decoded for next. The bands of one photo are spread over up to
  * [MAX_WORKERS] threads of the default dispatcher; they never touch the same pixels, so the answer does
- * not depend on the thread count or the band height (the tests compare them bit for bit).
+ * not depend on the thread count or the band height (the tests compare them bit for bit). Each
+ * worker holds two band buffers, allocated once ([scratchBytes]).
  *
  * ## What it does not do
  * No parallax fix, no seam that steers around a moving person (the straight feather is
@@ -135,6 +136,17 @@ object PanoCompositor {
         return PanoSize(max(1, (source.width * sx).roundToInt()), max(1, (source.height * sy).roundToInt()))
     }
 
+    /**
+     * The Java heap [compose] allocates for band buffers on a canvas of [plan]: two per worker, each
+     * the widest strip (a photo's strip is never wider than the canvas or than the photo as decoded)
+     * times a band of rows, 4 bytes a pixel. An upper bound; the decoded sources are not in it.
+     */
+    fun scratchBytes(sources: List<PanoSource>, plan: PanoGeometry.Plan, workers: Int = defaultWorkers()): Long {
+        val strip = sources.maxOfOrNull { min(decodeSize(it, plan).width, plan.canvasWidth) } ?: 0
+        val rows = min(max(1, plan.bandHeight), plan.canvasHeight)
+        return 2L * workers * strip * rows * 4
+    }
+
     /** One photo laid on the canvas: where, how big, and the strip of canvas it covers. */
     private class Placed(
         val index: Int,
@@ -156,22 +168,22 @@ object PanoCompositor {
     /** The per-column half of the inverse warp for one photo: which source pixel pair and weight, and the row stretch. */
     private class Columns(val ix0: IntArray, val wx: IntArray, val vScale: DoubleArray)
 
-    /** Two reusable band buffers; reallocated only when the band's size changes (the photo's last band is short). */
-    private class Scratch {
+    /**
+     * One worker's two band buffers (the photo's warped rows, and the canvas rows they blend into),
+     * allocated on first use at [capacity] pixels: the widest photo's strip times the tallest band.
+     * A narrower strip or a short last band uses the front of the same arrays, so a worker never
+     * holds more than these two ([SeamBlend.blendBand] accepts arrays larger than the band).
+     */
+    private class Scratch(private val capacity: Int) {
         var first = IntArray(0)
+            private set
         var second = IntArray(0)
-        private var spareFirst = IntArray(0)
-        private var spareSecond = IntArray(0)
+            private set
 
-        fun fit(size: Int) {
-            if (first.size == size) return
-            // The full-size pair and the short last band's pair swap places instead of being rebuilt.
-            val f = first
-            val s = second
-            first = if (spareFirst.size == size) spareFirst else IntArray(size)
-            second = if (spareSecond.size == size) spareSecond else IntArray(size)
-            spareFirst = f
-            spareSecond = s
+        fun ready() {
+            if (first.size == capacity) return
+            first = IntArray(capacity)
+            second = IntArray(capacity)
         }
     }
 
@@ -267,9 +279,10 @@ object PanoCompositor {
 
         val bandHeight = max(1, plan.bandHeight)
         fun bandsOf(p: Placed) = (p.y1 - p.y0 + bandHeight - 1) / bandHeight
+        val scratchPixels = order.maxOfOrNull { it.stripWidth * min(bandHeight, it.y1 - it.y0) } ?: 0
         val run = Run(
             canvas, sx, sy, bandHeight, feather,
-            Array(workers) { Scratch() }, shouldStop, onProgress,
+            Array(workers) { Scratch(scratchPixels) }, shouldStop, onProgress,
             max(1, order.sumOf { bandsOf(it) }),
         )
 
@@ -361,7 +374,7 @@ object PanoCompositor {
         rows: Int,
     ) {
         val stripWidth = photo.stripWidth
-        scratch.fit(stripWidth * rows)
+        scratch.ready()
         warp(run, photo, pixels, columns, top, rows, scratch.second)
         // Anything already drawn in these columns reaches at most previousRight, so beyond it the photo stands alone.
         val overlapEnd = min(previousRight, photo.x1) - photo.x0

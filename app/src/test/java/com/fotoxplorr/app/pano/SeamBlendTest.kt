@@ -188,6 +188,22 @@ class SeamBlendTest {
         assertEquals(0, SeamBlend.blendBand(IntArray(0), IntArray(0), 0, 0, 0, 0).size)
     }
 
+    @Test
+    fun `bands may sit at the front of longer arrays`() {
+        val first = IntArray(50) { 0xFF000000.toInt() or (it * 3) }
+        val second = IntArray(50) { 0xFF000000.toInt() or (200 + it) }
+        val exact = SeamBlend.blendBand(first.copyOf(20), second.copyOf(20), 5, 4, 0, 5, 4)
+        val longer = first.copyOf()
+        SeamBlend.blendBand(longer, second.copyOf(), 5, 4, 0, 5, 4, longer)
+        assertArrayEquals(exact, longer.copyOf(20))
+        assertArrayEquals("past the band is left alone", first.copyOfRange(20, 50), longer.copyOfRange(20, 50))
+        try {
+            SeamBlend.blendBand(IntArray(30), IntArray(20), 5, 4, 0, 5)
+            fail("accepted inputs of different lengths")
+        } catch (_: IllegalArgumentException) {
+        }
+    }
+
     // ---- on a procedural pair ----
 
     private fun toArgb(image: GrayImage, canvasW: Int, canvasH: Int, x0: Int, y0: Int): IntArray {

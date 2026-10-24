@@ -75,7 +75,8 @@ object SeamBlend {
 
     /**
      * Blend [first] and [second], two [width] x [rows] ARGB bands on the same canvas, into [out]
-     * (which may be either input: every pixel is read before it is written). The photos share the
+     * (which may be either input: every pixel is read before it is written). The bands are the front
+     * [width] x [rows] pixels of their arrays, which must be equally long and may be longer. The photos share the
      * columns [overlapStart] until [overlapEnd] (see [secondWeights]); the first is the one on the
      * left. Returns [out], allocating it when not given.
      *
@@ -94,7 +95,8 @@ object SeamBlend {
     ): IntArray {
         require(width >= 0 && rows >= 0) { "a band must not have negative size" }
         val size = width.toLong() * rows
-        require(first.size.toLong() == size && second.size.toLong() == size && out.size.toLong() == size) {
+        // The two inputs agree with each other; a buffer reused for narrower or shorter bands may be longer than the band.
+        require(first.size == second.size && first.size.toLong() >= size && out.size.toLong() >= size) {
             "bands must hold ${width}x$rows pixels"
         }
         val weights = secondWeights(width, overlapStart, overlapEnd, feather)

@@ -288,6 +288,47 @@ class PanoCompositorMechanicsTest {
     }
 
     @Test
+    fun `each worker holds two band buffers, allocated once, whatever the photo widths and the short last band`() {
+        val rig = Rig()
+        // Photos of three different widths and a band height that leaves a short last band on every photo:
+        // the shapes that used to make each worker keep a second, spare pair of buffers.
+        val widths = listOf(400, 380, 360)
+        val sources = widths.mapIndexed { i, w ->
+            FunctionSource(w, 300, 1.0e7) { tw, th -> rig.scene.tile(rig.xs[i], rig.ys[i], tw, th, 1.0, 1.0, 50L + i) }
+        }
+        val positions = widths.indices.map { PanoPoint(rig.xs[it], rig.ys[it]) }
+        val workers = 2
+        val plan = PanoGeometry.planPlaced(PanoCompositor.nativeSizes(sources), positions)
+        val seen = java.util.IdentityHashMap<IntArray, Boolean>()
+        val inner = IntArrayCanvas(plan.canvasWidth, plan.canvasHeight)
+        val canvas = object : PanoCanvas by inner {
+            override fun read(x: Int, y: Int, w: Int, h: Int, into: IntArray) {
+                // Whole-row reads are the crop's mask pass, which has its own buffer.
+                if (w != inner.width) synchronized(seen) { seen[into] = true }
+                inner.read(x, y, w, h, into)
+            }
+
+            override fun write(x: Int, y: Int, w: Int, h: Int, from: IntArray) {
+                synchronized(seen) { seen[from] = true }
+                inner.write(x, y, w, h, from)
+            }
+        }
+        val bandHeight = 7
+        assertTrue("the last band is short", plan.canvasHeight % bandHeight != 0)
+        val tall = PanoGeometry.Plan(plan.fullWidth, plan.fullHeight, plan.canvasWidth, plan.canvasHeight, plan.scale, bandHeight, plan.limit)
+        runBlocking { PanoCompositor.compose(sources, positions, tall, canvas, workers = workers) }
+        val arrays = synchronized(seen) { seen.keys.toList() }
+        assertTrue("${arrays.size} band buffers for $workers workers: ${arrays.map { it.size }}", arrays.size <= 2 * workers)
+        assertEquals("one size, the widest strip times the band", 1, arrays.map { it.size }.distinct().size)
+        assertTrue("no bigger than the widest photo's band", arrays.all { it.size <= plan.canvasWidth * bandHeight })
+        val bytes = arrays.sumOf { it.size * 4L }
+        assertTrue("the plan's estimate covers what was allocated: $bytes of ${PanoCompositor.scratchBytes(sources, tall, workers)}", bytes <= PanoCompositor.scratchBytes(sources, tall, workers))
+        // And the picture is the one a single-threaded, unbanded draw makes.
+        val reference = stitch(sources, positions, workers = 1, bandHeight = 100_000)
+        assertArrayEquals(reference.canvas.pixels, inner.pixels)
+    }
+
+    @Test
     fun `only two photos are alive at a time`() {
         val rig = Rig()
         val refs = Collections.synchronizedMap(HashMap<Int, WeakReference<IntArray>>())

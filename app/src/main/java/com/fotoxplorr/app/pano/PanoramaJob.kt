@@ -98,8 +98,9 @@ object PanoramaJob {
     private const val HEAP_BYTES_PER_PIXEL = 4
 
     /**
-     * The share of the Java heap the live decoded sources may take; the rest is the app, the grey
-     * copies, the compositor's band scratch and the garbage collector's room. A guess, not measured on a device.
+     * The share of the Java heap the live decoded sources and the compositor's band buffers may
+     * take; the rest is the app, the grey copies and the garbage collector's room. A guess, not
+     * measured on a device.
      */
     private const val HEAP_SHARE = 0.4
 
@@ -174,13 +175,14 @@ object PanoramaJob {
     }
 
     /**
-     * The Java heap the decoded sources of [plan] hold at the compositor's peak: the larger of the
-     * photos' decode sizes ([PanoCompositor.decodeSize]) in two live copies ([LIVE_SOURCES]), 4 bytes
-     * a pixel. The canvas is not in it: it is a native [android.graphics.Bitmap].
+     * The Java heap [plan] needs at the compositor's peak: the larger of the photos' decode sizes
+     * ([PanoCompositor.decodeSize]) in two live copies ([LIVE_SOURCES]), 4 bytes a pixel, plus the
+     * band buffers of the compositor's [workers] ([PanoCompositor.scratchBytes]). The canvas is not
+     * in it: it is a native [android.graphics.Bitmap].
      */
-    internal fun sourceHeapBytes(plan: PanoGeometry.Plan, sources: List<PanoSource>): Long {
+    internal fun sourceHeapBytes(plan: PanoGeometry.Plan, sources: List<PanoSource>, workers: Int = PanoCompositor.defaultWorkers()): Long {
         val largest = sources.maxOf { PanoCompositor.decodeSize(it, plan).let { size -> size.width.toLong() * size.height } }
-        return LIVE_SOURCES * HEAP_BYTES_PER_PIXEL * largest
+        return LIVE_SOURCES * HEAP_BYTES_PER_PIXEL * largest + PanoCompositor.scratchBytes(sources, plan, workers)
     }
 
     /**
@@ -262,7 +264,10 @@ object PanoramaJob {
      * The geometry is [PanoCompositor]'s: pixel centres at half-integers, the warped image's centre at
      * half its width, column `u` samples plane column `f*tan(u/f)` and row `v/cos(u/f)`, bilinear.
      * Samples outside the photo (the cylinder's corners) repeat its edge pixel: the aligner needs a
-     * rectangle, and the compositor treats those pixels as outside.
+     * rectangle, and the compositor treats those pixels as outside. The repeat is a vertical streak that
+     * is in no photo, but a flat mean-of-the-row fill was tried and scored WORSE on the procedural wide-lens
+     * pairs (the repeat is a better guess at the unseen scene than a constant); offsets and exposure
+     * ratios were exact either way. A mask that the aligner and [ExposureGain] skip would be the real fix.
      */
     internal fun warpToGrey(pixels: PanoPixels, focal: Double): GrayImage {
         val w = pixels.width
