@@ -26,9 +26,21 @@ import kotlin.math.sqrt
  * [Offset.confident] only when the best slide matches well, overlaps enough, AND no clearly
  * different slide matches nearly as well. A repeating fence or striped wall has many equally good
  * slides, a flat sky or a smooth gradient has all of them, and two unrelated photos have none that
- * is good: each of those comes back with `confident = false`. A wide, shallow peak (a rival a few
- * pixels away scoring almost the same, as in a very small patch of smooth content) counts as
- * ambiguous too: the answer would be good to the width of the peak, not to the pixel.
+ * is good: each of those comes back with `confident = false`.
+ *
+ * Two more checks run on the finished answer, because the walk down can be fooled where the top
+ * level cannot. A repeating texture OVER real content (siding, blinds, a picket fence in front of a
+ * street) is invisible at the top level, which averages the fine period away, so the walk starts
+ * at the right slide and then slips a whole period at a finer level, where the search window is
+ * under half a period. So every slide within about 28 px of the answer is scored at half size, the
+ * best few local peaks are refined at full size and join the candidates: the right slide is found
+ * and the comb of near-equal neighbours around it counts as rivals. And a wide, shallow peak
+ * (faint clouds, a smooth wall: slides 6 to 8 px away score within [Params.shoulderMargin] of the
+ * best) is ambiguous too, because the answer is only as good as the width of the peak. A texture
+ * period longer than about 28 px at the working size is outside the rescan; the walk down is
+ * trusted there. All of this is measured on procedural scenes ([PairAlignerTextureTest]); real
+ * photographs may have a different share of wide peaks, so the margin may refuse stitches that
+ * were good, which is the safe direction.
  *
  * ## Honest ceiling
  * Translation only. A frame held with more than about a degree of roll, shear from a rolling
@@ -66,6 +78,8 @@ object PairAligner {
         val ambiguityMargin: Float = 0.05f,
         /** Two finished candidates closer than this (pixels, both axes) are the same peak. */
         val samePeakDistance: Int = 4,
+        /** Slides 6 to 8 px from the best scoring within this of it mean the peak is too wide to trust to the pixel. */
+        val shoulderMargin: Float = 0.01f,
     )
 
     /**
@@ -123,13 +137,58 @@ object PairAligner {
             if (found.isEmpty()) return Offset(0, 0, 0f, 0f, false)
         }
 
-        // 3. judge the finished candidates at full working size
+        // 3. rescan around the answer. The walk down re-searches only +-refineRadius per level, which
+        //    is less than half a period of a repeating texture (siding, blinds, a fence over a street),
+        //    so over real content it can settle one or two periods out with a good-looking score.
+        //    Every slide near the answer is scored at a fine level, and the best few local peaks are
+        //    refined at full size and join the candidates: the right slide is found, and the comb of
+        //    near-equal neighbours around it is seen as the rivals it is.
+        val scanLevel = min(1, levels - 1)
+        val scale = 1 shl scanLevel
+        val radius = RESCAN_RADIUS / scale
+        val side = 2 * radius + 1
+        val scanner = Correlator(a[scanLevel], b[scanLevel], minOverlapFraction, shouldStop)
+        val centreX = Math.floorDiv(found.first().dx + scale / 2, scale)
+        val centreY = Math.floorDiv(found.first().dy + scale / 2, scale)
+        val local = FloatArray(side * side)
+        for (j in 0 until side) for (i in 0 until side) local[j * side + i] = scanner.score(centreX - radius + i, centreY - radius + j)
+        val full = Correlator(a[0], b[0], minOverlapFraction, shouldStop)
+        val merged = ArrayList<Candidate>(found)
+        for (peak in peaks(local, side, side, RESCAN_PEAKS, localOnly = true)) {
+            val px = (centreX - radius + peak.x) * scale
+            val py = (centreY - radius + peak.y) * scale
+            var refined = Candidate(px, py, NO_SCORE)
+            for (dy in -params.refineRadius..params.refineRadius) {
+                for (dx in -params.refineRadius..params.refineRadius) {
+                    val s = full.score(px + dx, py + dy)
+                    if (s > refined.score) refined = Candidate(px + dx, py + dy, s)
+                }
+            }
+            if (refined.score > NO_SCORE && merged.none { abs(it.dx - refined.dx) <= 1 && abs(it.dy - refined.dy) <= 1 }) merged += refined
+        }
+        found = merged.sortedByDescending { it.score }
+
+        // 4. judge the finished candidates at full working size
         val best = found.first()
-        val overlap = Correlator(a[0], b[0], minOverlapFraction, shouldStop).overlapFraction(best.dx, best.dy)
+        val overlap = full.overlapFraction(best.dx, best.dy)
         val rival = found.drop(1).firstOrNull {
             abs(it.dx - best.dx) > params.samePeakDistance || abs(it.dy - best.dy) > params.samePeakDistance
         }
-        val ambiguous = rival != null && best.score - rival.score < params.ambiguityMargin
+        // A wide, shallow peak: slides 6 to 8 px away score almost the same as the best one, so the
+        // answer is only good to the width of the peak. Judged on the rescan's own scores, same level.
+        val bestCellX = Math.floorDiv(best.dx + scale / 2, scale) - (centreX - radius)
+        val bestCellY = Math.floorDiv(best.dy + scale / 2, scale) - (centreY - radius)
+        var atBest = NO_SCORE
+        var shoulder = NO_SCORE
+        for (j in 0 until side) {
+            for (i in 0 until side) {
+                val distance = scale * max(abs(i - bestCellX), abs(j - bestCellY))
+                if (distance <= scale) atBest = max(atBest, local[j * side + i])
+                else if (distance in SHOULDER_NEAR..SHOULDER_FAR) shoulder = max(shoulder, local[j * side + i])
+            }
+        }
+        val wide = atBest > NO_SCORE && shoulder > NO_SCORE && atBest - shoulder < params.shoulderMargin
+        val ambiguous = wide || (rival != null && best.score - rival.score < params.ambiguityMargin)
         val overlapPixels = overlap.toDouble() * min(first.width.toLong() * first.height, second.width.toLong() * second.height)
         val confident = best.score >= params.minScore && overlap >= params.minConfidentOverlap &&
             overlapPixels >= params.minConfidentPixels && !ambiguous
@@ -245,13 +304,17 @@ object PairAligner {
     }
 
     /** The best [count] local maxima of a score map, each at least [PEAK_SEPARATION] cells from the ones before it. */
-    private fun peaks(map: FloatArray, columns: Int, rows: Int, count: Int): List<Peak> {
+    private fun peaks(map: FloatArray, columns: Int, rows: Int, count: Int, localOnly: Boolean = false): List<Peak> {
         val taken = ArrayList<Peak>()
         val blocked = BooleanArray(map.size)
         while (taken.size < count) {
             var bestIndex = -1
             var best = NO_SCORE
-            for (i in map.indices) if (!blocked[i] && map[i] > best) { best = map[i]; bestIndex = i }
+            for (i in map.indices) {
+                if (blocked[i] || map[i] <= best) continue
+                if (localOnly && !isLocalMaximum(map, columns, rows, i)) continue
+                best = map[i]; bestIndex = i
+            }
             if (bestIndex < 0) break
             val px = bestIndex % columns
             val py = bestIndex / columns
@@ -264,6 +327,26 @@ object PairAligner {
     }
 
     private const val PEAK_SEPARATION = 3
+
+    /** Whether cell [i] scores at least as much as each of its (up to eight) neighbours in the map. */
+    private fun isLocalMaximum(map: FloatArray, columns: Int, rows: Int, i: Int): Boolean {
+        val x = i % columns
+        val y = i / columns
+        for (ny in max(0, y - 1)..min(rows - 1, y + 1)) {
+            for (nx in max(0, x - 1)..min(columns - 1, x + 1)) if (map[ny * columns + nx] > map[i]) return false
+        }
+        return true
+    }
+
+    /** The rescan of step 3 covers this many pixels (at the input size) each way around the answer: periods up to about 28 px. */
+    private const val RESCAN_RADIUS = 28
+
+    /** The ring of slides (pixels from the best, at the input size) that tells a wide peak from a sharp one. */
+    private const val SHOULDER_NEAR = 6
+    private const val SHOULDER_FAR = 8
+
+    /** Local peaks of the rescan that are refined at full size and kept as candidates. */
+    private const val RESCAN_PEAKS = 4
 
     private val NEVER_STOP: () -> Boolean = { false }
 }
