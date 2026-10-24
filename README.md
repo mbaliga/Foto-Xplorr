@@ -64,6 +64,7 @@ Fotoz was previously called Foto Xplorr; the repository name, the `com.fotoxplor
 One page (the rail's Experimental word, and a card on Discover) of optional extras, one full-screen experiment at a time. The gallery works without any of them.
 
 - **Make:** *Draw an aquarium* (draw a fish with a finger or pick a ready shape and watch it swim; the drawings are kept in the app's own storage) and *See it on your wall* (pick a photo of your wall, give it a scale, hang pictures at real print sizes, and save a print-ready JPEG as a new file or send a PDF to the system print dialog). *See it on your wall* works on a photo of the wall; it is not augmented reality and uses no camera. Neither asks for a permission.
+- **Make, also:** *Stitch a panorama* joins 2 to 12 photos taken side to side, standing still and turning, into one wide JPEG, on the phone with no network. It is pure Kotlin (no OpenCV, no new dependency, no native code). It is new and has only been tried on made-up scenes: a near object (parallax) ghosts, a person walking through the overlap can make it refuse a join, a tilted hand misplaces the join a little, and it does not make 360 degree spheres. It saves a new file in `Pictures/Fotoz/Panoramas` with the first photo's date and no location. Protected photos are never read.
 - **Explore:** Compass view, the 3D photo wall, the gallery preview and look-alike grouping.
 - **Setup:** the on-device model and optional AI keys.
 
@@ -152,7 +153,7 @@ what exists today, and `docs/adr/` holds the individual architecture decisions s
 ## Known gaps
 
 Encrypted media-vault storage (private folders are an in-app access gate, not encryption),
-downloaded offline map packs in the `offline` flavor (the `connect` flavor saves small street-map areas), live-camera or augmented-reality wall previews, panorama stitching, user-supplied terrain datasets, and a true interactive 3D scene
+downloaded offline map packs in the `offline` flavor (the `connect` flavor saves small street-map areas), live-camera or augmented-reality wall previews, 360 degree or vertical panorama stitching (the horizontal *Stitch a panorama* is built; real-photo quality is unproven), user-supplied terrain datasets, and a true interactive 3D scene
 engine are not implemented. On-device face/pet/identity recognition and BYOK remote-AI assistance
 (the `connect` flavor only) are implemented; see `docs/PRODUCT-AND-ARCHITECTURE.md` for what each
 covers and does not.

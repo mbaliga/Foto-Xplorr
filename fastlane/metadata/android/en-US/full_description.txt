@@ -54,6 +54,8 @@ DISCOVER
   pictures on a photo of your wall at real print sizes. Save a print-ready JPEG
   as a new file, without the place, or send it to your printer. It uses a photo
   of the wall, not the camera, and asks for no permission.
+• Stitch a panorama: join 2 to 12 side-to-side photos on your phone. Close
+  objects can ghost and it makes no 360 degree spheres. No place is saved.
 • In the connect build only: save small map areas to use without a connection.
   Nothing is downloaded until you tap Download, and the map provider then sees
   the area and your IP address.
