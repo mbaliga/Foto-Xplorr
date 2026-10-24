@@ -93,7 +93,7 @@ sharing a photo does not silently share where it was taken.
   privacy line says printing uses the printer the person chooses. A new
   experiment is one `ExperimentEntry` in `builtInExperiments`, and reads photos only through
   `ExperimentEnv` (the already-filtered list, re-checked at export). Cards sit under Make, Explore
-  and Setup. Make holds two experiments that read no pixels they do not draw themselves:
+  and Setup. Make holds three experiments (the aquarium reads no library pixels; the wall and the panorama read them only through `ExperimentEnv`):
   - **Draw an aquarium** (`aquarium/`) — a drawing board (strokes, eight colours, three brushes,
     undo/redo, ready shapes as the non-drawing path; a closed outline is filled by a flood fill) and a
     tank where each drawing swims by a mesh-warped bitmap (`Canvas.drawBitmapMesh` behind the
@@ -114,6 +114,10 @@ sharing a photo does not silently share where it was taken.
     margins the dialog reports (otherwise shrunk to fit inside them)
     (`PhotoPrintAdapter`, no dependency). A banded Lanczos resampler (`LanczosResampler`) can enlarge a short
     photo to 300 dpi, labelled "Enlarged, no new detail". There is no camera and no AR: the wall is a photo.
+  - **Stitch a panorama** (`pano/`) — pick 2 to 12 photos, arrange them with Move left, Move right and Remove
+    buttons (no dragging needed), Preview a small version with an "About W by H" size, then Save as a job.
+    A horizontal sweep from a standing-still turn only; it is pure Kotlin on the phone, see "The panorama
+    package" in section 4. Real-photo quality is unproven.
 - **Photo scenes** — OpenGL-rendered 3D arrangements of the library (`experience/`, `spatial/`),
   including an orientation-driven photo wall.
 
@@ -663,6 +667,39 @@ rule as redundant.
 AGP and Gradle versions must stay in lockstep with `hyle-design-system` or composite builds
 hard-fail.
 
+### The panorama package
+
+`com.fotoxplorr.app.pano` is about 3,500 main lines and 5,800 test lines, with no dependency, no native code and
+no manifest change. A pure core has no Android types; one Android seam sits around it.
+
+- **Pure core.** `PanoGeometry` (focal length in pixels from the 35 mm tag or a 78 degree diagonal guess,
+  cylinder forward/inverse maths, `place`, and `plan`/`ladder`, which cap the canvas at 24 MP and the editor's
+  64 MP / 8192 px ceilings and step down by 0.5625 in pixels per rung); `PairAligner` (normalised
+  cross-correlation over a 5-level pyramid at about 1200 px, vertical search +-height/4, and a `confident` flag
+  that refuses thin, ambiguous or low-scoring matches); `PanoLayout` (chains the pairwise offsets, splits runs
+  at a pair that does not join, names the photo that does not, vertical drift); `ExposureGain` (one luma
+  multiplier per photo from block-median ratios); `SeamBlend` (a cosine feather behind `blendBand`, binary alpha);
+  `AutoCrop` (largest hole-free rectangle, coarse grid then full-size check); `PanoCompositor` (banded cylinder
+  warp straight onto the canvas, at most two decoded photos alive, up to four workers, progress and cancel,
+  independent of band height and worker count) behind `PanoSource` and `PanoCanvas`.
+- **The one Android seam.** `PanoramaHost` (`ExperimentPanoramaHost` over `ExperimentEnv`: `mayExport`,
+  `decodeUpright` through `env.decode`, the EXIF focal length) and `PanoramaSink` (`PanoramaWriter`: a Bitmap
+  canvas, a staged JPEG at quality 92, a pending MediaStore row in `Pictures/Fotoz/Panoramas`, the first
+  photo's date, no metadata, the row deleted on any failure or cancel). `PanoramaJob.run` is the whole chain
+  (small 1200 px reads, grey cylinder warp, align, layout, gains, then compose at the canvas scale down the OOM
+  ladder, re-checking protection four times); `PanoramaJob.launch` runs it through `JobRunner` titled
+  "Joining a panorama" with progress and cancel.
+- **The screen.** `PanoramaExperience` (registered as `panorama` under Make, restorable): `PanoramaDraft` is the
+  pure state (step, chosen ids, arranged order, one saved string), `PanoramaPreviewRun` is the same job on a
+  700,000 px canvas into a sink that writes nothing, and `PanoCopy` holds every sentence. It is reached only
+  from Experimental; there is no gallery selection action.
+- **Rules.** One camera: same size within 1 percent and focal length within 5 percent, else refused. The whole
+  selection must join, in the order given. A wide sweep is held by the 8192 px edge before the 24 MP budget.
+  Process death keeps the step, photos and order, not the preview or a running save. See TRAPS #89 to #98.
+- **Measured on procedural scenes only.** Offsets are exact (0 px) on clean, noisy, exposure-shifted and
+  jittered pairs at 25, 45 and 65 percent overlap; roll costs about 2 to 4 px per half degree and parallax costs
+  the layer shift, neither detected. See the batch 7 entry in `docs/handoff/MASTER-PROGRESS.md` for the table.
+
 ---
 
 ## 5. Known limits
@@ -755,6 +792,11 @@ hard-fail.
   The Offline build has the same pane signature and shows "Offline maps need the Connect build."
 - **Wall pictures need `decodeUpright`, which returns null on API 26 and 27** (found above and not fixed), so
   the wall and print file are unverified on Android 8.0 and 8.1.
-- **Not built, on purpose:** panorama stitching (owner go or no-go; the critic recommended no), a live-camera
-  wall (needs a CAMERA permission decision), an on-device neural upscaler, ARCore, OpenCV.
-
+- **Not built, on purpose:** a live-camera wall (needs a CAMERA permission decision), an on-device neural
+  upscaler, ARCore, OpenCV. (Panorama stitching was listed here at batch 6; the owner then overruled the critic
+  and a horizontal pure-Kotlin version was built in batch 7, see "The panorama package".)
+- **Panorama (batch 7) has not run on a device and no real photograph has gone through it.** Procedural scenes
+  say the aligner is exact on clean and handheld-noise pairs and that roll, parallax and a wrong focal-length
+  tag are not detected; a person walking through the overlap can make it refuse a join. Out of the slice: 360
+  degree spheres and loop closure, vertical and grid sweeps, multiband or seam-finding blends, GPano tagging,
+  48 MP output, mixed lenses or portrait among landscapes. The checklist is `docs/device-test/batch-7-checklist.md`.
