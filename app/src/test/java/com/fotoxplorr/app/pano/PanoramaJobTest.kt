@@ -162,9 +162,22 @@ class PanoramaJobTest {
         val sink = FakeSink()
         // The fourth photo is protected just as the full-size pass is about to read it.
         host.onDecode = { index, count -> if (count == 5 + 4 && index == 3) host.protectedIds += host.assets[3].id }
-        assertEquals(PanoCopy.PROTECTED, failed(run(rig, host, sink)))
+        // The host cannot tell a lock from a deletion, so the sentence names the photo and blames neither.
+        assertEquals("Photo 4 is no longer available.", failed(run(rig, host, sink)))
         assertTrue(sink.published.isEmpty())
         assertTrue("the canvas is handed back", sink.canvases.all { it.released })
+    }
+
+    @Test
+    fun `a photo that leaves the library during the small read is named, not called protected`() {
+        val rig = CylinderRig()
+        val host = rigHost(rig)
+        val sink = FakeSink()
+        host.onDecode = { index, _ -> if (index == 1) host.protectedIds += host.assets[1].id }
+        val message = failed(run(rig, host, sink))
+        assertEquals(PanoCopy.noLongerAvailable(2), message)
+        assertFalse(message.contains("protected"))
+        assertTrue(sink.canvases.isEmpty() && sink.published.isEmpty())
     }
 
     @Test
@@ -423,6 +436,46 @@ class PanoramaJobTest {
         assertTrue("${canvas.width}x${canvas.height} within 400000", canvas.width.toLong() * canvas.height <= 400_000)
         assertTrue(result.width.toLong() * result.height <= 400_000)
         assertFalse("planned at the budget, not stepped down", result.steppedDown)
+    }
+
+    @Test
+    fun `a small Java heap starts the ladder on a smaller rung instead of failing the whole compose first`() {
+        val sources = List(3) { FunctionSource(4000, 3000, PanoGeometry.focalPixels(26, 4000, 3000)) { _, _ -> null } }
+        val positions = listOf(PanoPoint(0, 0), PanoPoint(3000, 0), PanoPoint(6000, 0))
+        val ladder = PanoGeometry.ladder(PanoCompositor.nativeSizes(sources), positions, PanoGeometry.DEFAULT_MAX_PIXELS)
+        val need = ladder.map { PanoramaJob.sourceHeapBytes(it, sources) }
+        println("PANO-JOB heap need per rung for 3 x 12 MP: ${need.map { it shr 20 }} MB")
+        // Two live sources of about 8.5 MP at 4 bytes a pixel: about 68 MB at the first rung.
+        assertTrue("two live copies of the larger decode: ${need[0]}", need[0] in 60L * 1024 * 1024..80L * 1024 * 1024)
+        assertTrue("strictly smaller down the ladder", need.zipWithNext().all { (a, b) -> b < a })
+
+        assertEquals("a big heap keeps the plan", 0, PanoramaJob.startRung(ladder, sources, 4096L shl 20))
+        assertEquals("256 MB holds it", 0, PanoramaJob.startRung(ladder, sources, 256L shl 20))
+        val small = PanoramaJob.startRung(ladder, sources, 128L shl 20)
+        assertTrue("128 MB does not: rung $small", small > 0)
+        assertTrue("and the rung chosen fits 40% of it", need[small] <= 0.4 * (128L shl 20))
+        assertTrue("while the one before did not", need[small - 1] > 0.4 * (128L shl 20))
+        assertEquals("nothing fits a heap of one byte: the smallest", ladder.lastIndex, PanoramaJob.startRung(ladder, sources, 1L))
+    }
+
+    @Test
+    fun `the job composes on the rung the heap affords, once, and says it saved smaller`() {
+        val rig = CylinderRig()
+        val full = FakeSink()
+        val planned = done(run(rig, rigHost(rig), full))
+        assertFalse(planned.steppedDown)
+
+        val sink = FakeSink()
+        val host = rigHost(rig)
+        val result = runBlocking { PanoramaJob.run(PanoramaRequest(host.assets, heapBytes = 5_000_000L), host, sink) }
+        val smaller = done(result)
+        assertTrue(smaller.steppedDown)
+        assertTrue(smaller.notes.contains(PanoCopy.SAVED_SMALLER))
+        assertEquals("one attempt: no failed compose first", 1, sink.canvases.size)
+        val a = full.canvases.first()
+        val b = sink.canvases.first()
+        assertTrue("smaller than planned: ${b.width}x${b.height} against ${a.width}x${a.height}", b.width.toLong() * b.height < a.width.toLong() * a.height)
+        assertTrue(sink.canvases.all { it.released })
     }
 
     @Test

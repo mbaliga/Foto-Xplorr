@@ -34,6 +34,9 @@ internal object PanoCopy {
 
     fun cannotRead(photo: Int): String = "Photo $photo could not be read."
 
+    /** A photo that was fine at the start and then could not be exported: locked, trashed or deleted. */
+    fun noLongerAvailable(photo: Int): String = "Photo $photo is no longer available."
+
     fun cannotJoin(photo: Int): String = "Photo $photo does not match the one before it."
 
     // The screen. The strip counts photos from 1 too, left to right.

@@ -47,10 +47,12 @@ import kotlin.math.tan
  * 4. **Plan.** The exposure multipliers ([ExposureGain]) and the canvas ladder
  *    ([PanoGeometry.ladder], the pure plan capped at [PanoramaRequest.maxPixels], the editor's own
  *    export ceilings and a floor) are made from the small pictures.
- * 5. **Compose** at the first rung on a NEW canvas ([PanoramaSink.newCanvas]): every photo is
- *    decoded again, one ahead of the one being drawn, at exactly the size the canvas needs
- *    ([PanoCompositor.decodeSize]). An [OutOfMemoryError] anywhere in steps 5 and 6 takes the next,
- *    smaller rung on a fresh canvas, as `renderDownTheLadder` does for the editor.
+ * 5. **Compose** on a NEW canvas ([PanoramaSink.newCanvas]), starting at the first rung whose decoded
+ *    sources fit the Java heap ([startRung]; usually the first, smaller on a small heap): every photo
+ *    is decoded again, one ahead of the one being drawn, at exactly the size the canvas needs
+ *    ([PanoCompositor.decodeSize]) and held as an `IntArray` on the Java heap (the canvas alone is
+ *    native). An [OutOfMemoryError] anywhere in steps 5 and 6 takes the next, smaller rung on a fresh
+ *    canvas and redoes the compose, as `renderDownTheLadder` does for the editor.
  * 6. **Publish** the auto-cropped canvas through [PanoramaSink.publish], which asks
  *    [PanoramaHost.mayExport] AGAIN right before it creates the file (TRAPS #33: a folder can be
  *    locked while a long job runs).
@@ -60,16 +62,20 @@ import kotlin.math.tan
  * roll, jitter and a moving blob, and measure how much each costs; nothing here has run on a device
  * or on a photograph. The cylinder model needs a stationary photographer turning the phone: parallax
  * (near objects, walking) shows as ghosting that no step here repairs. All photos must come from one
- * camera at one size ([sameCamera]); a mixed set is refused rather than stitched wrongly.
+ * camera at one size ([sameCamera]); a mixed set is refused rather than stitched wrongly. A photo
+ * that lost its tag is not a different lens, so it borrows the others' ([sharedFocal35]) and the
+ * lens check does not count it. A mid-job photo the host stops serving is named, not blamed
+ * ([PanoCopy.noLongerAvailable]): the host cannot tell a lock from a deletion.
  *
  * ## Cancel and process death
  * Cancelling the coroutine stops the job between pairs, bands and photos (the aligner and compositor
  * are asked to stop), leaves no MediaStore row (the sink deletes a pending row on any failure,
  * including this one) and returns by throwing [CancellationException] so [JobRunner] reports it as
  * cancelled. If the process is killed, nothing has been saved: the panorama exists only as a new
- * file once step 6 finishes, a half-written one is a pending row Android hides and discards, and
- * a leftover staging file is deleted by the next run ([PanoramaWriter.pruneStaging]). What the
- * person had selected is the screen's to remember, not this job's.
+ * file once step 6 finishes, a half-written one is a pending row Android hides and discards (on
+ * Android 10 and later; on 8 and 9 there is no pending state, so a kill during the copy can leave a
+ * truncated JPEG, see [PanoramaWriter]), and a leftover staging file is deleted by the next run
+ * ([PanoramaWriter.pruneStaging]). What the person had selected is the screen's to remember, not this job's.
  */
 object PanoramaJob {
 
@@ -84,6 +90,18 @@ object PanoramaJob {
 
     /** A photo's long over short edge may be this fraction off 4:3 or 3:2 and still count as a whole frame. */
     private const val ASPECT_TOLERANCE = 0.02
+
+    /** The compositor holds this many decoded sources at once: the one being drawn and the next one, decoding. */
+    private const val LIVE_SOURCES = 2
+
+    /** Bytes of Java heap per decoded pixel: the host hands pixels over as an IntArray. */
+    private const val HEAP_BYTES_PER_PIXEL = 4
+
+    /**
+     * The share of the Java heap the live decoded sources may take; the rest is the app, the grey
+     * copies, the compositor's band scratch and the garbage collector's room. A guess, not measured on a device.
+     */
+    private const val HEAP_SHARE = 0.4
 
     /** Focal length over the diagonal may differ by this fraction between photos and still be one lens. */
     private const val LENS_TOLERANCE = 0.05
@@ -153,6 +171,28 @@ object PanoramaJob {
             t = t.cause
         }
         return false
+    }
+
+    /**
+     * The Java heap the decoded sources of [plan] hold at the compositor's peak: the larger of the
+     * photos' decode sizes ([PanoCompositor.decodeSize]) in two live copies ([LIVE_SOURCES]), 4 bytes
+     * a pixel. The canvas is not in it: it is a native [android.graphics.Bitmap].
+     */
+    internal fun sourceHeapBytes(plan: PanoGeometry.Plan, sources: List<PanoSource>): Long {
+        val largest = sources.maxOf { PanoCompositor.decodeSize(it, plan).let { size -> size.width.toLong() * size.height } }
+        return LIVE_SOURCES * HEAP_BYTES_PER_PIXEL * largest
+    }
+
+    /**
+     * The rung of [ladder] to try first on a Java heap of [heapBytes] ([Runtime.maxMemory]): the first
+     * whose [sourceHeapBytes] fit in [HEAP_SHARE] of it, or the last when none do. An
+     * [OutOfMemoryError] still takes the next rung, but only after the whole compose has been redone,
+     * which is minutes at 24 MP; this spares that on a phone whose heap is small next to its photos.
+     */
+    internal fun startRung(ladder: List<PanoGeometry.Plan>, sources: List<PanoSource>, heapBytes: Long): Int {
+        val room = heapBytes * HEAP_SHARE
+        val first = ladder.indexOfFirst { sourceHeapBytes(it, sources) <= room }
+        return if (first >= 0) first else ladder.lastIndex
     }
 
     /**
@@ -378,7 +418,7 @@ object PanoramaJob {
             if (shots.any { it.guessed }) notes += PanoCopy.LENS_GUESSED
             else if (shots.any { looksCropped(it.width, it.height) }) notes += PanoCopy.CROPPED
             if (layout.drifting) notes += PanoCopy.DRIFTING
-            for ((rung, plan) in ladder.withIndex()) {
+            for ((rung, plan) in ladder.withIndex().drop(startRung(ladder, sources, request.heapBytes))) {
                 var canvas: PanoramaCanvas? = null
                 try {
                     canvas = sink.newCanvas(plan.canvasWidth, plan.canvasHeight)
@@ -419,9 +459,13 @@ object PanoramaJob {
             return PanoramaOutcome.Failed(PanoCopy.OUT_OF_MEMORY)
         }
 
-        /** A photo that would not decode: protected since the start, or simply unreadable. */
+        /**
+         * A photo that would not decode after the start check passed. If the host no longer lets it be
+         * exported it was locked, trashed or deleted since the picker opened, and the host cannot say
+         * which, so the sentence names the photo and claims no reason; otherwise it is simply unreadable.
+         */
         private fun unreadable(index: Int): String =
-            if (host.mayExport(assets[index])) PanoCopy.cannotRead(index + 1) else PanoCopy.PROTECTED
+            if (host.mayExport(assets[index])) PanoCopy.cannotRead(index + 1) else PanoCopy.noLongerAvailable(index + 1)
     }
 }
 
@@ -430,6 +474,8 @@ class PanoramaRequest(
     val assets: List<MediaAsset>,
     /** The canvas budget in pixels; [PanoGeometry.planPlaced] clamps it to the editor's export ceilings. */
     val maxPixels: Long = PanoGeometry.DEFAULT_MAX_PIXELS,
+    /** The Java heap the decoded photos may count on ([PanoramaJob.startRung]); the tests say how small the phone's is. */
+    val heapBytes: Long = Runtime.getRuntime().maxMemory(),
 )
 
 /** How a run ended, unless it was cancelled. */

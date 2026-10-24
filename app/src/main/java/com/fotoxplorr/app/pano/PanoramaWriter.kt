@@ -20,7 +20,10 @@ import java.io.IOException
 
 /**
  * A [PanoCanvas] over an `ARGB_8888` [Bitmap], so a 24 MP canvas (96 MB) is native memory and not
- * Java heap. A new bitmap is all zero, i.e. transparent, which is what the compositor needs.
+ * Java heap. Only the canvas is: each photo the compositor draws from is an `IntArray` on the Java
+ * heap (4 bytes a pixel, two alive at a time), which is why [PanoramaJob.startRung] looks at
+ * `Runtime.maxMemory()` before the first rung. A new bitmap is all zero, i.e. transparent, which is
+ * what the compositor needs.
  *
  * Reads and writes take one lock. The compositor only touches disjoint rectangles, but whether
  * `Bitmap.getPixels` and `setPixels` are safe on one bitmap from several threads is not documented,
@@ -67,6 +70,22 @@ class BitmapPanoCanvas(val bitmap: Bitmap) : PanoramaCanvas {
  * Encoding the crop makes a second bitmap of that size (native memory), so the peak at 24 MP is about
  * two canvases; an [OutOfMemoryError] there is the job's cue to take a smaller rung. Quality is
  * [JPEG_QUALITY], the editor's default. Nothing here has run on a device.
+ *
+ * ## What the guarantees depend on
+ * - **Android 10 and later** (the `Q` branch): the row is pending (`IS_PENDING`) while the bytes are
+ *   copied, so a process kill mid-copy leaves a row Android hides and later discards, and the file
+ *   lands in `Pictures/Fotoz/Panoramas/`.
+ * - **Android 8 and 9 (API 26 to 28)**: `IS_PENDING` and `RELATIVE_PATH` are not set. The row is
+ *   visible and can be scanned while the bytes are copied, the file lands in the root of `Pictures/`,
+ *   and a name already taken is looked up by display name across every folder. A process kill during
+ *   the copy leaves a truncated JPEG that nothing here removes (only the cache is swept on the next
+ *   run). A cancel or an exception still deletes the row.
+ * - **A cancel at the very end**: the last stage (clearing the pending flag and re-asserting the
+ *   date) cannot be interrupted, but the caller's cancellation is only noticed when [publish]
+ *   returns, so [publish] deletes the row it just made and rethrows; "Cancelled." never has a file behind it.
+ * - **A full phone**: when the encode or the copy fails and the cache volume has under
+ *   [LOW_SPACE_BYTES] free, the failure is a [PanoramaNoSpaceException]. The volume checked is the
+ *   app's cache; on a phone with the library on an SD card that card can be full without it saying so.
  */
 class PanoramaWriter(
     context: Context,
