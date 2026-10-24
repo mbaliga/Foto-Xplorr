@@ -141,6 +141,10 @@ Current phase: **Phase 1 — Foundation**. Branch: `claude/fotoz-p1-foundation`.
   manual pin present) pinned at the top and marked MUST PASS BEFORE MERGE. PR #14's own description
   was rewritten as the Phase 1 gate report, summarising every WP and pointing back to this file's
   entries above for the full reasoning behind each deferral. Phase 2 has not started.
+- **Batch 1 (21 Oct 2026)**: `docs/device-test/batch-1-checklist.md` -- every device-only item from the
+  owner-feedback batch below (video playback, the filmstrip over a video, subject lift, the curves
+  editor, the shrink-to-map transition and the unknown-location plate), grouped by the owner's report
+  number, same shape as `phase-0-checklist.md`.
 
 ## Post-Phase-1 feature work (30 Sep 2026)
 
@@ -169,6 +173,12 @@ shape the WP entries above use.
   flag and the view-mode switcher's active-state mapping both updated to treat Year/Decade as
   non-grid (Year/Decade fold into the switcher's "Cal" button, since neither has a quick-select
   button of its own -- they are reached by pinch or by drilling in, not by a named jump).
+
+  **Superseded 21 Oct 2026 (batch 3, owner #21).** The ladder, the Calendar, Year and Decade rungs and
+  the Grid / Cal / Time view switcher are gone: the gallery is one grid with rungs 1 to 6 columns and
+  then Stamps (a month-block sheet), pinchable at every rung. `GalleryZoomLadder` and its test were
+  deleted; `CalendarScreen` survives only as a pane reached from Settings (its `initialMonth`
+  parameter went with `YearScreen` and `DecadeScreen`). See "Batch 3" below.
 
 - **Configurable pinch gesture, part (b): `ViewerPinchMode` in the single-photo viewer.** A new
   `GalleryPreferencesState.viewerPinchMode` (`OPTICAL_ZOOM` default / `PANEL_SHORTCUTS`), persisted
@@ -261,7 +271,7 @@ renders its surfaces to real PNGs under Robolectric NATIVE graphics (`GalleryRen
   it); `ActivityKind` colours re-measured off the screenshots (`BACKING_UP` #4DFF00, `MOVING`
   #40A0FF, `COPYING` #FFA100 -- was blue -- with distinct hues for scanning/recognising/exporting
   so no two kinds share one). The destination rail is the inline reference's word wheel: 44sp
-  bold, one word per 80dp row, white for the current destination with a 16dp square bullet, the
+  bold (batch 6: "Experimental" is too wide for the row, so that one row shrinks to fit, floor 28sp), one word per 80dp row, white for the current destination with a 16dp square bullet, the
   rest fading by distance (`DestinationWordRail`, app-local because `WordWheelRail`'s type, fade
   and marker are private constants); the 2026-08-14 "covers in the marker gutter" decision is
   superseded by the owner's later reference and recorded as such. The search entry is the root
@@ -270,11 +280,12 @@ renders its surfaces to real PNGs under Robolectric NATIVE graphics (`GalleryRen
   The grid itself then followed: `GRID_GUTTER` 1dp -> 4dp and 144 x 160 tiles (`GRID_TILE_ASPECT`),
   measured off the root-grid screenshot, replacing the earlier "seamless mosaic" geometry.
   Flagged, not changed: the swivel's visible band (72dp, a shared-shell constant), the pinned
-  rail width ellipsizing "Screenshots" on wide windows, the ten destinations including Audio.
+  rail width ellipsizing "Screenshots" on wide windows, the ten destinations including Audio (Audio was removed in batch 2: nine destinations now).
 - **Viewer to the references.** The details room moves to the TOP room (pull the photo down and
   it shrinks into its own 80dp map tile; `ViewerSettingsRoom` takes the bottom) -- a deliberate
   deviation from the 2026-08-18 "one geography" principle on the owner's later direction,
-  recorded in `ViewerScreen`'s KDoc. The room's order is the screenshot's: title and date, camera
+  recorded in `ViewerScreen`'s KDoc. (Superseded in batch 2, 21 Oct 2026: one geography again, with
+  the viewer's view options on the right and its actions at the bottom.) The room's order is the screenshot's: title and date, camera
   card (its return reverses the 2026-09-01 de-dup pass; the card now owns the capture facts and
   the rows no longer repeat them, so "every fact said once" still holds), the 400 x 400 place
   plate with the photo flown into a bordered tile and pointer, "Add a Caption", Information with
@@ -404,3 +415,764 @@ colour, and for APK links for both.
 Gate: `./scripts/verify.sh` is green on both flavours (1017 unit tests each, lint, both debug
 assemblies, the offline enforcement gates). Nothing under `core/` changed, so
 `scripts/verify-native.sh` was not needed.
+
+## Batch 1: bugs and regressions from the owner's feedback (21 Oct 2026)
+
+The owner tried the consolidated build and reported five things (several are quoted in the KDoc of
+the code that answers them): **#1** *"Fotoz is not playing videos"*; **#28** *"When I
+scrub through the filmstrip and stop on a video, the video player progress bar etc. replaces the
+filmstrip so scrubbing through is no longer possible"*; **#12** *"Tap the subject to lift it is not
+working. Needs to be richer: tap to select, draw to select, refine selection, etc."*; **#15** *"Edit
+doesn't work great - pro tools toggle etc. Curves doesn't show me the curves at all, like Snapseed
+does - I want that, not just the presets"*; **#19** *"The transition effect of the photo becoming
+smaller and appearing on the map ... is not happening ... not a pane tilt, rather a shrink-to-appear-
+on-the-map effect. And the map bg when the location is unknown is weird, and not comforting at all."*
+
+Method: a read-only diagnosis of each report, a critic pass that corrected it (and flagged what stayed
+a guess), then one code unit per report on disjoint files, then two wiring units that owned
+`ViewerScreen` (video and filmstrip; lift and flight), then this docs unit. Each code unit was
+required to compile for both flavours and pass its own tests before committing (the full
+`./scripts/verify.sh` gate is the orchestrator's final step and is not recorded here); **no device
+or emulator was available, so nothing below has run on a phone.** The device-only items are in
+`docs/device-test/batch-1-checklist.md`, and the lessons that bind later work are `docs/TRAPS.md`
+#39 to #56.
+
+Commits (oldest first): `8d13ccb` editor (curves, no tiers); `0424f87` video engine; `4c657ab` lift
+dead-tap fixes and the actions-room row; `a421009` lift scribble editor; `58133f4` flight and
+unknown-location plate; `e058630` filmstrip is roll-level; `2ef7c8c` video wiring; `496defc` lift
+wiring; `fa82327` flight wiring.
+
+### Owner decisions applied (not re-asked)
+
+- Video autoplay defaults to **ON** (opening a video starts it; the user's toggle persists), and the
+  chrome is shown the first time a video opens.
+- The editor's **Simple/Pro tier is removed**: one scrollable tool strip with Curves reachable.
+- The shrink flight must not fetch map tiles during a gesture or pre-warm (privacy): the existing
+  160 ms settle debounce stays.
+- `shared-libraries/` is another repo's submodule and was **not edited**; `ParkStyle` is chosen
+  app-side.
+- The rooms were **not moved** in this batch. (Later batch.)
+- Lift Phase B (a bundled learned model) is **not** in scope.
+- Sticker export is a 2048 px PNG with alpha to `Pictures/Fotoz/Stickers`, on a user action only.
+- Audio is slated for removal later and was not touched. (Removed in batch 2.)
+
+### What was built, per report
+
+- **#1 Videos.** The old player had no start affordance with the chrome hidden (autoplay off, chrome
+  down, a tap only toggled chrome) and **no error handling at all**, so any failure was a black frame
+  with a Play glyph that did nothing; the transport keyed on `isPlaying` (false while buffering, so
+  Pause was unreachable), the resume position was never saved (the save after the poll loop was
+  unreachable, and dispose does not run on process death), `ON_STOP` did not pause, and an external
+  clip shared one resume key. Now (`VideoPlayer`, `PlaybackLogic`, `ViewerPlayerFactory`): autoplay on
+  and chrome up on the first video; transport from `playWhenReady` and state; an error panel with
+  Retry / Open with and plain-language copy; a player built only after 250 ms on screen; decoder
+  fallback; audio focus and pause-on-noisy; sidecar subtitles resolved and probed before the first
+  prepare, with one silent retry without them; resume saved on pause / `ON_STOP` / loop end / release,
+  gated on having played or seeked; key-moment indexing 1.5 s after first ready; PiP armed only while
+  playing; `ExternalViewerActivity` declares PiP and gives each external video its own negative id.
+  See PRODUCT-AND-ARCHITECTURE §4 "The viewer's moving parts".
+- **#28 Filmstrip.** `ViewerChromePolicy.filmstripShown` has no asset: the strip is up over a video;
+  `FilmstripScrubber.onScrubbingChanged` (false on dispose) pauses a playing video on touch and holds
+  the next one back until the strip settles; the transport lifts by the strip's 74 dp band and its
+  second row folds behind "More" on a short window. The slideshow waits for a playing video, and
+  Lift being active holds it too.
+- **#12 Lift.** Two dead-ends fixed first: taps were mapped through `MediaAsset.width/height` rather
+  than the decoded bitmap, and `decodeUpright` could throw uncaught on an unreadable URI (a crash,
+  not a no-op). Then the richer editor: select by tap or scribble (with a Background polarity), a
+  refine brush, undo/redo by replaying a history, a checkerboard preview, Copy / Share / Save sticker.
+  Reachable from an always-present "Lift subject" row in the actions room as well as by long press.
+  The overlay now draws its own stage, sits outside the zoom layer, and withdraws the rooms.
+- **#15 Editor.** Curves was unreachable because a weightless `LazyRow` starved the "Pro tools" chip
+  to zero width in both tiers (TRAPS #44). The tier is gone. Curves is a drawn graph with a histogram
+  backdrop, per-channel (RGB, Luma, R, G, B) draggable points (add by touching the curve, drag; remove
+  by long-press, double-tap, or dragging off the graph), Reset / Reset all and the named presets as
+  chips. A real luma curve was added. Undo/Redo moved into the top bar.
+- **#19 Flight and plate.** The flight is an overlay driven by the shell's progress; the unknown
+  plate is calm (graticule, ghost pin, "No location yet", "Add a place"); the picker lost its spin and
+  gained fixes. See `DESIGN-FIDELITY-VIEWER.md` "Revisions in batch 1" and TRAPS #40, #41.
+
+### What deviated and why
+
+- **Armed start, not a mount gate.** The filmstrip plan wanted the player unmounted while scrubbing;
+  the critic showed a page swipe and the details room build players the same way, so the guard moved
+  inside `VideoPlayer` (250 ms armed delay; `scrubSuspended` only pauses and holds arming back).
+- **Key-moment indexing waits for the first ready state plus 1.5 s**, not just the armed delay, to keep
+  retriever decodes off the player's critical path. The "Key moment" pill therefore appears a few
+  seconds later than before.
+- **Autoplay with a remembered position resumes silently** and hides the "Resume from" chip (with
+  autoplay off the chip shows); otherwise default-on autoplay would flash the chip and restart at 0:00.
+- **The centre play glyph shows whenever the transport would offer Play** (paused, ended), not only
+  before the first play, and is hidden while an idle player is about to autoplay and while the error
+  panel is up.
+- **Manual Retry after a decoder error keeps subtitles** unless the silent retry already dropped them.
+- **`ResumePositionStore` also refuses every negative id**, a defensive guard on top of `VideoPlayer`'s.
+- **`ViewerScreen.autoplayVideos` default flipped to true**, so `ExternalViewerActivity` (which does not
+  pass it) autoplays too.
+- **The position chip uses the shared chrome rule**, not the filmstrip flag (see the viewer design doc).
+- **Room withdrawal while lifting waits for the shell to be home**, so a room closed to start the lift
+  slides away rather than vanishing; a long press at home withdraws immediately.
+- **Flight timing.** It runs over the whole pull, not the critic's geometry-derived late window (the
+  flier stays on screen at every progress, tested); the hand-off keeps the real pin opaque under a
+  fading flier rather than the critic's complementary alphas (which would dim the plate).
+- **The flier is composed only when the photo is at rest** (not zoomed or turned); otherwise the
+  room's own in-plate shrink plays. `PlacePlate` reports ROOT bounds while `PhotoDetailRoom` reports
+  ROOM-local, de-duplicated bounds (deliberately different semantics, documented on both).
+- **Lift: Tap and Draw are one Select tool** (a tap is a one-point scribble) with a Subject/Background
+  chip; Refine is the separate add/erase brush. The tap seed is a robust mean of a small disc around
+  the tapped pixel (a thin line keeps the line's colour; a hot pixel is ignored). A tap on the
+  letterbox is swallowed in the editor instead of dismissing it, to avoid losing work to a stray tap.
+  The brush type is `BrushStroke` (not `Stroke`, which clashes with the Compose drawing type).
+- **Editor.** `AdjustmentRenderer` was **not** edited: the luma table rides inside `ChannelLuts.luma`.
+  `CurveChannel` moved into `ToneCurve.kt` (pure) with its colour as an extension in `CurvesEditor.kt`.
+  A tap on empty space far from the curve inserts the point under the finger (bending the curve);
+  near the line it inserts on the line. Drag-off removal is armed (red, haptic) and happens on release,
+  and can be cancelled by dragging back in. `insertAt` is not bit-identical (neighbouring tangents are
+  recomputed; the tests allow up to 8 levels). The autofix offer row is hidden on the Curves tab.
+- **Tests.** Every unit added NEW test files; the three shared viewer test files were left alone. No
+  Compose/Robolectric test exists for the lift overlay or the whole `EditorScreen` (the former needs
+  decode plumbing, the latter `MediaAsset` plumbing): gesture flow, chrome and layout budgets are
+  compile-verified and reasoned only.
+- **Verification environment.** `captureToImage()` times out under Robolectric here (TRAPS #56);
+  the offline source scan is line-based and includes comments (TRAPS #43); a Gradle build needs the
+  shared lock when several agents work in one tree.
+
+### Found, not fixed (outside the units that found them)
+
+- `ViewerActionsRoom.ActionRow` makes only the 22 dp icon clickable; the label beside it is dead.
+  Relevant to #12's discoverability: tapping the words "Lift subject" does nothing. The fix is one
+  `Modifier.clickable` on the row.
+- `LiveTextOverlay` consumes every tap and long press on a photo with recognised text while the chrome
+  is up, so long-press-to-lift and tap-to-toggle-chrome do nothing there (TRAPS #50).
+- `MediaAsset.width/height` may be the un-rotated sensor grid for an EXIF-rotated photo; Lift now uses
+  the decoded bitmap, but `LiveTextOverlay`, the minimap and the flight's start rectangle still trust
+  the stored size (TRAPS #48). Unverified until logged on a device.
+- The rooms' positions in the viewer (details top, actions right, settings bottom) differ from the
+  layout in the original brief for #12 (details top, actions bottom, view options right). Not moved in
+  this batch by decision; the owner should say which is intended before the rooms batch.
+  **Resolved in batch 2 by owner feedback #26:** left navigation, top details, bottom actions, right
+  view options, in the gallery and the viewer alike.
+
+### Residual, for the owner
+
+- Whether to schedule lift Phase B (a bundled learned segmentation model) once the licence and size
+  trade-off is decided; until then hair, fur, glass and low-contrast edges will be rough.
+- The classical solver's honest limits (multi-coloured subject needs a second scribble; a same-colour
+  neighbour needs a Background scribble) are in PRODUCT-AND-ARCHITECTURE §5.
+- Audio focus is a visible change: starting a video now pauses another app's music (Fotoz has no
+  music of its own any more).
+- `proguard-rules.pro` has no Media3 section; the release build relies on the library's consumer
+  rules (a device smoke test, listed in the checklist).
+
+
+## Batch 2: audio out, one open-with door, a safer Replace, one room geography (21 Oct 2026)
+
+The owner's second round on the consolidated build. Items quoted in the code that answers them:
+**#18** *"The favourite icon should be visible when a photo is being viewed - doesn't need to hide in
+the right side menu."*; **#16** *"Once slideshow mode is on, the slideshow controls should be overlayed
+in the style of the actions bar at the top."*; **#17** *"When viewing images that have transparency,
+we should be able to choose background - the grey white grid, or white or black."*; **#6** *"The help
+text is too verbose."* The rest arrived as direction rather than a numbered quote: remove Audio from
+the product; the rail should scrub; Settings should take over the page; one toggle look; and **#26**,
+the rooms geography (left navigation, top details, bottom actions, right view options, in the gallery
+and the viewer alike), which answers the question batch 1 left open.
+
+Method: a read-only design pass (six plans and a critic that corrected them, with a short list of
+questions that needed an owner answer and a default for each), then serial code units on this one
+branch, each required to compile for both flavours and pass its own tests, then this docs unit.
+**No device or emulator was available; nothing here has run on a phone.** The full
+`./scripts/verify.sh` gate is the orchestrator's last step and is not recorded here. Device-only
+items are in `docs/device-test/batch-2-checklist.md`; lessons that bind later work are
+`docs/TRAPS.md` #57 to #67, and #17, #31, #34, #35, #47 were corrected.
+
+Commits (oldest first, grouped): **open-with and audio** `0395dfa` (`ExternalViewerActivity` the single
+VIEW target), `fc04c73` `294520a` `8192057` `90d44cb` `e7e7450` (audio removal 1-5), `e1fad2d` (parity
+test: 25 projections per privacy view = 9 destinations + 11 smart albums + 4 sorts + the timeline),
+`e8c394c` (hidden-photo bypasses closed). **Editor** `dec6a54` `abe8c5c` `0970c68` `3d906e8` `f4b72a2`
+`e9ec27a` `88c148a` `5194e55` `f34eeda` `326b48c`. **Video** `e43dcf5` (exporter error mapping and
+publish pinned). **Core** `ceb2243` (`AlphaSniffer`). **Rooms and navigation** `4f48c47` (rail scrub)
+`02bc6fe` (Settings as a page) `5a13e19` (one toggle) `9d33fbe` (one geography) `6d2c47d` `294d75c`
+`7ede90e` `c771edc` `3cd648b` `253f8ba` (the quick strip, library bumps and review fixes). **Viewer**
+`0d3362a` (heart) `026a8b1` (transparency) `84e3e4e` (slideshow bar). **Help text** `27e5c35`.
+
+### Owner decisions applied (not re-asked)
+
+- **Audio is removed**, not hidden: the Audio destination, library, player, tag editor and
+  audio-to-AAC conversion, the `audio/`, `audiotags/` and `playback/` packages, the media-playback
+  service, and `READ_MEDIA_AUDIO` / `FOREGROUND_SERVICE_MEDIA_PLAYBACK`. `WAKE_LOCK` stays in the merged
+  manifest because Media3 contributes it. The old audio database and scan preferences are deleted on
+  first launch; user audio files are never touched; a saved default view of Audio opens on Photos.
+  Kept: Lens text-to-speech, the tab tick sound, the video player's audio-track menu, the editor's mute.
+- **`POST_NOTIFICATIONS`** stays declared and is requested once, on Android 13+, the first time a job
+  runs.
+- **Open-with:** `ExternalViewerActivity` is the single VIEW target (`content://` only); EDIT and SEND
+  stay on `FotoXplorrActivity`; a photo the library hides is never opened from outside (a notice
+  instead).
+- **Replace the original refuses** rather than loses (metadata it cannot carry, animation, Ultra HDR,
+  Motion Photo, transparency, lossless WebP), and writes with a safety copy. **Save As strips
+  location** with no opt-in switch. The README HEIC claim was corrected, not the behaviour. No
+  `android:largeHeap`, no video free-space pre-flight.
+- **One toggle:** `RoomToggle` is `HyleToggle`; disabled is a fade of the live colours; the on state is
+  a position, not a hue (the accent-coloured on-state was not done). `RoomStyle.InkFaint` rose to 0.55
+  alpha and `InkMuted` to 0.70 so the three ink steps stay ordered.
+- **Heart:** in the chrome row, tied to the chrome (so immersive photos hide it), for catalogued photos
+  and videos; the actions room keeps its Favourite row. **Transparency:** default checkerboard; a chrome
+  button only on photos that have transparency, and a row in the view options.
+- **Help text:** one `HelpCopy` object, no onboarding tour; four lines flagged for the owner's or
+  counsel's eye (below).
+- **Store rename:** Fotoz in the fastlane title and description, the privacy policy and the Play
+  Console sheet; contact address and package unchanged.
+
+### What was built, per item
+
+- **Nine destinations; Settings as a page.** `HyleDestination` has nine entries. Settings (nine tabs:
+  Appearance, Media, Library, Privacy, Viewer, Data, Background, Pro, About) and Albums, Calendar,
+  Discover, Library and Tidy up share `PaneScaffold`; `paneTakenOver` and `paneBackTarget` are the one
+  predicate and the one Back order. While a page is up the other rooms' drags and the keyboard
+  shortcuts (Escape excepted) are off, the rail leads back out, and background-job progress shows over
+  it. Settings chips and options have 48 dp targets. The Connect build's About tab said "no INTERNET
+  permission" though its manifest holds INTERNET; it now says what is true for the flavour.
+- **The rail scrubs.** The square tracks the finger; the word that rests on the focus line for 140 ms
+  is committed; a fling commits where it lands; release only settles and never closes the room (TRAPS
+  #61). Selecting a destination now clears `legacyScreen` (a verified bug: a destination screen stayed
+  on top of the one just picked; TRAPS #62).
+- **One geography.** `ui/RoomGeography.kt` is the table; both screens build slots through `roomSlots`.
+  The bottom actions room is two-stage: a quick-action strip at the head on a short pull
+  (`ui/QuickActionStrip.kt`), everything on a longer one. That needed changes in `shared-libraries`
+  (a navigation-bar-aware bottom edge zone, `bottomPeek`, `hasBottomPeek`, `bottomReserve`, a
+  stale-flick guard), pinned here at `1f33d10` (PR #17 there, to be merged first). The viewer passes
+  `bottomReserve` so a vertical-first drag on the filmstrip or the video transport scrubs instead of
+  opening the room; the quick strip is context-aware in the gallery (browse, selection, trash). Escape
+  closes an open room first and every other shortcut is ignored behind it.
+- **Open-with.** One VIEW door; `content://media` Uris read as Android reads them; unscanned rows looked
+  up in MediaStore and held to the folder rules; stale or foreign `EXTRA_OPEN_MEDIA_ID` dropped; only
+  three incoming extras are read (TRAPS #57, #58).
+- **Editor safety.** Typed `OverwriteException`; the hazard and metadata gates; the safety copy in
+  `filesDir/overwrite-recovery`; a recovery dialog that names the photo, offers to share the copy and
+  returns until answered; Save, Cancel and Back locked while a write runs; the write's bookkeeping
+  survives recreation; the in-session warnings name the photo. Save As strips and proves it. Exports no
+  longer shrink by memory class; they step down on a real out-of-memory error (TRAPS #59, #60, #65).
+- **Viewer.** The heart; the slideshow bar with a real pause and a three-second chrome auto-hide (a
+  swipe or the bar's Next now goes in order in a shuffled slideshow; shuffle lives only in the
+  countdown); the transparency backdrop, detected by `AlphaSniffer` from at most 64 KiB of header,
+  cached per photo and modification time.
+- **Help text.** `ui/HelpCopy.kt` holds the trimmed copy in three groups (captions at most 60
+  characters, hints 80, notes 160), with `HelpCopyTest` holding the ceilings. `BackgroundWorkStatusTest`
+  was changed with the strings it pins. Jargon went ("embedding", "tflite", "OpenGL ES").
+
+### What deviated and why
+
+- **The two-stage reveal was planned for later and was done now.** The design pass said to ship the
+  geography only and have the owner file the library change; the library work landed during the batch
+  instead, so the quick strip exists. A short bottom pull no longer "settles to home or fully open".
+- **Rail select no longer closes the room** (owner #5), so the room's close paths are tapping
+  the selected word, the parked card, or Back (the pinned rail has none).
+- **The viewer chrome row got a swatch button as well as the heart** (transparency, only on see-through
+  photos), and the heart's glyph pair is `Outlined.Favorite` / `FavoriteBorder`: the design document
+  thought these were the same hollow heart; a render showed `Favorite` is the solid one.
+- **The slideshow bar is flush to the top edge and taller by the status-bar inset**
+  (`SelectionToolbarTallShape`) instead of a filler strip, with glyph targets of 48 dp rather than the
+  mockup's 46. The hide timer keys on the computed auto-hide boolean and a press counter, not the asset
+  id (otherwise a 2 to 3 second interval would never let it fold). The video "Resume from" chip now
+  sits under the chrome and the bar rather than at a fixed 24 dp.
+- **Backdrop is a composable inside the zoom layer**, so the grid's squares scale with the picture (v1).
+  An optional `onImageSize` callback gives an SVG its drawing's shape.
+- **Help text:** the Connect About statement is new wording the table did not propose; the AI settings
+  device line was shortened rather than dropped (it sits behind a details toggle); the Trash row's
+  caption was verified against the screen before it was kept.
+
+### Found, not fixed (outside the units that found them)
+
+- **`decodeUpright` returned null on API 26 and 27** (TRAPS #34): fixed. Its bounds-only `BitmapFactory`
+  pass returns null by design and the line ended `?: return null`; it now ignores that result and
+  `BitmapDecodingBitmapFactoryTest` covers upright and alpha at SDK 26.
+- `ViewerActionsRoom.ActionRow` still makes only the 22 dp icon clickable; `LiveTextOverlay` still
+  swallows taps and long presses on a photo with recognised text while the chrome is up (TRAPS #50).
+- `EditedCopyWriter`'s class KDoc still says overwrite refuses "a source holding IPTC-IIM or extended
+  XMP" (it now also covers PNG text and unknown WebP chunks).
+- The grid and filmstrip thumbnails and the shrink-to-map flier do not draw the transparency backdrop.
+  A photo that declares an alpha channel but is fully opaque shows the swatch button and the choice
+  changes nothing visible (the sniff reports what the file declares).
+- The Samsung `MotionPhoto_Data` marker was written from memory of its layout and was not checked
+  against a real file.
+
+### Residual, for the owner
+
+- Four copy lines changed meaning-preserving but are legal-ish and want a human read: the offline
+  statement, the Places privacy paragraph, the AI-service paragraph and the Pro "nothing is charged
+  yet" line (plus the new Connect statement).
+- Two privacy lines were added after review and want the same human read: "Protected folders lock
+  access inside Fotoz. They do not encrypt your files." (Privacy settings and the Protected screen, with
+  "N protected · in-app lock only" on the Library card), and the Places paragraph, now one wording per
+  build (Offline: nothing here goes online; Connect: Street map tiles, the one-time similarity model
+  download and AI services you add are the only network use).
+- Store rename: the hosted privacy policy at the unchanged URL must be republished with the release
+  that drops the audio permission, `versionCode` must go to 5 to match `changelogs/5.txt`, and the
+  Play permission and foreground-service declarations must be re-answered without audio.
+- The licence is PolyForm Noncommercial 1.0.0, which is source-available and not open source; the
+  store text now says so and `play-console.md`'s old "Apache-2.0" line was wrong.
+- Whether to build a Restore button for a safety copy (recovery is share-out only today), and whether
+  to set `android:largeHeap`.
+- Rooms: the live-preview partial-width detents for the right room's view options still need a
+  shared-shell change.
+
+## Batch 3: one zoomable grid, a timeline you place, the map as a mode, a long-press choice (21 Oct 2026)
+
+The owner's third round, answered here in two parts (the grid and the map first, the timeline and the
+sideways grid second). Quoted in the code that answers them: **#21** one continuous grid you pinch
+through, then postage-stamp months, "still a long and continuous scroll, not the left right movement
+it is now"; **#25** *"Timeline should be allowed to be toggled on/off and the placement decided - can
+be left or right with a vertical scroll, or top and bottom with a horizontal scroll. User should also
+be allowed to select whether they want to see the photos top to bottom or bottom to top or left to
+right or right to left ... When the timeline is toggled on, the photo grid needs to move to make
+space for it. Or at least while scrubbing through the timeline, shrink the grid so they don't overlap,
+and group and separate the photos by month."*; **#27** a round grid/map toggle and time as a filter
+(the grid and the map both narrowed by a range); **#3 and #14** what a long press does.
+
+Method as batch 2: a read-only design pass with a critic (its corrections and defaults are below),
+then serial code units on this one branch, each compiling for both flavours with its own tests, an
+audit pass whose three findings were fixed, then this docs unit. **No device or emulator was
+available; nothing here has run on a phone.** The last full-suite figures recorded before the timeline
+and sideways units were 2205 offline tests and 2205 on Connect (10 skipped by design: the offline map
+seam tests call `assumeFalse(NETWORK_FEATURES)`), `:app:lint*` and both `assemble*` green, and the
+offline manifest, classpath and source-reference gates green; the last two units added tests and
+were each run on their own areas. The full `./scripts/verify.sh` gate is the orchestrator's last
+step and is not recorded here. Device-only items are in `docs/device-test/batch-3-checklist.md`;
+lessons that bind later work are `docs/TRAPS.md` #68 to #73.
+
+Commits (app repo, oldest first): `16392a7` (the gallery held across the viewer), `73333cc` (long press
+does), `d01266e` (map as a mode, time range), `c22c345` (one zoomable grid, Stamps), `1341bdd` (three
+audit fixes), `d4e1f0a` (library pin bump), `465c873` (timeline on/off, edge, gutter, headers, Oldest
+opens at the latest end), `66f691c` (sideways scroll). Library repo: `18fc20e` (`EdgeTimelineScrubber`
+edge parameter, PR #17).
+
+### Owner decisions applied (not re-asked)
+
+- **Reading of #25.** The strip's placement (Left, Right, Top, Bottom) and its on/off are independent
+  of the scroll axis (Vertical default, Horizontal) and of the photo order. Order is the existing
+  Newest / Oldest sort, worded "Latest at top" / "Latest at bottom" ("left" / "right" on a sideways
+  grid); the grid opens at the latest end; there is no `reverseLayout` (`GridIndexMap` and the
+  scrubber's index mapping are untouched).
+- **Defaults.** Timeline ON, placement Right, a permanent 44 dp gutter while it is on (the grid makes
+  room), the strip hidden for Name and Size, in masonry and in panes. A fresh install groups by month
+  (a stored value, including Day, is untouched). On rungs 1 to 6 month headers appear only while the
+  timeline is on and grouping is not None; Stamps always has month headers (flat for Name and Size).
+- **Sideways grid.** A `LazyHorizontalGrid` with a narrow full-height month header; Stamps stays
+  vertical-only in v1; the shell's 56 dp left and right edge zones still claim horizontal drags that
+  start in them (accepted and documented). The strip lives on the grid's own box so a Left strip
+  clears the pinned rail; a Bottom strip lifts the pill and the discs; a Top strip drops the album bar.
+- **Zoom.** Rungs 1 to 6 are columns and 7 is Stamps; a stored 7 columns becomes 6; the rung is
+  stored when a gesture settles. No Year or Decade view.
+- **Map.** A mode of the browser (not a destination, not a rung), reached from a bottom-left disc and
+  a Map rail word before Places; session-only (a cold start lands on the grid); Places and Protected
+  do not offer it.
+- **Long press.** A Settings choice (Quick preview default, Select, Favourite, Share, Edit, Nothing);
+  the old on/off key is read once.
+
+### What was built, per item
+
+- **Back from a photo lands where you left (`16392a7`, TRAPS #68).** `FotoXplorrApp` composes the
+  gallery, viewer and editor as sibling branches, so the gallery's `rememberSaveable` state died with
+  every round trip. It is held by a `SaveableStateProvider` (`GALLERY_STATE_KEY`), and the first-composition
+  reset of search, selection and route in `GalleryBrowser` is skipped. `GalleryViewerRoundTripTest`
+  holds a search across the round trip and has a control showing it is lost without the holder.
+- **Long press does (`73333cc`, TRAPS #73).** `GridLongPress`, `LongPressResolver`, the legacy
+  `long_press_preview` mapping (false becomes Select), Settings > Media "Long press does", merged
+  TalkBack semantics on tiles, and the stale-closure fix (a tap after a sort change now pages the
+  viewer through the new order). The right-click menu was not extended with Share and Edit.
+- **Map and time range (`d01266e`, TRAPS #71).** `MapToggleFab`, the Map rail word, `TimeRange`
+  (month-granular, judged on `timelineMillis`), the always-visible chip and panel, `PhotoMapPane` with an
+  offline and a Connect implementation, embedded map screens with no `BackHandler`, and
+  `PaneBackTarget.CLOSE_MAP`.
+- **One zoomable grid (`c22c345`, TRAPS #70).** `ZoomGrid`, `GridZoom.kt` (pinch accumulator at ln 1.25
+  per rung, closed ends), `TimelineRuns` (runs with a distinct key per run), the slim `StampTile` with a
+  dashed perforated edge, Ctrl plus or minus and Ctrl-wheel, a density pill that wraps, "Zoom" in the
+  view options and "Grid zoom" in Settings, and the picker clamped to 1 to 6. `TimelineScreen`, the
+  view switcher and the Year and Decade screens were deleted.
+- **Audit fixes (`1341bdd`).** Stamps to columns keeps the photo at the top (a header top line is
+  re-anchored to its run's first photo); a scrub resting on Map never builds the Connect street map on a
+  pinned rail (`onTurning`, `mapPaneSettled`); a time panel hidden by a selection or a pane no longer
+  swallows Back (`timeEditorShown`, `CLOSE_TIME_EDITOR`).
+- **Timeline (`465c873`, TRAPS #69).** The library's `ScrubberEdge` (pinned at `18fc20e`), Settings
+  "Timeline" and "Timeline edge", a TIMELINE group in the view options room, `stripShouldShow` and
+  `timelineReserve` as one decision, the 44 dp gutter, a constant 0.6 rest alpha (the fade machinery
+  was deleted), headers that follow "Group timeline by" on the columns (that row is live again), and an
+  anchor that opens Oldest first at its last item once the scan is done.
+- **Sideways grid (`66f691c`, TRAPS #72).** `ScrollAxis`, Settings "Scroll direction" and a flip row in
+  the view options, the `LazyHorizontalGrid` branch of `ZoomGrid`, 36 dp header columns reading upward,
+  an 88 dp bottom band, arrow-key strides swapped, and Stamps and masonry falling back to vertical.
+
+### What deviated and why
+
+- **The permanent gutter reverses an earlier call.** A comment in `GalleryScreen` had recorded that the
+  strip would be a transient right-edge overlay because a permanent stripe was cluttered; the owner
+  asked for the grid to make room, so it is permanent while the timeline is on, at 0.6 alpha.
+- **Oldest first is not a reversed layout.** A short library under Oldest sits at the top of the screen,
+  not the bottom, and returning from an album to the root grid re-anchors (it loses the previous scroll
+  position).
+- **Continuous zoom is slice 1 only.** The rungs are discrete; the optional layer-scale feel with
+  focal-point anchoring (a `GridGeometry`) was not built, and pinching past Stamps clamps with no
+  elasticity.
+- **Back from a photo opened on the map lands on the grid** (`mapOpen` is a plain `remember`, by
+  decision); the time range survives.
+- **The strip hides during a selection on every edge** (the selection controls are drawn over the
+  screen, not inset by the gutter, and cover a Left or Right strip's first and last stops and its
+  bottom end); the gutter stays, so the grid does not jump. The strip is not given to the shell as
+  `topReserve` or `bottomReserve`; only the shade, which a Top strip pushes down, adds the gutter to the
+  shell's `topReserve` (`shadeTopReserve`).
+- **The sideways grid keeps its pill clearance as a permanent 88 dp bottom padding** rather than a
+  footer, and the Stamps rung flips the grid vertical under the same `LazyGridState`.
+- **The unit that bumped the pin** (`d4e1f0a`) did so before any app code used the new parameter; the
+  library PR #17 must still be merged with `--no-ff` before this app's PR (TRAPS #2).
+- **Tests that pinned removed or moved behaviour were updated, not skipped:** the switcher assertions in
+  `GalleryMapModeTest`, the switch count in `PaneRenderTest` (the Peek switch became a chip row), and
+  that test's Library-tab layout (it now scrolls to "Tidy up" and asserts "Timeline edge").
+
+### Found, not fixed (outside the units that found them)
+
+- `GridChromeBridge.columnsAcross` now means "tiles across the short side" (rows when the grid is
+  sideways); its KDoc still says "one row".
+- The selection count text does not mention an active time range, and Select all and Trash act on the
+  range-filtered list while the chip is hidden by the selection chrome.
+- `LazyHorizontalGrid` flows right to left under RTL, so "Latest at left" would be wrong there; not
+  handled.
+- Undated photos: `sortAssets` orders by date taken while the strip, headers and range read date taken
+  else modified, so undated photos cluster at one end and a month can head two runs. Keys carry the
+  run index; the behaviour is recorded in TRAPS #69 and is a device check.
+- The right-click menu has no Share or Edit rows; the tile has no custom TalkBack action list (a
+  merged long-click only).
+- Deferred as decided: slide-up from the preview to open, video playback in the preview, blurring a
+  sensitive photo in the preview (it is shown unblurred), a Gestures tab, a view-options mirror of the
+  long-press row, Open details, drag-to-extend selection, and a viewer long-press setting.
+- Connect-flavour unit tests were compiled but not run for the timeline and sideways units; the
+  Connect MapLibre view's `textureMode(true)` was not applied pending a device check (it may draw
+  untransformed inside the shell's swivelling card).
+
+### Residual, for the owner
+
+- **A human read of the new wording.** Settings and room strings: "Latest at top / bottom / left /
+  right", "Timeline" ("Date orders only. The photos make room for the strip."), "Timeline edge",
+  "Scroll direction" ("Across suits a top or bottom timeline. Stamps stay vertical."), "Long press
+  does" ("What holding a photo does. While selecting, a hold adds it."). The store description and the
+  changelog now mention the timeline and the map. The Connect build's network statement (street map
+  tiles, one-time model download, AI services you add) was written before the map was reachable from
+  the grid's disc and the Map rail word; it is still true but wants the same human read as the batch 2
+  privacy lines.
+- **Decisions to confirm.** The permanent 44 dp stripe at 0.6 alpha (the owner once called a permanent
+  stripe cluttered); Timeline ON and Right as the defaults; a fresh install grouping by month while
+  existing installs keep Day; Back from the map's photo landing on the grid; the shell edge zones
+  taking the first and last 56 dp of a Top or Bottom strip and of a sideways grid; whether the sideways
+  grid should be inset instead.
+- **Release housekeeping.** `shared-libraries` PR #17 merges first with a merge commit, then this PR;
+  `versionCode` must go to 5 to match `changelogs/5.txt`, which now also covers batch 3.
+
+## Batch 6: the Experimental section, a drawn aquarium, a wall mock-up with print export, offline map areas (22 Oct 2026)
+
+Branch `claude/friendly-lovelace-06dito` (PR #18). **Nothing in this batch has run on a device.** Every
+visual and feel item below is **unverified until run on a device**; the list is
+`docs/device-test/batch-6-checklist.md`. Roborazzi runs in record mode, so no screenshot test counts as
+visual verification. Traps found are TRAPS #78 to #88.
+
+### Owner decisions applied (not re-asked)
+
+- The critic's cuts: no experiment registry or spec machinery (an `ExperimentEntry` list), no aquarium
+  gallery or bucket fill or caustics, the offline-map button on the embedded Map not the (unreachable)
+  header, no `EditedCopyWriter` dpi change (the print has its own exporter), no `ACTION_IMAGE_CAPTURE`.
+- Label-only rename: the destination is still `HyleDestination.PLACES`, shown as "Experimental"; the saved
+  "Open the app on" value is unchanged.
+- "Spatial compass" is "Compass view"; the Photo map and Street map cards are gone (Map mode shows them).
+- Offline maps are not an experiment: a Settings > Data row and a pill on the Map in the Connect build.
+
+### What was built
+
+- **Experimental host** (`experimental/`): hub of cards under Make / Explore / Setup; one saved id, one Back
+  handler, `ExperimentEnv` (browsable list only, `decode` re-checks the live list), `clearOfShellEdges`.
+  Registered: `aquarium`, `wall-mockup` (Make), `similarity`, `wall`, `preview`, `compass` (Explore), `ai`
+  (Setup, last). `ExperimentalHostTest` pins the ids and that each has a title and a one-sentence blurb.
+- **Draw an aquarium** (`aquarium/`): pure core (sketch, flood fill, swim mesh, tank simulation, codec),
+  creature store (PNG then JSON, at most 12; a pair that will not decode is swept on open), draft saver, rasteriser, draw and tank screens, a frame loop.
+- **See it on your wall** (`wall/`): print maths, scale from a reference or the lens, 12 standard sizes, frames
+  and set layouts, the draft, canvas and four steps; print-ready JPEG with the density in Exif and JFIF and no
+  place; system print at real size; a banded Lanczos Enlarge labelled "Enlarged, no new detail".
+- **Offline map areas** (`spatial/offline/`): budget and tile maths, suggestions from browsable photos,
+  `DownloadGuard`, the engine seam, a request-cap wrapper in `:feature:ai-remote`, a map-library engine, the
+  download job (`ActivityKind.DOWNLOADING_MAP`, data-sync service), the pane, the Settings row and the Map
+  pill; ADR-015 (the request cap) and ADR-016 (source verdicts, limits, which numbers are guesses).
+- Docs: README, store description, PRODUCT-AND-ARCHITECTURE, TRAPS, the batch 6 checklist, this entry.
+
+### What deviated and why
+
+- The host kept `icon`, `coverSkip` and `badge` on `ExperimentEntry` beyond the critic's minimal list because
+  they carry the existing cards' look; the host logic is about 150 lines.
+- The aquarium: "mesh at phase 0 is the identity grid" is false (a travelling sine is never flat); the identity
+  is at wave scale 0. The fixed-step accumulator was not built, so `step(dt)` is not frame-rate independent.
+  The sprite is rendered from the vectors at its final size, not rendered at board size then downsized.
+- The wall: the distance formula uses the image's share of the full-frame diagonal, not `2*atan(12/f35)` (8
+  percent under-read for 4:3). "Size" is the print, not the framed piece. The id is `wall-mockup` because
+  `wall` is the 3D photo wall.
+- The print: the design said to reuse the editor's writer path; its encoder is private and copies GPS, so the
+  print has its own exporter. Pictures/Fotoz became `Pictures/Fotoz/Prints` (Android 10 and later; below that the default Pictures folder). `ExifCopier` does carry the
+  source's resolution tags, so the density is written after it.
+- Enlarge: no whole-picture `IntArray` (a 64 MP result is 256 MB), so rows are streamed in bands, single
+  threaded; the editor's mask runs per band with a two-row halo.
+- Offline maps: Switzerland's box is 2,486 tiles to z12 and Greater London's 1,707 to z14 (the investigators
+  said 2,619 and 1,781); Switzerland is refused on bytes. The byte table is conservative. The "throttleInstalled
+  while active" wording could not drive a button enabled before the tap, so it is a probed "can be applied"
+  flag. ADR-015 was already taken, so the source verdicts are ADR-016.
+- The Connect privacy line for the Experimental page no longer names the street map; the map's disclosure is
+  the offline-maps pane's ("Downloading shows the area and your IP address to the map provider.").
+
+### Not built, and why
+
+- **Panorama utility** (superseded: the owner overruled the critic and it was built in Batch 7, below): an owner go or no-go; the critic recommended no. Nothing prepares it, but the Lanczos
+  reader and sink (`PixelRows`, `RowSink`) are the reuse point if it is wanted.
+- **Live-camera wall**: needs a CAMERA permission decision (TRAPS #83). The wall uses a photo.
+- **On-device neural upscaler** (LiteRT, Real-ESRGAN): deferred; `docs/MODEL_LICENSES.md` does not exist.
+- **ARCore** and **OpenCV**: no dependency was added anywhere in this batch (one compile-only declaration in
+  `:feature:ai-remote`, see `docs/DEPENDENCIES.md`).
+- Aquarium: a fallback renderer, a Calm switch in the UI, keep-screen-on, frame-rate throttling, schools,
+  bubbles, photo cutouts, a gallery sheet, backup of creatures. Wall: perspective correction, per-frame style,
+  automatic orientation, tiling, TIFF, CMYK, bleed, choosing the dpi or crop. Enlarge for the system Print
+  path, a marker in the enlarged file, a cap on the enlarging factor.
+- Offline maps: date-line areas, updates after 90 days, measured sizes written back (no record-rewrite on the
+  engine seam; the unused `bytesMeasured` field was removed), low-battery confirm, renaming a saved area, the hillshade or dark style offline.
+
+### Found, not fixed
+
+- `decodeUpright` returns null on API 26 and 27 (known): the wall and the print file are unverified there.
+- Back ordering between a shell room opened over an open experiment and the host's handler depended on
+  registration order. Fixed after the first audit (`RoomFirstBackHandler`: the gallery's Back handler
+  re-registers a frame after a room opens, so the room closes first), but only a Robolectric stand-in
+  handler has run it: the real shell's room over the real browser has no test and no device has seen it.
+- Open after the second audit pass (LOW, not built): in the wall's Hang step with frames hung and the wall
+  width at 0 (a typed distance that gives no width), the Move buttons can compute an infinite or NaN
+  position; the Connect privacy sentence is 154 characters with a semicolon, one sentence only by grammar;
+  a disabled colour swatch in the aquarium has no dimmed look; a refused-shape line can hide a later
+  save-failed sentence; `JfifDensityFileTest` makes 2 GiB and 3 GiB sparse files and assumes a filesystem
+  that supports them; a region that finishes by itself may hold the map request cap for the full 5 s;
+  the privacy sentence of the offline-map pane sits only under the first Download button; other Discover
+  and album cards still pass `onLongClick = onClick`; the aquarium's `TANK_FULL` and `SAVE_FAILED` are two
+  sentences each.
+- A Compose test that shows the unpaused tank never goes idle (TRAPS #80).
+- A native-test JVM abort on a fresh run of Robolectric-native tests that decode on a worker (TRAPS #88).
+- `changelogs/5.txt` was not updated for this batch.
+
+### Residual, for the owner
+
+- **Decisions to confirm.** The 60 dp edge clearance on the drawing board and the wall (it costs a 360 dp phone
+  120 dp of width; the alternative is to ignore only the first touch in the zone); "Draw an aquarium" and
+  "See it on your wall" as titles; a frame's size meaning the print; the print keeping the camera make, serials
+  and date and dropping only the place; prints in `Pictures/Fotoz/Prints` (Android 10 and later only); Enlarge aiming at 300 dpi with no
+  cap on the factor; one download at a time, at most 6 areas and 300 MB, the 12-fish store, MIN useful zoom 12.
+- **A human read of the new wording** (every string is one short sentence): the Copy objects
+  `AquariumCopy`, `WallCopy` and `OfflineMapsCopy`, the Discover card ("Draw fish, try pictures on your wall,
+  and more"), the store description and README lines.
+- **Release gates.** Do the map spike (checklist section 5) before the Connect build ships the download; if the
+  4-request cap does not hold, do not ship it. Re-read the OpenFreeMap terms before release (read 22 Oct 2026).
+  Whether printing through the system print service counts as "goes online" in the Offline build's privacy
+  line was a wording call: the line now reads "Nothing here uploads your photos, and printing uses the
+  printer you choose." (the app has no network code, a print service may). Confirm that wording.
+- **Offline map downloads are DISABLED in release builds.** `MapLibreRegionEngine.CAP_VERIFIED_ON_DEVICE` is
+  `false`, so a release build of the Connect flavour reports the 4-request cap as not applicable and the pane
+  says downloads are unavailable. Debug builds work, so the check can be done: run a debug build behind a
+  logging proxy, download an area, confirm never more than 4 requests in flight (including just after Pause
+  or Delete) and the User-Agent ending in " Fotoz", then flip the constant to `true` (ADR-015, checklist
+  section 5). If the cap does not hold, do not ship the download and ask OpenFreeMap instead. The store
+  text and README describe the feature as if it ships; they are right only after this step.
+- **Blur sensitive hides, it does not blur, in the experiments.** With Blur sensitive on, a photo flagged
+  sensitive is dropped from `ExperimentEnv.assets` (`assetsForExperiments`), so the hub covers, the wall
+  picker, the 3D wall, similarity, preview and the compass never offer it, and `mayExport` refuses it. A
+  per-experiment blur would be gentler but needs edits in `wall/`, `ai/` and `experience/`. Owner decision:
+  keep hiding, or ask for blurring.
+- **Not built, and what would change that.** Panorama (#24, since built in Batch 7): the critic recommended no and the owner had not
+  said go; an owner go would reuse the Lanczos `PixelRows` and `RowSink`, and needs a stitching approach that
+  adds no dependency. Live-camera AR: needs a CAMERA permission decision and a `restorable = false` entry
+  (TRAPS #83), and ARCore, a dependency this batch did not add; the wall uses a photo. On-device upscaler: needs a
+  model (LiteRT, Real-ESRGAN) with a licence file (`docs/MODEL_LICENSES.md` does not exist) and a size and
+  speed budget on a low-end phone; Enlarge is Lanczos with a mild mask, labelled "no new detail".
+- **Nothing in batches 1 to 6 has run on a real device.** Every test is JVM, Robolectric or a fake; Roborazzi
+  runs in record mode, so no screenshot test proves how anything looks. The device checklists
+  (`docs/device-test/`, batch 6 section 8 for the polish) list what to run; each box is unverified until
+  ticked.
+
+## Batch 7: Stitch a panorama (24 Oct 2026)
+
+Branch `claude/friendly-lovelace-06dito` (PR #18). **Nothing in this batch has run on a device, and no real
+photograph has gone through any of it.** Every figure below is from procedural scenes (1/f noise, hard edges,
+gradients, with per-frame gain and bias, sensor noise, vignetting, roll, shear, vertical jitter, a moving
+blob and a parallax layer). The checklist is `docs/device-test/batch-7-checklist.md`; traps are TRAPS #89 to #98.
+
+### Owner decision applied (not re-asked)
+
+- Item #24 (an Image Composite Editor kind of utility) said "don't do this if it takes too much tech debt". The
+  critic recommended against it; the owner then said **build it anyway**. It was built as the pure-Kotlin MVP
+  the investigator designed: a horizontal sweep of 2 to 12 photos, **no OpenCV, no new Gradle dependency, no
+  native code, no manifest change, APK delta about zero**. Measured OpenCV verdict, in `docs/DEPENDENCIES.md`:
+  about +24.8 MB per installed arm64 APK and +141 MB universal, and no `Stitcher` binding in the Maven artifact.
+- It is about 3,500 main lines and 5,800 test lines in one package, `com.fotoxplorr.app.pano`, with one Android
+  seam (`PanoramaHost` / `PanoramaSink`). That is more than the critic's 1,100 + 450 estimate, mostly tests and
+  the screen.
+
+### What was built
+
+- **Geometry and plan** (`PanoGeometry`, `PanoTypes`): focal length in pixels from the 35 mm tag (the design's
+  "about 2.4k px for 26 mm" was wrong; it is 3004 px on 4000x3000), cylinder warp maths, and `plan`/`ladder`
+  (24 MP default, the editor's 64 MP and 8192 px ceilings, never enlarged, a strictly shrinking out-of-memory ladder).
+- **Aligner** (`PairAligner`): normalised cross-correlation over a 5-level pyramid, integer working pixels
+  (about 1200 px), a local rescan within 48 px (half-size scores, the best 4 local peaks refined at full size)
+  and a wide-peak check (slides 6 to 8 px away within 0.01 of the best), and a `confident` flag that refuses
+  thin, ambiguous or low-scoring matches.
+- **Layout and exposure** (`PanoLayout`, `ExposureGain`): chaining, runs split at a pair that does not join,
+  the isolated photo named, vertical drift; one luma multiplier per photo from block-median ratios.
+- **Blend, crop, compositor** (`SeamBlend`, `AutoCrop`, `PanoCompositor`): a 32-column cosine feather with binary
+  alpha, the largest hole-free rectangle, and a banded compositor that warps straight onto the canvas with two
+  photos alive, up to four workers, progress and cancel.
+- **Job and writer** (`PanoramaJob`, `PanoramaWriter`, `PanoCopy`): small reads, grey warp, align, layout, gains,
+  compose down the OOM ladder, protection re-checked four times, a JPEG (quality 92) in
+  `Pictures/Fotoz/Panoramas` with the first photo's date and no metadata, through `JobRunner` with progress and
+  cancel, and no partial MediaStore row.
+- **Screen** (`PanoramaScreen`, `PanoramaDraft`, `PanoramaPreview`): the "Stitch a panorama" Experimental entry
+  (Make): choose, arrange with Move left / Move right / Remove buttons (48 dp, named, no drag needed), Preview,
+  Save as a job, Open in the gallery. The chosen photos, their order and the step survive a process kill;
+  the preview and a running save do not.
+- Docs: README, store description, PRODUCT-AND-ARCHITECTURE, TRAPS #89 to #98, DEPENDENCIES, the batch 7 checklist, this entry.
+- Tests: 219 in the pano package before the screen (core and job: 57 aligner and geometry, 37 layout and exposure, 25 blend
+  and crop, 26 compositor, 74 job, writer, host and measurements) plus the screen's 50 (23 draft, 16 screen, 11
+  screen-with-job) and the host list, all passing; the full suite is the verifier's.
+
+### Measured on procedural scenes (the honest table)
+
+Offset error against the truth, 1200x900 pairs at 25, 45 and 65 percent overlap, 3 scenes each (px, working size):
+
+| Condition | Error | Notes |
+|---|---|---|
+| Clean, +-20 px vertical jitter | 0 | score 1.00, 9 of 9 confident |
+| Gain 0.8 to 1.2, bias +-25, 3 percent noise, jitter, one moving blob | 0 | scores 0.61 to 0.93, 9 of 9 confident |
+| Vignetting (corners -35 percent) | 0 | scores 0.67 to 0.92 |
+| Roll 0.5 / 1.0 degree in one frame | dy 1 to 4 / 2 to 8, dx <= 2 | translation-only, not detected |
+| Shear 0.01 | dx <= 1 | |
+| Parallax, near layer shifted 20 / 50 px | up to 20 / 50 | locks on the near layer, still confident, not detected |
+| Everything at once | dx up to 24 at 45 percent | 8 of 9 confident |
+| Moving subject in BOTH frames over a fifth of a 25 percent overlap | 17 of 18 exact, 4 refused, 1 lost (refused) | never confident and wrong |
+
+False positives (16 seeds): unrelated scenes, 0 to 10 percent overlap neighbours, flat or faint sky,
+gradients, stripes, window grids: 0 confident. The trust line 0.55 has a thin margin (false-positive maximum 0.48,
+true-positive minimum 0.61). A true 14 percent overlap is found but refused as too thin.
+
+Whole job on a pinhole-photographed cylinder, 5 photos 640x480, 30 percent overlap (green channel, mean grey
+levels over the crop after removing a global gain and bias): no imperfection 0.76; gain 0.9 to 1.1 0.81; noise
+(3 percent) 4.22 (that is the noise); vignette 0.3 4.84; gain 0.8 to 1.2 plus bias +-25 9.98 (a multiplier cannot
+undo a bias); roll 0.5 / 1.0 / 2.0 degrees 2.77 / 5.23 / 11.13; parallax 8 / 20 px 5.37 / 11.05; no lens tag
+(78 degree guess) 6.94 with a note; tag wrong by 3 mm (about 10 percent) 14.6 and 12.8, no note; everything
+together 5.75. A big mover in the overlap makes the job refuse ("Photo 3 doesn't overlap enough."). Exposure
+gains: pure gain 0.8 to 1.25 matched within 0.1 percent (bar 2 percent), 10 to 26 percent of a step left at
++-10 to 25 grey of bias. Compositor: planar tiles 0.34 mean grey levels with gains (7.17 without); a 12 percent
+wrong focal length is 1.4 levels worse on average and 3.4 times worse at the seams.
+
+Time on the 4-core host (a phone is guessed at 2 to 4 times slower; guesses, not measurements): aligner about 375 ms
+per pair on the host since the rescan (median 376, range 371 to 450; it was 150 to 200 ms before); compositor 1 to 2 s for a full 24 MP canvas, 0.14 to 0.4 s for normal sweeps; crop 40 to 450 ms.
+Memory (arithmetic): about 145 MB heap plus 96 MB native at 24 MP, about two canvases native at publish; the
+compositor's band buffers are two per worker (about 16 MB typical, 64 MB worst) and `startRung` picks the first
+OOM-ladder rung from `Runtime.maxMemory()` (40 percent share, a guess).
+A 12-photo sweep at 35 percent overlap is held by the 8192 px edge to about 8192x745.
+
+### What deviated and why
+
+- The job refuses a mixed selection (different size, portrait among landscapes, a lens differing by more than 5
+  percent between photos that have a lens tag; an untagged photo borrows the median tag of the others and adds a note) and requires the whole selection to join; it does not drop the odd photo or sort. This is simpler and
+  safer than guessing; "join these N" is a follow-up.
+- Preview is the job itself on a 700,000 px canvas, so it shares every refusal and word; the price is that
+  alignment is paid again on Save.
+- The gallery's "Stitch panorama" selection action was **not built**: it needed about 80 lines across five files
+  (two of them hot), over the 60-line limit set for it. The Experimental card is the only way in.
+- Exposure uses block medians, not the design's mean-colour least squares (a mover swung the plain mean by 26.6 percent).
+- `PanoCopy.TITLE` is "Stitch a panorama" and the old "Panorama" had no other user.
+
+### Not built, and why
+
+Full 360 degree and sphere stitching (bundle adjustment, loop closure, a viewer), vertical and grid sweeps,
+multiband blending and a dynamic-programming seam that steers around a moving person, GPano XMP tagging, 48 MP
+output, roll or shear search, parallax or wrong-focal-length detection, per-channel gain and vignetting
+compensation, a bias (affine) exposure model, sub-pixel offsets, mixed lenses or orientations, auto-sorting and
+"join the longest run", an output size or quality choice, writing the capture date into EXIF. Each was left out
+to keep the slice small, as instructed, and none is prepared beyond the swap-in points noted in the KDoc
+(`blendBand` for a seam, `Layout.runs` for a partial join).
+
+### Found, not fixed
+
+- `JobRunner.launch` registers the job after starting it, leaving a stale entry for a job that can finish on
+  another thread first (TRAPS #97); not this unit's file, and the panorama cannot hit it.
+- The activity's app-wide outcome collector posts "Joining a panorama finished." in addition to the screen's strip.
+- `decodeUpright` still returns null on API 26 and 27, so the panorama is unverified there (as the wall is).
+
+### After the audit rounds (24 Oct 2026, measured on procedural scenes only)
+
+Three audits (core, Android seam, screen) with fixes and reviews. Fixed and tested: a texture laid over real
+content no longer gives a confident stitch a period out (23 of 56 cases confidently wrong before, 0 after, 31
+refused; the first 28 px rescan still let 2 of 108 coarse-period cases through, so it is 48 px: 95 right, 13
+refused, 0 wrong); a wide peak is refused (`shoulderMargin` 0.01); the compositor keeps two band buffers per
+worker, counted by `startRung`; the ladder starts from the Java heap; an untagged photo borrows the sweep's lens
+instead of making it MIXED; a cancel after the row is visible deletes it; a full phone has its own sentence; a
+cropped frame has a note; a vanished photo is named "no longer available"; the screen guards a double Save tap,
+keeps and announces a moved photo, announces outcomes once, ignores a stale cancel, holds the first Back that
+would stop a save, and says a failed save in the pinned strip. The new checks are in section 7 of the batch 7
+checklist; the docs corrections are in TRAPS #89 to #97.
+
+**Left open by those audits (unverified, none run on a device):**
+
+- Real-photo quality of the rescan and the wide-peak rule is unproven. The 0.01 margin refuses every faint-cloud
+  pair tried, so a blurry or heavily denoised real photo may be refused when it would have stitched; loosening
+  `Params.shoulderMargin` is a one-line change after the real sweeps. Horizon and sky scenes are the expected refusals.
+- The rescan covers periods up to about 48 working px (about 160 px on a 4000 px photo); longer periods rely on
+  the walk down, untested above 60 px. 31 of 56 periodic cases are now refused, some of which stitched right before.
+- `warpToGrey` repeats the edge row into the cylinder corners; the aligner score pays (0.71 to 0.997) but offsets
+  and exposure did not. A mean-fill was tried and scored worse. The real fix is a validity mask in `PairAligner` and
+  `ExposureGain.measure`, not built.
+- Memory is arithmetic: `HEAP_SHARE` 0.4 is a guess, the manifest has no `largeHeap`, and the scratch figures (16
+  MB typical, 64 MB worst) are not measured. The scratch-count test counts distinct arrays, not heap.
+- The cropped-frame focal length is noted (`CROPPED`), not corrected; the aspect test also flags a square or 5:4
+  photo, which may be over-cautious.
+- API 28 writer: no pending state, no `Pictures/Fotoz/Panoramas` folder, and a kill mid-copy can leave a truncated
+  JPEG; documented, not changed. The no-space check reads the app's cache volume only, so a full SD card shows the
+  plain "could not be saved". The 8 MiB threshold is below a 24 MP JPEG and is read after the partial file is
+  deleted, so a phone with 8 to 15 MB free may not say "not enough space" (review finding, not fixed; the tests
+  never exercise that gap).
+- Cancelling in the last millisecond deletes a finished file rather than reporting Done (the stated contract).
+- A photo locked mid-job now gets "Photo N is no longer available." rather than the protected sentence; the
+  start check, the final look and the writer still say protected. `PanoramaProblem.of` does not map
+  `noLongerAvailable(n)`, so that sentence has no "Remove photo N" button (review finding, not fixed;
+  `PanoramaDraftTest` covers only `cannotRead` and `cannotJoin`).
+- **MEDIUM, not fixed (files outside the screen unit):** the activity-wide `JobRunner.outcomes` collector in
+  `FotoXplorrActivity` also reports every panorama outcome: a failure opens the modal dialog with the job's raw
+  sentence over the screen (covering Remove), and a success posts "Joining a panorama finished.". Proposed patch:
+  `reportsItself: Boolean = false` on `JobRunner.launch`, carried on `JobOutcome`, honoured by the collector;
+  `PanoramaJob.launch` passes true; test the flag and a pure decision function for the collector.
+- **MEDIUM, not fixed (`PanoramaJob.kt`, `PanoramaDraft.kt`):** the "cannot join" flow names the photo after the
+  first break, not the stray photo; with a stray first photo the one-tap Remove removes a good photo and the set
+  still does not join. `PanoLayout.isolated` and `outside` are computed and ignored. Proposed patch: in `Steps.go`
+  name `layout.isolated.firstOrNull()` (or the first index of a prefix or suffix `outside` block), falling back to
+  `cannotJoin` only for a break between two equal-length runs; add stray-first and stray-last job tests.
+- LOW, not fixed: `PanoCopy.PICK_HINT` does not say what makes a sweep work (one spot, turning, each photo
+  overlapping the next) or that close objects can ghost; proposed "Pick photos taken from one spot, turning side to
+  side, each overlapping the next." A preview failure is still printed in the scrolling page and could be off
+  screen on a small phone.
+- LOW, screen review findings not fixed: the held-Back flag is never reset after the first hold (a second save in
+  one visit leaves at the first Back); a stale preview failure on the same photos masks a later save failure on
+  the arrange page; the held Back and the "Saving" strip also apply to a leftover job from an earlier visit; the
+  strip scrolls the moved photo to the start edge even when already fully in view. Leaving by the rail scrub or
+  Settings still cancels a save at once. TalkBack focus is not moved to the preview or the moved button.
+- Everything above was verified only under Robolectric with injected clicks and semantic actions, or on procedural
+  scenes; the screen test height (2400 dp) proves placement, not visibility on a short screen.
+
+### Residual, for the owner
+
+- **Real-photo quality is unverified until your three real handheld sweeps** (standing still and turning, one with
+  a walking person, one indoors), compared with the phone's own panorama mode. That is the second half of the
+  design's kill criterion and the go / no-go; section 1 of the batch 7 checklist.
+- **Decisions to confirm:** the same-camera rule and refusing the whole selection on one bad pair; the 8192 px edge
+  (a long sweep never reaches 24 MP; a panorama-specific larger edge would be a change in `plan()` and the editor ceilings it references, if wanted);
+  the folder `Pictures/Fotoz/Panoramas`; no metadata at all in the output; whether to build the gallery selection
+  action; whether to keep Save re-aligning or reuse the preview's positions.
+- **A human read of the new wording:** the `PanoCopy` sentences (each one short sentence)
+  and the README and store lines. The store line says close objects can ghost; check it matches what you see.
+- **Silent failures to keep in mind:** a tilted hand, a near object or a focal-length tag that is wrong by about
+  10 percent produces visible flaws and the app does not warn. A person walking through is the one case where it refuses.

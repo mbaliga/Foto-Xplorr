@@ -68,6 +68,12 @@ enum class ActivityKind(val label: String, val accent: Color, val glyph: ImageVe
     COPYING("Copying", Color(0xFFFFA100), ActivityGlyphs.Copy),
     BACKING_UP("Backing up", Color(0xFF4DFF00), ActivityGlyphs.Save),
     EXPORTING("Exporting", Color(0xFFFFE600), ActivityGlyphs.Export),
+
+    // A saved map area coming over the network. Pink-red is the one stretch of the wheel still
+    // empty (about 50 degrees from the magenta and 60 from the orange), and saturated so it cannot
+    // be read as the pale error salmon. The glyph is the generic sync mark: a download arrow would
+    // need a new vector in ActivityGlyphs.
+    DOWNLOADING_MAP("Downloading map", Color(0xFFFF4081), ActivityGlyphs.Scan),
 }
 
 /**

@@ -1,0 +1,482 @@
+package com.fotoxplorr.app.pano
+
+import android.os.Looper
+import androidx.activity.OnBackPressedDispatcher
+import androidx.activity.OnBackPressedDispatcherOwner
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleRegistry
+import com.fotoxplorr.app.gallery.GalleryPreferencesState
+import com.fotoxplorr.app.jobs.JobRunner
+import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.core.model.MediaId
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import java.io.IOException
+import kotlin.math.abs
+
+/**
+ * The panorama screen with the REAL job behind it (aligner, layout, exposure, compositor, preview
+ * canvas) over procedural photos: Preview, the size it shows, Save as a job on the app's runner, a photo
+ * that does not join, a protected photo, Cancel, and leaving the screen mid-save. Only the phone is
+ * faked ([FakeHost], [FakeSink]); nothing here is a photograph, and nothing says how it looks.
+ */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [34], qualifiers = "w440dp-h2400dp-xhdpi")
+class PanoramaScreenJobTest {
+
+    @get:Rule
+    val compose = createComposeRule()
+
+    private class BackOwner : OnBackPressedDispatcherOwner {
+        private val registry = LifecycleRegistry.createUnsafe(this).also { it.currentState = Lifecycle.State.RESUMED }
+        override val lifecycle: Lifecycle get() = registry
+        override val onBackPressedDispatcher = OnBackPressedDispatcher()
+    }
+
+    private val owner = BackOwner()
+    private val scope = CoroutineScope(Dispatchers.Unconfined)
+    private val runner = JobRunner(scope)
+
+    @After
+    fun tearDown() = scope.cancel()
+
+    @Composable
+    private fun Screen(
+        assets: List<MediaAsset>,
+        host: FakeHost,
+        sink: FakeSink,
+        opened: MutableList<MediaAsset>? = null,
+        onClose: () -> Unit = {},
+    ) {
+        FotoXplorrTheme(GalleryPreferencesState()) {
+            CompositionLocalProvider(LocalOnBackPressedDispatcherOwner provides owner) {
+                PanoramaScreen(
+                    assets = assets,
+                    newHost = { host },
+                    newSink = { sink },
+                    runner = runner,
+                    onOpenAsset = { asset, _ -> opened?.add(asset) },
+                    onClose = onClose,
+                )
+            }
+        }
+    }
+
+    private fun waitFor(timeoutMillis: Long = 120_000, condition: () -> Boolean) =
+        compose.waitUntil(timeoutMillis) { shadowOf(Looper.getMainLooper()).idle(); condition() }
+
+    private fun waitForText(text: String) =
+        waitFor { compose.onAllNodes(hasText(text)).fetchSemanticsNodes().isNotEmpty() }
+
+    private fun pickPhotos(rig: CylinderRig, vararg indices: Int) {
+        indices.forEach { compose.onNodeWithContentDescription(rig.asset(it).displayName).performClick() }
+        compose.onNodeWithText(PanoCopy.NEXT).performClick()
+    }
+
+    private fun textOf(prefix: String): String {
+        val nodes = compose.onAllNodes(hasText(prefix, substring = true)).fetchSemanticsNodes()
+        return nodes.first().config[SemanticsProperties.Text].first().text
+    }
+
+    // ---- Preview -----------------------------------------------------------------------------------
+
+    @Test
+    fun `Preview joins the photos on a small canvas, shows the picture, and saves nothing`() {
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        val sink = FakeSink()
+        compose.setContent { Screen(rig.assets(), host, sink) }
+        pickPhotos(rig, 0, 1, 2)
+
+        compose.onNodeWithText(PanoCopy.PREVIEW).performClick()
+        waitFor { compose.onAllNodesWithContentDescription(PanoCopy.PREVIEW_DESCRIPTION).fetchSemanticsNodes().isNotEmpty() }
+
+        assertTrue("nothing was written", sink.published.isEmpty() && sink.canvases.isEmpty())
+        assertTrue("and no job was put on the list", runner.jobs.value.isEmpty())
+        compose.onNodeWithText(PanoCopy.PREVIEW).assertExists()
+        // The size line now says "about", not "up to".
+        assertTrue(textOf("About").endsWith("pixels."))
+        compose.onAllNodes(hasText(PanoCopy.upToSize(PanoGeometry.DEFAULT_MAX_PIXELS))).fetchSemanticsNodes().let { assertTrue(it.isEmpty()) }
+    }
+
+    @Test
+    fun `changing the order throws the preview away, because it was made for the old order`() {
+        val rig = CylinderRig(count = 3)
+        compose.setContent { Screen(rig.assets(), rigHost(rig), FakeSink()) }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.PREVIEW).performClick()
+        waitFor { compose.onAllNodesWithContentDescription(PanoCopy.PREVIEW_DESCRIPTION).fetchSemanticsNodes().isNotEmpty() }
+
+        compose.onNodeWithContentDescription(PanoCopy.moveRight(1)).performClick()
+
+        assertTrue(compose.onAllNodesWithContentDescription(PanoCopy.PREVIEW_DESCRIPTION).fetchSemanticsNodes().isEmpty())
+        compose.onNodeWithText(PanoCopy.upToSize(PanoGeometry.DEFAULT_MAX_PIXELS)).assertExists()
+    }
+
+    @Test
+    fun `a photo that does not overlap is named in plain words and can be removed`() {
+        // Photos 1 and 2 are one scene; 3 is another place altogether, so the break is before it.
+        val a = CylinderRig(count = 2, seed = 5)
+        val b = CylinderRig(count = 2, seed = 6)
+        val host = FakeHost(List(3) { a.asset(it) }, { PanoSize(640, 480) }, { 28 }) { i, w, h ->
+            if (i < 2) a.render(i, w, h) else b.render(0, w, h)
+        }
+        compose.setContent { Screen(a.assets() + a.asset(2), host, FakeSink()) }
+        pickPhotos(a, 0, 1, 2)
+
+        compose.onNodeWithText(PanoCopy.PREVIEW).performClick()
+        waitForText("Photo 3 doesn't overlap enough.")
+
+        compose.onNodeWithText(PanoCopy.remove(3)).performClick()
+
+        assertTrue(compose.onAllNodes(hasText("Photo 3 doesn't overlap enough.")).fetchSemanticsNodes().isEmpty())
+        compose.onNodeWithContentDescription(PanoCopy.photoInStrip(2, a.asset(1).displayName)).assertExists()
+        compose.onNodeWithContentDescription(PanoCopy.photoInStrip(3, a.asset(2).displayName)).assertDoesNotExist()
+        // Two photos are left, so Preview works again and joins them.
+        compose.onNodeWithText(PanoCopy.PREVIEW).performClick()
+        waitFor { compose.onAllNodesWithContentDescription(PanoCopy.PREVIEW_DESCRIPTION).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test
+    fun `a protected photo is refused before a pixel is read`() {
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        host.protectedIds += rig.asset(1).id
+        compose.setContent { Screen(rig.assets(), host, FakeSink()) }
+        pickPhotos(rig, 0, 1, 2)
+
+        compose.onNodeWithText(PanoCopy.PREVIEW).performClick()
+        waitForText(PanoCopy.PROTECTED)
+
+        assertTrue("no pixel and no tag was read", host.calls.isEmpty() && host.focalReads.get() == 0)
+        assertTrue(compose.onAllNodesWithContentDescription(PanoCopy.PREVIEW_DESCRIPTION).fetchSemanticsNodes().isEmpty())
+    }
+
+    // ---- Save --------------------------------------------------------------------------------------
+
+    @Test
+    fun `the size shown after Preview is about the size Save then makes`() {
+        // 1000 x 750 photos spread over about 2240 x 770: more than the preview's budget, so the preview
+        // is drawn at a fraction of full size and the figure has to be scaled back up.
+        val rig = CylinderRig(photoW = 1000, photoH = 750, count = 3, step = 620)
+        val host = rigHost(rig)
+        val sink = FakeSink()
+        compose.setContent { Screen(rig.assets(), host, sink) }
+        pickPhotos(rig, 0, 1, 2)
+
+        compose.onNodeWithText(PanoCopy.PREVIEW).performClick()
+        waitFor { compose.onAllNodesWithContentDescription(PanoCopy.PREVIEW_DESCRIPTION).fetchSemanticsNodes().isNotEmpty() }
+        val previewedAt = host.calls.last { it.index == 0 }.limits.maxLongEdge
+        assertTrue("the preview really was drawn smaller than the photo ($previewedAt)", previewedAt < 1000)
+        val numbers = Regex("\\d+").findAll(textOf("About")).map { it.value.toInt() }.toList()
+        assertEquals(2, numbers.size)
+
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitForText(PanoCopy.SAVED)
+
+        val crop = sink.published.single().crop
+        assertTrue("width ${numbers[0]} vs ${crop.width}", abs(numbers[0] - crop.width) <= crop.width * 0.03)
+        assertTrue("height ${numbers[1]} vs ${crop.height}", abs(numbers[1] - crop.height) <= crop.height * 0.03)
+    }
+
+    @Test
+    fun `Save runs as a job on the app's list, says it is saved, and opens the new picture in the gallery`() {
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        val sink = FakeSink()
+        // The gallery already lists the file the fake sink will "create": row id 1.
+        val saved = rig.asset(0).copy(id = MediaId(1), displayName = "IMG_0001-panorama.jpg")
+        val opened = mutableListOf<MediaAsset>()
+        val seen = mutableListOf<String>()
+        scope.launch { runner.outcomes.collect { seen += it.title } }
+        compose.setContent { Screen(rig.assets() + saved, host, sink, opened) }
+        pickPhotos(rig, 0, 1, 2)
+
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitForText(PanoCopy.SAVED)
+
+        assertEquals(listOf(PanoCopy.JOB_TITLE), seen)
+        assertEquals("saved once", 1, sink.published.size)
+        assertEquals("dated and named after the first photo", rig.asset(0).dateTakenMillis, sink.published.single().dateTakenMillis)
+        assertEquals(rig.asset(0).displayName, sink.published.single().sourceName)
+        assertTrue("the list is empty again", runner.jobs.value.isEmpty())
+
+        compose.onNodeWithText(PanoCopy.OPEN).performClick()
+        assertEquals(listOf(saved), opened)
+    }
+
+    @Test
+    fun `until the gallery lists the new picture the screen says so instead of offering a dead button`() {
+        val rig = CylinderRig(count = 3)
+        compose.setContent { Screen(rig.assets(), rigHost(rig), FakeSink()) }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitForText(PanoCopy.SAVED)
+        compose.onNodeWithText(PanoCopy.NOT_LISTED_YET).assertExists()
+        compose.onNodeWithText(PanoCopy.OPEN).assertDoesNotExist()
+    }
+
+    @Test
+    fun `a failure of the save is said in the job's own sentence`() {
+        val rig = CylinderRig(count = 3)
+        val sink = FakeSink().also { it.failWith = IOException("disk full") }
+        compose.setContent { Screen(rig.assets(), rigHost(rig), sink) }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitForText(PanoCopy.SAVE_FAILED)
+        assertTrue("none of the exception's text reaches the person", compose.onAllNodes(hasText("disk full", substring = true)).fetchSemanticsNodes().isEmpty())
+    }
+
+    @Test
+    fun `Cancel stops a save that is running and leaves nothing`() {
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        host.onDecode = { _, _ -> Thread.sleep(150) }
+        val sink = FakeSink()
+        compose.setContent { Screen(rig.assets(), host, sink) }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitFor(20_000) { runner.jobs.value.isNotEmpty() }
+        waitForText(PanoCopy.SAVING)
+
+        compose.onNodeWithText(PanoCopy.CANCEL).performClick()
+        waitForText(PanoCopy.CANCELLED)
+
+        assertTrue(runner.jobs.value.isEmpty())
+        assertTrue("nothing was published", sink.published.isEmpty())
+        assertTrue("and every canvas was handed back", sink.canvases.all { it.released })
+    }
+
+    @Test
+    fun `leaving the screen stops a save that is running`() {
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        host.onDecode = { _, _ -> Thread.sleep(150) }
+        val sink = FakeSink()
+        var shown by mutableStateOf(true)
+        compose.setContent { if (shown) Screen(rig.assets(), host, sink) }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitFor(20_000) { runner.jobs.value.isNotEmpty() }
+
+        compose.runOnUiThread { shown = false }
+        compose.waitForIdle()
+        waitFor(20_000) { runner.jobs.value.isEmpty() }
+
+        assertTrue("nothing was published", sink.published.isEmpty())
+        assertNull(runner.jobs.value.firstOrNull())
+    }
+
+    @Test
+    fun `Save and Preview wait for each other, so two jobs never hold the photos at once`() {
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        host.onDecode = { _, _ -> Thread.sleep(150) }
+        compose.setContent { Screen(rig.assets(), host, FakeSink()) }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitFor(20_000) { runner.jobs.value.isNotEmpty() }
+        waitForText(PanoCopy.SAVING)
+
+        compose.onNodeWithText(PanoCopy.PREVIEW).assertIsNotEnabled()
+        compose.onNodeWithText(PanoCopy.SAVE).assertIsNotEnabled()
+        compose.onNodeWithText(PanoCopy.CANCEL).performClick()
+        waitForText(PanoCopy.CANCELLED)
+    }
+
+    // ---- the screen's own care of a save ------------------------------------------------------------
+
+    @Test
+    fun `two Save taps before the screen redraws start one job, not two`() {
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        host.onDecode = { _, _ -> Thread.sleep(150) }
+        val sink = FakeSink()
+        compose.setContent { Screen(rig.assets(), host, sink) }
+        pickPhotos(rig, 0, 1, 2)
+
+        // Both activations arrive on the main thread before the screen is redrawn (a fast double tap, or a
+        // switch or TalkBack activating twice): the second sees the screen as the first did.
+        val save = compose.onNodeWithText(PanoCopy.SAVE).fetchSemanticsNode().config[SemanticsActions.OnClick].action!!
+        compose.runOnUiThread {
+            save()
+            save()
+        }
+        compose.waitForIdle()
+
+        assertEquals("one job on the list", 1, runner.jobs.value.count { it.title == PanoCopy.JOB_TITLE })
+        compose.onNodeWithText(PanoCopy.CANCEL).performClick()
+        waitForText(PanoCopy.CANCELLED)
+        assertTrue("nothing was published", sink.published.isEmpty())
+    }
+
+    @Test
+    fun `the preview picture and the saved line are announced as they appear`() {
+        val polite = SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite)
+        val rig = CylinderRig(count = 3)
+        compose.setContent { Screen(rig.assets(), rigHost(rig), FakeSink()) }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.PREVIEW).performClick()
+        waitFor { compose.onAllNodesWithContentDescription(PanoCopy.PREVIEW_DESCRIPTION).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription(PanoCopy.PREVIEW_DESCRIPTION).assert(polite)
+
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitForText(PanoCopy.SAVED)
+        compose.onNodeWithText(PanoCopy.SAVED).assert(polite)
+    }
+
+    @Test
+    fun `a failure is announced, and the progress is not read out twice`() {
+        val polite = SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite)
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        host.onDecode = { _, _ -> Thread.sleep(150) }
+        compose.setContent { Screen(rig.assets(), host, FakeSink().also { it.failWith = IOException("x") }) }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitFor(20_000) { runner.jobs.value.isNotEmpty() }
+        waitForText(PanoCopy.SAVING)
+        // The words are the Text; the bar adds no second copy of them.
+        assertTrue(compose.onAllNodesWithContentDescription(PanoCopy.SAVING).fetchSemanticsNodes().isEmpty())
+
+        waitForText(PanoCopy.SAVE_FAILED)
+        assertEquals("said once, not in the strip and again in the page", 1, compose.onAllNodes(hasText(PanoCopy.SAVE_FAILED)).fetchSemanticsNodes().size)
+        compose.onNodeWithText(PanoCopy.SAVE_FAILED).assert(polite)
+        assertPinnedAbovePage(PanoCopy.SAVE_FAILED)
+    }
+
+    @Test
+    fun `a failed save that names a photo says it in the pinned strip, with Remove still in the page`() {
+        // The person taps Save at the bottom of a page that scrolls: the sentence must not be up in the page.
+        val a = CylinderRig(count = 2, seed = 5)
+        val b = CylinderRig(count = 2, seed = 6)
+        val all = List(4) { a.asset(it) }
+        val host = FakeHost(all, { PanoSize(640, 480) }, { 28 }) { i, w, h -> if (i < 2) a.render(i, w, h) else b.render(i - 2, w, h) }
+        compose.setContent { Screen(all, host, FakeSink()) }
+        pickPhotos(a, 0, 1, 2, 3)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitFor { compose.onAllNodes(hasText("doesn't overlap enough.", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+
+        val sentence = textOf("doesn't overlap enough.")
+        assertEquals("said once", 1, compose.onAllNodes(hasText(sentence)).fetchSemanticsNodes().size)
+        assertPinnedAbovePage(sentence)
+        compose.onNodeWithText(PanoCopy.remove(3)).assertExists()
+    }
+
+    /** The page is one scrolling column that starts with the order hint; a pinned line sits wholly above it. */
+    private fun assertPinnedAbovePage(text: String) {
+        val line = compose.onNodeWithText(text).fetchSemanticsNode().boundsInRoot
+        val page = compose.onNodeWithText(PanoCopy.ORDER_HINT).fetchSemanticsNode().boundsInRoot
+        assertTrue("\"$text\" is above the scrolling page, not in it", line.bottom <= page.top)
+    }
+
+    @Test
+    fun `a failed save names a photo only while the photos are the ones it was made for`() {
+        // Photos 1 and 2 are one scene, 3 and 4 another: the save fails at a photo in the middle of the four.
+        val a = CylinderRig(count = 2, seed = 5)
+        val b = CylinderRig(count = 2, seed = 6)
+        val all = List(4) { a.asset(it) }
+        val host = FakeHost(all, { PanoSize(640, 480) }, { 28 }) { i, w, h -> if (i < 2) a.render(i, w, h) else b.render(i - 2, w, h) }
+        var assets by mutableStateOf(all)
+        compose.setContent { Screen(assets, host, FakeSink()) }
+        pickPhotos(a, 0, 1, 2, 3)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitFor { compose.onAllNodes(hasText("doesn't overlap enough.", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+
+        // A different photo is locked in the gallery meanwhile: the strip shifts without the person editing it,
+        // so the number in the message now points at another photo.
+        compose.runOnUiThread { assets = all.filter { it.id != a.asset(0).id } }
+        compose.waitForIdle()
+
+        assertTrue("the message is gone", compose.onAllNodes(hasText("doesn't overlap enough.", substring = true)).fetchSemanticsNodes().isEmpty())
+        (1..3).forEach { compose.onNodeWithText(PanoCopy.remove(it)).assertDoesNotExist() }
+    }
+
+    @Test
+    fun `Back while a save runs holds the first press that would leave, and the next one leaves`() {
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        host.onDecode = { _, _ -> Thread.sleep(150) }
+        var closed = 0
+        compose.setContent { Screen(rig.assets(), host, FakeSink(), onClose = { closed++ }) }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitFor(20_000) { runner.jobs.value.isNotEmpty() }
+        waitForText(PanoCopy.SAVING)
+
+        fun back() {
+            compose.runOnUiThread { owner.onBackPressedDispatcher.onBackPressed() }
+            compose.waitForIdle()
+        }
+        back() // arranging -> choosing, the save keeps going
+        compose.onNodeWithText(PanoCopy.PICK_HINT).assertExists()
+        assertEquals(0, closed)
+        assertTrue(runner.jobs.value.isNotEmpty())
+
+        back() // the first press that would leave is held, with the warning in view
+        assertEquals("the screen did not close", 0, closed)
+        assertTrue("and the save was not stopped", runner.jobs.value.isNotEmpty())
+        compose.onNodeWithText(PanoCopy.LEAVING_CANCELS).assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+
+        back() // the second one leaves
+        assertEquals(1, closed)
+
+        compose.onNodeWithText(PanoCopy.CANCEL).performClick()
+        waitForText(PanoCopy.CANCELLED)
+    }
+
+    @Test
+    fun `a cancel that finishes after the screen was left is not shown on the next screen`() {
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        host.onDecode = { _, _ -> Thread.sleep(300) }
+        var generation by mutableStateOf(0)
+        compose.setContent { key(generation) { Screen(rig.assets(), host, FakeSink()) } }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitFor(20_000) { runner.jobs.value.isNotEmpty() }
+
+        // Leave and come back at once: the first screen's save is told to stop, and has not finished doing so.
+        compose.runOnUiThread { generation++ }
+        compose.waitForIdle()
+        waitFor(20_000) { runner.jobs.value.isEmpty() }
+        compose.waitForIdle()
+
+        compose.onNodeWithText(PanoCopy.CANCELLED).assertDoesNotExist()
+        compose.onNodeWithText(PanoCopy.SAVED).assertDoesNotExist()
+    }
+}

@@ -244,6 +244,12 @@ dependencies {
     // ---- end WS-D block ----
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
+    // Encrypted backup (docs/adr/ADR-014): Tink's streaming AEAD (AES-256-GCM, HKDF per file,
+    // chunked with a final-segment flag) seals the pack and manifest files. Used through ONE
+    // small interface (backup/ChunkedAead.kt), so it can be swapped for plain JCA without
+    // touching the format. Pure JVM code, no network or Play Services dependency. 1.22.0 bundles a
+    // relocated protobuf, so it does not meet mediapipe's protobuf-javalite 4.26.1.
+    implementation("com.google.crypto.tink:tink-android:1.22.0")
     // HEIC export
     implementation("androidx.heifwriter:heifwriter:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
@@ -337,11 +343,6 @@ dependencies {
     // the owner asked for one navigation feel across every app, and two apps each deriving
     // their own version of it is precisely how that feel drifts apart.
     implementation("dev.aarso:cell-shell:0.1.0")
-
-    // Media3 session (audio playback service)
-    implementation("androidx.media3:media3-exoplayer:1.9.0")
-    implementation("androidx.media3:media3-session:1.9.0")
-    implementation("androidx.media3:media3-common:1.9.0")
 
     testImplementation("junit:junit:4.13.2")
     // WS-D: JobRunner's state transitions run real coroutines (progress callbacks, cancellation)

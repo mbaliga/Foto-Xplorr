@@ -2,23 +2,20 @@ package com.fotoxplorr.app.openwith
 
 /**
  * What an incoming ACTION_VIEW / ACTION_EDIT / ACTION_SEND(_MULTIPLE) intent should do inside the
- * app, once classified. One case per real destination -- the viewer, the editor, or the audio
- * player -- rather than a single "here is a Uri, go figure it out" so a caller can `when` over it
- * exhaustively instead of re-deriving the same image/video/audio branching a second time.
+ * app, once classified. One case per real destination -- the viewer or the editor -- rather than
+ * a single "here is a Uri, go figure it out" so a caller can `when` over it exhaustively instead
+ * of re-deriving the same image/video branching a second time.
  */
 sealed interface IncomingIntentRoute {
     /** A single image or video Uri, opened straight into the viewer. */
     data class ViewMedia(val uris: List<String>, val isVideo: Boolean) : IncomingIntentRoute
 
-    /** A single audio Uri, opened straight into the player. */
-    data class ViewAudio(val uri: String) : IncomingIntentRoute
-
     /** An image handed over specifically to be edited, per ACTION_EDIT's own contract. */
     data class EditImage(val uri: String) : IncomingIntentRoute
 
     /** The intent named an action/type this app answers in its manifest but could not be
-     *  classified into anything usable -- no data, no stream, or a MIME type outside the three
-     *  this app declares intent filters for. */
+     *  classified into anything usable -- no data, no stream, no `content://` Uri, or a MIME type
+     *  outside the two this app declares intent filters for. */
     data object Unhandled : IncomingIntentRoute
 }
 
@@ -26,6 +23,12 @@ sealed interface IncomingIntentRoute {
  * Pure classification of an incoming intent, from the plain strings an
  * [android.content.Intent] carries rather than the Intent itself -- so this is testable with no
  * Android runtime at all.
+ *
+ * Only `content://` Uris are accepted. A `file://` Uri would have this app open any path it can
+ * read with its own permissions on behalf of whoever sent the intent, and a `content://` Uri is
+ * the only kind that carries a grant from the sender; everything else is [IncomingIntentRoute.Unhandled].
+ * [FotoXplorrActivity][com.fotoxplorr.app.FotoXplorrActivity] declares no VIEW filter (that is
+ * `ExternalViewerActivity`'s), but it is exported, so an explicit intent can still carry any action.
  *
  * @param action `Intent.ACTION_VIEW`, `Intent.ACTION_EDIT`, `Intent.ACTION_SEND` or
  *   `Intent.ACTION_SEND_MULTIPLE`, passed as the plain string constant those fields hold.
@@ -45,27 +48,23 @@ fun classifyIncomingIntent(
     val kind = mediaKindFor(mimeType)
     return when (action) {
         ACTION_VIEW -> {
-            val uri = dataUri ?: return IncomingIntentRoute.Unhandled
+            val uri = dataUri?.takeIf(::isContentUri) ?: return IncomingIntentRoute.Unhandled
             when (kind) {
                 MediaKind.IMAGE -> IncomingIntentRoute.ViewMedia(listOf(uri), isVideo = false)
                 MediaKind.VIDEO -> IncomingIntentRoute.ViewMedia(listOf(uri), isVideo = true)
-                MediaKind.AUDIO -> IncomingIntentRoute.ViewAudio(uri)
                 MediaKind.UNKNOWN -> IncomingIntentRoute.Unhandled
             }
         }
         ACTION_EDIT -> {
-            val uri = dataUri ?: return IncomingIntentRoute.Unhandled
+            val uri = dataUri?.takeIf(::isContentUri) ?: return IncomingIntentRoute.Unhandled
             if (kind == MediaKind.IMAGE) IncomingIntentRoute.EditImage(uri) else IncomingIntentRoute.Unhandled
         }
         ACTION_SEND, ACTION_SEND_MULTIPLE -> {
-            val uris = streamUris.ifEmpty { listOfNotNull(dataUri) }
+            val uris = streamUris.ifEmpty { listOfNotNull(dataUri) }.filter(::isContentUri)
             if (uris.isEmpty()) return IncomingIntentRoute.Unhandled
             when (kind) {
                 MediaKind.IMAGE -> IncomingIntentRoute.ViewMedia(uris, isVideo = false)
                 MediaKind.VIDEO -> IncomingIntentRoute.ViewMedia(uris, isVideo = true)
-                // A shared audio file plays the first track; a batch share of audio has no
-                // "queue" contract from the sending app, so only the first Uri is honoured.
-                MediaKind.AUDIO -> IncomingIntentRoute.ViewAudio(uris.first())
                 MediaKind.UNKNOWN -> IncomingIntentRoute.Unhandled
             }
         }
@@ -73,13 +72,14 @@ fun classifyIncomingIntent(
     }
 }
 
-private enum class MediaKind { IMAGE, VIDEO, AUDIO, UNKNOWN }
+private enum class MediaKind { IMAGE, VIDEO, UNKNOWN }
+
+private fun isContentUri(uri: String): Boolean = uri.startsWith(CONTENT_PREFIX, ignoreCase = true)
 
 private fun mediaKindFor(mimeType: String?): MediaKind = when {
     mimeType == null -> MediaKind.UNKNOWN
     mimeType.startsWith("image/") -> MediaKind.IMAGE
     mimeType.startsWith("video/") -> MediaKind.VIDEO
-    mimeType.startsWith("audio/") -> MediaKind.AUDIO
     else -> MediaKind.UNKNOWN
 }
 

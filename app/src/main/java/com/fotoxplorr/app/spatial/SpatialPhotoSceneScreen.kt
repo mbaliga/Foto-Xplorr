@@ -69,6 +69,7 @@ import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import com.fotoxplorr.app.ui.HelpCopy
 
 private enum class SpatialDistanceFilter(val label: String, val maximumMeters: Double?) {
     NEARBY("1 km", 1_000.0),
@@ -123,7 +124,7 @@ fun SpatialPhotoSceneScreen(
                 locationMessage = message
             }
         } else {
-            locationMessage = "Location permission was not granted. This mode cannot position photos relative to you."
+            locationMessage = HelpCopy.Hint.LOCATION_DENIED
         }
     }
 
@@ -207,23 +208,22 @@ fun SpatialPhotoSceneScreen(
         when {
             geoState.scannedCount == 0 -> SpatialOptInPanel(
                 title = "Read embedded coordinates first",
-                message = "Fotoz reads each photo's GPS tag on this device. Nothing is uploaded.",
+                message = HelpCopy.Hint.READS_GPS_LOCALLY,
                 action = "Read locations",
                 onAction = onIndexLocations,
             )
             location == null -> SpatialOptInPanel(
                 title = "See photos relative to where you stand",
-                message = "Location permission is requested only for this mode. The camera is not used and no location leaves the device.",
+                message = HelpCopy.Hint.LOCATION_ONLY_HERE,
                 action = "Use current location",
                 onAction = ::requestLocation,
             )
             placements.isEmpty() -> SpatialOptInPanel(
                 title = "No photos in this distance and time range",
                 message = if (geoState.locatedCount == 0) {
-                    "None of your photos carry a location. Photos saved from messaging apps and " +
-                        "websites usually have theirs removed before they reach your phone."
+                    HelpCopy.Hint.NO_PHOTO_LOCATION
                 } else {
-                    "Choose a wider range, or a longer stretch of time."
+                    HelpCopy.Hint.WIDER_RANGE
                 },
                 action = "Show all distances",
                 onAction = { distanceFilter = SpatialDistanceFilter.ALL },
@@ -267,7 +267,7 @@ fun SpatialPhotoSceneScreen(
                     IconButton(onClick = onClose) {
                         Icon(
                             Icons.Outlined.Close,
-                            contentDescription = "Close spatial compass",
+                            contentDescription = "Close compass view",
                             tint = ComposeColor.White,
                         )
                     }
@@ -540,12 +540,12 @@ private fun resolveCurrentLocation(
 }
 
 private fun sensorStatusMessage(accuracy: Int): String = when (accuracy) {
-    SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> "Compass accuracy high. Turn the phone to look around."
+    SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> HelpCopy.Hint.COMPASS_GOOD
     SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM ->
-        "Compass accuracy medium. A figure-eight motion can improve calibration."
+        HelpCopy.Hint.COMPASS_FAIR
     SensorManager.SENSOR_STATUS_ACCURACY_LOW ->
-        "Compass accuracy low. Move away from magnets and calibrate with a figure-eight motion."
-    else -> "Compass unreliable or unavailable. Drag to adjust the view manually."
+        HelpCopy.Hint.COMPASS_POOR
+    else -> HelpCopy.Hint.COMPASS_UNAVAILABLE
 }
 
 /** Scrim behind overlaid text, so a bright photo behind it cannot make the label unreadable. */

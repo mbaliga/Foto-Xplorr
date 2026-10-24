@@ -234,6 +234,40 @@ class PlaceMorphTest {
         assertNull(colorSpaceName(7))
     }
 
+    @Test
+    fun `the pin is hero-scaled only when no flier carries the photo`() {
+        val hero = 4.2f
+        val hand = PlaceMorph.pinMode(flightActive = false, flightFlies = true)
+        assertEquals(PlaceMorph.PinMode.HERO, hand)
+        assertEquals(PlaceMorph.thumbnailScale(0.3f, hero), PlaceMorph.pinScale(hand, 0.3f, hero), TOLERANCE)
+        // With a flier (or when it cannot fly) the tile never scales: two shrinking copies of one
+        // photo is the thing flightActive exists to prevent.
+        for (mode in listOf(PlaceMorph.PinMode.FLIGHT, PlaceMorph.PinMode.FADE)) {
+            assertEquals(1f, PlaceMorph.pinScale(mode, 0f, hero), TOLERANCE)
+            assertEquals(1f, PlaceMorph.pinScale(mode, 0.5f, hero), TOLERANCE)
+        }
+        assertEquals(PlaceMorph.PinMode.FLIGHT, PlaceMorph.pinMode(flightActive = true, flightFlies = true))
+        assertEquals(PlaceMorph.PinMode.FADE, PlaceMorph.pinMode(flightActive = true, flightFlies = false))
+        // flightFlies means nothing without flightActive.
+        assertEquals(PlaceMorph.PinMode.HERO, PlaceMorph.pinMode(flightActive = false, flightFlies = false))
+    }
+
+    @Test
+    fun `an unreachable pin fades in with the plate instead of waiting for a flier`() {
+        assertEquals(PlaceMorph.plateAlpha(0.5f), PlaceMorph.pinTileAlpha(PlaceMorph.PinMode.FADE, 0.5f), TOLERANCE)
+        assertEquals(1f, PlaceMorph.pinTileAlpha(PlaceMorph.PinMode.FADE, 1f), TOLERANCE)
+        // The hero path never fades the tile.
+        assertEquals(1f, PlaceMorph.pinTileAlpha(PlaceMorph.PinMode.HERO, 0f), TOLERANCE)
+    }
+
+    @Test
+    fun `the old stagger windows are untouched by the flight geometry`() {
+        // The flight additions live beside the in-plate hero and must not move it.
+        assertEquals(1f, PlaceMorph.thumbnailScale(0.85f, 4.2f), TOLERANCE)
+        assertEquals(0f, PlaceMorph.plateAlpha(0.15f), TOLERANCE)
+        assertEquals(0f, PlaceMorph.textAlpha(0.45f), TOLERANCE)
+    }
+
     private companion object {
         const val TOLERANCE = 1e-4f
     }

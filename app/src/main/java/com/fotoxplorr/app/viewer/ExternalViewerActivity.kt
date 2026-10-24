@@ -1,7 +1,6 @@
 package com.fotoxplorr.app.viewer
 
 import android.content.ComponentName
-import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
@@ -15,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +29,20 @@ import com.fotoxplorr.app.FotoXplorrActivity
 import com.fotoxplorr.app.LibraryRuntime
 import com.fotoxplorr.app.gallery.GalleryPreferences
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.OPEN_REQUEST_HIDDEN_MESSAGE
+import com.fotoxplorr.app.OPEN_REQUEST_UNVERIFIED_MESSAGE
+import com.fotoxplorr.app.gallery.browsableAssets
+import com.fotoxplorr.app.openwith.ExternalAssetLoader
+import com.fotoxplorr.app.openwith.MediaStoreUri
+import com.fotoxplorr.app.openwith.OpenRequestLookup
+import com.fotoxplorr.app.openwith.classifyMediaStoreUri
+import com.fotoxplorr.app.openwith.lookupUncataloguedRow
+import com.fotoxplorr.app.organize.LibraryStore
+import com.fotoxplorr.app.privacy.PrivateFolderStore
+import com.fotoxplorr.app.privacy.SensitiveStore
+import com.fotoxplorr.app.recognition.TextLayoutProvider
+import com.fotoxplorr.app.openwith.syntheticNegativeMediaId
+import com.fotoxplorr.app.openwith.withSafeExtras
 import com.fotoxplorr.app.share.PreparedItem
 import com.fotoxplorr.app.share.ShareFrame
 import com.fotoxplorr.app.share.ShareOptions
@@ -45,10 +59,11 @@ import java.util.Locale
 import kotlinx.coroutines.withContext
 
 /**
- * "Open with Fotoz" (P0-18): the only entry point besides the launcher. A photo or video
- * tapped in another app -- the Files app, including on a USB drive -- lands here, never in
- * [FotoXplorrActivity], since this activity needs no gallery and must never touch this app's own
- * catalogue for a file that catalogue has never scanned.
+ * "Open with Fotoz" (P0-18): the single VIEW target (FotoXplorrActivity only receives EDIT and
+ * SEND). A photo or video tapped in another app -- the Files app, including on a USB drive --
+ * lands here, never in [FotoXplorrActivity], since this activity needs no gallery and must never
+ * touch this app's own catalogue for a file that catalogue has never scanned. The manifest filter
+ * is `content://` only, and [onCreate] re-checks the scheme for an explicit intent.
  *
  * Two outcomes, decided once, up front, from the incoming URI alone:
  *  - it is a `content://media/...` row this app's own catalogue already has (someone opened a
@@ -57,7 +72,10 @@ import kotlinx.coroutines.withContext
  *    activity's own, already-correct favourite/sensitive/trash/tags/caption/location wiring is
  *    what "open that asset with all its normal actions instead" (the brief's own words) actually
  *    means -- a second, hand-rolled copy of that wiring here would drift from the real one the
- *    moment either changed, and would double the surface a real bug could hide in.
+ *    moment either changed, and would double the surface a real bug could hide in. That activity
+ *    also owns the privacy rule: a photo the library is hiding (locked, archived, trashed,
+ *    sensitive-hidden) is NOT opened there, only a short notice is shown. This activity must
+ *    never fall back to showing a catalogued row itself -- that would be the side door.
  *  - anything else -- an ad-hoc [MediaAsset] is built from the URI alone (via [buildExternalAsset],
  *    never written to any store) and shown in [ViewerScreen] with `catalogueActions = false`.
  */
@@ -66,9 +84,14 @@ class ExternalViewerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         if (CrashRecovery.maybeShowRecovery(this, appLabel = "Fotoz", style = crashRecoveryStyle(this))) return
         enableEdgeToEdge()
+        // Exported and reachable by any app: this activity reads no extras itself, but a hostile
+        // one must not be left packed in the intent for a later reader to trip on.
+        intent?.withSafeExtras()
 
         val uri = intent?.data
-        if (uri == null) {
+        // The manifest only routes content:// here, but this activity is exported and an explicit
+        // intent can carry any Uri; a file:// one would be read with this app's own permissions.
+        if (uri == null || !uri.scheme.equals("content", ignoreCase = true)) {
             finish()
             return
         }
@@ -80,17 +103,29 @@ class ExternalViewerActivity : ComponentActivity() {
             var asset by remember { mutableStateOf<MediaAsset?>(null) }
             val galleryPreferences = remember { GalleryPreferences(applicationContext) }
             val preferences by galleryPreferences.observe().collectAsStateWithLifecycle()
+            // A photo from another app has no recognition index, so the word reader is the only
+            // source of its text for Select text; released with the composition, as the main
+            // activity does when its viewer closes.
+            val textLayoutProvider = remember { TextLayoutProvider(applicationContext) }
+            DisposableEffect(textLayoutProvider) { onDispose { textLayoutProvider.release() } }
 
             LaunchedEffect(uri) {
-                val catalogedId = withContext(Dispatchers.IO) { catalogedMediaId(context, uri) }
-                if (catalogedId != null) {
-                    startActivity(
-                        Intent(context, FotoXplorrActivity::class.java).apply {
-                            putExtra(FotoXplorrActivity.EXTRA_OPEN_MEDIA_ID, catalogedId)
-                        },
-                    )
-                    finish()
-                    return@LaunchedEffect
+                when (val decision = withContext(Dispatchers.IO) { decideOpen(context, uri) }) {
+                    is ExternalOpenDecision.Redirect -> {
+                        startActivity(
+                            Intent(context, FotoXplorrActivity::class.java).apply {
+                                putExtra(FotoXplorrActivity.EXTRA_OPEN_MEDIA_ID, decision.mediaId)
+                            },
+                        )
+                        finish()
+                        return@LaunchedEffect
+                    }
+                    is ExternalOpenDecision.Refuse -> {
+                        Toast.makeText(context, decision.message, Toast.LENGTH_LONG).show()
+                        finish()
+                        return@LaunchedEffect
+                    }
+                    ExternalOpenDecision.OpenExternally -> Unit
                 }
                 asset = runCatching {
                     withContext(Dispatchers.IO) { buildExternalAsset(context, uri, intentMimeType) }
@@ -133,6 +168,14 @@ class ExternalViewerActivity : ComponentActivity() {
                             onNext = {},
                             onClose = { finish() },
                             catalogueActions = false,
+                            // ViewerScreen's default is "autoplay on": without this an externally
+                            // opened video would ignore the user turning autoplay off in settings.
+                            autoplayVideos = preferences.autoplayVideos,
+                            // A sticker opened from another app gets the same background choice,
+                            // remembered in the same preference.
+                            transparencyBackground = preferences.viewerTransparencyBackground,
+                            onSetTransparencyBackground = galleryPreferences::setViewerTransparencyBackground,
+                            textLayoutProvider = textLayoutProvider,
                         )
                     }
                 }
@@ -190,18 +233,70 @@ class ExternalViewerActivity : ComponentActivity() {
     }
 }
 
+/** What [ExternalViewerActivity] does with an incoming Uri; see [decideOpen]. */
+private sealed interface ExternalOpenDecision {
+    /** A catalogued photo: hand over to [FotoXplorrActivity], which owns the privacy rules. */
+    data class Redirect(val mediaId: Long) : ExternalOpenDecision
+
+    /** Not a library photo at all: read it as the external file it is. */
+    data object OpenExternally : ExternalOpenDecision
+
+    /** A library photo that must not be shown, or one that cannot be checked: say so, open nothing. */
+    data class Refuse(val message: String) : ExternalOpenDecision
+}
+
 /**
- * Null unless [uri] is a `content://media/...` row this app's own catalogue has already scanned --
- * see [ExternalViewerActivity]'s own KDoc for what the caller does with either answer.
- * [LibraryRuntime.repository] is a local SQLite cache of MediaStore, not MediaStore itself, so
- * this is a fast, fully offline lookup, never a network or MediaStore round trip.
+ * Decides, once, what to do with [uri] -- see [ExternalViewerActivity]'s own KDoc.
+ * [LibraryRuntime.repository] is a local SQLite cache of MediaStore, not MediaStore itself, so the
+ * catalogue lookup is a fast, fully offline read.
+ *
+ * A `content://media` Uri is never simply opened as an external file: that would read the photo
+ * with this app's own media grant and skip the lock. One the catalogue holds is redirected (the
+ * other activity applies the rules). One it does not hold yet -- a photo written a moment ago,
+ * inside the scan debounce -- is looked up in MediaStore itself and held to the same rules by its
+ * folder identity; a locked folder here stays locked, because this activity's own
+ * [PrivateFolderStore] has nothing unlocked (the unlocked set lives in memory in the main
+ * activity), which errs on the side of refusing. A media Uri with no readable row, or a row
+ * MediaStore will not describe, is refused.
  */
-private suspend fun catalogedMediaId(context: Context, uri: Uri): Long? {
-    if (uri.authority != "media") return null
-    val id = runCatching { ContentUris.parseId(uri) }.getOrNull() ?: return null
-    val repository = LibraryRuntime.get(context).repository
-    val isCataloged = repository.awaitLoaded().any { it.id == MediaId(id) }
-    return id.takeIf { isCataloged }
+private suspend fun decideOpen(context: Context, uri: Uri): ExternalOpenDecision =
+    when (val ref = classifyMediaStoreUri(uri.toString())) {
+        MediaStoreUri.NotMediaStore -> ExternalOpenDecision.OpenExternally
+        MediaStoreUri.Unreadable -> ExternalOpenDecision.Refuse(OPEN_REQUEST_UNVERIFIED_MESSAGE)
+        is MediaStoreUri.Row -> {
+            val runtime = LibraryRuntime.get(context)
+            if (runtime.repository.awaitLoaded().any { it.id == MediaId(ref.id) }) {
+                ExternalOpenDecision.Redirect(ref.id)
+            } else {
+                val stores = OpenGuardStores(context)
+                when (lookupUncataloguedRow(ExternalAssetLoader(context).readMediaStoreRow(ref.id), stores::browsable)) {
+                    OpenRequestLookup.Unknown -> {
+                        runtime.requestScan(false)
+                        ExternalOpenDecision.OpenExternally
+                    }
+                    OpenRequestLookup.Hidden -> ExternalOpenDecision.Refuse(OPEN_REQUEST_HIDDEN_MESSAGE)
+                    is OpenRequestLookup.Found, OpenRequestLookup.Unverified ->
+                        ExternalOpenDecision.Refuse(OPEN_REQUEST_UNVERIFIED_MESSAGE)
+                }
+            }
+        }
+    }
+
+/** The stores `browsableAssets` reads, opened fresh for the one check [decideOpen] makes. */
+private class OpenGuardStores(context: Context) {
+    private val library = LibraryStore.get(context)
+    private val sensitive = SensitiveStore(context)
+    private val privateFolders = PrivateFolderStore(context)
+    private val preferences = GalleryPreferences(context)
+
+    fun browsable(list: List<MediaAsset>): List<MediaAsset> = browsableAssets(
+        list,
+        library.observe().value.archivedIds,
+        sensitive.observe().value,
+        privateFolders.observeLockedFolders().value,
+        privateFolders.observeUnlockedFolders().value,
+        preferences.observe().value.hideSensitive,
+    )
 }
 
 /**
@@ -274,7 +369,10 @@ internal fun buildExternalAsset(context: Context, uri: Uri, intentMimeType: Stri
     }.getOrNull()?.let(::parseExifDateTimeOriginal) ?: System.currentTimeMillis()
 
     return MediaAsset(
-        id = MediaId.EXTERNAL,
+        // A per-URI id, not MediaId.EXTERNAL: every external asset sharing one id made every
+        // external video share one resume-position key, so a clip resumed at another clip's
+        // position. Negative by construction, so it can never collide with a catalogue row.
+        id = syntheticNegativeMediaId(uri.toString()),
         contentUriString = uri.toString(),
         displayName = identity.displayName,
         mimeType = identity.mimeType,
@@ -289,6 +387,9 @@ internal fun buildExternalAsset(context: Context, uri: Uri, intentMimeType: Stri
         relativePath = null,
         isFavorite = false,
         isTrashed = false,
+        // Handed to this app, not owned by it: see MediaAsset.isExternal. VideoPlayer keys its
+        // "no catalogue writes" rule (key moments, resume positions) off this flag.
+        isExternal = true,
     )
 }
 

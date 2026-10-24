@@ -3,4 +3,8 @@
      else about the app is identical to offline — that is the point of the split. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Read by the offline-map pane to tell "no connection" from "mobile data" before a download
+         (ConnectionCheck). Declared here rather than left to the map library's own manifest, so
+         the app's check does not depend on a library keeping it; the offline flavor removes it. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 </manifest>

@@ -8,7 +8,9 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import com.fotoxplorr.app.hyle.ActivityKind
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
@@ -54,17 +56,30 @@ class JobForegroundService : LifecycleService() {
             return
         }
         val notification = buildNotification(jobs)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING)
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        val type = foregroundTypeFor(jobs.map { it.kind }, Build.VERSION.SDK_INT)
+        // ServiceCompat drops the type below Android 10, where the three-argument call does not exist.
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
+    }
+
+    /**
+     * Android 15 gives a data-sync service a time budget (about six hours in a day) and calls this
+     * when it is spent; the service must stop at once or the system raises an error. The job itself
+     * lives in the ViewModel and is not cancelled here, but without its notification the process may
+     * be stopped, which an encrypted backup survives by design: run it again and it carries on.
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     private fun buildNotification(jobs: List<RunningJob>) = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setSmallIcon(android.R.drawable.stat_sys_upload)
+        .setSmallIcon(
+            if (jobs.all { it.kind == ActivityKind.DOWNLOADING_MAP }) {
+                android.R.drawable.stat_sys_download
+            } else {
+                android.R.drawable.stat_sys_upload
+            },
+        )
         .setOngoing(true)
         .setOnlyAlertOnce(true)
         .setContentTitle(
@@ -112,15 +127,44 @@ class JobForegroundService : LifecycleService() {
     }
 
     companion object {
+        /**
+         * The foreground-service type to start with, as a bit mask (0 below Android 10, which has none).
+         * A backup copies bytes to a folder and a map download fetches them over the network: both are
+         * data sync, on every version. Media processing is for the transcodes, and is what Android 15
+         * and later get for every other kind of job, as before. A mix of the two asks for both; both
+         * are declared in the manifest.
+         */
+        internal fun foregroundTypeFor(kinds: Collection<ActivityKind>, sdk: Int): Int {
+            if (sdk < Build.VERSION_CODES.Q) return 0
+            if (sdk < Build.VERSION_CODES.VANILLA_ICE_CREAM) return ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            val dataSync = kinds.any { it.movesBytes() }
+            val other = kinds.any { !it.movesBytes() }
+            return when {
+                dataSync && other -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+                dataSync -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                else -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+            }
+        }
+
+        /** Kinds that copy or fetch bytes rather than transcode media. */
+        private fun ActivityKind.movesBytes(): Boolean =
+            this == ActivityKind.BACKING_UP || this == ActivityKind.DOWNLOADING_MAP
+
         private const val CHANNEL_ID = "foto_xplorr_jobs"
         private const val NOTIFICATION_ID = 4210
         private const val PERCENT_MAX = 100
         private const val ACTION_CANCEL = "com.fotoxplorr.app.jobs.action.CANCEL"
         private const val EXTRA_JOB_ID = "jobId"
 
-        /** Idempotent: safe to call every time the job list goes from empty to non-empty. */
+        /**
+         * Idempotent: safe to call every time the job list goes from empty to non-empty. Never
+         * throws: from the background Android 12+ can refuse a foreground start, and the job
+         * itself runs on regardless (it lives in the ViewModel), only without its notification.
+         */
         fun start(context: Context) {
-            ContextCompat.startForegroundService(context, Intent(context, JobForegroundService::class.java))
+            runCatching {
+                ContextCompat.startForegroundService(context, Intent(context, JobForegroundService::class.java))
+            }
         }
 
         fun stop(context: Context) {

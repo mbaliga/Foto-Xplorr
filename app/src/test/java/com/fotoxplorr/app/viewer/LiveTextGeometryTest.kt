@@ -1,10 +1,8 @@
 package com.fotoxplorr.app.viewer
 
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import com.fotoxplorr.app.recognition.TextBlock
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,33 +53,6 @@ class LiveTextGeometryTest {
     }
 
     @Test
-    fun `a tap inside a block finds it and a tap on bare photo finds nothing`() {
-        val rect = fittedImageRect(Size(1000f, 1000f), imageWidth = 1000, imageHeight = 1000)
-        val blocks = listOf(
-            TextBlock("top", left = 0.0f, top = 0.0f, right = 0.5f, bottom = 0.2f),
-            TextBlock("bottom", left = 0.0f, top = 0.8f, right = 0.5f, bottom = 1.0f),
-        )
-
-        assertEquals(0, blockAt(blocks, rect, Offset(100f, 100f)))
-        assertEquals(1, blockAt(blocks, rect, Offset(100f, 900f)))
-        assertNull(blockAt(blocks, rect, Offset(900f, 500f)))
-    }
-
-    @Test
-    fun `overlapping blocks resolve to the last one so small boxes stay reachable`() {
-        val rect = fittedImageRect(Size(1000f, 1000f), imageWidth = 1000, imageHeight = 1000)
-        val blocks = listOf(
-            TextBlock("whole paragraph", left = 0f, top = 0f, right = 1f, bottom = 1f),
-            TextBlock("one word", left = 0.4f, top = 0.4f, right = 0.6f, bottom = 0.6f),
-        )
-
-        // Inside the small one: the small one wins, or it could never be selected at all.
-        assertEquals(1, blockAt(blocks, rect, Offset(500f, 500f)))
-        // Outside it but inside the big one: the big one.
-        assertEquals(0, blockAt(blocks, rect, Offset(100f, 100f)))
-    }
-
-    @Test
     fun `degenerate sizes do not divide by zero`() {
         // A frame can be measured at zero before layout settles; returning the container rather
         // than crashing is the only sane answer.
@@ -90,5 +61,37 @@ class LiveTextGeometryTest {
 
         val stillFine = fittedImageRect(Size(100f, 100f), imageWidth = 0, imageHeight = 10)
         assertEquals(100f, stillFine.width, 0.01f)
+    }
+
+    @Test
+    fun `the overlay frame for an EXIF rotated portrait is the upright size, not the stored one`() {
+        // MediaStore reports the sensor grid (4000x3000 landscape); the file displays upright
+        // (3000x4000 portrait) and the OCR boxes are normalised to that upright bitmap (TRAPS 48).
+        val frame = PlaceMorph.restingImageSize(storedWidth = 4000, storedHeight = 3000, displayWidth = 3000, displayHeight = 4000)
+        assertEquals(3000, frame.width.toInt())
+        assertEquals(4000, frame.height.toInt())
+
+        val container = Size(1000f, 1000f)
+        val upright = fittedImageRect(container, frame.width.toInt(), frame.height.toInt())
+        val stored = fittedImageRect(container, 4000, 3000)
+
+        // The photo is pillarboxed; fitting the stored size letterboxes it instead and lands
+        // every box somewhere else.
+        assertEquals(125f, upright.left, 0.01f)
+        assertEquals(0f, upright.top, 0.01f)
+        assertEquals(750f, upright.width, 0.01f)
+        assertEquals(0f, stored.left, 0.01f)
+        assertEquals(125f, stored.top, 0.01f)
+
+        val block = TextBlock("PLATFORM 9", left = 0.5f, top = 0.5f, right = 0.6f, bottom = 0.6f)
+        assertEquals(125f + 0.5f * 750f, block.toScreenRect(upright).left, 0.01f)
+        assertEquals(500f, block.toScreenRect(upright).top, 0.01f)
+    }
+
+    @Test
+    fun `with no EXIF size read the stored size is the frame`() {
+        val frame = PlaceMorph.restingImageSize(storedWidth = 4000, storedHeight = 3000, displayWidth = 0, displayHeight = 0)
+        assertEquals(4000, frame.width.toInt())
+        assertEquals(3000, frame.height.toInt())
     }
 }

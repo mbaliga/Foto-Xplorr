@@ -15,7 +15,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
-import com.fotoxplorr.app.audio.AudioLibraryScreen
 import com.fotoxplorr.app.curate.ArchiveAdvisor
 import com.fotoxplorr.app.curate.ArchiveReviewItem
 import com.fotoxplorr.app.curate.ArchiveSuggestionsReview
@@ -26,6 +25,7 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.moments.MomentSource
 import com.fotoxplorr.app.moments.VideoMoment
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.app.ui.PaneScaffold
 import com.fotoxplorr.app.viewer.ImageExifDetails
 import com.fotoxplorr.app.viewer.KeyMomentBar
 import com.fotoxplorr.app.viewer.MomentScrubber
@@ -142,14 +142,19 @@ class NewSurfaceRenderTest {
     @Test
     fun `settings background rules tab`() {
         render("settings-1-background-rules") {
-            SettingsTabsRoom(
-                state = emptyState(),
-                actions = noOpActions(),
-                onOpenLegacyScreen = {},
-                onOpenSupport = {},
-                onOpenMoreApps = {},
-                initialTab = SettingsTab.BACKGROUND,
-            )
+            // Hosted as the browser hosts it: the Settings pane, which owns the title and the way back.
+            PaneScaffold(title = "Settings", onBack = {}) {
+                SettingsTabsRoom(
+                    state = emptyState(),
+                    actions = noOpActions(),
+                    onOpenLegacyScreen = {},
+                    onOpenSupport = {},
+                    onOpenMoreApps = {},
+                    initialTab = SettingsTab.BACKGROUND,
+                    showHeader = false,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 
@@ -157,14 +162,19 @@ class NewSurfaceRenderTest {
     @Test
     fun `settings library tab with tidy up entry`() {
         render("settings-2-library-tidy-up") {
-            SettingsTabsRoom(
-                state = emptyState(),
-                actions = noOpActions(),
-                onOpenLegacyScreen = {},
-                onOpenSupport = {},
-                onOpenMoreApps = {},
-                initialTab = SettingsTab.LIBRARY,
-            )
+            // Hosted as the browser hosts it: the Settings pane, which owns the title and the way back.
+            PaneScaffold(title = "Settings", onBack = {}) {
+                SettingsTabsRoom(
+                    state = emptyState(),
+                    actions = noOpActions(),
+                    onOpenLegacyScreen = {},
+                    onOpenSupport = {},
+                    onOpenMoreApps = {},
+                    initialTab = SettingsTab.LIBRARY,
+                    showHeader = false,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 
@@ -201,20 +211,6 @@ class NewSurfaceRenderTest {
         check(items.isNotEmpty()) { "The advisor offered nothing for a fixture built to trip all three signals" }
         render("tidy-up-1-review") {
             ArchiveSuggestionsReview(items = items, onAccept = {}, onReject = {})
-        }
-    }
-
-    /** The Audio library's permission-gated empty state (P0-10): distinct from "no audio files
-     *  found" (assets empty but granted), with the request button actually visible. */
-    @Test
-    fun `audio library permission prompt`() {
-        render("audio-1-permission-prompt") {
-            AudioLibraryScreen(
-                assets = emptyList(),
-                onPlay = {},
-                permissionGranted = false,
-                onRequestPermission = {},
-            )
         }
     }
 

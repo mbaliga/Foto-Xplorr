@@ -5,6 +5,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -34,10 +36,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -47,6 +51,8 @@ import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.ui.HyleGrotesk
 import dev.aarso.cellshell.SpatialMotion
 import dev.aarso.cellshell.WheelItem
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.floor
@@ -65,11 +71,16 @@ import kotlin.math.roundToInt
  * library is untouched.
  *
  * The wheel's BEHAVIOUR is kept, because the owner's reference video set it and a still cannot
- * unset it: the run turns under the finger; the fade is read off the fractional scroll position
- * so it moves continuously rather than re-highlighting on settle; release snaps to the nearest row
- * and selects it; and the marker is pinned to its row, not to the focus line, so a selection
- * change makes it travel back across the intervening rows — a little slower than the words, and
- * stretching along its path as it goes — rather than teleport.
+ * unset it: the run turns under the finger and the fade is read off the fractional scroll
+ * position so it moves continuously rather than re-highlighting on settle.
+ *
+ * What changed (owner, 2026-10, *"release should not take you to a location -- if scroll and
+ * release is the interaction, then the selection indicator must move as well, and the change
+ * should reflect on the pane"*): the square tracks the focus line LIVE, hopping from word to word
+ * as the wheel turns, and the hovered destination is committed once the wheel hesitates
+ * ([RAIL_COMMIT_DEBOUNCE_MS]) -- while the finger is still down -- so the pane follows the
+ * indicator. Lifting the finger only SETTLES the wheel on its nearest word; it never navigates and
+ * never closes the room (that is [onReselect]'s job).
  *
  * **Nothing per-frame recomposes.** Each row's alpha is read in its graphics layer, the marker's
  * position in its placement lambda, and the weight is constant (every word is bold), so a turn of
@@ -78,7 +89,19 @@ import kotlin.math.roundToInt
  * @param items the destinations, top to bottom.
  * @param selectedId the item at the focus line. The source of truth: the rail follows it and
  *   holds no selection of its own.
- * @param onSelect fired when a row is tapped, and when a turn settles on a new row.
+ * @param onSelect fired when a row is tapped, when a turn hesitates on a new row, and when a turn
+ *   ends on one that has not been committed yet.
+ * @param onReselect fired when the ALREADY-selected row is tapped. Release no longer closes the
+ *   room, so tapping the current word is how the user says "this one, close the menu". It is also
+ *   how a pane (Settings, a destination screen) is left from the word you came from: that word is
+ *   still the selected one, so it is never an `onSelect`.
+ * @param paneOpen whether a pane is open over the destination [selectedId] names. Then a scrub or
+ *   a fling that comes to rest on the selected word is a choice of it, not a no-op, and says so
+ *   through [onLeavePane] (and not [onReselect], which also closes the room under the finger).
+ * @param onLeavePane fired when the wheel rests on the selected word while [paneOpen].
+ * @param onTurning whether the wheel is moving at all: a finger on it, its fling, or the rail's
+ *   own settle. A host that creates something costly from the committed word (the street map)
+ *   waits for false, because a commit arrives while the finger is still down.
  */
 @Composable
 fun DestinationWordRail(
@@ -86,10 +109,16 @@ fun DestinationWordRail(
     selectedId: String,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onReselect: () -> Unit = {},
+    paneOpen: Boolean = false,
+    onLeavePane: () -> Unit = {},
+    onTurning: (Boolean) -> Unit = {},
 ) {
     if (items.isEmpty()) return
 
-    val selectedIndex = items.indexOfFirst { it.id == selectedId }.coerceAtLeast(0)
+    // -1 when the id is unknown: nothing is selected, so any hovered row is a change.
+    val selectedRaw = items.indexOfFirst { it.id == selectedId }
+    val selectedIndex = selectedRaw.coerceAtLeast(0)
     val scroll = rememberScrollState()
 
     BoxWithConstraints(modifier = modifier) {
@@ -112,52 +141,149 @@ fun DestinationWordRail(
         // wheel's position in row units, fractional part and all.
         fun scrollRows(): Float = scroll.value / pitchPx
 
-        // The marker's row. It trails [selectedIndex] rather than tracking the focus line: while
-        // the wheel turns, selection has not changed yet, so the marker rides away with its row.
+        // The marker's row: the word under the focus line, so the square is always beside the
+        // bright word and hops with the wheel. It is an animated row index rather than the focus
+        // index itself so the hop is a short glide, not a teleport.
         val markerRow = remember { Animatable(selectedIndex.toFloat()) }
         var travelFrom by remember { mutableFloatStateOf(selectedIndex.toFloat()) }
         var travelTo by remember { mutableFloatStateOf(selectedIndex.toFloat()) }
 
+        val currentSelectedId by rememberUpdatedState(selectedId)
+        val currentSelectedRaw by rememberUpdatedState(selectedRaw)
+        val currentOnSelect by rememberUpdatedState(onSelect)
+        val currentPaneOpen by rememberUpdatedState(paneOpen)
+        val currentOnLeavePane by rememberUpdatedState(onLeavePane)
+        val currentItems by rememberUpdatedState(items)
+
         var placed by remember { mutableStateOf(false) }
+        // True while the rail is moving its OWN wheel (placement, following a tap, settling on a
+        // detent). Those scrolls pass through rows the user never chose, so they are never a
+        // hover worth committing and their end is never a release.
+        var settling by remember { mutableStateOf(false) }
+        suspend fun moveWheelTo(px: Int, animated: Boolean) {
+            settling = true
+            try {
+                if (animated) scroll.animateScrollTo(px, SpatialMotion.settleSpec) else scroll.scrollTo(px)
+            } finally {
+                settling = false
+            }
+        }
+
+        // Whether a finger is on the wheel and moving it, and whether the wheel has been turned by
+        // one since it last landed. The scroll state's own `isScrollInProgress` cannot say: it is
+        // equally true for the rail's animations, whose interruption (a second tap, a finger
+        // grabbing the wheel) would otherwise read as a release. A turn with no finger -- a mouse
+        // wheel, a trackpad, a screen reader's scroll action -- has no drag to see; it is told
+        // apart by starting while the rail is not moving the wheel itself (see below).
+        var dragging by remember { mutableStateOf(false) }
+        var turnedByUser by remember { mutableStateOf(false) }
+        LaunchedEffect(scroll) {
+            scroll.interactionSource.interactions.collect { interaction ->
+                when (interaction) {
+                    is DragInteraction.Start -> {
+                        dragging = true
+                        turnedByUser = true
+                    }
+                    is DragInteraction.Stop, is DragInteraction.Cancel -> dragging = false
+                    else -> Unit
+                }
+            }
+        }
+
+        // The wheel's motion, for the host. Reported from here rather than derived by it because
+        // only the rail knows which scrolls count: all of them, the rail's own settle included.
+        val currentOnTurning by rememberUpdatedState(onTurning)
+        LaunchedEffect(scroll) {
+            snapshotFlow { dragging || scroll.isScrollInProgress }.collect { currentOnTurning(it) }
+        }
+        // A rail that leaves the composition mid-turn (a window resize swapping presentations)
+        // must not leave the host believing it is still turning.
+        DisposableEffect(scroll) { onDispose { currentOnTurning(false) } }
+
         LaunchedEffect(selectedIndex, pitchPx) {
             val target = (selectedIndex * pitchPx).roundToInt()
             if (!placed) {
                 // First composition: the selected room is simply already there.
+                moveWheelTo(target, animated = false)
                 placed = true
-                scroll.scrollTo(target)
-                markerRow.snapTo(selectedIndex.toFloat())
-                travelFrom = selectedIndex.toFloat()
-                travelTo = selectedIndex.toFloat()
-            } else {
-                travelFrom = markerRow.value
-                travelTo = selectedIndex.toFloat()
-                // The words settle on the shell's contract spec; the marker uses a longer run so
-                // it visibly lags them and catches up at the focus line.
-                launch { scroll.animateScrollTo(target, SpatialMotion.settleSpec) }
-                markerRow.animateTo(
-                    selectedIndex.toFloat(),
-                    tween(MARKER_TRAVEL_MS, easing = FastOutSlowInEasing),
-                )
+            } else if (
+                // A commit the wheel itself caused (the finger or a fling is still moving it, and
+                // it is already on this row): animating now would fight the finger. The release
+                // below settles it on the detent.
+                !(scroll.isScrollInProgress && railFocusIndex(scroll.value, pitchPx, currentItems.lastIndex) == selectedIndex) &&
+                scroll.value != target
+            ) {
+                // An outside change (a tap, a selection set elsewhere): the words settle on the
+                // shell's contract spec.
+                launch { moveWheelTo(target, animated = true) }
             }
         }
 
-        // A wheel does not stop between detents: on release, snap to the nearest row and report
-        // it — turning the wheel IS selecting.
-        val currentSelectedId by rememberUpdatedState(selectedId)
-        val currentOnSelect by rememberUpdatedState(onSelect)
-        val currentItems by rememberUpdatedState(items)
+        // The marker follows the focus line. Until the first placement the wheel sits at 0, which
+        // is not where the user is, so the selected row stands in.
+        LaunchedEffect(scroll, pitchPx) {
+            snapshotFlow {
+                if (placed) railFocusIndex(scroll.value, pitchPx, currentItems.lastIndex) else selectedIndex
+            }.collectLatest { row ->
+                travelFrom = markerRow.value
+                travelTo = row.toFloat()
+                markerRow.animateTo(row.toFloat(), tween(MARKER_HOP_MS, easing = FastOutSlowInEasing))
+            }
+        }
+
+        // Commit while scrubbing: once the wheel has rested on a new word for the debounce, that
+        // word becomes the selection, so the pane follows the indicator without recomputing for
+        // every row of a fast fling. collectLatest drops a pending commit the moment the focus
+        // moves on or returns to the selected word.
+        LaunchedEffect(scroll, pitchPx) {
+            snapshotFlow {
+                railPendingCommit(
+                    focusIndex = railFocusIndex(scroll.value, pitchPx, currentItems.lastIndex),
+                    selectedIndex = currentSelectedRaw,
+                    dragging = dragging && scroll.isScrollInProgress && !settling,
+                    paneOpen = currentPaneOpen,
+                )
+            }.collectLatest { hovered ->
+                if (hovered != null) {
+                    delay(RAIL_COMMIT_DEBOUNCE_MS)
+                    if (hovered == currentSelectedRaw) {
+                        // Only reachable with a pane open: the scrub has come back to the word
+                        // the pane sits over, which is choosing it.
+                        currentOnLeavePane()
+                    } else {
+                        currentItems.getOrNull(hovered)?.let { currentOnSelect(it.id) }
+                    }
+                }
+            }
+        }
+
+        // A wheel does not stop between detents. When a turn the user made comes to rest -- the
+        // finger lifted, or its fling ran out -- settle on the nearest row. This is ONLY a settle:
+        // the hovered row has normally been committed already, and a turn that never paused gets
+        // its one commit here, but nothing closes the room and nothing navigates anywhere the
+        // indicator was not already pointing.
         LaunchedEffect(scroll, pitchPx) {
             var wasScrolling = false
             snapshotFlow { scroll.isScrollInProgress }.collect { scrolling ->
-                // Only a true→false edge is a release; the initial false must not fire onSelect.
-                if (wasScrolling && !scrolling) {
+                // A scroll that begins while the rail is not moving its own wheel is a user's whether
+                // or not a finger drags it (mouse wheel, trackpad, TalkBack): without this it
+                // neither committed nor settled, and left the wheel between words.
+                if (scrolling && !wasScrolling && !settling) turnedByUser = true
+                // Only a true->false edge is a landing; the initial false must not fire onSelect.
+                if (wasScrolling && !scrolling && turnedByUser) {
+                    turnedByUser = false
                     val landing = currentItems
-                    val nearest = (scroll.value / pitchPx).roundToInt().coerceIn(0, landing.lastIndex)
-                    if (landing[nearest].id != currentSelectedId) currentOnSelect(landing[nearest].id)
-                    // A programmatic settle is itself a scroll and comes back through this edge;
-                    // without the guard the wheel would animate to where it already is, forever.
+                    val nearest = railFocusIndex(scroll.value, pitchPx, landing.lastIndex)
+                    when (railLanding(nearest, currentSelectedRaw, currentPaneOpen)) {
+                        RailLanding.SELECT -> currentOnSelect(landing[nearest].id)
+                        RailLanding.LEAVE_PANE -> currentOnLeavePane()
+                        RailLanding.NONE -> Unit
+                    }
+                    // The settle is itself a scroll and comes back through this edge, but it is not
+                    // a user turn, so it ends here. A child job, so a finger that grabs the wheel
+                    // mid-settle cancels the settle alone rather than this collector.
                     val detent = (nearest * pitchPx).roundToInt()
-                    if (scroll.value != detent) scroll.animateScrollTo(detent, SpatialMotion.settleSpec)
+                    if (scroll.value != detent) launch { moveWheelTo(detent, animated = true) }
                 }
                 wasScrolling = scrolling
             }
@@ -177,7 +303,7 @@ fun DestinationWordRail(
                     // Deferred: read on the draw pass, never captured here, so a turn of the
                     // wheel does not recompose this loop.
                     distance = { index - scrollRows() },
-                    onClick = { if (item.id != selectedId) onSelect(item.id) },
+                    onClick = { if (item.id != selectedId) onSelect(item.id) else onReselect() },
                 )
             }
             Spacer(Modifier.height(padDp))
@@ -197,6 +323,8 @@ fun DestinationWordRail(
                             .roundToInt(),
                     )
                 }
+                // After the offset, so the semantics bounds are where the square is drawn.
+                .testTag(RAIL_MARKER_TAG)
                 .graphicsLayer {
                     alpha = destinationRowFade(markerRow.value - scrollRows())
                     // Motion carries the state change: the square lengthens along its path,
@@ -246,20 +374,54 @@ private fun DestinationRow(
         // A fixed gutter so every word sits on one optical left edge whether or not the marker
         // is beside it — the words must not shuffle sideways when selection moves.
         Spacer(Modifier.width(RAIL_GUTTER_DP.dp))
-        BasicText(
-            text = item.label,
-            style = TextStyle(
+        // The room left for the word is what decides its size: "Experimental" is about 274 sp at
+        // the reference's 44, more than the 260 dp pinned rail or a 360 dp phone's pull-out room
+        // leaves, so a word that does not fit is drawn smaller (down to RAIL_MIN_FONT_SP) before
+        // it is ever cut. Every other word keeps the reference size.
+        BoxWithConstraints(Modifier.weight(1f)) {
+            val measurer = rememberTextMeasurer()
+            val density = LocalDensity.current
+            val availablePx = constraints.maxWidth.toFloat()
+            val baseStyle = TextStyle(
                 color = Color.White,
                 fontFamily = HyleGrotesk,
                 fontSize = RAIL_FONT_SP.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = RAIL_LETTER_SPACING_SP.sp,
-            ),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+            )
+            val fontSp = remember(item.label, availablePx, density.density, density.fontScale) {
+                val natural = measurer.measure(
+                    text = item.label,
+                    style = baseStyle,
+                    softWrap = false,
+                    maxLines = 1,
+                ).size.width.toFloat()
+                railFontSpFor(naturalPx = natural, availablePx = availablePx)
+            }
+            BasicText(
+                text = item.label,
+                style = baseStyle.copy(fontSize = fontSp.sp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
+
+/**
+ * The font size, in sp, to draw a rail word at: the reference's [baseSp] when its natural width
+ * [naturalPx] (measured at [baseSp]) fits in [availablePx], otherwise scaled down to fit, with a
+ * 2% margin for kerning the measure does not see, and never below [minSp]. Pure so the rule is
+ * asserted, not eyeballed. A word that cannot fit even at the floor is ellipsised by the text.
+ */
+internal fun railFontSpFor(
+    naturalPx: Float,
+    availablePx: Float,
+    baseSp: Float = RAIL_FONT_SP.toFloat(),
+    minSp: Float = RAIL_MIN_FONT_SP.toFloat(),
+): Float =
+    if (naturalPx <= 0f || naturalPx <= availablePx) baseSp
+    else (baseSp * availablePx / naturalPx * 0.98f).coerceAtLeast(minSp)
 
 /**
  * The reference's word greys, by whole rows from the selected one, as alphas of white on black:
@@ -296,6 +458,56 @@ internal fun destinationRowFade(distance: Float): Float {
 }
 
 /**
+ * The row under the focus line for a scroll offset: with the wheel's half-viewport padding one
+ * [pitchPx] of scroll moves the focus line exactly one row, so this is the offset in rows, rounded
+ * to the nearest. The single definition for the marker's target, the debounced commit and the
+ * release snap, so they can never disagree about which word is "the one under the finger".
+ */
+internal fun railFocusIndex(scrollPx: Int, pitchPx: Float, lastIndex: Int): Int {
+    if (lastIndex <= 0 || pitchPx <= 0f) return 0
+    return (scrollPx / pitchPx).roundToInt().coerceIn(0, lastIndex)
+}
+
+/**
+ * Which row the debounce should be waiting to commit, or null for none. Only a finger actually
+ * dragging the wheel (not its fling after the lift, which commits once where it lands, and not the
+ * rail's own settle or follow-the-selection animation, which pass through rows nobody chose) that
+ * is resting on a row other than the selected one has anything pending -- or, with a [paneOpen]
+ * over the selected row, resting on that one too. [selectedIndex] is -1 when the selected id is
+ * unknown, so any row is then a change.
+ */
+internal fun railPendingCommit(
+    focusIndex: Int,
+    selectedIndex: Int,
+    dragging: Boolean,
+    paneOpen: Boolean = false,
+): Int? =
+    if (dragging && (focusIndex != selectedIndex || paneOpen)) focusIndex else null
+
+/** What a wheel that has come to rest on a row means. */
+internal enum class RailLanding {
+    /** A row other than the selected one: commit it. */
+    SELECT,
+
+    /** The selected row, with a pane open over it: the pane is what is being left. */
+    LEAVE_PANE,
+
+    /** The selected row and nothing over it: nothing to say. */
+    NONE,
+}
+
+/**
+ * The meaning of resting on [nearest]. With a pane open the selected row is not "no change": the
+ * rail's selection is the destination UNDER the pane, so the word you came from is the way back to
+ * it ([paneOpen]).
+ */
+internal fun railLanding(nearest: Int, selectedIndex: Int, paneOpen: Boolean): RailLanding = when {
+    nearest != selectedIndex -> RailLanding.SELECT
+    paneOpen -> RailLanding.LEAVE_PANE
+    else -> RailLanding.NONE
+}
+
+/**
  * How far through its journey the marker is, as 0 at rest at either end and 1 at the midpoint.
  * A parabola rather than "distance remaining" so the stretch is symmetric: it has to settle back
  * to a square on arrival, not merely shrink towards one.
@@ -309,6 +521,9 @@ internal fun markerStretch(current: Float, from: Float, to: Float): Float {
 
 /** The reference's type: 44sp bold on an 80dp pitch, tracked a touch tight as display type is. */
 internal const val RAIL_FONT_SP = 44
+
+/** The smallest a long word is shrunk to by [railFontSpFor]: 28 keeps "Experimental" whole on 196 dp. */
+internal const val RAIL_MIN_FONT_SP = 28
 internal const val RAIL_ROW_PITCH_SP = 80
 private const val RAIL_LETTER_SPACING_SP = -0.5f
 
@@ -316,8 +531,19 @@ private const val RAIL_LETTER_SPACING_SP = -0.5f
 internal const val RAIL_MARKER_DP = 16
 internal const val RAIL_GUTTER_DP = 32
 
-/** Longer than [SpatialMotion.settleSpec]'s 320ms so the marker's lag behind the words is seen. */
-private const val MARKER_TRAVEL_MS = 420
+/** One hop of the marker from word to word: short, so it keeps up with a turning wheel. */
+private const val MARKER_HOP_MS = 140
+
+/**
+ * How long the wheel must rest on a new word, finger down or coasting, before that word is
+ * committed. Long enough that a fast fling through five rows commits none of the ones it passed
+ * over (each commit recomputes the whole library projection), short enough that the pane follows
+ * a hesitation instead of waiting for the lift.
+ */
+internal const val RAIL_COMMIT_DEBOUNCE_MS = 140L
+
+/** The marker square's test tag, so a test can read where it is drawn. */
+internal const val RAIL_MARKER_TAG = "destination-rail-marker"
 
 /** How much the square lengthens along its path at mid-flight, and narrows across it. */
 private const val MARKER_STRETCH = 0.4f

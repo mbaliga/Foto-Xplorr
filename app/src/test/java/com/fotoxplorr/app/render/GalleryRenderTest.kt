@@ -19,7 +19,11 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.gallery.DestinationRailPanel
+import com.fotoxplorr.app.gallery.GalleryActionsRoom
+import com.fotoxplorr.app.gallery.GalleryInfoRoom
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
+import com.fotoxplorr.app.gallery.GallerySelection
+import com.fotoxplorr.app.gallery.GalleryViewOptionsRoom
 import com.fotoxplorr.app.gallery.HyleDestination
 import com.fotoxplorr.app.hyle.ActivityKind
 import com.fotoxplorr.app.hyle.ActivityShade
@@ -30,6 +34,8 @@ import com.fotoxplorr.app.hyle.SEARCH_FAB_MARGIN_END
 import com.fotoxplorr.app.hyle.SearchFab
 import com.fotoxplorr.app.hyle.ShadeState
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.app.ui.RoomGeography
+import com.fotoxplorr.app.ui.roomSlots
 import com.github.takahirom.roborazzi.captureRoboImage
 import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.RoomEdge
@@ -126,6 +132,27 @@ class GalleryRenderTest {
     }
 
     @Test
+    fun `actions room fully revealed at the bottom`() {
+        renderRooms("gallery-7-actions-bottom") { it.open(RoomGeography.Actions) }
+    }
+
+    @Test
+    fun `actions room mid reveal shows the tilt`() {
+        // A short pull, the way a thumb starts one: the grid has only begun to tilt up.
+        renderRooms("gallery-8-actions-mid-reveal") { it.dragV(-it.viewport.height * 0.1f, -1f, 0f) }
+    }
+
+    @Test
+    fun `details room fully revealed at the top`() {
+        renderRooms("gallery-9-details-top") { it.open(RoomGeography.Details) }
+    }
+
+    @Test
+    fun `view options room fully revealed at the right`() {
+        renderRooms("gallery-10-view-options-right") { it.open(RoomGeography.ViewOptions) }
+    }
+
+    @Test
     fun `grid root chrome`() {
         render("gallery-6-grid-root") {
             ReferenceGridStandIn()
@@ -168,6 +195,61 @@ class GalleryRenderTest {
                             onOpenSettings = {},
                         )
                     },
+                ) { ReferenceGridStandIn() }
+            }
+        }
+        compose.waitForIdle()
+        compose.runOnIdle { settle(controller) }
+        compose.waitForIdle()
+        compose.onRoot().captureRoboImage("build/renders/$name.png")
+    }
+
+    /**
+     * The three non-navigation rooms through the real shell, on the slots [roomSlots] assigns
+     * them, in the swivel style the gallery uses for a peek. Unlike the standalone room renders
+     * this shows each room against the shell's own band and parked card, which is what decides
+     * whether its content is clipped or hidden behind the card.
+     */
+    private fun renderRooms(name: String, settle: (SpatialController) -> Unit) {
+        lateinit var controller: SpatialController
+        compose.setContent {
+            FotoXplorrTheme(GalleryPreferencesState()) {
+                controller = rememberSpatialController()
+                val rooms = roomSlots<@Composable () -> Unit>(
+                    details = { GalleryInfoRoom(title = "Photos", assets = emptyList(), state = emptyState()) },
+                    actions = {
+                        GalleryActionsRoom(
+                            state = emptyState(),
+                            actions = noOpActions(),
+                            selection = GallerySelection(),
+                            selectedAssets = emptyList(),
+                            currentIds = emptySet(),
+                            inTrash = false,
+                            inArchive = false,
+                            tagRoute = null,
+                            collectionRoute = null,
+                            onSelectionChange = {},
+                            onRenameAsset = {},
+                            onAddToCollection = {},
+                            onAddTag = {},
+                            onStartSelection = {},
+                            onNewCollection = {},
+                            onCloseRoom = {},
+                        )
+                    },
+                    viewOptions = { GalleryViewOptionsRoom(state = emptyState(), actions = noOpActions()) },
+                )
+                SpatialShell(
+                    controller = controller,
+                    accentColor = MaterialTheme.colorScheme.primary,
+                    scrimColor = Color.Black,
+                    cardColor = Color.Black,
+                    modifier = Modifier.fillMaxSize(),
+                    parkStyle = ParkStyle.SWIVEL,
+                    left = rooms.left,
+                    top = rooms.top,
+                    right = rooms.right,
+                    bottom = rooms.bottom,
                 ) { ReferenceGridStandIn() }
             }
         }

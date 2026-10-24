@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * The PRESETS tab: built-in looks, then user presets, then "Save current as preset".
@@ -53,7 +54,7 @@ fun PresetsPanel(
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            "A look, applied on top of crop and rotation — never a replacement for them.",
+            HelpCopy.Hint.LOOK_ON_TOP,
             color = Color.White.copy(alpha = 0.5f),
             style = MaterialTheme.typography.bodySmall,
         )

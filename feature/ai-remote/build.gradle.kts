@@ -35,4 +35,9 @@ dependencies {
     // be loggable by construction.
     implementation(platform("com.squareup.okhttp3:okhttp-bom:5.3.0"))
     implementation("com.squareup.okhttp3:okhttp")
+    // Compile-only: MapRequestCap hands the map library an OkHttp client, which the app cannot
+    // name itself (the library declares OkHttp with runtime scope only). The connect flavour
+    // supplies the library at run time; no flavour that lacks it ever loads MapRequestCap. Not a
+    // new dependency of the app, so nothing changes in the resolved classpaths (ADR-015).
+    compileOnly("org.maplibre.gl:android-sdk:13.0.2")
 }

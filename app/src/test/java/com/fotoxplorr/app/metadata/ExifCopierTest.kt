@@ -112,4 +112,27 @@ class ExifCopierTest {
 
         assertEquals(null, exif(target).getAttribute(ExifInterface.TAG_XMP))
     }
+
+    @Test
+    fun `an unparseable XMP packet with non-ASCII text is skipped, not copied with its characters turned into question marks`() {
+        val raw = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><broken José García"
+        assertEquals(null, XmpPacket.parse(raw))
+        assertEquals(null, copiedXmpValue(raw))
+    }
+
+    @Test
+    fun `an unparseable XMP packet that is pure ASCII is still passed through untouched`() {
+        val raw = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><broken"
+        assertEquals(null, XmpPacket.parse(raw))
+        assertEquals(raw, copiedXmpValue(raw))
+    }
+
+    @Test
+    fun `a parseable XMP packet with non-ASCII text is escaped by the serializer and kept`() {
+        val packet = XmpPacket.empty()
+        packet.setLangAlt(XmpPacket.DC_NS, "dc", "description", "Café José")
+        val copied = copiedXmpValue(packet.serialize())!!
+        assertTrue("serialized output must be 7-bit so ExifInterface cannot mangle it", copied.all { it.code <= 127 })
+        assertEquals("Café José", XmpPacket.parse(copied)!!.langAlt(XmpPacket.DC_NS, "description"))
+    }
 }

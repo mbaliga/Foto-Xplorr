@@ -44,6 +44,7 @@ import com.fotoxplorr.app.media.decodeUpright
 import com.fotoxplorr.app.pro.LocalProEntitlement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.fotoxplorr.app.ui.HelpCopy
 
 // Fixed on purpose (reference design): neutral sheet surfaces, the accent roles in this sheet use
 // primary.
@@ -175,7 +176,7 @@ fun ShareOptionsSheet(
                     value = options.caption.orEmpty(),
                     onValueChange = { options = options.copy(caption = it) },
                     label = "Caption",
-                    caption = "Written along the bottom of the frame. Leave blank for none.",
+                    caption = HelpCopy.Caption.SHARE_NOTE,
                 )
             }
             if (options.frame == ShareFrame.STAMP) {
@@ -183,13 +184,13 @@ fun ShareOptionsSheet(
                     value = options.seal.orEmpty(),
                     onValueChange = { options = options.copy(seal = it) },
                     label = "Your seal",
-                    caption = "A few letters, struck like a postmark in the corner.",
+                    caption = HelpCopy.Caption.SHARE_SEAL,
                 )
             }
 
             SheetSwitch(
                 label = "Remove location and camera data",
-                caption = "On by default. Strips GPS, camera model and timestamps from the copy you send.",
+                caption = HelpCopy.Hint.STRIP_METADATA,
                 checked = options.stripMetadata,
                 onCheckedChange = { options = options.copy(stripMetadata = it) },
             )

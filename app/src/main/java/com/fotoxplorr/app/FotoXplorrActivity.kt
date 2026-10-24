@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,17 +51,23 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.withResumed
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.fotoxplorr.app.audio.AudioAsset
-import com.fotoxplorr.app.audio.AudioConversionWriter
-import com.fotoxplorr.app.audio.AudioPlayerScreen
+import com.fotoxplorr.app.backup.rememberMetadataBackup
 import com.fotoxplorr.app.curate.AutoCurationPass
 import com.fotoxplorr.app.editor.EditedCopyWriter
 import com.fotoxplorr.app.editor.EditorScreen
+import com.fotoxplorr.app.editor.OverwriteRecovery
+import com.fotoxplorr.app.editor.RecoveryEntry
+import com.fotoxplorr.app.editor.decodeRecoveryEntries
+import com.fotoxplorr.app.editor.encodeRecoveryEntries
+import com.fotoxplorr.app.editor.recoveryNoticeMessage
+import com.fotoxplorr.app.editor.toRecoveryEntries
 import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.gallery.GalleryActions
@@ -68,11 +75,14 @@ import com.fotoxplorr.app.gallery.GalleryPreferences
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.GalleryScreen
 import com.fotoxplorr.app.gallery.GalleryUiState
+import com.fotoxplorr.app.gallery.browsableAssets
 import com.fotoxplorr.app.gallery.folderIdentity
 import com.fotoxplorr.app.gallery.rememberGeoRepository
 import com.fotoxplorr.app.hyle.ActivityKind
 import com.fotoxplorr.app.jobs.JobForegroundService
 import com.fotoxplorr.app.jobs.humanMessage
+import com.fotoxplorr.app.jobs.notificationPromptWasAnswered
+import com.fotoxplorr.app.jobs.shouldAskForJobNotifications
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.metadata.GpsCoordinate
 import com.fotoxplorr.app.metadata.MetadataEdit
@@ -80,21 +90,36 @@ import com.fotoxplorr.app.metadata.MetadataWriter
 import com.fotoxplorr.app.metadata.isMetadataWritable
 import com.fotoxplorr.app.openwith.ExternalAssetLoader
 import com.fotoxplorr.app.openwith.IncomingIntentRoute
+import com.fotoxplorr.app.openwith.OpenRequestLookup
+import com.fotoxplorr.app.openwith.MediaStoreUri
 import com.fotoxplorr.app.openwith.classifyIncomingIntent
+import com.fotoxplorr.app.openwith.classifyMediaStoreUri
+import com.fotoxplorr.app.openwith.lookupOpenRequest
+import com.fotoxplorr.app.openwith.lookupUncataloguedRow
+import com.fotoxplorr.app.openwith.restoreViewerRun
+import com.fotoxplorr.app.openwith.withSafeExtras
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.shell.AppStateViewModel
+import com.fotoxplorr.app.shell.copySavedOriginalAtRiskMessage
+import com.fotoxplorr.app.shell.OVERWRITE_NOT_STARTED_MESSAGE
+import com.fotoxplorr.app.shell.OVERWRITE_NOT_ALLOWED_MESSAGE
+import com.fotoxplorr.app.shell.OverwriteFailure
 import com.fotoxplorr.app.shell.PendingMediaOperation
 import com.fotoxplorr.app.shell.PendingTreeOperation
+import com.fotoxplorr.app.shell.overwriteFailureOf
+import com.fotoxplorr.app.shell.shouldRefreshRecoveryNotice
 import com.fotoxplorr.app.video.VideoExportOptions
 import com.fotoxplorr.app.recognition.RecognitionIndexer
 import com.fotoxplorr.app.recognition.RecognitionStore
+import com.fotoxplorr.app.recognition.TextLayoutProvider
 import com.fotoxplorr.app.share.PreparedItem
 import com.fotoxplorr.app.share.ShareFrame
 import com.fotoxplorr.app.share.ShareOptions
 import com.fotoxplorr.app.share.ShareOptionsSheet
 import com.fotoxplorr.app.share.SharePreparer
+import com.fotoxplorr.app.share.fileProviderAuthority
 import com.fotoxplorr.app.share.ZipExporter
 import com.fotoxplorr.app.ui.FotoXplorrTheme
 import com.fotoxplorr.app.ui.crashRecoveryStyle
@@ -108,8 +133,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
+import com.fotoxplorr.app.ui.HelpCopy
 
 class FotoXplorrActivity : ComponentActivity() {
     // Bumped by onNewIntent so the composition below reprocesses `intent`: singleTop launch mode
@@ -126,12 +150,15 @@ class FotoXplorrActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
+        // Unpacked once, guarded, before anything reads an extra: see withSafeExtras.
+        setIntent(intent.withSafeExtras())
         incomingIntentGeneration++
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Any app can send this activity an intent; a hostile extra must not crash it on launch.
+        intent?.withSafeExtras()
         // First thing, per dev.aarso:crash-recovery's documented contract: if a crash was
         // captured last run, show the recovery screen instead of this activity's real
         // content and finish this instance.
@@ -167,10 +194,19 @@ class FotoXplorrActivity : ComponentActivity() {
 /**
  * "No media id": the default for an Intent extra that was never set (P0-18's
  * [FotoXplorrActivity.EXTRA_OPEN_MEDIA_ID]). Every real [MediaId] comes from MediaStore's own
- * `_ID` column, which is never negative. (The ids of the open photo / editor / audio track are
+ * `_ID` column, which is never negative. (The ids of the open photo / editor are
  * saved across process death by [AppStateViewModel]'s SavedStateHandle, not here.)
  */
 private const val NO_MEDIA_ID = -1L
+
+/**
+ * The key the gallery's saveable state is held under while the viewer or the editor replaces it
+ * (see `galleryStateHolder` in [FotoXplorrApp]). One key: there is one browser.
+ */
+internal const val GALLERY_STATE_KEY = "gallery"
+
+/** Shown when another app asks to edit a photo while a replace is in flight or its failure is being held. */
+private const val FINISH_EDIT_FIRST_MESSAGE = "Finish saving your edit first"
 
 @Composable
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
@@ -184,7 +220,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // full scan, on every single Activity recreation -- see LibraryRuntime's own KDoc.
     val runtime = remember { LibraryRuntime.get(applicationContext) }
     val repository = runtime.repository
-    val audioRepository = runtime.audioRepository
     val favoriteStore = remember { FavoriteStore(applicationContext) }
     val sensitiveStore = remember { SensitiveStore(applicationContext) }
     val privateFolderStore = remember { PrivateFolderStore(applicationContext) }
@@ -200,7 +235,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // the device (the BYOK remote-AI path stays separate and strictly opt-in).
     val recognitionStore = remember { RecognitionStore(applicationContext) }
     val recognitionIndexer = remember { RecognitionIndexer(applicationContext, recognitionStore) }
-    val audioConversionWriter = remember { AudioConversionWriter(applicationContext) }
+    // Word-level text for the photo being viewed, made on demand and kept in memory only.
+    val textLayoutProvider = remember { TextLayoutProvider(applicationContext) }
     val scope = rememberCoroutineScope()
     // One geo index for the whole app: the gallery reads it for the map and compass, the viewer
     // writes hand-placed locations into it. Two instances over the same file would each hold
@@ -209,7 +245,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val geoState by geoRepository.observe().collectAsStateWithLifecycle()
 
     val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
-    val audioAssets by audioRepository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val sensitiveIds by sensitiveStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val lockedFolders by privateFolderStore.observeLockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
@@ -223,9 +258,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
 
     var permissionGranted by remember { mutableStateOf(hasMediaPermission()) }
     var partialMediaAccess by remember { mutableStateOf(hasPartialMediaAccess(applicationContext)) }
-    // Independent of permissionGranted above and requested separately, only once the user opens
-    // the Audio library (P0-10) -- see hasAudioPermission's own KDoc for why.
-    var audioPermissionGranted by remember { mutableStateOf(hasAudioPermission(applicationContext)) }
     // P0-09: the scan itself, and the request channel driving it, now live entirely in
     // LibraryRuntime -- this is a read-only view onto its process-wide state, so recomposing (or
     // recreating) this Activity never resets progress or re-triggers a full scan.
@@ -233,19 +265,17 @@ private fun FotoXplorrActivity.FotoXplorrApp(
 
     // Every one of these used to be `remember { mutableStateOf(...) }`, which any Activity
     // recreation tore down along with the whole composable tree -- closing the
-    // viewer/editor/audio player, forgetting the current selection, and cancelling whatever
+    // viewer/editor, forgetting the current selection, and cancelling whatever
     // `rememberCoroutineScope()` job happened to be mid-flight. (The manifest's `configChanges`
     // keeps a plain rotation from recreating the Activity at all, P0-09, but not every
     // configuration change, and never process death.) Delegating to a property on `viewModel`
     // (`by viewModel::field`) keeps every downstream read/write in this function exactly as it
-    // was; only the storage moved, to survive the recreation (and, for the three ids `viewModel`
+    // was; only the storage moved, to survive the recreation (and, for the two ids `viewModel`
     // mirrors into `SavedStateHandle`, process death).
     var viewerAssets by viewModel::viewerAssets
     var selectedAssetId by viewModel::selectedAssetId
-    var audioQueue by viewModel::audioQueue
-    var selectedAudioAssetId by viewModel::selectedAudioAssetId
-    var convertingAudioId by viewModel::convertingAudioId
     var slideshowActive by viewModel::slideshowActive
+    var slideshowPaused by viewModel::slideshowPaused
     var pendingOperation by viewModel::pendingOperation
     var pendingOperationIds by viewModel::pendingOperationIds
     var pendingTreeOperation by viewModel::pendingTreeOperation
@@ -268,6 +298,31 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // editor (still open -- see `editingAsset` below) can offer "Save a copy instead" using the
     // very bitmap already rendered, instead of the edit simply being lost.
     var overwriteDeclined by viewModel::overwriteDeclined
+    var overwriteFailureMessage by viewModel::overwriteFailureMessage
+    var overwriteOriginalAtRisk by viewModel::overwriteOriginalAtRisk
+    // The one place a failed overwrite is recorded, so the banner's wording and its "original may
+    // be damaged" state are always set together with the flag that shows it. Ignored when the
+    // replace it reports no longer belongs to the open editor (see overwriteOutcomeApplies); a
+    // failure that left the original damaged is then still said out loud, as it has no banner.
+    //
+    // The pending recovery notice (the dialog naming a photo whose safety copy was kept) is
+    // computed at start; [refreshRecoveryNotice] recomputes it so a copy kept by a failure of THIS
+    // session is announced now, not at the next cold start. Entries are kept as a string so the
+    // dialog survives a recreation.
+    var recoveryEncoded by rememberSaveable { mutableStateOf("") }
+    fun refreshRecoveryNotice() {
+        scope.launch {
+            recoveryEncoded = withContext(Dispatchers.IO) {
+                OverwriteRecovery.pendingCopies(applicationContext).toRecoveryEntries().encodeRecoveryEntries()
+            }
+        }
+    }
+    fun declineOverwrite(failure: OverwriteFailure) {
+        if (!viewModel.recordOverwriteFailure(failure) && failure.originalAtRisk) {
+            viewModel.userMessage = failure.message
+        }
+        if (shouldRefreshRecoveryNotice(failure)) refreshRecoveryNotice()
+    }
 
     // P0-09 item 6 (process death): the ViewModel above keeps `viewerAssets` across an Activity
     // recreation, but a dead process takes the ViewModel with it, and MediaAsset is not
@@ -283,6 +338,45 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         savedViewerAssetIds = list.filterNot { it.isExternal }.map { it.id.value }.toLongArray()
     }
 
+    // A short-lived, non-modal notice for a result that does not need a decision (a rename that
+    // landed, a copy that finished): shown briefly and dismissed on its own, or on a tap if
+    // `onOpen` is set. Cleared by the LaunchedEffect below three seconds after it is set.
+    var transientNotice by remember { mutableStateOf<TransientNotice?>(null) }
+    LaunchedEffect(transientNotice) {
+        if (transientNotice != null) {
+            delay(TRANSIENT_NOTICE_MILLIS)
+            transientNotice = null
+        }
+    }
+
+    // On every start, off the main thread: ages out the leftover safety copies the person has
+    // already been told about and, if a copy of a photo that was not put back is still waiting,
+    // says so in a dialog that waits for an answer (a three-second notice is too easy to miss for a
+    // warning that a photo may be damaged). Nothing is recorded until the dialog is answered, so a
+    // process death or a recreation before then just shows it again; the entries are kept as a
+    // string so the dialog itself survives a recreation. See OverwriteRecovery.pendingCopies.
+    LaunchedEffect(Unit) {
+        recoveryEncoded = withContext(Dispatchers.IO) {
+            OverwriteRecovery.sweepOrphans(applicationContext)
+            OverwriteRecovery.pendingCopies(applicationContext).toRecoveryEntries().encodeRecoveryEntries()
+        }
+    }
+
+    // [assets] narrowed to what the person may see right now (not trashed, archived, in a locked
+    // folder or sensitive-hidden), read from the stores' own StateFlows at CALL time. The values
+    // collected into locals above start as empty sets for the first composition, which would let a
+    // locked photo through; the stores themselves are loaded synchronously and never lag. Every
+    // path that opens a photo on someone else's say-so (a redirect, an open-with / share Uri, a
+    // restore after process death) goes through this, so none is a side door around the lock.
+    fun browsableNow(list: List<MediaAsset>): List<MediaAsset> = browsableAssets(
+        list,
+        libraryStore.observe().value.archivedIds,
+        sensitiveStore.observe().value,
+        privateFolderStore.observeLockedFolders().value,
+        privateFolderStore.observeUnlockedFolders().value,
+        galleryPreferences.observe().value.hideSensitive,
+    )
+
     // P0-18: ExternalViewerActivity redirects here, rather than reimplementing the catalogue
     // actions itself, when an incoming "Open with" URI turns out to already be a photo this app
     // has scanned. `assets` is empty on the very first composition and fills in asynchronously
@@ -296,20 +390,40 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // rescan from reopening the viewer for the SAME, already-handled intent. Plain `remember`, not
     // saveable: a recreated Activity starts at generation 0 again, and that must NOT re-arm.
     var armedForIntentGeneration by remember { mutableIntStateOf(0) }
-    LaunchedEffect(assets, incomingIntentGeneration) {
+    // Unknown is only "not scanned yet" until the first scan has settled; after that a request for a
+    // photo the catalogue does not hold is simply dropped, so it cannot pop the viewer open later,
+    // when some other photo with that id is scanned in.
+    val scanSettled = scanState is ScanState.Complete || scanState is ScanState.Error
+    LaunchedEffect(assets, incomingIntentGeneration, scanSettled) {
         if (incomingIntentGeneration > armedForIntentGeneration) {
             armedForIntentGeneration = incomingIntentGeneration
             consumedOpenMediaIdExtra = false
         }
         if (consumedOpenMediaIdExtra) return@LaunchedEffect
-        val requestedId = intent.getLongExtra(FotoXplorrActivity.EXTRA_OPEN_MEDIA_ID, NO_MEDIA_ID)
+        val requestedId = runCatching { intent.getLongExtra(FotoXplorrActivity.EXTRA_OPEN_MEDIA_ID, NO_MEDIA_ID) }
+            .getOrDefault(NO_MEDIA_ID)
         if (requestedId == NO_MEDIA_ID) {
             consumedOpenMediaIdExtra = true
             return@LaunchedEffect
         }
-        val match = assets.firstOrNull { it.id.value == requestedId } ?: return@LaunchedEffect
-        setViewerAssets(listOf(match))
-        selectedAssetId = match.id
+        // Any app can send this extra, so it is held to the same rule as every gallery surface:
+        // a hidden photo is NOT opened (nor shown as an "external" file), the person is told why.
+        var lookup = lookupOpenRequest(assets, browsableNow(assets), requestedId)
+        if (lookup == OpenRequestLookup.Unknown && scanSettled) {
+            // The composable's `assets` can trail the repository by a frame; ask the repository
+            // itself before deciding the id is not ours.
+            val live = repository.awaitLoaded()
+            lookup = lookupOpenRequest(live, browsableNow(live), requestedId)
+        }
+        when (val found = lookup) {
+            is OpenRequestLookup.Found -> {
+                setViewerAssets(listOf(found.asset))
+                selectedAssetId = found.asset.id
+            }
+            OpenRequestLookup.Hidden -> transientNotice = TransientNotice(OPEN_REQUEST_HIDDEN_MESSAGE)
+            OpenRequestLookup.Unknown -> if (!scanSettled) return@LaunchedEffect
+            OpenRequestLookup.Unverified -> Unit
+        }
         consumedOpenMediaIdExtra = true
     }
 
@@ -323,16 +437,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // AlertDialog is now reserved for a failure that needs a decision -- see `transientNotice`
     // just below for the non-modal "it worked" case this used to also carry.
     var userMessage by viewModel::userMessage
-    // A short-lived, non-modal notice for a result that does not need a decision (a rename that
-    // landed, a copy that finished): shown briefly and dismissed on its own, or on a tap if
-    // `onOpen` is set. Cleared by the LaunchedEffect below three seconds after it is set.
-    var transientNotice by remember { mutableStateOf<TransientNotice?>(null) }
-    LaunchedEffect(transientNotice) {
-        if (transientNotice != null) {
-            delay(TRANSIENT_NOTICE_MILLIS)
-            transientNotice = null
-        }
-    }
     // Collects every job's outcome once, wherever it lands -- a rotation loses and regains this
     // LaunchedEffect, but jobRunner.outcomes is a buffered SharedFlow (see its own doc), so an
     // outcome delivered mid-rotation is not lost, only delayed until the new instance subscribes.
@@ -377,8 +481,53 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // progress tick the same list of jobs produces.
     val runningJobs by viewModel.jobRunner.jobs.collectAsStateWithLifecycle()
     val anyJobRunning = runningJobs.isNotEmpty()
+    // The progress notification needs POST_NOTIFICATIONS on Android 13+, and this is the only place
+    // that asks for it: once, the first time a job actually runs (see shouldAskForJobNotifications).
+    // "Asked" is recorded when the system dialog has been ANSWERED, not when it was launched: a
+    // launch the system drops (the activity was not in front, or another permission request was
+    // already pending, which is answered with an empty result and no dialog) must be tried again.
+    var notificationAskInFlight by remember { mutableStateOf(false) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        notificationAskInFlight = false
+        // The permission state afterwards tells a real answer from a dropped request.
+        val answered = notificationPromptWasAnswered(
+            granted = granted,
+            shouldShowRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+                this@FotoXplorrApp,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ),
+        )
+        if (answered) {
+            applicationContext.getSharedPreferences("job_notifications", android.content.Context.MODE_PRIVATE)
+                .edit().putBoolean("asked", true).apply()
+        }
+    }
     LaunchedEffect(anyJobRunning) {
-        if (anyJobRunning) JobForegroundService.start(applicationContext) else JobForegroundService.stop(applicationContext)
+        if (anyJobRunning) {
+            // First, and not behind the ask below: that waits for RESUMED, and a job started while
+            // the app is in the background (the case this service exists for) must still get its
+            // notification now.
+            JobForegroundService.start(applicationContext)
+            val prefs = applicationContext.getSharedPreferences("job_notifications", android.content.Context.MODE_PRIVATE)
+            val granted = ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!notificationAskInFlight &&
+                shouldAskForJobNotifications(Build.VERSION.SDK_INT, granted, prefs.getBoolean("asked", false))
+            ) {
+                // Only while the activity is in front (RESUMED); waits for that, and gives up with
+                // this effect if the jobs finish first, leaving the question for the next job.
+                lifecycle.withResumed {
+                    notificationAskInFlight = true
+                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+        } else {
+            JobForegroundService.stop(applicationContext)
+        }
     }
 
     val selectedIndex = selectedAssetId?.let { id -> viewerAssets.indexOfFirst { it.id == id } } ?: -1
@@ -392,64 +541,77 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val activeAsset = viewerAssets.getOrNull(selectedIndex)?.let { fromList ->
         if (fromList.isExternal) fromList else assets.firstOrNull { it.id == fromList.id } ?: fromList
     }
-    val activeAudioAsset = selectedAudioAssetId?.let { id -> audioQueue.firstOrNull { it.id == id } }
+    // The cached layouts hold the text of the photos viewed and the recogniser holds its model:
+    // both are let go when the viewer closes (and with the screen).
+    val viewerOpen = activeAsset != null
+    DisposableEffect(viewerOpen) { onDispose { if (viewerOpen) textLayoutProvider.release() } }
 
     // Open-with / share-to: classifies whatever this Activity was started or re-delivered with
     // (see onNewIntent's own doc on incomingIntentGeneration) and routes it straight to the
-    // viewer, the editor, or the audio player. Keyed on the generation counter, not on `intent`
+    // viewer or the editor. Keyed on the generation counter, not on `intent`
     // itself -- `Intent` is not stable equality for a Compose key across the SAME intent being
     // re-read after `setIntent`, and the counter is exactly "a new intent arrived" as a value.
     LaunchedEffect(incomingIntentGeneration) {
         processIncomingIntent(
             intent = intent,
             loader = externalAssetLoader,
+            lookupCatalogued = { rowId ->
+                val all = repository.awaitLoaded()
+                when (val known = lookupOpenRequest(all, browsableNow(all), rowId)) {
+                    // Not scanned yet (a photo written a moment ago): ask MediaStore which folder
+                    // the row is in, so a locked folder stays locked inside the scan debounce.
+                    OpenRequestLookup.Unknown -> lookupUncataloguedRow(
+                        externalAssetLoader.readMediaStoreRow(rowId),
+                        ::browsableNow,
+                    ).also { if (it == OpenRequestLookup.Unknown) runtime.requestScan(false) }
+                    else -> known
+                }
+            },
             onViewMedia = { loaded ->
                 setViewerAssets(loaded)
                 selectedAssetId = loaded.first().id
                 slideshowActive = false
             },
-            onViewAudio = { audio ->
-                audioQueue = listOf(audio)
-                selectedAudioAssetId = audio.id
+            // Refused while a replace is in flight or its failure is being held: the edit on screen
+            // is not yet safe, and opening another photo would drop it.
+            onEditImage = { asset ->
+                if (!viewModel.setEditingAsset(asset)) transientNotice = TransientNotice(FINISH_EDIT_FIRST_MESSAGE)
             },
-            onEditImage = { asset -> viewModel.setEditingAsset(asset) },
+            onHidden = { transientNotice = TransientNotice(OPEN_REQUEST_HIDDEN_MESSAGE) },
+            onUnverified = { transientNotice = TransientNotice(OPEN_REQUEST_UNVERIFIED_MESSAGE) },
         )
     }
 
-    // Process death: `selectedAssetId`/`editingAssetId`/`selectedAudioAssetId` themselves survived
+    // Process death: `selectedAssetId`/`editingAssetId` themselves survived
     // (SavedStateHandle) and so did `savedViewerAssetIds` (rememberSaveable), but `viewerAssets`/
-    // `editingAsset`/`audioQueue` did not -- a fresh ViewModel instance starts those empty.
+    // `editingAsset` did not -- a fresh ViewModel instance starts those empty.
     // Rebuilds each one, by id, the FIRST time the relevant repository has something to look the
     // id up in; a no-op on an ordinary configuration change, where they were never emptied.
+    // Restored through browsableNow: the unlocked folders live in memory, so after process death a
+    // locked folder is locked again, and a photo trashed / archived / hidden in the meantime is
+    // simply not reopened.
     LaunchedEffect(assets) {
         if (assets.isEmpty()) return@LaunchedEffect
+        val browsable = browsableNow(assets)
         viewModel.selectedAssetId?.let { id ->
             if (viewerAssets.isEmpty()) {
-                val assetsById = assets.associateBy { it.id.value }
                 // The whole run that was being paged through; just the open photo if that list
                 // did not survive.
-                val restored = savedViewerAssetIds.asList().mapNotNull { assetsById[it] }
-                    .ifEmpty { listOfNotNull(assetsById[id.value]) }
-                if (restored.any { it.id == id }) {
+                val restored = restoreViewerRun(browsable, savedViewerAssetIds.asList(), id.value)
+                if (restored != null) {
                     viewerAssets = restored
                 } else {
-                    // The photo that was open no longer exists (or was an external one, which the
-                    // re-delivered intent reloads on its own): nothing to reopen.
+                    // The photo that was open no longer exists, is now hidden (or was an external
+                    // one, which the re-delivered intent reloads on its own): nothing to reopen.
                     selectedAssetId = null
                 }
             }
         }
         viewModel.editingAssetId?.let { id ->
             if (viewModel.editingAsset == null) {
-                assets.firstOrNull { it.id == id }?.let { restored -> viewModel.setEditingAsset(restored) }
-            }
-        }
-    }
-    LaunchedEffect(audioAssets) {
-        if (audioAssets.isEmpty()) return@LaunchedEffect
-        viewModel.selectedAudioAssetId?.let { id ->
-            if (audioQueue.isEmpty()) {
-                audioAssets.firstOrNull { it.id == id }?.let { restored -> audioQueue = listOf(restored) }
+                val restored = browsable.firstOrNull { it.id == id }
+                // Dropping the id too, so it cannot resurface on a later rescan once unlocked.
+                viewModel.setEditingAsset(restored)
             }
         }
     }
@@ -497,7 +659,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     fun requestMediaOperation(items: List<MediaAsset>, operation: PendingMediaOperation) {
         if (items.isEmpty()) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            userMessage = "System trash operations require Android 11 or newer. Fotoz will not delete media directly."
+            userMessage = HelpCopy.Hint.TRASH_NEEDS_ANDROID_11
             return
         }
         runCatching {
@@ -708,16 +870,15 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     fun finishOverwrite(outcome: Result<Unit>) {
         outcome.fold(
             onSuccess = {
-                pendingOverwriteAsset = null
-                pendingOverwriteBitmap = null
-                overwriteDeclined = false
-                viewModel.setEditingAsset(null)
+                // The file changed whether or not the editor is still the one that asked, so the
+                // notice and the rescan do not depend on the state transition applying.
+                viewModel.finishOverwriteSucceeded()
                 transientNotice = TransientNotice("Replaced the original.")
                 // The bytes at this Uri changed size and content; the library's cached
                 // size/date-modified (and any thumbnail) are stale until MediaStore looks again.
                 runtime.requestScan(false)
             },
-            onFailure = { overwriteDeclined = true },
+            onFailure = { error -> declineOverwrite(overwriteFailureOf(error)) },
         )
     }
 
@@ -729,13 +890,15 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     ) { result ->
         val asset = pendingOverwriteAsset
         val bitmap = pendingOverwriteBitmap
-        if (result.resultCode == Activity.RESULT_OK && asset != null && bitmap != null) {
-            scope.launch { finishOverwrite(editedCopyWriter.overwrite(asset, bitmap)) }
+        if (!viewModel.overwriteOutcomeApplies()) {
+            // A result for a replace nobody is waiting on any more: nothing to write or to show.
+        } else if (result.resultCode == Activity.RESULT_OK && asset != null && bitmap != null) {
+            viewModel.launchWrite { finishOverwrite(editedCopyWriter.overwrite(asset, bitmap)) }
         } else {
             // Declined, not merely cancelled -- see finishOverwrite's own doc for why this is
             // NOT treated the way a trash/rename cancellation is (nulling the pending state and
             // reporting failure): the edit itself must survive this.
-            overwriteDeclined = true
+            declineOverwrite(OverwriteFailure(OVERWRITE_NOT_ALLOWED_MESSAGE, originalAtRisk = false))
         }
     }
 
@@ -744,9 +907,13 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // this function's only job is the consent dance and the actual write, the same division of
     // labour requestMetadataWrite already has with MetadataWriter.
     fun requestOverwrite(asset: MediaAsset, bitmap: Bitmap) {
-        pendingOverwriteAsset = asset
-        pendingOverwriteBitmap = bitmap
-        overwriteDeclined = false
+        // A second request while one is in flight (or for another photo) is dropped; the editor
+        // disables Save and Cancel for the duration, so this is the belt to that brace. Said out
+        // loud: the edit it carried is not being saved.
+        if (!viewModel.beginOverwrite(asset, bitmap)) {
+            transientNotice = TransientNotice(OVERWRITE_NOT_STARTED_MESSAGE)
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             runCatching {
                 MediaStore.createWriteRequest(contentResolver, listOf(asset.contentUri))
@@ -754,9 +921,12 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 overwritePermissionLauncher.launch(
                     IntentSenderRequest.Builder(request.intentSender).build(),
                 )
-            }.onFailure { overwriteDeclined = true }
+            }.onFailure {
+                // The system would not even offer the consent sheet: Android said no.
+                declineOverwrite(OverwriteFailure(OVERWRITE_NOT_ALLOWED_MESSAGE, originalAtRisk = false))
+            }
         } else {
-            scope.launch {
+            viewModel.launchWrite {
                 val outcome = editedCopyWriter.overwrite(asset, bitmap)
                 val error = outcome.exceptionOrNull()
                 if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q && error is RecoverableSecurityException) {
@@ -802,15 +972,23 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     fun saveDeclinedOverwriteAsCopy() {
         val asset = pendingOverwriteAsset ?: return
         val bitmap = pendingOverwriteBitmap ?: return
-        scope.launch {
+        // A second tap while the first copy is being written would save the same edit twice.
+        if (!viewModel.beginCopyOfDeclinedOverwrite()) return
+        // On the ViewModel's scope, like the replace: a recreation must not strand the lock.
+        viewModel.launchWrite {
             val outcome = editedCopyWriter.save(asset, bitmap)
-            pendingOverwriteAsset = null
-            pendingOverwriteBitmap = null
-            overwriteDeclined = false
+            // The failure state is forgotten only once a copy exists: if the copy failed too (the
+            // same full storage, say) the banner, the at-risk flag and the held bitmap are all
+            // still here, and the person can try again.
+            val originalStillAtRisk = viewModel.finishCopyOfDeclinedOverwrite(saved = outcome.isSuccess)
             outcome.fold(
                 onSuccess = { uri ->
-                    viewModel.setEditingAsset(null)
                     transientNotice = TransientNotice("Saved a copy.") { openViewerForSavedUri(uri) }
+                    // The copy does not repair the original, and the safety copy of it is still
+                    // kept (the notice for it stays pending until it has been answered).
+                    if (originalStillAtRisk) userMessage = copySavedOriginalAtRiskMessage(asset.displayName)
+                    // Offered again if the earlier dialog was dismissed without an answer.
+                    if (shouldRefreshRecoveryNotice(copySavedOriginalAtRisk = originalStillAtRisk)) refreshRecoveryNotice()
                     runtime.requestScan(false)
                 },
                 onFailure = { error -> userMessage = humanMessage(error, "Could not save a copy of the edit.") },
@@ -845,28 +1023,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 // out of the suspend call above, which would skip a plain statement and leave this
                 // video "converting" (and its action disabled) for the rest of the session.
                 convertingVideoId = null
-            }
-        }
-    }
-
-    // AudioConversionWriter's own doc explains why this too needs no permission dance: like a
-    // video conversion, it inserts a brand-new MediaStore row this app owns rather than touching
-    // the source file. Same job-runner treatment as requestVideoConversion, immediately above.
-    fun requestAudioConversion(asset: AudioAsset) {
-        if (convertingAudioId != null) return
-        convertingAudioId = asset.id
-        viewModel.jobRunner.launch(
-            title = "Converting ${asset.displayName}",
-            kind = ActivityKind.EXPORTING,
-        ) { onProgress ->
-            onProgress(null)
-            try {
-                audioConversionWriter.convertToAac(asset).also { outcome ->
-                    outcome.onSuccess { runtime.requestAudioScan(false) }
-                }.map { "Converted to M4A (AAC)." }
-            } finally {
-                // Same reason as requestVideoConversion's: also runs when the job is cancelled.
-                convertingAudioId = null
             }
         }
     }
@@ -937,18 +1093,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         if (permissionGranted) runtime.requestScan(false)
     }
 
-    val audioPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions(),
-    ) {
-        audioPermissionGranted = hasAudioPermission(applicationContext)
-        if (audioPermissionGranted) runtime.ensureInitialAudioScan()
-    }
-
-    fun requestAudioPermission() {
-        val permissions = requiredAudioPermissions()
-        if (permissions.isNotEmpty()) audioPermissionLauncher.launch(permissions)
-    }
-
     fun requestMediaPermissionOrOpenSettings() {
         if (mediaPermissionPermanentlyDenied) {
             runCatching {
@@ -971,60 +1115,18 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         permissionGranted = hasMediaPermission()
         partialMediaAccess = hasPartialMediaAccess(applicationContext)
         if (!hadPermission && permissionGranted) runtime.requestScan(false)
-
-        val hadAudioPermission = audioPermissionGranted
-        audioPermissionGranted = hasAudioPermission(applicationContext)
-        if (!hadAudioPermission && audioPermissionGranted) runtime.ensureInitialAudioScan()
     }
 
-    val exportMetadataLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json"),
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        viewModel.jobRunner.launch(title = "Backing up", kind = ActivityKind.BACKING_UP) { onProgress ->
-            onProgress(null)
-            runCatching {
-                val root = JSONObject().apply {
-                    put("schema", 1)
-                    put("exportedAtMillis", System.currentTimeMillis())
-                    put("library", libraryStore.exportJson())
-                    put("favoriteIds", JSONArray(favoriteIds.map { it.value }))
-                    put("sensitiveIds", JSONArray(sensitiveIds.map { it.value }))
-                }
-                withContext(Dispatchers.IO) {
-                    contentResolver.openOutputStream(uri, "w")?.bufferedWriter()?.use { writer ->
-                        writer.write(root.toString(2))
-                    } ?: error("Unable to open backup destination")
-                }
-                "Metadata backup exported."
-            }
-        }
-    }
-
-    val importMetadataLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        viewModel.jobRunner.launch(title = "Restoring backup", kind = ActivityKind.BACKING_UP) { onProgress ->
-            onProgress(null)
-            runCatching {
-                val json = withContext(Dispatchers.IO) {
-                    contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                        ?: error("Unable to open backup")
-                }
-                val root = JSONObject(json)
-                val libraryRoot = root.optJSONObject("library") ?: root
-                libraryStore.importJson(libraryRoot).getOrThrow()
-                val importedFavorites = root.optJSONArray("favoriteIds").toMediaIds()
-                val importedSensitive = root.optJSONArray("sensitiveIds").toMediaIds()
-                favoriteStore.setFavorite(favoriteIds, false)
-                favoriteStore.setFavorite(importedFavorites, true)
-                sensitiveStore.setSensitive(sensitiveIds, false)
-                sensitiveStore.setSensitive(importedSensitive, true)
-                "Metadata backup imported."
-            }
-        }
-    }
+    // The plain tags-and-collections backup: pickers, the review a file must pass and the confirmed
+    // Replace all live in backup/MetadataBackupUi.kt; nothing is written before the person has seen it.
+    val metadataBackup = rememberMetadataBackup(
+        jobRunner = viewModel.jobRunner,
+        libraryStore = libraryStore,
+        favoriteStore = favoriteStore,
+        sensitiveStore = sensitiveStore,
+        photos = { assets },
+        onMessage = { userMessage = it },
+    )
 
     fun shareUris(uris: List<Uri>, mimeType: String, title: String) {
         if (uris.isEmpty()) return
@@ -1044,6 +1146,23 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
         runCatching { startActivity(Intent.createChooser(intent, title)) }
             .onFailure { userMessage = "No compatible sharing app was found." }
+    }
+
+    /**
+     * Hands the private safety copy [entry] names to the system share sheet, under the photo's own
+     * name, so the person can put it back over the damaged original with any app. The private file
+     * is copied into the share directory first and never exposed itself.
+     */
+    fun shareSafetyCopy(entry: RecoveryEntry) {
+        scope.launch {
+            val staged = withContext(Dispatchers.IO) { OverwriteRecovery.stageForShare(applicationContext, entry.fileName) }
+            if (staged == null) {
+                userMessage = "The safety copy could not be found any more."
+                return@launch
+            }
+            val uri = FileProvider.getUriForFile(applicationContext, fileProviderAuthority(applicationContext), staged.first)
+            shareUris(listOf(uri), staged.second, "Share the safety copy")
+        }
     }
 
     /**
@@ -1126,9 +1245,10 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // picker that answers nothing: the person is already looking at this photo, in this
             // app, right now.
             //
-            // FotoXplorrActivity is excluded too: the manifest now gives it its own VIEW/EDIT
-            // open-with filters (media3 viewer work), so it would otherwise appear in this very
-            // chooser and re-open the photo that is already on screen as an "external" asset.
+            // FotoXplorrActivity is excluded too: its EDIT filter (it also receives SEND) would
+            // otherwise list this app in "Edit with" and re-open the photo that is already on
+            // screen as an "external" asset. It has no VIEW filter any more; the entry is harmless
+            // for ACTION_VIEW and still needed for ACTION_EDIT.
             putExtra(
                 Intent.EXTRA_EXCLUDE_COMPONENTS,
                 arrayOf(
@@ -1162,14 +1282,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         runtime.ensureInitialScan()
     }
 
-    // Kept separate from the effect above (P0-10): audio permission is granted independently, and
-    // often much later -- the Audio library is unreachable until permissionGranted is already
-    // true (see GalleryScreen's own top-level `when`), so this fires on its own key rather than
-    // waiting for another change to permissionGranted that may never come again.
-    LaunchedEffect(audioPermissionGranted) {
-        if (audioPermissionGranted) runtime.ensureInitialAudioScan()
-    }
-
     LaunchedEffect(Unit) { recognitionStore.reload() }
 
     // Guarded on a generation counter rather than the asset list itself, so a recomposition
@@ -1197,13 +1309,6 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         }
     }
 
-    LaunchedEffect(selectedAudioAssetId, activeAudioAsset) {
-        if (selectedAudioAssetId != null && activeAudioAsset == null) {
-            selectedAudioAssetId = null
-            audioQueue = emptyList()
-        }
-    }
-
     // Reserved for a failure that needs a decision -- every plain "it worked" result now goes
     // through transientNotice, just below, instead of blocking a tap on OK.
     userMessage?.let { message ->
@@ -1211,6 +1316,49 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             onDismissRequest = { userMessage = null },
             text = { Text(message) },
             confirmButton = { TextButton(onClick = { userMessage = null }) { Text("OK") } },
+        )
+    }
+
+    val recoveryEntries = remember(recoveryEncoded) { decodeRecoveryEntries(recoveryEncoded) }
+    recoveryNoticeMessage(recoveryEntries)?.let { message ->
+        val names = recoveryEntries.map { it.fileName }
+        // Dismissing without answering (a tap outside) records nothing: the notice is offered again.
+        AlertDialog(
+            onDismissRequest = { recoveryEncoded = "" },
+            title = { Text("A save did not finish") },
+            text = {
+                Column {
+                    Text(
+                        message + "\n\nFotoz kept a private copy of each original from before the save. Share it to " +
+                            "put the photo back with any app. The copies are deleted on their own some days " +
+                            "after you tap OK; delete them now only if the photos look fine, which cannot be undone.",
+                    )
+                    recoveryEntries.forEach { entry ->
+                        TextButton(onClick = { shareSafetyCopy(entry) }) {
+                            Text(if (entry.photoName.isBlank()) "Share the safety copy" else "Share the copy of ${entry.photoName}")
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        recoveryEncoded = ""
+                        OverwriteRecovery.markNoticeSeen(applicationContext, names)
+                    },
+                ) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        recoveryEncoded = ""
+                        scope.launch(Dispatchers.IO) {
+                            OverwriteRecovery.markNoticeSeen(applicationContext, names)
+                            OverwriteRecovery.deleteCopies(applicationContext, names)
+                        }
+                    },
+                ) { Text("Delete copies") }
+            },
         )
     }
 
@@ -1254,6 +1402,14 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         )
     }
 
+    // The gallery shares this slot with the editor and the viewer, so it is composed out whenever
+    // either is up and everything it kept in `rememberSaveable` (destination, route, search,
+    // selection, Settings, the grid's scroll position) would be dropped with it: Back from a photo
+    // landed on the default destination at the top. The holder keeps that state while the gallery
+    // is out of composition and hands it back when it returns. Remembered here, above the
+    // branches, because it has to outlive each of them.
+    val galleryStateHolder = rememberSaveableStateHolder()
+
     val editing = editingAsset
     if (editing != null && editing.isVideo) {
         // A separate screen, not a branch inside EditorScreen: trim/speed share almost nothing
@@ -1271,19 +1427,26 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             },
         )
     } else if (editing != null) {
-        BackHandler { viewModel.setEditingAsset(null) }
+        // While a failed replace has left the original at risk, Back and close change nothing:
+        // the banner below stays up, with only "Save a copy" to leave by (the edited bitmap held
+        // for it is the only good version). Otherwise closing also clears the failure state.
+        BackHandler { viewModel.closeEditor() }
         Box(Modifier.fillMaxSize()) {
             EditorScreen(
                 asset = editing,
                 saveMode = preferences.editorSaveMode,
                 onSetSaveMode = galleryPreferences::setEditorSaveMode,
-                onClose = { viewModel.setEditingAsset(null) },
+                // Cancel and Save are off while a replace is in flight or the original is at risk.
+                locked = viewModel.editorCloseBlocked,
+                onClose = { viewModel.closeEditor() },
                 onSaved = { message ->
-                    viewModel.setEditingAsset(null)
+                    // Only if the editor is still on the photo this save belonged to.
+                    viewModel.closeEditorFor(editing.id)
                     transientNotice = TransientNotice(message)
                     // The copy is a new file, so the library has to learn about it.
                     runtime.requestScan(false)
                 },
+                onSaveInProgress = { viewModel.saveInProgress = it },
                 onOverwrite = ::requestOverwrite,
                 onSavedUri = ::openViewerForSavedUri,
             )
@@ -1293,12 +1456,11 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // AppStateViewModel.overwriteDeclined's own doc.
             if (overwriteDeclined) {
                 OverwriteDeclinedBanner(
+                    message = overwriteFailureMessage ?: OVERWRITE_NOT_ALLOWED_MESSAGE,
+                    originalAtRisk = overwriteOriginalAtRisk,
+                    copySaving = viewModel.overwriteCopySaving,
                     onSaveCopy = ::saveDeclinedOverwriteAsCopy,
-                    onDismiss = {
-                        overwriteDeclined = false
-                        pendingOverwriteAsset = null
-                        pendingOverwriteBitmap = null
-                    },
+                    onDismiss = { viewModel.clearOverwriteFailure() },
                 )
             }
         }
@@ -1318,6 +1480,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // than passed wholesale: the index holds every photo's text, and the viewer needs
             // exactly one photo's worth.
             liveTextBlocks = recognition.textByMedia[activeAsset.id].orEmpty(),
+            textLayoutProvider = textLayoutProvider,
             // Likewise the palette that pass sampled, and every photo's dominant colour for the
             // expanded map's dots.
             palette = recognition.paletteFor(activeAsset.id),
@@ -1374,6 +1537,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             slideshowActive = slideshowActive,
             slideshowIntervalSeconds = preferences.slideshowIntervalSeconds,
             onToggleSlideshow = { slideshowActive = !slideshowActive },
+            slideshowPaused = slideshowPaused,
+            onSetSlideshowPaused = { slideshowPaused = it },
             onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
             onToggleSensitive = { sensitiveStore.toggle(activeAsset.id) },
             onShare = { share(listOf(activeAsset)) },
@@ -1385,6 +1550,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // Favourite/sensitive/trash/collections are library concepts; an asset opened from
             // another app's share sheet has no library row for any of them to act on.
             isExternal = activeAsset.isExternal,
+            // The catalogue rows (tags, caption, location, rating) belong to library photos: an
+            // external asset has none, and writing them would key rows to a synthetic id.
+            catalogueActions = !activeAsset.isExternal,
             isConvertingToMp4 = convertingVideoId == activeAsset.id,
             onConvertToMp4 = if (activeAsset.isVideo) {
                 { requestVideoConversion(activeAsset) }
@@ -1395,14 +1563,25 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 viewerAssets.getOrNull(selectedIndex - 1)?.let { selectedAssetId = it.id }
             },
             onNext = {
+                // A swipe, the bar's Next: the next photo, in order. The sequence wraps while a
+                // slideshow is up (running or paused), and ends otherwise.
                 val nextIndex = when {
-                    // Shuffle only applies to a running slideshow: a manual swipe means "the
-                    // next photo", and answering it with a random one would be a bug, not a
-                    // setting.
-                    slideshowActive && preferences.slideshowShuffle && viewerAssets.size > 1 ->
-                        randomOtherIndex(viewerAssets.size, selectedIndex)
                     selectedIndex < viewerAssets.lastIndex -> selectedIndex + 1
                     slideshowActive && viewerAssets.size > 1 -> 0
+                    else -> -1
+                }
+                viewerAssets.getOrNull(nextIndex)?.let { selectedAssetId = it.id }
+            },
+            // The slideshow's own countdown. Shuffle belongs here and only here: it used to live
+            // in onNext, so a swipe during a shuffled slideshow answered with a random photo,
+            // which the comment on it said was a bug, not a setting. The screen never calls this
+            // while the slideshow is paused or not running.
+            onSlideshowAdvance = {
+                val nextIndex = when {
+                    preferences.slideshowShuffle && viewerAssets.size > 1 ->
+                        randomOtherIndex(viewerAssets.size, selectedIndex)
+                    selectedIndex < viewerAssets.lastIndex -> selectedIndex + 1
+                    viewerAssets.size > 1 -> 0
                     else -> -1
                 }
                 viewerAssets.getOrNull(nextIndex)?.let { selectedAssetId = it.id }
@@ -1452,6 +1631,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             animated = activeAsset.id in animatedIds,
             autoplayVideos = preferences.autoplayVideos,
             pinchMode = preferences.viewerPinchMode,
+            transparencyBackground = preferences.viewerTransparencyBackground,
             onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
             onSetBlurSensitive = galleryPreferences::setBlurSensitive,
             onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
@@ -1460,6 +1640,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             onSetLoopAnimations = galleryPreferences::setLoopAnimations,
             onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
             onSetPinchMode = galleryPreferences::setViewerPinchMode,
+            onSetTransparencyBackground = galleryPreferences::setViewerTransparencyBackground,
             relatedAssets = viewerAssets,
             onSelectAsset = { picked ->
                 // From the filmstrip, or from a dot on the expanded map. The filmstrip only ever
@@ -1475,142 +1656,129 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 }
             },
         )
-    } else if (activeAudioAsset != null) {
-        BackHandler {
-            selectedAudioAssetId = null
-            audioQueue = emptyList()
-        }
-        AudioPlayerScreen(
-            asset = activeAudioAsset,
-            queue = audioQueue,
-            onClose = {
-                selectedAudioAssetId = null
-                audioQueue = emptyList()
-            },
-            onSelect = { picked -> selectedAudioAssetId = picked.id },
-            isConverting = convertingAudioId == activeAudioAsset.id,
-            onConvertToAac = { requestAudioConversion(activeAudioAsset) },
-        )
     } else {
-        GalleryScreen(
-            geoRepository = geoRepository,
-            audioAssets = audioAssets,
-            onPlayAudio = { asset, queue ->
-                audioQueue = queue
-                selectedAudioAssetId = asset.id
-            },
-            audioPermissionGranted = audioPermissionGranted,
-            onRequestAudioPermission = ::requestAudioPermission,
-            state = GalleryUiState(
-                assets = assets,
-                favoriteIds = favoriteIds,
-                sensitiveIds = sensitiveIds,
-                lockedFolders = lockedFolders,
-                unlockedFolders = unlockedFolders,
-                library = library,
-                permissionGranted = permissionGranted,
-                partialMediaAccess = partialMediaAccess,
-                audioPermissionGranted = audioPermissionGranted,
-                mediaPermissionPermanentlyDenied = mediaPermissionPermanentlyDenied,
-                scanState = scanState,
-                preferences = preferences,
-                recognition = recognition,
-                recognitionProgress = recognitionProgress,
-                animatedIds = animatedIds,
-                pendingSearch = pendingSearch,
-            ),
-            actions = GalleryActions(
-                onRequestPermission = ::requestMediaPermissionOrOpenSettings,
-                onRequestAudioPermission = ::requestAudioPermission,
-                onRefresh = { runtime.requestScan(true) },
-                onSetSort = galleryPreferences::setSort,
-                onSetGridColumns = galleryPreferences::setGridColumns,
-                onSetBlurSensitive = galleryPreferences::setBlurSensitive,
-                onSetHideSensitive = galleryPreferences::setHideSensitive,
-                onSetShowVideos = galleryPreferences::setShowVideos,
-                onSetTimelineGrouping = galleryPreferences::setTimelineGrouping,
-                onSetThemeMode = galleryPreferences::setThemeMode,
-                onSetAccentPalette = galleryPreferences::setAccentPalette,
-                onSetCustomTheme = galleryPreferences::setCustomTheme,
-                onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
-                onSetDefaultDestination = galleryPreferences::setDefaultDestination,
-                onSetKeepScreenOn = galleryPreferences::setKeepScreenOn,
-                onSetSlideshowShuffle = galleryPreferences::setSlideshowShuffle,
-                onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
-                onSetFitToTile = galleryPreferences::setFitToTile,
-                onSetLoopAnimations = galleryPreferences::setLoopAnimations,
-                onSetLongPressPreview = galleryPreferences::setLongPressPreview,
-                onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
-                onSetEditorSaveMode = galleryPreferences::setEditorSaveMode,
-                onIndexRecognition = { recognitionGeneration += 1 },
-                onProtectFolder = privateFolderStore::protect,
-                onUnlockFolder = privateFolderStore::unlock,
-                onLockFolder = privateFolderStore::lock,
-                onRemoveFolderProtection = privateFolderStore::removeProtection,
-                onSetFavorite = favoriteStore::setFavorite,
-                onSetSensitive = sensitiveStore::setSensitive,
-                onSetArchived = libraryStore::setArchived,
-                onShare = ::share,
-                onShareClean = ::shareAdvanced,
-                onCopyToFolder = { items ->
-                    pendingTreeOperation = PendingTreeOperation.COPY
-                    pendingTreeItems = items
-                    treeLauncher.launch(null)
-                },
-                onMoveToFolder = { items ->
-                    pendingTreeOperation = PendingTreeOperation.MOVE
-                    pendingTreeItems = items
-                    treeLauncher.launch(null)
-                },
-                onRenameAsset = ::requestRename,
-                onMoveToTrash = { requestMediaOperation(it, PendingMediaOperation.TRASH) },
-                onRestore = { requestMediaOperation(it, PendingMediaOperation.RESTORE) },
-                onDeletePermanently = { requestMediaOperation(it, PendingMediaOperation.DELETE) },
-                onCreateCollection = { libraryStore.createCollection(it)?.id },
-                onRenameCollection = { id, name -> libraryStore.renameCollection(id, name) },
-                onDeleteCollection = libraryStore::deleteCollection,
-                onAddToCollection = libraryStore::addToCollection,
-                onRemoveFromCollection = libraryStore::removeFromCollection,
-                onAddTag = libraryStore::addTag,
-                onRemoveTag = libraryStore::removeTag,
-                onExportZip = { items ->
-                    viewModel.jobRunner.launch(
-                        title = "Building a zip of ${items.size} item${if (items.size == 1) "" else "s"}",
-                        kind = ActivityKind.EXPORTING,
-                    ) { onProgress ->
-                        zipExporter.export(items, preferences.toShareOptions().stripMetadata) { done, total ->
-                            onProgress(if (total > 0) done.toFloat() / total else null)
-                        }.map { export ->
-                            unpreparedShareItemsMessage(export.failed)?.let { userMessage = it }
-                            val intent = Intent(Intent.ACTION_SEND).apply {
-                                type = "application/zip"
-                                putExtra(Intent.EXTRA_STREAM, export.uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            startActivity(Intent.createChooser(intent, null))
-                            ""
+        // Held under its own key so that opening a photo and coming Back finds the browser as it was
+        // left (see [GALLERY_STATE_KEY]); the editor and the viewer are siblings of this branch.
+        galleryStateHolder.SaveableStateProvider(GALLERY_STATE_KEY) {
+            GalleryScreen(
+                geoRepository = geoRepository,
+                state = GalleryUiState(
+                    assets = assets,
+                    favoriteIds = favoriteIds,
+                    sensitiveIds = sensitiveIds,
+                    lockedFolders = lockedFolders,
+                    unlockedFolders = unlockedFolders,
+                    library = library,
+                    permissionGranted = permissionGranted,
+                    partialMediaAccess = partialMediaAccess,
+                    mediaPermissionPermanentlyDenied = mediaPermissionPermanentlyDenied,
+                    scanState = scanState,
+                    preferences = preferences,
+                    recognition = recognition,
+                    recognitionProgress = recognitionProgress,
+                    animatedIds = animatedIds,
+                    pendingSearch = pendingSearch,
+                ),
+                actions = GalleryActions(
+                    onRequestPermission = ::requestMediaPermissionOrOpenSettings,
+                    onRefresh = { runtime.requestScan(true) },
+                    onSetSort = galleryPreferences::setSort,
+                    onSetGridZoomRung = galleryPreferences::setGridZoomRung,
+                    onSetBlurSensitive = galleryPreferences::setBlurSensitive,
+                    onSetHideSensitive = galleryPreferences::setHideSensitive,
+                    onSetShowVideos = galleryPreferences::setShowVideos,
+                    onSetTimelineGrouping = galleryPreferences::setTimelineGrouping,
+                    onSetTimelineOn = galleryPreferences::setTimelineOn,
+                    onSetTimelinePlacement = galleryPreferences::setTimelinePlacement,
+                    onSetScrollAxis = galleryPreferences::setScrollAxis,
+                    onSetThemeMode = galleryPreferences::setThemeMode,
+                    onSetAccentPalette = galleryPreferences::setAccentPalette,
+                    onSetCustomTheme = galleryPreferences::setCustomTheme,
+                    onSetSlideshowInterval = galleryPreferences::setSlideshowInterval,
+                    onSetDefaultDestination = galleryPreferences::setDefaultDestination,
+                    onSetKeepScreenOn = galleryPreferences::setKeepScreenOn,
+                    onSetSlideshowShuffle = galleryPreferences::setSlideshowShuffle,
+                    onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
+                    onSetFitToTile = galleryPreferences::setFitToTile,
+                    onSetLoopAnimations = galleryPreferences::setLoopAnimations,
+                    onSetGridLongPress = galleryPreferences::setGridLongPress,
+                    onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
+                    onEditAsset = { asset ->
+                        if (!viewModel.setEditingAsset(asset)) {
+                            transientNotice = TransientNotice(FINISH_EDIT_FIRST_MESSAGE)
                         }
-                    }
-                },
-                onExportMetadata = { exportMetadataLauncher.launch("fotoz-metadata.json") },
-                onImportMetadata = { importMetadataLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
-                onOpenAsset = { asset, visible ->
-                    setViewerAssets(visible)
-                    selectedAssetId = asset.id
-                    slideshowActive = false
-                },
-                onStartSlideshow = { visible ->
-                    if (visible.isNotEmpty()) {
+                    },
+                    onSetEditorSaveMode = galleryPreferences::setEditorSaveMode,
+                    onIndexRecognition = { recognitionGeneration += 1 },
+                    onProtectFolder = privateFolderStore::protect,
+                    onUnlockFolder = privateFolderStore::unlock,
+                    onLockFolder = privateFolderStore::lock,
+                    onRemoveFolderProtection = privateFolderStore::removeProtection,
+                    onSetFavorite = favoriteStore::setFavorite,
+                    onSetSensitive = sensitiveStore::setSensitive,
+                    onSetArchived = libraryStore::setArchived,
+                    onShare = ::share,
+                    onShareClean = ::shareAdvanced,
+                    onCopyToFolder = { items ->
+                        pendingTreeOperation = PendingTreeOperation.COPY
+                        pendingTreeItems = items
+                        treeLauncher.launch(null)
+                    },
+                    onMoveToFolder = { items ->
+                        pendingTreeOperation = PendingTreeOperation.MOVE
+                        pendingTreeItems = items
+                        treeLauncher.launch(null)
+                    },
+                    onRenameAsset = ::requestRename,
+                    onMoveToTrash = { requestMediaOperation(it, PendingMediaOperation.TRASH) },
+                    onRestore = { requestMediaOperation(it, PendingMediaOperation.RESTORE) },
+                    onDeletePermanently = { requestMediaOperation(it, PendingMediaOperation.DELETE) },
+                    onCreateCollection = { libraryStore.createCollection(it)?.id },
+                    onRenameCollection = { id, name -> libraryStore.renameCollection(id, name) },
+                    onDeleteCollection = libraryStore::deleteCollection,
+                    onAddToCollection = libraryStore::addToCollection,
+                    onRemoveFromCollection = libraryStore::removeFromCollection,
+                    onAddTag = libraryStore::addTag,
+                    onRemoveTag = libraryStore::removeTag,
+                    onExportZip = { items ->
+                        viewModel.jobRunner.launch(
+                            title = "Building a zip of ${items.size} item${if (items.size == 1) "" else "s"}",
+                            kind = ActivityKind.EXPORTING,
+                        ) { onProgress ->
+                            zipExporter.export(items, preferences.toShareOptions().stripMetadata) { done, total ->
+                                onProgress(if (total > 0) done.toFloat() / total else null)
+                            }.map { export ->
+                                unpreparedShareItemsMessage(export.failed)?.let { userMessage = it }
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "application/zip"
+                                    putExtra(Intent.EXTRA_STREAM, export.uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                startActivity(Intent.createChooser(intent, null))
+                                ""
+                            }
+                        }
+                    },
+                    onExportMetadata = metadataBackup.saveToFile,
+                    onImportMetadata = metadataBackup.restoreFromFile,
+                    onOpenAsset = { asset, visible ->
                         setViewerAssets(visible)
-                        selectedAssetId = visible.first().id
-                        slideshowActive = true
-                    }
-                },
-                onPendingSearchConsumed = { pendingSearch = null },
-                onRejectArchiveSuggestions = libraryStore::rejectArchiveSuggestions,
-                onManageSelectedMedia = { permissionLauncher.launch(requiredMediaPermissions()) },
-            ),
-        )
+                        selectedAssetId = asset.id
+                        slideshowActive = false
+                    },
+                    onStartSlideshow = { visible ->
+                        if (visible.isNotEmpty()) {
+                            setViewerAssets(visible)
+                            selectedAssetId = visible.first().id
+                            slideshowActive = true
+                        }
+                    },
+                    onPendingSearchConsumed = { pendingSearch = null },
+                    onRejectArchiveSuggestions = libraryStore::rejectArchiveSuggestions,
+                    onManageSelectedMedia = { permissionLauncher.launch(requiredMediaPermissions()) },
+                ),
+            )
+        }
     }
 }
 
@@ -1634,23 +1802,6 @@ private fun requiredMediaPermissions(): Array<String> =
         // the person tries to do prompts them again for a permission that reads, to them, like
         // the one they already granted a moment ago.
         mediaReadPermissions() + requiredWriteStoragePermission()
-    }
-
-/**
- * The Audio library's own grant (P0-10), requested the first time the Audio destination is opened
- * rather than upfront with the photo/video grant -- see [hasAudioPermission]'s KDoc (in
- * LibraryRuntime.kt) for why this is never folded into [mediaReadPermissions], and
- * [GalleryUiState.audioPermissionGranted]'s own doc.
- *
- * API 33+ also asks for POST_NOTIFICATIONS in the same sheet, since the background-playback
- * notification is dropped silently without it. Below 33 `READ_EXTERNAL_STORAGE` is the audio grant
- * (the photo/video flow already holds it, so this resolves instantly).
- */
-private fun requiredAudioPermissions(): Array<String> =
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        arrayOf(Manifest.permission.READ_MEDIA_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
-    } else {
-        arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
 
 /**
@@ -1685,50 +1836,82 @@ private fun mediaReadPermissions(): Array<String> = when {
  *
  * Kept apart from [classifyIncomingIntent] deliberately: that function is pure and tested with no
  * Android runtime at all, and this is the Android-glue half -- turning its result into real
- * [MediaAsset]/[com.fotoxplorr.app.audio.AudioAsset] objects via [ExternalAssetLoader] -- that a
- * pure unit test has no way to exercise.
+ * [MediaAsset] objects via [ExternalAssetLoader] -- that a pure unit test has no way to exercise.
+ *
+ * A Uri that names a row this app has catalogued (a `content://media/...` photo) is never loaded
+ * as an "external" file: [lookupCatalogued] decides, so a photo the library is hiding (locked,
+ * archived, trashed, sensitive-hidden) cannot be put on screen just because another app handed
+ * over its Uri. A hidden one is skipped and reported through [onHidden]. A `content://media` Uri
+ * that cannot be read as a row, or whose row MediaStore will not describe, is refused the same way
+ * ([onUnverified]): it is never read as an ordinary file, since that would skip the lock.
  */
 private suspend fun FotoXplorrActivity.processIncomingIntent(
     intent: Intent,
     loader: ExternalAssetLoader,
+    lookupCatalogued: suspend (rowId: Long) -> OpenRequestLookup,
     onViewMedia: suspend (List<MediaAsset>) -> Unit,
-    onViewAudio: suspend (AudioAsset) -> Unit,
     onEditImage: suspend (MediaAsset) -> Unit,
+    onHidden: () -> Unit,
+    onUnverified: () -> Unit,
 ) {
     val mimeType = intent.type ?: intent.data?.let { runCatching { contentResolver.getType(it) }.getOrNull() }
-    val streamUris = when (intent.action) {
-        Intent.ACTION_SEND ->
-            IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
-                ?.let { listOf(it.toString()) } ?: emptyList()
-        Intent.ACTION_SEND_MULTIPLE ->
-            IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
-                ?.map { it.toString() } ?: emptyList()
-        else -> emptyList()
-    }
+    // A hostile EXTRA_STREAM can throw BadParcelableException on extraction; that must read as
+    // "no stream", not crash the activity every time it is relaunched from Recents.
+    val streamUris = runCatching {
+        when (intent.action) {
+            Intent.ACTION_SEND ->
+                IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                    ?.let { listOf(it.toString()) } ?: emptyList()
+            Intent.ACTION_SEND_MULTIPLE ->
+                IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                    ?.map { it.toString() } ?: emptyList()
+            else -> emptyList()
+        }
+    }.getOrDefault(emptyList())
     val route = classifyIncomingIntent(
         action = intent.action,
         dataUri = intent.data?.toString(),
         mimeType = mimeType,
         streamUris = streamUris,
     )
+    var anyHidden = false
+    var anyUnverified = false
+    suspend fun load(uriString: String, isVideo: Boolean): MediaAsset? {
+        when (val ref = classifyMediaStoreUri(uriString)) {
+            MediaStoreUri.NotMediaStore -> Unit
+            MediaStoreUri.Unreadable -> {
+                anyUnverified = true
+                return null
+            }
+            is MediaStoreUri.Row -> when (val found = lookupCatalogued(ref.id)) {
+                is OpenRequestLookup.Found -> return found.asset
+                OpenRequestLookup.Hidden -> {
+                    anyHidden = true
+                    return null
+                }
+                OpenRequestLookup.Unverified -> {
+                    anyUnverified = true
+                    return null
+                }
+                // Not scanned yet, and MediaStore says nothing hides it: an ordinary external file,
+                // read through its own grant.
+                OpenRequestLookup.Unknown -> Unit
+            }
+        }
+        return runCatching {
+            val uri = Uri.parse(uriString)
+            if (isVideo) loader.loadVideo(uri) else loader.loadImage(uri)
+        }.getOrNull()
+    }
     when (route) {
         is IncomingIntentRoute.ViewMedia -> {
-            val assets = route.uris.mapNotNull { uriString ->
-                runCatching {
-                    val uri = Uri.parse(uriString)
-                    if (route.isVideo) loader.loadVideo(uri) else loader.loadImage(uri)
-                }.getOrNull()
-            }
+            val assets = route.uris.mapNotNull { load(it, route.isVideo) }
             if (assets.isNotEmpty()) onViewMedia(assets)
         }
-        is IncomingIntentRoute.ViewAudio -> {
-            runCatching { loader.loadAudio(Uri.parse(route.uri)) }.getOrNull()?.let { onViewAudio(it) }
-        }
-        is IncomingIntentRoute.EditImage -> {
-            runCatching { loader.loadImage(Uri.parse(route.uri)) }.getOrNull()?.let { onEditImage(it) }
-        }
+        is IncomingIntentRoute.EditImage -> load(route.uri, isVideo = false)?.let { onEditImage(it) }
         IncomingIntentRoute.Unhandled -> Unit
     }
+    if (anyHidden) onHidden() else if (anyUnverified) onUnverified()
 }
 
 internal fun commonShareType(mimeTypes: List<String>): String = when {
@@ -1757,16 +1940,6 @@ private fun List<Uri>.toClipData(
     drop(1).forEach { uri -> clip.addItem(ClipData.Item(uri)) }
 }
 
-private fun JSONArray?.toMediaIds(): Set<MediaId> {
-    if (this == null) return emptySet()
-    return buildSet {
-        for (index in 0 until length()) {
-            val value = optLong(index, -1L)
-            if (value >= 0L) add(MediaId(value))
-        }
-    }
-}
-
 // ScanState moved to LibraryRuntime.kt (P0-09): it is no longer only ever produced from this
 // file's own scan loop, since LibraryRuntime's scan loop is what produces it now.
 
@@ -1780,6 +1953,16 @@ private data class TransientNotice(val message: String, val onOpen: (() -> Unit)
 
 /** How long a [TransientNotice] stays up before dismissing itself. */
 private const val TRANSIENT_NOTICE_MILLIS = 3_000L
+
+/** Shown when another app asks to open a catalogued photo the library is hiding right now
+ *  (locked folder, archived, in the trash, sensitive-hidden). It does not name the photo or the
+ *  reason, and it is the whole answer: nothing is opened. */
+internal const val OPEN_REQUEST_HIDDEN_MESSAGE = "That photo is hidden or locked in Fotoz, so it was not opened."
+
+/** Shown when a `content://media` Uri cannot be checked against the library's privacy rules (it
+ *  names no readable row, or MediaStore will not describe the row), so it is not opened. */
+internal const val OPEN_REQUEST_UNVERIFIED_MESSAGE =
+    "That photo could not be checked against your library, so it was not opened. Try again in a moment."
 
 /** How long [FotoXplorrActivity.openViewerForSavedUri] waits for the row it just inserted to
  *  reach the repository's own `observeAll()` before giving up quietly. */
@@ -1814,12 +1997,22 @@ private fun TransientNoticeBar(notice: TransientNotice, onDismiss: () -> Unit) {
 }
 
 /**
- * "Android would not let this app replace the original -- save a copy instead?" Rendered over
- * the still-open editor rather than as a dialog that would hide it, because the whole point is
- * that the edit the person just made is still right there, unlost, waiting on this one decision.
+ * "The original could not be replaced -- save a copy instead?" Rendered over the still-open
+ * editor rather than as a dialog that would hide it, because the whole point is that the edit the
+ * person just made is still right there, unlost, waiting on this one decision.
+ *
+ * [message] says why, as it is (see `overwriteFailureOf`). When [originalAtRisk] the original may
+ * be damaged and the edit is the only good version, so Discard is off and the copy is the way out.
+ * While [copySaving] both buttons are off, so a double tap cannot save the copy twice.
  */
 @Composable
-private fun OverwriteDeclinedBanner(onSaveCopy: () -> Unit, onDismiss: () -> Unit) {
+private fun OverwriteDeclinedBanner(
+    message: String,
+    originalAtRisk: Boolean,
+    copySaving: Boolean,
+    onSaveCopy: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     Box(Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -1830,18 +2023,21 @@ private fun OverwriteDeclinedBanner(onSaveCopy: () -> Unit, onDismiss: () -> Uni
                 .background(Color(0xFF232329), RoundedCornerShape(10.dp))
                 .padding(16.dp),
         ) {
+            Text(message, color = Color.White)
             Text(
-                "Android did not allow replacing the original photo.",
-                color = Color.White,
-            )
-            Text(
-                "Your edit is not lost -- save it as a new photo instead.",
+                if (originalAtRisk) {
+                    "The original may be damaged. Your edit is still here: save it as a new photo now."
+                } else {
+                    "Your edit is not lost -- save it as a new photo instead."
+                },
                 color = Color.White.copy(alpha = 0.7f),
                 modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
             )
             Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                TextButton(onClick = onDismiss) { Text("Discard", color = Color.White.copy(alpha = 0.7f)) }
-                TextButton(onClick = onSaveCopy) { Text("Save a copy") }
+                TextButton(onClick = onDismiss, enabled = !originalAtRisk && !copySaving) {
+                    Text("Discard", color = Color.White.copy(alpha = if (originalAtRisk || copySaving) 0.3f else 0.7f))
+                }
+                TextButton(onClick = onSaveCopy, enabled = !copySaving) { Text(if (copySaving) "Saving…" else "Save a copy") }
             }
         }
     }

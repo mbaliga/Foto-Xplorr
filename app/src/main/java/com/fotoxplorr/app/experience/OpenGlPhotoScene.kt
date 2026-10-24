@@ -37,6 +37,7 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.ui.HelpCopy
 
 @Composable
 fun PhotoWallScreen(
@@ -97,7 +98,7 @@ fun PhotoWallScreen(
             Column(Modifier.weight(1f)) {
                 Text("3D photo wall", color = Color.White, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Drag to turn and travel · pinch to move through depth · tap a photo",
+                    HelpCopy.Hint.WALL_GESTURES,
                     color = Color.White.copy(alpha = 0.72f),
                     style = MaterialTheme.typography.labelSmall,
                 )

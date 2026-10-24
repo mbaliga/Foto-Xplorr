@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -19,20 +18,27 @@ import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.ui.RoomEyebrow
+import com.fotoxplorr.app.ui.RoomGeography
 import com.fotoxplorr.app.ui.RoomRule
 import com.fotoxplorr.app.ui.RoomStyle
+import com.fotoxplorr.app.ui.clearSystemBarsFor
 import com.fotoxplorr.app.viewer.DetailFormatting
 import com.fotoxplorr.core.model.MediaId
 import java.util.Calendar
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
- * The gallery's BOTTOM room: what the view you are looking at actually *is*.
+ * The gallery's TOP room, the details: what the view you are looking at actually *is*, pulled down
+ * over it.
  *
- * Where the viewer USED to put one photo's EXIF, because the model is the edge, not the content
- * (owner, 2026-08-18: *"the info would be different as well as actions, but the model needs to
- * remain the same"*). The viewer has since deviated on the owner's own later direction: an open
- * photo's facts are its pull-DOWN room (see `ViewerScreen`), while a grid's facts stay here, below.
- * The gallery's geography is unchanged.
+ * The counterpart of the viewer's details room, which says the same kind of thing about one open
+ * photo from the same edge, because the model is the edge, not the content (owner, 2026-08-18:
+ * *"the info would be different as well as actions, but the model needs to remain the same"*).
+ * It was the bottom room here while the viewer's details were on top, which is the inconsistency
+ * [RoomGeography] now ends: details are always the top room.
+ *
+ * While a background job's shade is up it owns the strip it covers (the gallery's `topReserve`), so
+ * this room is pulled from just below it.
  *
  * The numbers are counted from the assets actually on screen rather than from the whole library,
  * so the room describes the destination, album or search result you are in — a "Videos" that said
@@ -54,9 +60,9 @@ fun GalleryInfoRoom(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
-            // The shell parks the card upward for a bottom room and insets this one at its top,
-            // so the system bar to clear here is the navigation bar.
-            .navigationBarsPadding()
+            // The shell parks the card downward for a top room and insets this one at its bottom,
+            // so the system bar to clear here is the status bar.
+            .clearSystemBarsFor(RoomGeography.Details)
             .verticalScroll(rememberScrollState())
             .padding(
                 start = RoomStyle.GutterStart,
@@ -99,8 +105,7 @@ fun GalleryInfoRoom(
         }
 
         Text(
-            text = "Counted from what is on screen, so it follows whichever destination, album " +
-                "or search you are in.",
+            text = HelpCopy.Caption.COUNTS_VIEWING,
             color = RoomStyle.InkFaint,
             style = RoomStyle.Caption,
             modifier = Modifier.padding(top = 16.dp),

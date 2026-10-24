@@ -161,8 +161,10 @@ class MetadataWriter(context: Context) {
             val expected = requested.coerceIn(0, 5).takeIf { it != 0 }
             check(current.rating == expected) { "Rating did not verify after writing" }
         }
-        if (edit.keywordsToAdd.isNotEmpty()) {
-            check(current.keywords.containsAll(edit.keywordsToAdd)) { "Keywords did not verify after writing" }
+        if (edit.keywordsToAdd.isNotEmpty() || edit.keywordsToRemove.isNotEmpty()) {
+            check(keywordsVerify(current.keywords, edit.keywordsToAdd, edit.keywordsToRemove)) {
+                "Keywords did not verify after writing"
+            }
         }
         if (edit.setLocation != null) {
             val latLong = FloatArray(2)
@@ -223,6 +225,16 @@ data class BulkMetadataOutcome(
     val attempted: Int get() = succeeded.size + failed.size
     val allSucceeded: Boolean get() = failed.isEmpty() && succeeded.isNotEmpty()
 }
+
+/**
+ * Whether the keywords read back from the staged file ([current]) match what an edit asked for.
+ * Mirrors [applyToXmp] exactly: a keyword named in both [add] and [remove] is REMOVED (removal
+ * wins), so it must be absent rather than present; every other added keyword must be present, and
+ * every removed one absent. Checking only the adds, as this used to, failed a correctly written
+ * add-and-remove-the-same-keyword edit and never noticed a removal that did not land.
+ */
+internal fun keywordsVerify(current: List<String>, add: List<String>, remove: List<String>): Boolean =
+    current.containsAll(add - remove.toSet()) && remove.none { it in current }
 
 /**
  * The actual read-modify-write logic, as a top-level function rather than a [MetadataWriter]

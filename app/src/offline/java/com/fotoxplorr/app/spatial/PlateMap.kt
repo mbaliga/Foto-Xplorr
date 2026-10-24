@@ -10,7 +10,7 @@ import com.fotoxplorr.core.model.MediaId
  *
  * The plate keeps its local graticule look, because a street map under the pin means map tiles
  * from a server and this build performs no network I/O at all -- the same reason this flavour's
- * `PhotoMapExperience` is an honest absence. Same fully-qualified signature as `src/connect`'s
+ * map pane is the tile-free stamp map. Same fully-qualified signature as `src/connect`'s
  * implementation; the flavour picks which one compiles in, and `PlacePlate` (main) calls it
  * without knowing which it got.
  */

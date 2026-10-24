@@ -184,6 +184,41 @@ private fun clearXmpLocation(packet: XmpPacket) {
     packet.clearProperty(XmpPacket.IPTC4XMPEXT_NS, "LocationCreated")
 }
 
+/**
+ * [clearXmpLocation] plus the place NAMES, for a file that leaves the device's own library
+ * ([com.fotoxplorr.app.editor.EditedCopyWriter.saveTo]): `photoshop:City`/`State`/`Country`,
+ * `Iptc4xmpCore:Location`/`CountryCode`, and every GPS or `Iptc4xmpExt` location structure wherever
+ * it sits in the packet. The metadata panel's "Clear location" leaves the names alone on purpose
+ * (see above: one may have been typed in by hand about a remembered place, and keeping data beats
+ * guessing); an export is the opposite case, where a name that identifies where a photo was taken
+ * is the leak, whoever wrote it. [XmpPacket.clearProperty] takes every copy, in every Description
+ * and nested, so a second Description or a duplicated element cannot survive.
+ */
+internal fun clearXmpLocationForExport(packet: XmpPacket) {
+    clearXmpLocation(packet)
+    XMP_PLACE_PROPERTIES.forEach { (namespace, name) -> packet.clearProperty(namespace, name) }
+}
+
+/**
+ * Whether [packet] still holds any location [clearXmpLocationForExport] clears: a GPS property, an
+ * IPTC location structure or a place name, in any shape and under any prefix. The XMP half of the
+ * proof [com.fotoxplorr.app.editor.carriesLocation] gives for a Save As.
+ */
+internal fun xmpCarriesLocation(packet: XmpPacket): Boolean =
+    XMP_GPS_PROPERTIES.any { packet.hasProperty(XmpPacket.EXIF_NS, it) } ||
+        packet.hasProperty(XmpPacket.IPTC4XMPEXT_NS, "LocationShown") ||
+        packet.hasProperty(XmpPacket.IPTC4XMPEXT_NS, "LocationCreated") ||
+        XMP_PLACE_PROPERTIES.any { (namespace, name) -> packet.hasProperty(namespace, name) }
+
+/** Place-name properties an export clears (namespace to local name). */
+private val XMP_PLACE_PROPERTIES = listOf(
+    XmpPacket.PHOTOSHOP_NS to "City",
+    XmpPacket.PHOTOSHOP_NS to "State",
+    XmpPacket.PHOTOSHOP_NS to "Country",
+    XmpPacket.IPTC4XMPCORE_NS to "Location",
+    XmpPacket.IPTC4XMPCORE_NS to "CountryCode",
+)
+
 /** Every property in the XMP EXIF schema's GPS group (Adobe XMP Specification Part 2, the EXIF
  *  schema's GPS Info IFD section) that this app's own GPS write path ([applyMetadataToExif]'s
  *  `exif.setLatLong`) could plausibly have a counterpart for, or that a camera/GPS receiver

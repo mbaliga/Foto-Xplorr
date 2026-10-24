@@ -31,6 +31,7 @@ class ResumePositionStore(context: Context) {
     /** The remembered position for [mediaId], or null if there is none (never watched partway,
      *  already finished, or already resumed and cleared). */
     fun get(mediaId: MediaId): Long? {
+        if (!isRememberable(mediaId)) return null
         val value = prefs.getLong(keyFor(mediaId), NO_VALUE)
         return value.takeIf { it >= 0L }
     }
@@ -40,6 +41,7 @@ class ResumePositionStore(context: Context) {
      *  leaving a stale near-the-end value that would show "Resume from 12:58" on a video the user
      *  already watched to completion. */
     fun save(mediaId: MediaId, positionMs: Long, durationMs: Long) {
+        if (!isRememberable(mediaId)) return
         if (shouldRememberPosition(positionMs, durationMs)) {
             prefs.edit().putLong(keyFor(mediaId), positionMs).apply()
         } else {
@@ -50,8 +52,17 @@ class ResumePositionStore(context: Context) {
     /** Called once playback runs to its natural end -- see [VideoPlayer]'s own completion
      *  handling -- so a finished video never offers to resume itself. */
     fun clear(mediaId: MediaId) {
+        if (!isRememberable(mediaId)) return
         prefs.edit().remove(keyFor(mediaId)).apply()
     }
+
+    /**
+     * A negative id is synthetic: `MediaId.EXTERNAL`, or the per-URI id `syntheticNegativeMediaId`
+     * mints for a file opened from another app. This app does not own those files, so nothing is
+     * remembered for them -- and before ExternalViewerActivity minted per-URI ids every external
+     * video shared the one `MediaId.EXTERNAL` key, so one clip's position resumed another's.
+     */
+    private fun isRememberable(mediaId: MediaId): Boolean = mediaId.value >= 0L
 
     private fun keyFor(mediaId: MediaId): String = "resume_${mediaId.value}"
 

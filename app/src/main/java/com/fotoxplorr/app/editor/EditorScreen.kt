@@ -13,9 +13,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,10 +29,15 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,8 +47,12 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
@@ -48,80 +61,32 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.decodeUpright
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * Which set of controls the bottom bar is showing.
  *
  * Grouped the way a photographer works rather than by what the code does: light before colour
  * before detail, because fixing exposure changes what the colour looks like and sharpening before
- * either amplifies whatever you were about to correct.
+ * either amplifies whatever you were about to correct. All of them are always offered, in one
+ * scrollable strip -- there used to be a Simple/Pro switch beside it, and its layout starved the
+ * switch to zero width so Curves could not be reached at all (docs/TRAPS.md, the LazyRow note).
+ * [CURVES] sits third because it is the tool people come looking for.
  */
 private enum class EditTool(val label: String) {
     LIGHT("Light"),
     COLOUR("Colour"),
+    CURVES("Curves"),
     PRESETS("Presets"),
     DETAIL("Detail"),
-    CURVES("Curves"),
     HSL("HSL"),
     CROP("Crop"),
     ROTATE("Rotate"),
     HEAL("Heal"),
-}
-
-/**
- * How much of the editor is showing — Snapseed's own split, by the owner's own description: "a
- * simple interface for most, regular users, and an on-demand suite of professional editing tools".
- *
- * [SIMPLE] is not a smaller tool SET so much as a smaller SLIDER count within [EditTool.LIGHT] and
- * [EditTool.COLOUR] — the two tabs that matter for almost every photo — plus [EditTool.PRESETS],
- * [EditTool.CROP] and [EditTool.ROTATE], which are not optional in any tier: a one-tap look and a
- * crop/rotate are exactly the moves a first-time user reaches for. [PRO] adds the remaining, more
- * granular sliders to LIGHT/COLOUR and unlocks [EditTool.DETAIL], [EditTool.CURVES],
- * [EditTool.HSL] and [EditTool.HEAL] entirely, which stay hidden rather than shown-and-empty in
- * [SIMPLE] — an on-demand suite that is visible by default is not on demand.
- *
- * Deliberately unrelated to [com.fotoxplorr.app.pro.ProEntitlement]: that gate is about payment
- * (it removes the share watermark), this one is about interface complexity, and conflating "the
- * tools you get for free" with "the tools shown right now" would make a paying user's own Simple
- * tier feel like a downgrade.
- */
-private enum class EditorTier(val label: String) {
-    SIMPLE("Simple"),
-    PRO("Pro"),
-}
-
-/** Which [EditTool] tabs [tier] shows at all — see [EditorTier]'s own doc. */
-private fun toolsFor(tier: EditorTier): List<EditTool> = when (tier) {
-    EditorTier.SIMPLE -> listOf(EditTool.LIGHT, EditTool.COLOUR, EditTool.PRESETS, EditTool.CROP, EditTool.ROTATE)
-    EditorTier.PRO -> EditTool.entries.toList()
-}
-
-/**
- * Named tone-curve shapes offered by [EditTool.CURVES] as a quick start, above the full
- * per-channel [CurvesEditor] the same tab now also offers for hand-dragged control points.
- *
- * Each is a real [ToneCurve], not a cosmetic label: selecting one sets [Adjustments.rgbCurve]
- * outright, so [ToneCurveTest]'s monotone-interpolation guarantees apply to every shape here
- * exactly as they would to a hand-dragged curve.
- */
-private enum class CurvePreset(val label: String, val curve: ToneCurve) {
-    /** [ToneCurve.IDENTITY] under a name that reads as an action ("remove the curve") rather
-     *  than a shape, since an identity curve has no shape to describe. */
-    LINEAR("Linear", ToneCurve.IDENTITY),
-    SOFT_CONTRAST(
-        "Soft contrast",
-        ToneCurve(listOf(CurvePoint(0f, 0f), CurvePoint(0.25f, 0.20f), CurvePoint(0.75f, 0.80f), CurvePoint(1f, 1f))),
-    ),
-    STRONG_CONTRAST(
-        "Strong contrast",
-        ToneCurve(listOf(CurvePoint(0f, 0f), CurvePoint(0.25f, 0.12f), CurvePoint(0.75f, 0.88f), CurvePoint(1f, 1f))),
-    ),
-    // Two points only: a faded look is a straight lift-and-lower of black and white, not an S --
-    // adding interior points here would just be a slower way to draw the same line.
-    FADE("Fade", ToneCurve(listOf(CurvePoint(0f, 0.08f), CurvePoint(1f, 0.92f)))),
 }
 
 /**
@@ -150,6 +115,13 @@ fun EditorScreen(
     onClose: () -> Unit,
     onSaved: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * True while the host cannot let this editor go: a replace of the original is in flight, or it
+     * failed and the edit held by the host is the only good version. Cancel and Save are then off
+     * (Save would re-render from a file that may be half written), and the host's Back does
+     * nothing either. The host clears it when the replace is over.
+     */
+    locked: Boolean = false,
     /** What Save does. ASK shows the choice; anything else acts and remembers. */
     saveMode: EditorSaveMode = EditorSaveMode.ASK,
     onSetSaveMode: (EditorSaveMode) -> Unit = {},
@@ -169,6 +141,12 @@ fun EditorScreen(
      * never a failure. Additive: existing callers that only pass [onSaved] see no change at all.
      */
     onSavedUri: ((Uri) -> Unit)? = null,
+    /**
+     * Told true when a save starts and false when it ends (or this screen leaves composition), so
+     * the host can refuse to point the editor at another photo while a save of this one is still
+     * rendering: its late result would otherwise land on the wrong photo.
+     */
+    onSaveInProgress: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val recipeStore = remember(context) { RecipeStore(context) }
@@ -182,22 +160,24 @@ fun EditorScreen(
     var recipe by remember(asset.id) { mutableStateOf(EditRecipe()) }
     var history by remember(asset.id) { mutableStateOf(EditHistory.of(EditRecipe())) }
 
-    // Simple by default -- the "regular users" half of the tier's own reasoning (see EditorTier's
-    // doc): a photo editor most people open should not open onto the Pro-tier control set.
-    var tier by remember { mutableStateOf(EditorTier.SIMPLE) }
-    var tool by remember { mutableStateOf(EditTool.LIGHT) }
-    val availableTools = toolsFor(tier)
-    // Switching tier can leave `tool` pointing at a tab that just disappeared (Pro -> Simple while
-    // DETAIL, CURVES, HSL or HEAL was open). Falling back to LIGHT rather than rendering an empty
-    // panel for a tab no chip now selects. A LaunchedEffect rather than a plain `if` in the
-    // composable body: a direct write here would be a state mutation during composition, which is
-    // exactly the pattern Compose's own tooling warns against.
-    LaunchedEffect(tier) {
-        if (tool !in toolsFor(tier)) tool = EditTool.LIGHT
-    }
+    // Saveable, so a process kill while the user is mid-edit (the editor is a full-screen host,
+    // and Android reclaims those freely) returns them to the tab they were on rather than Light.
+    var tool by rememberSaveable(stateSaver = EditToolSaver) { mutableStateOf(EditTool.LIGHT) }
+    // Hoisted out of CurvesEditor, which leaves composition whenever another tab is open: state
+    // kept inside it would reset to RGB every time the user stepped away and back.
+    var curveChannel by rememberSaveable(stateSaver = CurveChannelSaver) { mutableStateOf(CurveChannel.RGB) }
+    // True only while a finger is actually moving a curve point; see the render effect below.
+    var curveDragging by remember { mutableStateOf(false) }
     var source by remember(asset.id) { mutableStateOf<Bitmap?>(null) }
     var preview by remember(asset.id) { mutableStateOf<Bitmap?>(null) }
     var saving by remember { mutableStateOf(false) }
+    val currentOnSaveInProgress by rememberUpdatedState(onSaveInProgress)
+    // The one way [saving] changes, so the host is always told.
+    fun setSaving(value: Boolean) {
+        saving = value
+        currentOnSaveInProgress(value)
+    }
+    DisposableEffect(Unit) { onDispose { currentOnSaveInProgress(false) } }
     var saveRequested by remember { mutableStateOf(false) }
     val writer = remember(context) { EditedCopyWriter(context) }
     val scope = rememberCoroutineScope()
@@ -245,10 +225,35 @@ fun EditorScreen(
         }
     }
 
+    // The histogram behind the curve graph, measured from the UNEDITED source for the same reason
+    // the auto-fix offers are: it describes the photograph, and a backdrop that moved while the
+    // user dragged a point would make the point they are dragging impossible to judge.
+    var histogram by remember(asset.id) { mutableStateOf<ToneHistogram?>(null) }
+    LaunchedEffect(source) {
+        val base = source ?: return@LaunchedEffect
+        histogram = withContext(Dispatchers.Default) {
+            runCatching { histogramOf(base) }.getOrNull()
+        }
+    }
+
+    // A much smaller copy of the source, used for the preview only while a curve point is being
+    // dragged. The full preview is up to 2048px on a side and every move re-renders it from
+    // scratch; a drag produces a render per touch event, and at that size they queue faster than
+    // they finish. The graph is the thing under the finger, so the photo can be coarse until it
+    // lets go -- the settled recipe then re-renders from the full source.
+    var dragSource by remember(asset.id) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(source) {
+        val base = source ?: return@LaunchedEffect
+        dragSource = withContext(Dispatchers.Default) {
+            runCatching { downscaledForDrag(base) }.getOrNull()
+        }
+    }
+
     // Re-render off the main thread: the matrix runs over every previewed pixel, and doing that
     // in composition would drop frames on the very drag that requested it.
-    LaunchedEffect(source, recipe) {
-        val base = source ?: return@LaunchedEffect
+    val renderBase = if (curveDragging) (dragSource ?: source) else source
+    LaunchedEffect(renderBase, recipe) {
+        val base = renderBase ?: return@LaunchedEffect
         preview = withContext(Dispatchers.Default) {
             runCatching { EditRenderer.render(base, recipe) }.getOrNull()
         }
@@ -258,7 +263,8 @@ fun EditorScreen(
     // drag fires this effect on every intermediate frame, and LaunchedEffect keyed on `recipe`
     // cancels and restarts its own delay each time, so only the value the user actually stopped
     // on ever reaches disk or the history stack -- not every frame in between.
-    LaunchedEffect(recipe, asset.id) {
+    LaunchedEffect(recipe, asset.id, pendingResumeChoice) {
+        if (!shouldAutosave(pendingResumeChoice)) return@LaunchedEffect
         delay(HISTORY_COMMIT_DEBOUNCE_MS)
         if (recipe != history.current) history = history.commit(recipe)
         recipeStore.save(asset, recipe)
@@ -274,16 +280,20 @@ fun EditorScreen(
         val bitmap = pendingSaveToBitmap
         pendingSaveToBitmap = null
         if (uri == null || bitmap == null) {
-            if (saving) { saving = false; onSaved("Cancelled — nothing was saved") }
+            if (saving) { setSaving(false); onSaved("Cancelled — nothing was saved") }
             return@rememberLauncherForActivityResult
         }
         scope.launch {
-            val result = writer.saveTo(uri, asset, bitmap, pendingSaveToFormat, pendingSaveToQuality)
-            saving = false
+            var steppedNote = ""
+            val result = writer.saveTo(
+                uri, asset, bitmap, pendingSaveToFormat, pendingSaveToQuality,
+                onSteppedDown = { w, h -> steppedNote = " at reduced size ($w × $h)" },
+            )
+            setSaving(false)
             result.onSuccess { onSavedUri?.invoke(uri) }
             onSaved(
                 result.fold(
-                    onSuccess = { "Saved to the chosen location$pendingSaveToNote" },
+                    onSuccess = { "Saved to the chosen location${steppedNote.ifEmpty { pendingSaveToNote }}" },
                     onFailure = { it.message ?: "Could not save the edited photo" },
                 ),
             )
@@ -296,46 +306,58 @@ fun EditorScreen(
             .background(Color.Black)
             .statusBarsPadding(),
     ) {
+        // Undo and Redo live in the top bar with Cancel and Save rather than on a row of their
+        // own: that row cost ~48dp of the photo's height on every tab, and with a curve graph in
+        // the bottom half the photo has none to spare.
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            TextButton(onClick = onClose) { Text("Cancel", color = Color.White) }
+            BarAction("Cancel", enabled = !locked, color = Color.White, onClick = onClose)
+            BarAction(
+                "Undo",
+                enabled = history.canUndo,
+                color = Color.White,
+                onClick = { history = history.undo(); recipe = history.current },
+            )
+            BarAction(
+                "Redo",
+                enabled = history.canRedo,
+                color = Color.White,
+                onClick = { history = history.redo(); recipe = history.current },
+            )
             Text(
                 asset.displayName,
                 color = Color.White.copy(alpha = 0.7f),
                 style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
             )
-            TextButton(
+            BarAction(
+                if (saving) "Saving…" else "Save",
                 // A no-op edit must not write a second copy of the photo.
-                enabled = !recipe.isIdentity && !saving && source != null,
+                enabled = !recipe.isIdentity && !saving && !locked && source != null,
+                color = MaterialTheme.colorScheme.primary,
+                bold = true,
                 onClick = { saveRequested = true },
-            ) {
-                Text(
-                    if (saving) "Saving…" else "Save",
-                    color = if (recipe.isIdentity) Color.White.copy(alpha = 0.4f) else MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        }
-
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            TextButton(enabled = history.canUndo, onClick = { history = history.undo(); recipe = history.current }) {
-                Text("Undo", color = if (history.canUndo) Color.White else Color.White.copy(alpha = 0.3f))
-            }
-            TextButton(enabled = history.canRedo, onClick = { history = history.redo(); recipe = history.current }) {
-                Text("Redo", color = if (history.canRedo) Color.White else Color.White.copy(alpha = 0.3f))
-            }
+            )
         }
 
         // A format this file's own bytes could actually be replaced in, or null when they can't
-        // be — see overwriteFormatFor's own doc. Read once here rather than per-save so both the
-        // sheet (which hides the row entirely) and performSave (which must not attempt one) agree.
-        val canOverwriteInPlace = overwriteFormatFor(asset.mimeType) != null
+        // be — see overwriteFormatFor's own doc — and not a file whose animation, HDR gain map or
+        // motion video a re-encode would destroy (see overwriteHazards). Read once here rather
+        // than per-save so both the sheet (which hides the row entirely) and performSave (which
+        // must not attempt one) agree. The hazard read is one pass over the file off the main
+        // thread; until it lands the row is offered and EditedCopyWriter.overwrite repeats the same
+        // check, so a quick tap is refused there rather than let through. A file that could not be
+        // read at all is not offered either: it cannot be vouched for.
+        val hazardScan by produceState(HazardScan.CLEAR, asset.id) {
+            value = withContext(Dispatchers.IO) { context.readOverwriteHazards(asset) }
+        }
+        val hazards = hazardScan.hazards
+        val canOverwriteInPlace = overwriteFormatFor(asset.mimeType) != null && !hazardScan.blocksOverwrite
 
         // Saving in one place, whichever route asked for it. Two call sites for "write the file"
         // is how a save path ends up with two different sets of error handling.
@@ -347,31 +369,46 @@ fun EditorScreen(
         // and, for the same reason, ignores the sheet's quality and long-edge controls entirely.
         fun performSave(mode: EditorSaveMode, options: ExportOptions) {
             saveRequested = false
-            saving = true
+            setSaving(true)
+            // True only while the system file picker owns the rest of the save: every other way out
+            // ends the save below, so [saving] (and the host's lock) cannot be left set by a throw.
+            var pickerHasIt = false
             scope.launch {
                 val overwriting = mode == EditorSaveMode.OVERWRITE && canOverwriteInPlace
-                // An overwrite is rendered at the absolute ceiling, never the user's long-edge cap
-                // and never the memory-derived one: a smaller export is a fine COPY, but silently
-                // re-encoding the ORIGINAL at reduced size would destroy pixels that cannot be
-                // recovered (docs/TRAPS.md #17). A render that fails for lack of memory is
-                // harmless -- it reports and nothing is written -- and a render that still had to
-                // downscale is refused below.
-                val edge = if (overwriting) MAX_EXPORT_EDGE else options.renderEdge(context)
-                val rendered = renderFullSize(context, asset, recipe, edge)
+                // An overwrite is rendered at the absolute ceiling and on a single rung, never the
+                // user's long-edge cap and never stepped down after an OutOfMemoryError: a
+                // smaller export is a fine COPY, but silently re-encoding the ORIGINAL at reduced
+                // size would destroy pixels that cannot be recovered (docs/TRAPS.md #17). A render
+                // that fails for lack of memory is harmless -- it reports and nothing is written
+                // -- and a render that still had to downscale is refused below. A COPY starts at
+                // the user's cap (or the ceiling) and steps down only after a real OOM.
+                val ladder = if (overwriting) listOf(MAX_EXPORT_EDGE) else exportEdgeLadder(options.renderEdge())
+                // The format the pixels will be encoded in, so a render for an alpha-less one is
+                // flattened inside the ladder attempt (an out-of-memory there steps down too).
+                val targetFormat = if (overwriting) {
+                    overwriteFormatFor(asset.mimeType)
+                } else {
+                    options.format ?: outputFormatFor(asset.mimeType)
+                }
+                val rendered = renderFullSize(
+                    context, asset, recipe, ladder,
+                    targetFormat.takeIf { it != OutputFormat.HEIC },
+                )
                 if (rendered == null) {
-                    saving = false
+                    setSaving(false)
                     onSaved("Could not read the photo at full size")
                     return@launch
                 }
                 val full = rendered.bitmap
 
                 if (overwriting && !rendered.downscaled) {
-                    saving = false
                     // Hands off to the Activity and does NOT close this screen -- see onOverwrite's
                     // own doc. The host closes on success and, on a declined consent prompt, is
                     // expected to keep this editor open (the edit is still right here) and offer a
-                    // copy instead.
+                    // copy instead. [saving] ends only after the hand-off, which locks the editor
+                    // itself, so there is no moment when neither holds it.
                     onOverwrite(asset, full)
+                    setSaving(false)
                     return@launch
                 }
 
@@ -386,47 +423,67 @@ fun EditorScreen(
                     // HEIC has no MediaStore fast path in this app (see EditedCopyWriter's HEIC
                     // section) -- every HEIC export goes through the same SAF picker "Save to…"
                     // uses, saving that path from having to exist twice.
+                    pickerHasIt = true
                     saveToLauncher.launch(SaveToRequest(editedName(asset.displayName, resolvedFormat), resolvedFormat.mimeType))
                     return@launch
                 }
-                val result = writer.save(asset, full, resolvedFormat, options.resolvedQuality(resolvedFormat))
-                saving = false
+                var metadataNote = ""
+                // Set when the ENCODE (not the render) ran out of memory and the writer saved a
+                // smaller copy, so the message never claims a size it did not write.
+                var steppedNote = ""
+                val result = writer.save(
+                    asset,
+                    full,
+                    resolvedFormat,
+                    options.resolvedQuality(resolvedFormat),
+                    onMetadata = { metadataNote = it.savedNote() },
+                    onSteppedDown = { w, h -> steppedNote = " at reduced size ($w × $h)" },
+                )
+                setSaving(false)
                 result.onSuccess { uri -> onSavedUri?.invoke(uri) }
                 onSaved(
                     result.fold(
                         onSuccess = {
+                            val sizeNote = steppedNote.ifEmpty { rendered.reducedSizeNote }
                             when {
                                 // OVERWRITE was chosen and this format could take it, but the
                                 // photo is too large to re-encode at full size on this device: the
                                 // original is left exactly as it was and a copy is saved instead.
                                 overwriting ->
-                                    "Saved a copy${rendered.reducedSizeNote} — the original was left untouched " +
-                                        "because it is too large to replace at full size here"
+                                    HelpCopy.savedCopyTooLarge(sizeNote)
                                 // Honest about what actually happened: OVERWRITE was chosen but
-                                // this format has no in-place path at all (see canOverwriteInPlace
-                                // above), so the safe fallback ran instead and needs to say so.
+                                // this photo cannot take it (see canOverwriteInPlace above), so
+                                // the safe fallback ran instead and needs to say why.
+                                mode == EditorSaveMode.OVERWRITE && hazards.isNotEmpty() ->
+                                    "Saved a copy — replacing the original would destroy its ${hazards.describe()}"
+                                mode == EditorSaveMode.OVERWRITE && hazardScan.unreadable ->
+                                    "Saved a copy — the original could not be checked, so it was left untouched"
                                 mode == EditorSaveMode.OVERWRITE ->
-                                    "Saved a copy — ${asset.mimeType} can't be replaced in place"
+                                    HelpCopy.savedCopyFormat()
                                 options.format != null ->
-                                    "Saved a copy as ${resolvedFormat.label}${rendered.reducedSizeNote}"
-                                rendered.downscaled -> "Saved a copy${rendered.reducedSizeNote}"
+                                    "Saved a copy as ${resolvedFormat.label}$sizeNote"
+                                sizeNote.isNotEmpty() -> "Saved a copy$sizeNote"
                                 else -> "Saved a copy at full resolution"
-                            }
+                            } + metadataNote
                         },
                         onFailure = { it.message ?: "Could not save the edited photo" },
                     ),
                 )
-            }
+            }.invokeOnCompletion { if (!pickerHasIt) setSaving(false) }
         }
 
         fun performSaveTo(options: ExportOptions) {
             saveRequested = false
-            saving = true
+            setSaving(true)
+            var pickerHasIt = false
             scope.launch {
                 val resolvedFormat = options.format ?: outputFormatFor(asset.mimeType)
-                val rendered = renderFullSize(context, asset, recipe, options.renderEdge(context))
+                val rendered = renderFullSize(
+                    context, asset, recipe, exportEdgeLadder(options.renderEdge()),
+                    resolvedFormat.takeIf { it != OutputFormat.HEIC },
+                )
                 if (rendered == null) {
-                    saving = false
+                    setSaving(false)
                     onSaved("Could not read the photo at full size")
                     return@launch
                 }
@@ -434,8 +491,9 @@ fun EditorScreen(
                 pendingSaveToFormat = resolvedFormat
                 pendingSaveToQuality = options.resolvedQuality(resolvedFormat)
                 pendingSaveToNote = rendered.reducedSizeNote
+                pickerHasIt = true
                 saveToLauncher.launch(SaveToRequest(editedName(asset.displayName, resolvedFormat), resolvedFormat.mimeType))
-            }
+            }.invokeOnCompletion { if (!pickerHasIt) setSaving(false) }
         }
 
         if (saveRequested) {
@@ -558,7 +616,9 @@ fun EditorScreen(
             // and someone who wants a slider will scroll past a row of three chips without
             // resenting it. Absent entirely when the photo needs nothing, which is the property
             // that keeps them worth reading.
-            if (autoFixes.isNotEmpty()) {
+            // Not on the Curves tab: the graph needs every dp it can get, and the offers are one
+            // tab away.
+            if (autoFixes.isNotEmpty() && tool != EditTool.CURVES) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(autoFixes, key = { it.id.name }) { suggestion ->
                         Column(
@@ -599,267 +659,219 @@ fun EditorScreen(
                 }
             }
 
-            Row(
+            // ONE strip, full width, scrollable. It used to share a Row with a "Pro tools" chip,
+            // and a LazyRow without a width of its own takes everything the Row offers, so the
+            // chip behind it was measured at nothing and the tabs it controlled were unreachable.
+            LazyRow(
                 Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(availableTools, key = { it.name }) { entry ->
-                        val selected = entry == tool
-                        Text(
-                            entry.label,
-                            color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
-                            style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier
-                                .background(
-                                    if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
-                                    RoundedCornerShape(50),
-                                )
-                                .clickable { tool = entry }
-                                .padding(horizontal = 14.dp, vertical = 8.dp),
-                        )
-                    }
+                items(EditTool.entries.toList(), key = { it.name }) { entry ->
+                    val selected = entry == tool
+                    Text(
+                        entry.label,
+                        color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
+                                RoundedCornerShape(50),
+                            )
+                            .clickable { tool = entry }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
                 }
-                // Off to the side rather than mixed into the tool row above: this switches what
-                // the WHOLE row above even offers, so it reads as a setting for the row rather
-                // than one more tab inside it. Same filled-when-on chip language as the tool tabs
-                // themselves, so "this is currently active" reads the same way everywhere in this
-                // screen rather than needing its own convention for one toggle.
-                val proOn = tier == EditorTier.PRO
-                Text(
-                    "Pro tools",
-                    color = if (proOn) MaterialTheme.colorScheme.onPrimary else Color.White.copy(alpha = 0.7f),
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier
-                        .background(
-                            if (proOn) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
-                            RoundedCornerShape(50),
-                        )
-                        .clickable { tier = if (proOn) EditorTier.SIMPLE else EditorTier.PRO }
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                )
             }
 
             val adjust = recipe.adjustments
+            // Reads `recipe` afresh rather than the `adjust` captured at composition: the curve
+            // graph can fire several edits between two recompositions (an insert then a move), and
+            // each must build on the one before it, not on the snapshot the first one started from.
             fun set(block: Adjustments.() -> Adjustments) {
-                recipe = recipe.copy(adjustments = adjust.block())
+                recipe = recipe.copy(adjustments = recipe.adjustments.block())
             }
 
-            when (tool) {
-                EditTool.LIGHT -> {
-                    // Exposure is in stops, so its range is not the -1..1 the others use: a photo
-                    // that needs rescuing needs two stops, not a fraction of one.
-                    LabelledSlider("Exposure", adjust.exposure, range = -2f..2f, unit = " EV") {
-                        set { copy(exposure = it) }
-                    }
-                    LabelledSlider("Contrast", adjust.contrast) { set { copy(contrast = it) } }
-                    // Highlights/Shadows/Whites/Blacks are the finer, region-targeted half of tone
-                    // -- Exposure and Contrast alone already cover "make it look right" for most
-                    // photos, which is exactly what SIMPLE is for. See EditorTier's own doc.
-                    if (tier == EditorTier.PRO) {
+            // The curve graph is OUTSIDE the scrolling column below, on purpose: a vertical drag
+            // on a control point inside a verticalScroll is contested by the scroll container and
+            // the panel moves instead of the point.
+            if (tool == EditTool.CURVES) {
+                CurvesEditor(
+                    curveFor = { channel -> recipe.adjustments.curveFor(channel) },
+                    onCurveChange = { channel, curve -> set { withCurve(channel, curve) } },
+                    channel = curveChannel,
+                    onChannelChange = { curveChannel = it },
+                    histogram = histogram,
+                    onDragActive = { curveDragging = it },
+                )
+            }
+
+            // Every other tool's controls scroll within a cap, so a tab with many sliders (Light,
+            // Detail, HSL) cannot grow past the photo; the cap leaves the preview at least half
+            // the screen.
+            val controlsCap = (LocalConfiguration.current.screenHeightDp * CONTROLS_MAX_SCREEN_FRACTION).dp
+            if (tool != EditTool.CURVES) Column(
+                Modifier.heightIn(max = controlsCap).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                when (tool) {
+                    EditTool.LIGHT -> {
+                        // Exposure is in stops, so its range is not the -1..1 the others use: a photo
+                        // that needs rescuing needs two stops, not a fraction of one.
+                        LabelledSlider("Exposure", adjust.exposure, range = -2f..2f, unit = " EV") {
+                            set { copy(exposure = it) }
+                        }
+                        LabelledSlider("Contrast", adjust.contrast) { set { copy(contrast = it) } }
+                        // Highlights/Shadows/Whites/Blacks are the finer, region-targeted half of tone.
                         LabelledSlider("Highlights", adjust.highlights) { set { copy(highlights = it) } }
                         LabelledSlider("Shadows", adjust.shadows) { set { copy(shadows = it) } }
                         LabelledSlider("Whites", adjust.whites) { set { copy(whites = it) } }
                         LabelledSlider("Blacks", adjust.blacks) { set { copy(blacks = it) } }
                     }
-                }
 
-                EditTool.COLOUR -> {
-                    LabelledSlider("Temperature", adjust.temperature) { set { copy(temperature = it) } }
-                    LabelledSlider("Saturation", adjust.saturation) { set { copy(saturation = it) } }
-                    // Tint and Vibrance are the more surgical pair -- a green/magenta cast and a
-                    // saturation curve that spares skin tones are both real needs, just rarer ones
-                    // than "warmer/cooler" and "more colourful", which SIMPLE already covers above.
-                    if (tier == EditorTier.PRO) {
+                    EditTool.COLOUR -> {
+                        LabelledSlider("Temperature", adjust.temperature) { set { copy(temperature = it) } }
+                        LabelledSlider("Saturation", adjust.saturation) { set { copy(saturation = it) } }
+                        // Tint and Vibrance are the more surgical pair -- a green/magenta cast and a
+                        // saturation boost that spares skin tones.
                         LabelledSlider("Tint", adjust.tint) { set { copy(tint = it) } }
                         LabelledSlider("Vibrance", adjust.vibrance) { set { copy(vibrance = it) } }
                     }
-                }
 
-                EditTool.PRESETS -> {
-                    PresetsPanel(
-                        userPresets = userPresets,
-                        currentAdjustments = adjust,
-                        onApply = { preset -> recipe = recipe.copy(adjustments = preset.adjustments) },
-                        onSaveCurrent = { name -> presetStore.save(name, adjust); refreshPresets() },
-                        onRename = { preset, newName -> presetStore.rename(preset, newName); refreshPresets() },
-                        onDelete = { preset -> presetStore.delete(preset); refreshPresets() },
-                    )
-                }
-
-                EditTool.DETAIL -> {
-                    // Pro-only tab (see toolsFor) -- these run neighbourhood passes rather than a
-                    // lookup, so they are the slow ones, grouped together so it is obvious which
-                    // controls cost time.
-                    LabelledSlider("Sharpen", adjust.sharpen, range = 0f..1f) { set { copy(sharpen = it) } }
-                    LabelledSlider("Clarity", adjust.clarity, range = 0f..1f) { set { copy(clarity = it) } }
-                    LabelledSlider("Denoise", adjust.denoise, range = 0f..1f) { set { copy(denoise = it) } }
-                    LabelledSlider("Vignette", adjust.vignette) { set { copy(vignette = it) } }
-                }
-
-                EditTool.CURVES -> {
-                    // Pro-only tab (see toolsFor). The presets are a quick start; the graph below
-                    // is the actual per-channel, hand-dragged control ToneCurveTest's monotone
-                    // Hermite maths already supports and nothing used to expose.
-                    Text(
-                        "A tone-curve shape, applied across all three colour channels together.",
-                        color = Color.White.copy(alpha = 0.5f),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(CurvePreset.entries.toList(), key = { it.name }) { preset ->
-                            val selected = adjust.rgbCurve == preset.curve
-                            Text(
-                                preset.label,
-                                color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
-                                style = MaterialTheme.typography.labelLarge,
-                                modifier = Modifier
-                                    .background(
-                                        if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
-                                        RoundedCornerShape(50),
-                                    )
-                                    .clickable { set { copy(rgbCurve = preset.curve) } }
-                                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                            )
-                        }
+                    EditTool.PRESETS -> {
+                        PresetsPanel(
+                            userPresets = userPresets,
+                            currentAdjustments = adjust,
+                            onApply = { preset -> recipe = recipe.copy(adjustments = preset.adjustments) },
+                            onSaveCurrent = { name -> presetStore.save(name, adjust); refreshPresets() },
+                            onRename = { preset, newName -> presetStore.rename(preset, newName); refreshPresets() },
+                            onDelete = { preset -> presetStore.delete(preset); refreshPresets() },
+                        )
                     }
-                    CurvesEditor(
-                        curveFor = { channel ->
-                            when (channel) {
-                                CurveChannel.RGB -> adjust.rgbCurve
-                                CurveChannel.RED -> adjust.redCurve
-                                CurveChannel.GREEN -> adjust.greenCurve
-                                CurveChannel.BLUE -> adjust.blueCurve
-                            }
-                        },
-                        onCurveChange = { channel, curve ->
-                            set {
-                                when (channel) {
-                                    CurveChannel.RGB -> copy(rgbCurve = curve)
-                                    CurveChannel.RED -> copy(redCurve = curve)
-                                    CurveChannel.GREEN -> copy(greenCurve = curve)
-                                    CurveChannel.BLUE -> copy(blueCurve = curve)
-                                }
-                            }
-                        },
-                    )
-                }
 
-                EditTool.HSL -> {
-                    // Pro-only tab (see toolsFor).
-                    HslPanel(hsl = adjust.hsl, onChange = { set { copy(hsl = it) } })
-                }
+                    EditTool.DETAIL -> {
+                        // These run neighbourhood passes rather than a lookup, so they are the slow
+                        // ones, grouped together so it is obvious which controls cost time.
+                        LabelledSlider("Sharpen", adjust.sharpen, range = 0f..1f) { set { copy(sharpen = it) } }
+                        LabelledSlider("Clarity", adjust.clarity, range = 0f..1f) { set { copy(clarity = it) } }
+                        LabelledSlider("Denoise", adjust.denoise, range = 0f..1f) { set { copy(denoise = it) } }
+                        LabelledSlider("Vignette", adjust.vignette) { set { copy(vignette = it) } }
+                    }
 
-                EditTool.CROP -> {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(AspectPreset.entries.toList(), key = { it.name }) { preset ->
-                            val selected = preset == selectedAspect
-                            Text(
-                                preset.label,
-                                color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
-                                style = MaterialTheme.typography.labelLarge,
-                                modifier = Modifier
-                                    .background(
-                                        if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
-                                        RoundedCornerShape(50),
-                                    )
-                                    .clickable {
-                                        selectedAspect = preset
-                                        val imageAspect = source?.let {
-                                            if (it.height > 0) it.width.toFloat() / it.height else 1f
-                                        } ?: 1f
-                                        recipe = recipe.copy(
-                                            crop = when (preset) {
-                                                AspectPreset.FREE -> recipe.crop
-                                                AspectPreset.ORIGINAL -> CropRect.FULL
-                                                else -> recipe.crop.fitTo(preset.ratio!!, imageAspect)
-                                            },
+                    // Drawn above, outside this scrolling column -- see the CurvesEditor call.
+                    EditTool.CURVES -> Unit
+
+                    EditTool.HSL -> {
+                        HslPanel(hsl = adjust.hsl, onChange = { set { copy(hsl = it) } })
+                    }
+
+                    EditTool.CROP -> {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(AspectPreset.entries.toList(), key = { it.name }) { preset ->
+                                val selected = preset == selectedAspect
+                                Text(
+                                    preset.label,
+                                    color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier
+                                        .background(
+                                            if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
+                                            RoundedCornerShape(50),
                                         )
-                                    }
-                                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                            )
+                                        .clickable {
+                                            selectedAspect = preset
+                                            val imageAspect = source?.let {
+                                                if (it.height > 0) it.width.toFloat() / it.height else 1f
+                                            } ?: 1f
+                                            recipe = recipe.copy(
+                                                crop = when (preset) {
+                                                    AspectPreset.FREE -> recipe.crop
+                                                    AspectPreset.ORIGINAL -> CropRect.FULL
+                                                    else -> recipe.crop.fitTo(preset.ratio!!, imageAspect)
+                                                },
+                                            )
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                                )
+                            }
                         }
+                        Text(
+                            HelpCopy.Hint.CROP,
+                            color = Color.White.copy(alpha = 0.5f),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
-                    Text(
-                        "Drag a handle to resize, drag inside the box to move it. Straighten " +
-                            "(in Rotate) still applies before the crop.",
-                        color = Color.White.copy(alpha = 0.5f),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
 
-                EditTool.ROTATE -> {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { recipe = recipe.rotatedClockwise() }) {
-                            Text("Rotate 90°", color = Color.White)
+                    EditTool.ROTATE -> {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { recipe = recipe.rotatedClockwise() }) {
+                                Text("Rotate 90°", color = Color.White)
+                            }
+                            TextButton(onClick = { recipe = recipe.copy(flipHorizontal = !recipe.flipHorizontal) }) {
+                                Text(if (recipe.flipHorizontal) "Unflip" else "Flip", color = Color.White)
+                            }
+                            TextButton(onClick = { recipe = EditRecipe(); history = EditHistory.of(recipe) }) {
+                                Text("Reset all", color = Color.White.copy(alpha = 0.7f))
+                            }
                         }
-                        TextButton(onClick = { recipe = recipe.copy(flipHorizontal = !recipe.flipHorizontal) }) {
-                            Text(if (recipe.flipHorizontal) "Unflip" else "Flip", color = Color.White)
+                        // "Revert to original" is stronger than "Reset all": it also forgets the
+                        // autosave, so re-opening this photo later starts blank rather than offering
+                        // to continue an edit the user just explicitly threw away.
+                        TextButton(
+                            enabled = !recipe.isIdentity || recipeStore.has(asset),
+                            onClick = {
+                                recipe = recipeStore.revert(asset)
+                                history = EditHistory.of(recipe)
+                            },
+                        ) {
+                            Text("Revert to original", color = Color(0xFFEF5350))
                         }
-                        TextButton(onClick = { recipe = EditRecipe(); history = EditHistory.of(recipe) }) {
-                            Text("Reset all", color = Color.White.copy(alpha = 0.7f))
-                        }
+                        // Free rotation, solved as a crop problem rather than refused: dragging this
+                        // past zero exposes triangular gaps at the corners, which EditRenderer hides
+                        // by auto-cropping inward via StraightenGeometry -- so the preview itself is
+                        // already showing exactly what export will produce, corners and all.
+                        LabelledSlider(
+                            "Straighten",
+                            recipe.straightenDegrees,
+                            range = -STRAIGHTEN_LIMIT_DEGREES..STRAIGHTEN_LIMIT_DEGREES,
+                            unit = "°",
+                        ) { recipe = recipe.copy(straightenDegrees = it) }
                     }
-                    // "Revert to original" is stronger than "Reset all": it also forgets the
-                    // autosave, so re-opening this photo later starts blank rather than offering
-                    // to continue an edit the user just explicitly threw away.
-                    TextButton(
-                        enabled = !recipe.isIdentity || recipeStore.has(asset),
-                        onClick = {
-                            recipe = recipeStore.revert(asset)
-                            history = EditHistory.of(recipe)
-                        },
-                    ) {
-                        Text("Revert to original", color = Color(0xFFEF5350))
-                    }
-                    // Free rotation, solved as a crop problem rather than refused: dragging this
-                    // past zero exposes triangular gaps at the corners, which EditRenderer hides
-                    // by auto-cropping inward via StraightenGeometry -- so the preview itself is
-                    // already showing exactly what export will produce, corners and all.
-                    LabelledSlider(
-                        "Straighten",
-                        recipe.straightenDegrees,
-                        range = -STRAIGHTEN_LIMIT_DEGREES..STRAIGHTEN_LIMIT_DEGREES,
-                        unit = "°",
-                    ) { recipe = recipe.copy(straightenDegrees = it) }
-                }
 
-                EditTool.HEAL -> {
-                    // Pro-only tab (see toolsFor). Ported from PR #9: tap the photograph (handled
-                    // in the preview Box's own pointerInput above) to place a spot, a spot-size
-                    // slider, remove-last / clear-all, and a spot count.
-                    Text(
-                        "Tap a blemish to heal it — a matching patch from nearby covers the " +
-                            "spot. Heal after framing: changing crop or rotation moves the spots.",
-                        color = Color.White.copy(alpha = 0.7f),
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                    LabelledSlider(
-                        "Spot size",
-                        healRadius,
-                        range = HealSpot.MIN_RADIUS..HealSpot.MAX_RADIUS,
-                    ) { healRadius = it }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(
-                            enabled = recipe.heals.isNotEmpty(),
-                            onClick = { recipe = recipe.copy(heals = recipe.heals.dropLast(1)) },
-                        ) {
-                            Text("Remove last", color = Color.White)
-                        }
-                        TextButton(
-                            enabled = recipe.heals.isNotEmpty(),
-                            onClick = { recipe = recipe.copy(heals = emptyList()) },
-                        ) {
-                            Text("Clear all", color = Color.White.copy(alpha = 0.7f))
-                        }
-                        if (recipe.heals.isNotEmpty()) {
-                            Text(
-                                "${recipe.heals.size} ${if (recipe.heals.size == 1) "spot" else "spots"}",
-                                color = Color.White.copy(alpha = 0.55f),
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.align(Alignment.CenterVertically),
-                            )
+                    EditTool.HEAL -> {
+                        // Ported from PR #9: tap the photograph (handled
+                        // in the preview Box's own pointerInput above) to place a spot, a spot-size
+                        // slider, remove-last / clear-all, and a spot count.
+                        Text(
+                            HelpCopy.Hint.HEAL,
+                            color = Color.White.copy(alpha = 0.7f),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        LabelledSlider(
+                            "Spot size",
+                            healRadius,
+                            range = HealSpot.MIN_RADIUS..HealSpot.MAX_RADIUS,
+                        ) { healRadius = it }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(
+                                enabled = recipe.heals.isNotEmpty(),
+                                onClick = { recipe = recipe.copy(heals = recipe.heals.dropLast(1)) },
+                            ) {
+                                Text("Remove last", color = Color.White)
+                            }
+                            TextButton(
+                                enabled = recipe.heals.isNotEmpty(),
+                                onClick = { recipe = recipe.copy(heals = emptyList()) },
+                            ) {
+                                Text("Clear all", color = Color.White.copy(alpha = 0.7f))
+                            }
+                            if (recipe.heals.isNotEmpty()) {
+                                Text(
+                                    "${recipe.heals.size} ${if (recipe.heals.size == 1) "spot" else "spots"}",
+                                    color = Color.White.copy(alpha = 0.55f),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier.align(Alignment.CenterVertically),
+                                )
+                            }
                         }
                     }
                 }
@@ -879,7 +891,7 @@ private fun ContinueEditingDialog(onContinue: () -> Unit, onStartOver: () -> Uni
         ) {
             Text("Unsaved edit found", color = Color.White, style = MaterialTheme.typography.titleMedium)
             Text(
-                "This photo has changes from last time that were never saved.",
+                HelpCopy.Hint.UNSAVED_FROM_LAST_TIME,
                 color = Color.White.copy(alpha = 0.6f),
                 style = MaterialTheme.typography.bodySmall,
             )
@@ -1017,7 +1029,7 @@ private fun SaveChoiceSheet(
                 )
             }
             Text(
-                "You can change this any time in Settings › Media.",
+                HelpCopy.Hint.CHANGE_IN_SETTINGS,
                 color = Color.White.copy(alpha = 0.4f),
                 style = MaterialTheme.typography.labelSmall,
             )
@@ -1052,7 +1064,8 @@ private data class FullSizeRender(val bitmap: Bitmap, val downscaled: Boolean) {
 }
 
 /**
- * Render at FULL resolution (or [edge], whichever is smaller) and return the result.
+ * Render at FULL resolution (or the first rung of [ladder], whichever is smaller) and return the
+ * result.
  *
  * A second decode rather than reusing the preview bitmap, which is the whole point: the preview is
  * capped at 2048px so a slider drag stays interactive, and saving that would hand the user a
@@ -1061,27 +1074,82 @@ private data class FullSizeRender(val bitmap: Bitmap, val downscaled: Boolean) {
  * correctly at either size.
  *
  * Decoded through [decodeUpright] (docs/TRAPS.md #34), which applies EXIF orientation and samples
- * to the exact bound, so a sideways-shot photo is never exported sideways. Capped at [edge] /
- * [MAX_EXPORT_PIXELS] because a 108-megapixel phone photo is 432 MB as ARGB_8888 and several
- * copies of that exist at once inside the pipeline. Above the cap the export is downscaled rather
- * than the app being killed mid-save, and the caller says so ([FullSizeRender.downscaled]).
+ * to the exact bound, so a sideways-shot photo is never exported sideways. Capped at the rung's
+ * edge / [MAX_EXPORT_PIXELS] because a 108-megapixel phone photo is 432 MB as ARGB_8888 and several
+ * copies of that exist at once inside the pipeline. Above the cap the export is downscaled, and
+ * the caller says so ([FullSizeRender.downscaled]).
  *
- * @param edge defaults to [maxExportEdge], the memory-derived safety ceiling; a caller may pass a
- *   smaller value (the export controls' own long-edge presets) but never needs to pass a larger
- *   one — [performSave] already clamps its own request against the same ceiling before calling in.
+ * The cap is a fixed decode limit, not a guess at the device's free memory. If the decode or the
+ * render actually throws [OutOfMemoryError], the next, smaller rung of [ladder] is tried (see
+ * [renderDownTheLadder]) and the result reports `downscaled = true` even when the source was
+ * smaller than the first rung's edge. A caller that must not accept a smaller render (OVERWRITE)
+ * passes a one-rung ladder and gets null on an OOM.
+ *
+ * [flattenFor] is the format the pixels will be encoded in (null for none, and for HEIC, which
+ * takes its own path): an alpha-less one gets its transparency flattened onto white here, inside
+ * the attempt, rather than later in [EditedCopyWriter] where an out-of-memory would bypass the ladder.
  */
 private suspend fun renderFullSize(
     context: android.content.Context,
     asset: MediaAsset,
     recipe: EditRecipe,
-    edge: Int = maxExportEdge(context),
+    ladder: List<Int>,
+    flattenFor: OutputFormat? = null,
 ): FullSizeRender? = withContext(Dispatchers.IO) {
-    val limits = DecodeLimits(maxLongEdge = edge, maxPixels = MAX_EXPORT_PIXELS)
-    val decoded = decodeUpright(context, asset.contentUri, limits) ?: return@withContext null
-    val rendered = withContext(Dispatchers.Default) {
-        runCatching { EditRenderer.render(decoded.bitmap, recipe) }.getOrNull()
+    val outcome = renderDownTheLadder(ladder) { edge ->
+        val limits = DecodeLimits(maxLongEdge = edge, maxPixels = MAX_EXPORT_PIXELS)
+        val decoded = decodeUpright(context, asset.contentUri, limits) ?: return@renderDownTheLadder null
+        val bitmap = renderThenFlatten(
+            decoded = decoded.bitmap,
+            render = { source ->
+                withContext(Dispatchers.Default) {
+                    // Exception, not Throwable: an OutOfMemoryError must reach renderDownTheLadder.
+                    try {
+                        EditRenderer.render(source, recipe)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            },
+            flatten = { rendered -> if (flattenFor != null) compositeOntoWhiteIfNeeded(rendered, flattenFor) else rendered },
+        ) ?: return@renderDownTheLadder null
+        FullSizeRender(bitmap, decoded.downscaled)
     } ?: return@withContext null
-    FullSizeRender(rendered, decoded.downscaled)
+    outcome.value.copy(downscaled = outcome.value.downscaled || outcome.steppedDown)
+}
+
+/**
+ * One rung's work on an already-decoded bitmap: [render] it, then [flatten] the result (which
+ * allocates a second full-size bitmap, so it belongs inside the ladder attempt: an out-of-memory
+ * there must step down a rung like the render does, not escape the ladder).
+ *
+ * Whatever is not handed back is recycled on the way out, success or throw: [decoded] is only the
+ * render's input, and the unflattened render is superseded by its flattened copy. Holding either
+ * while the next rung runs would start that rung short of exactly the memory it needs. Returns null
+ * when [render] does.
+ */
+internal suspend fun renderThenFlatten(
+    decoded: Bitmap,
+    render: suspend (Bitmap) -> Bitmap?,
+    flatten: (Bitmap) -> Bitmap,
+): Bitmap? {
+    var result: Bitmap? = null
+    try {
+        val rendered = render(decoded) ?: return null
+        val flat = try {
+            flatten(rendered)
+        } catch (e: OutOfMemoryError) {
+            if (rendered !== decoded) rendered.recycle()
+            throw e
+        }
+        if (flat !== rendered && rendered !== decoded) rendered.recycle()
+        result = flat
+        return flat
+    } finally {
+        if (decoded !== result) decoded.recycle()
+    }
 }
 
 /** What [CreateImageDocumentContract] asks the system document picker to create. */
@@ -1107,65 +1175,6 @@ private class CreateImageDocumentContract : ActivityResultContract<SaveToRequest
     override fun parseResult(resultCode: Int, intent: android.content.Intent?): Uri? =
         intent.takeIf { resultCode == android.app.Activity.RESULT_OK }?.data
 }
-
-/**
- * The longest edge an export may reach on THIS device, derived from [ActivityManager.memoryClass]
- * rather than the fixed [MAX_EXPORT_EDGE] this used to be.
- *
- * [MAX_EXPORT_EDGE] alone allows a 67-megapixel ARGB_8888 buffer -- ~270 MB -- and the export
- * pipeline holds several of those at once (the decode, [AdjustmentRenderer]'s output copy, and
- * its own shared scratch pair for sharpen/clarity -- see that file's own doc). A phone with a
- * small `memoryClass` (the per-app heap ceiling Android itself enforces) would be killed by its
- * own OS before a save at that size finished, on exactly the low-end devices a photo editor most
- * needs to not crash on. `memoryClass` stands in for "available heap" here because that is the
- * number this app can actually get without an allocation of its own to measure against — the
- * real ceiling, not an estimate of what happens to be free at this instant.
- */
-private fun maxExportEdge(context: android.content.Context): Int {
-    val activityManager = context.getSystemService(android.content.Context.ACTIVITY_SERVICE)
-        as? android.app.ActivityManager
-    val memoryClassMb = (activityManager?.memoryClass ?: DEFAULT_MEMORY_CLASS_MB).coerceAtLeast(16)
-    val budgetBytes = (memoryClassMb.toDouble() * 1024.0 * 1024.0 * EXPORT_MEMORY_BUDGET_FRACTION).toLong()
-    val maxPixels = (budgetBytes / (BYTES_PER_ARGB_PIXEL * EXPORT_CONCURRENT_BUFFERS)).coerceAtLeast(1L)
-    val edge = kotlin.math.sqrt(maxPixels.toDouble()).toInt()
-    return edge.coerceIn(MIN_EXPORT_EDGE, MAX_EXPORT_EDGE)
-}
-
-/** The long edge an export under these options is rendered at: the user's own cap, when they
- *  chose one, but never above this device's [maxExportEdge] safety ceiling. */
-private fun ExportOptions.renderEdge(context: android.content.Context): Int =
-    maxEdge.edgePx?.coerceAtMost(maxExportEdge(context)) ?: maxExportEdge(context)
-
-/** Used only when the platform declines to report a memory class at all. */
-private const val DEFAULT_MEMORY_CLASS_MB = 192
-
-/** Share of the app's own heap ceiling this export is allowed to occupy at once. */
-private const val EXPORT_MEMORY_BUDGET_FRACTION = 0.35
-
-private const val BYTES_PER_ARGB_PIXEL = 4L
-
-/** How many full-resolution buffers the export pipeline holds at the same time: the decode,
- *  [AdjustmentRenderer]'s output copy, and its shared sharpen/clarity scratch pair counted as one
- *  more -- see that file's own doc for why the pair collapsed to a single reused allocation. */
-private const val EXPORT_CONCURRENT_BUFFERS = 3L
-
-/** Never decode below this even on the smallest reported memory class -- a crop or straighten
- *  tool needs enough real pixels to look sharp once exported. */
-private const val MIN_EXPORT_EDGE = 1536
-
-/**
- * The absolute ceiling on an export's longest edge, regardless of how generous a device's
- * `memoryClass` is — see [maxExportEdge], which is what callers actually use.
- *
- * 8192 is 67 megapixels at 1:1 and covers every phone camera in circulation, so there is never a
- * reason to decode above it even on a device that reports an unusually large heap.
- */
-private const val MAX_EXPORT_EDGE = 8192
-
-/** The pixel-count budget alongside [MAX_EXPORT_EDGE] -- P0-03: a source can be under the edge
- * cap on both axes yet still exceed a sane pixel count on an unusual aspect ratio, so both limits
- * apply together, exactly like [com.fotoxplorr.app.media.DecodeLimits] everywhere else. */
-private const val MAX_EXPORT_PIXELS = 64_000_000L
 
 @Composable
 internal fun LabelledSlider(
@@ -1210,6 +1219,79 @@ internal fun LabelledSlider(
 private const val PREVIEW_VIEWPORT_EDGE_PX = 1080
 
 /**
+ * The tool controls (everything but the curve graph) scroll inside this fraction of the screen's
+ * height, which keeps at least about half of it for the photo.
+ */
+private const val CONTROLS_MAX_SCREEN_FRACTION = 0.40f
+
+/** Long edge of the copy of the source the preview is rendered from while a curve point is dragged. */
+private const val DRAG_PREVIEW_EDGE_PX = 640
+
+/** Long edge of the copy the histogram is measured from. A statistic converges long before this. */
+private const val HISTOGRAM_EDGE_PX = 256
+
+/** Tab and channel as their names, so the saved state is a String rather than a private enum. */
+private val EditToolSaver = Saver<EditTool, String>(
+    save = { it.name },
+    restore = { name -> EditTool.entries.firstOrNull { it.name == name } },
+)
+
+private val CurveChannelSaver = Saver<CurveChannel, String>(
+    save = { it.name },
+    restore = { name -> CurveChannel.entries.firstOrNull { it.name == name } },
+)
+
+/** [bitmap] scaled so its long edge is [maxEdge], aspect kept; the bitmap itself if already smaller. */
+private fun scaledToEdge(bitmap: Bitmap, maxEdge: Int): Bitmap {
+    val longEdge = maxOf(bitmap.width, bitmap.height)
+    if (longEdge <= maxEdge) return bitmap
+    val scale = maxEdge.toFloat() / longEdge
+    return Bitmap.createScaledBitmap(
+        bitmap,
+        (bitmap.width * scale).toInt().coerceAtLeast(1),
+        (bitmap.height * scale).toInt().coerceAtLeast(1),
+        true,
+    )
+}
+
+private fun downscaledForDrag(source: Bitmap): Bitmap = scaledToEdge(source, DRAG_PREVIEW_EDGE_PX)
+
+private fun histogramOf(source: Bitmap): ToneHistogram {
+    val sampled = scaledToEdge(source, HISTOGRAM_EDGE_PX)
+    val pixels = IntArray(sampled.width * sampled.height)
+    sampled.getPixels(pixels, 0, sampled.width, 0, 0, sampled.width, sampled.height)
+    if (sampled !== source) sampled.recycle()
+    return ToneHistogram.of(pixels)
+}
+
+/**
+ * A top-bar action. A plain tappable label rather than a [TextButton]: four of them plus the
+ * photo's name share one row, and a TextButton's 58dp minimum width and 12dp padding would leave
+ * the name no room on a 360dp phone.
+ */
+@Composable
+private fun BarAction(
+    label: String,
+    enabled: Boolean,
+    color: Color,
+    onClick: () -> Unit,
+    bold: Boolean = false,
+) {
+    Text(
+        label,
+        color = if (enabled) color else color.copy(alpha = 0.35f),
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = if (bold) FontWeight.Bold else null,
+        maxLines = 1,
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 10.dp)
+            .wrapContentHeight(Alignment.CenterVertically),
+    )
+}
+
+/**
  * Edge length the auto-fix analysis samples down to.
  *
  * 128x128 is ~16k pixels, which settles a histogram completely while costing under a millisecond.
@@ -1234,3 +1316,11 @@ private const val STRAIGHTEN_LIMIT_DEGREES = 15f
  * the photo still autosaves promptly.
  */
 private const val HISTORY_COMMIT_DEBOUNCE_MS = 400L
+
+/**
+ * Whether the settled-recipe effect may touch history and disk. While the "Continue editing"
+ * choice is pending the live recipe is still the identity placeholder, and [RecipeStore.save]
+ * deletes the stored file for an identity recipe -- so an answer slower than the debounce would
+ * destroy the very edit the dialog is offering to resume.
+ */
+internal fun shouldAutosave(pendingResumeChoice: Boolean): Boolean = !pendingResumeChoice

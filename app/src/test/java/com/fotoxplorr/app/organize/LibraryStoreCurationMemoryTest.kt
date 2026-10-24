@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.organize
 
+import com.fotoxplorr.app.backup.ImportMode
 import com.fotoxplorr.core.model.MediaId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -192,10 +193,33 @@ class LibraryStoreCurationMemoryTest {
         library.setCaption(photo, "")
 
         val backup = library.exportJson()
-        // importJson clears the file and rewrites it from the backup, so importing into the same
-        // store is the round trip a restore performs.
+        // An import used to clear the file and rewrite it from the backup. It now merges by
+        // default (see LibraryStoreImportTest), and the memories must survive that path and the
+        // explicit replace alike, because a restore on a phone that lost its data is a replace in
+        // effect: nothing is there to merge with.
+        assertTrue(library.importJson(backup).isSuccess)
+        assertMemoriesIntact(library, photo)
+        assertTrue(library.importJson(backup, ImportMode.REPLACE).isSuccess)
+        assertMemoriesIntact(library, photo)
+    }
+
+    @Test
+    fun `an import keeps a no the person said after the backup was made`() {
+        val library = store()
+        val backup = library.exportJson()
+        val photo = MediaId(2L)
+        library.addAutoTags(photo, setOf("beach"))
+        library.removeTag(setOf(photo), "beach")
+
+        // This used to wipe the rejection, so the next curation pass put the tag straight back.
         assertTrue(library.importJson(backup).isSuccess)
 
+        assertEquals(setOf("beach"), library.observe().value.rejectedAutoTagsFor(photo))
+        library.addAutoTags(photo, setOf("beach"))
+        assertTrue(library.observe().value.tagsFor(photo).isEmpty())
+    }
+
+    private fun assertMemoriesIntact(library: LibraryStore, photo: MediaId) {
         val state = library.observe().value
         assertEquals(setOf("beach"), state.rejectedAutoTagsFor(photo))
         assertTrue(state.isMachineCaptionSuppressed(photo))
