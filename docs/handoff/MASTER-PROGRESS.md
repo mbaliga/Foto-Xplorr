@@ -923,7 +923,7 @@ visual verification. Traps found are TRAPS #78 to #88.
 
 ### Not built, and why
 
-- **Panorama utility**: an owner go or no-go; the critic recommended no. Nothing prepares it, but the Lanczos
+- **Panorama utility** (superseded: the owner overruled the critic and it was built in Batch 7, below): an owner go or no-go; the critic recommended no. Nothing prepares it, but the Lanczos
   reader and sink (`PixelRows`, `RowSink`) are the reuse point if it is wanted.
 - **Live-camera wall**: needs a CAMERA permission decision (TRAPS #83). The wall uses a photo.
 - **On-device neural upscaler** (LiteRT, Real-ESRGAN): deferred; `docs/MODEL_LICENSES.md` does not exist.
@@ -983,7 +983,7 @@ visual verification. Traps found are TRAPS #78 to #88.
   picker, the 3D wall, similarity, preview and the compass never offer it, and `mayExport` refuses it. A
   per-experiment blur would be gentler but needs edits in `wall/`, `ai/` and `experience/`. Owner decision:
   keep hiding, or ask for blurring.
-- **Not built, and what would change that.** Panorama (#24): the critic recommended no and the owner has not
+- **Not built, and what would change that.** Panorama (#24, since built in Batch 7): the critic recommended no and the owner had not
   said go; an owner go would reuse the Lanczos `PixelRows` and `RowSink`, and needs a stitching approach that
   adds no dependency. Live-camera AR: needs a CAMERA permission decision and a `restorable = false` entry
   (TRAPS #83), and ARCore, a dependency this batch did not add; the wall uses a photo. On-device upscaler: needs a
@@ -993,3 +993,123 @@ visual verification. Traps found are TRAPS #78 to #88.
   runs in record mode, so no screenshot test proves how anything looks. The device checklists
   (`docs/device-test/`, batch 6 section 8 for the polish) list what to run; each box is unverified until
   ticked.
+
+## Batch 7: Stitch a panorama (24 Oct 2026)
+
+Branch `claude/friendly-lovelace-06dito` (PR #18). **Nothing in this batch has run on a device, and no real
+photograph has gone through any of it.** Every figure below is from procedural scenes (1/f noise, hard edges,
+gradients, with per-frame gain and bias, sensor noise, vignetting, roll, shear, vertical jitter, a moving
+blob and a parallax layer). The checklist is `docs/device-test/batch-7-checklist.md`; traps are TRAPS #89 to #98.
+
+### Owner decision applied (not re-asked)
+
+- Item #24 (an Image Composite Editor kind of utility) said "don't do this if it takes too much tech debt". The
+  critic recommended against it; the owner then said **build it anyway**. It was built as the pure-Kotlin MVP
+  the investigator designed: a horizontal sweep of 2 to 12 photos, **no OpenCV, no new Gradle dependency, no
+  native code, no manifest change, APK delta about zero**. Measured OpenCV verdict, in `docs/DEPENDENCIES.md`:
+  about +24.8 MB per installed arm64 APK and +141 MB universal, and no `Stitcher` binding in the Maven artifact.
+- It is about 3,500 main lines and 5,800 test lines in one package, `com.fotoxplorr.app.pano`, with one Android
+  seam (`PanoramaHost` / `PanoramaSink`). That is more than the critic's 1,100 + 450 estimate, mostly tests and
+  the screen.
+
+### What was built
+
+- **Geometry and plan** (`PanoGeometry`, `PanoTypes`): focal length in pixels from the 35 mm tag (the design's
+  "about 2.4k px for 26 mm" was wrong; it is 3004 px on 4000x3000), cylinder warp maths, and `plan`/`ladder`
+  (24 MP default, the editor's 64 MP and 8192 px ceilings, never enlarged, a strictly shrinking out-of-memory ladder).
+- **Aligner** (`PairAligner`): normalised cross-correlation over a 5-level pyramid, integer working pixels
+  (about 1200 px), a `confident` flag that refuses thin, ambiguous or low-scoring matches.
+- **Layout and exposure** (`PanoLayout`, `ExposureGain`): chaining, runs split at a pair that does not join,
+  the isolated photo named, vertical drift; one luma multiplier per photo from block-median ratios.
+- **Blend, crop, compositor** (`SeamBlend`, `AutoCrop`, `PanoCompositor`): a 32-column cosine feather with binary
+  alpha, the largest hole-free rectangle, and a banded compositor that warps straight onto the canvas with two
+  photos alive, up to four workers, progress and cancel.
+- **Job and writer** (`PanoramaJob`, `PanoramaWriter`, `PanoCopy`): small reads, grey warp, align, layout, gains,
+  compose down the OOM ladder, protection re-checked four times, a JPEG (quality 92) in
+  `Pictures/Fotoz/Panoramas` with the first photo's date and no metadata, through `JobRunner` with progress and
+  cancel, and no partial MediaStore row.
+- **Screen** (`PanoramaScreen`, `PanoramaDraft`, `PanoramaPreview`): the "Stitch a panorama" Experimental entry
+  (Make): choose, arrange with Move left / Move right / Remove buttons (48 dp, named, no drag needed), Preview,
+  Save as a job, Open in the gallery. The chosen photos, their order and the step survive a process kill;
+  the preview and a running save do not.
+- Docs: README, store description, PRODUCT-AND-ARCHITECTURE, TRAPS #89 to #98, DEPENDENCIES, the batch 7 checklist, this entry.
+- Tests: 219 in the pano package before the screen (core and job: 57 aligner and geometry, 37 layout and exposure, 25 blend
+  and crop, 26 compositor, 74 job, writer, host and measurements) plus the screen's 50 (23 draft, 16 screen, 11
+  screen-with-job) and the host list, all passing; the full suite is the verifier's.
+
+### Measured on procedural scenes (the honest table)
+
+Offset error against the truth, 1200x900 pairs at 25, 45 and 65 percent overlap, 3 scenes each (px, working size):
+
+| Condition | Error | Notes |
+|---|---|---|
+| Clean, +-20 px vertical jitter | 0 | score 1.00, 9 of 9 confident |
+| Gain 0.8 to 1.2, bias +-25, 3 percent noise, jitter, one moving blob | 0 | scores 0.61 to 0.93, 9 of 9 confident |
+| Vignetting (corners -35 percent) | 0 | scores 0.67 to 0.92 |
+| Roll 0.5 / 1.0 degree in one frame | dy 1 to 4 / 2 to 8, dx <= 2 | translation-only, not detected |
+| Shear 0.01 | dx <= 1 | |
+| Parallax, near layer shifted 20 / 50 px | up to 20 / 50 | locks on the near layer, still confident, not detected |
+| Everything at once | dx up to 24 at 45 percent | 8 of 9 confident |
+| Moving subject in BOTH frames over a fifth of a 25 percent overlap | 17 of 18 exact, 4 refused, 1 lost (refused) | never confident and wrong |
+
+False positives (16 seeds): unrelated scenes, 0 to 10 percent overlap neighbours, flat or faint sky,
+gradients, stripes, window grids: 0 confident. The trust line 0.55 has a thin margin (false-positive maximum 0.48,
+true-positive minimum 0.61). A true 14 percent overlap is found but refused as too thin.
+
+Whole job on a pinhole-photographed cylinder, 5 photos 640x480, 30 percent overlap (green channel, mean grey
+levels over the crop after removing a global gain and bias): no imperfection 0.76; gain 0.9 to 1.1 0.81; noise
+(3 percent) 4.22 (that is the noise); vignette 0.3 4.84; gain 0.8 to 1.2 plus bias +-25 9.98 (a multiplier cannot
+undo a bias); roll 0.5 / 1.0 / 2.0 degrees 2.77 / 5.23 / 11.13; parallax 8 / 20 px 5.37 / 11.05; no lens tag
+(78 degree guess) 6.94 with a note; tag wrong by 3 mm (about 10 percent) 14.6 and 12.8, no note; everything
+together 5.75. A big mover in the overlap makes the job refuse ("Photo 3 doesn't overlap enough."). Exposure
+gains: pure gain 0.8 to 1.25 matched within 0.1 percent (bar 2 percent), 10 to 26 percent of a step left at
++-10 to 25 grey of bias. Compositor: planar tiles 0.34 mean grey levels with gains (7.17 without); a 12 percent
+wrong focal length is 1.4 levels worse on average and 3.4 times worse at the seams.
+
+Time on the 4-core host (a phone is guessed at 2 to 4 times slower; guesses, not measurements): aligner 150 to 200 ms
+per pair; compositor 1 to 2 s for a full 24 MP canvas, 0.14 to 0.4 s for normal sweeps; crop 40 to 450 ms.
+Memory (arithmetic): about 145 MB heap plus 96 MB native at 24 MP, about two canvases native at publish.
+A 12-photo sweep at 35 percent overlap is held by the 8192 px edge to about 8192x745.
+
+### What deviated and why
+
+- The job refuses a mixed selection (different size, portrait among landscapes, a lens differing by more than 5
+  percent) and requires the whole selection to join; it does not drop the odd photo or sort. This is simpler and
+  safer than guessing; "join these N" is a follow-up.
+- Preview is the job itself on a 700,000 px canvas, so it shares every refusal and word; the price is that
+  alignment is paid again on Save.
+- The gallery's "Stitch panorama" selection action was **not built**: it needed about 80 lines across five files
+  (two of them hot), over the 60-line limit set for it. The Experimental card is the only way in.
+- Exposure uses block medians, not the design's mean-colour least squares (a mover swung the plain mean by 26.6 percent).
+- `PanoCopy.TITLE` is "Stitch a panorama" and the old "Panorama" had no other user.
+
+### Not built, and why
+
+Full 360 degree and sphere stitching (bundle adjustment, loop closure, a viewer), vertical and grid sweeps,
+multiband blending and a dynamic-programming seam that steers around a moving person, GPano XMP tagging, 48 MP
+output, roll or shear search, parallax or wrong-focal-length detection, per-channel gain and vignetting
+compensation, a bias (affine) exposure model, sub-pixel offsets, mixed lenses or orientations, auto-sorting and
+"join the longest run", an output size or quality choice, writing the capture date into EXIF. Each was left out
+to keep the slice small, as instructed, and none is prepared beyond the swap-in points noted in the KDoc
+(`blendBand` for a seam, `Layout.runs` for a partial join).
+
+### Found, not fixed
+
+- `JobRunner.launch` registers the job after starting it, leaving a stale entry for a job that can finish on
+  another thread first (TRAPS #97); not this unit's file, and the panorama cannot hit it.
+- The activity's app-wide outcome collector posts "Joining a panorama finished." in addition to the screen's strip.
+- `decodeUpright` still returns null on API 26 and 27, so the panorama is unverified there (as the wall is).
+
+### Residual, for the owner
+
+- **Real-photo quality is unverified until your three real handheld sweeps** (standing still and turning, one with
+  a walking person, one indoors), compared with the phone's own panorama mode. That is the second half of the
+  design's kill criterion and the go / no-go; section 1 of the batch 7 checklist.
+- **Decisions to confirm:** the same-camera rule and refusing the whole selection on one bad pair; the 8192 px edge
+  (a long sweep never reaches 24 MP; a panorama-specific larger edge would be a change in `plan()` and the editor ceilings it references, if wanted);
+  the folder `Pictures/Fotoz/Panoramas`; no metadata at all in the output; whether to build the gallery selection
+  action; whether to keep Save re-aligning or reuse the preview's positions.
+- **A human read of the new wording:** the `PanoCopy` sentences (each one short sentence)
+  and the README and store lines. The store line says close objects can ghost; check it matches what you see.
+- **Silent failures to keep in mind:** a tilted hand, a near object or a focal-length tag that is wrong by about
+  10 percent produces visible flaws and the app does not warn. A person walking through is the one case where it refuses.
