@@ -1207,3 +1207,149 @@ When such a test (wall, export) is the first thing in a fresh JVM the process ca
 races the main thread. `NativeWarmUp.warmUpNativeImageDecoder()` in `@Before` fixes the two wall classes
 that hit it; any new test that decodes on a worker (aquarium, panorama) needs the same line. Read test
 results inside the same `flock` hold: other agents' runs overwrite the shared results directory.
+
+## 89. Panorama pixels come from `decodeUpright`, and protection is asked four times
+
+Everything the panorama reads goes through `ExperimentEnv.decode` (`decodeUpright` behind the live `mayExport`
+check, #33 and #34); the focal length is read from EXIF directly, only for a photo that may be exported, and
+not through the location reader (focal length is not a place, and the redacted view keeps it).
+`PanoramaJob` asks `mayExport` (a) for every photo before any pixel or EXIF is read, (b) inside every decode
+(a null there becomes the protected sentence if `mayExport` is now false, else "Photo N could not be read."),
+(c) once for all photos right after the last draw, and (d) in the writer right before the MediaStore row is
+created. Nothing is staged anywhere another app can see before (d); the staging JPEG is in app cache. A new
+`PanoSource` or `PanoramaHost` must keep (b): a photo protected while the job runs has to abort it, not leak
+into the output. `PanoSource.decode` is blocking and the host's is suspending (`runBlocking` on the
+compositor's IO thread), so a cancel cannot interrupt a decode that is in flight; it finishes, then the next
+`shouldStop` poll ends the job. The output has no EXIF at all (`Bitmap.compress` writes none): no GPS, make,
+model or date inside the file; the date lives only in the MediaStore `DATE_TAKEN`, re-asserted after
+`IS_PENDING` is cleared.
+
+## 90. The panorama's size is the pure `plan()`, never the width of the sweep
+
+`PanoGeometry.plan` is the only place that decides the canvas: 24 MP by default, clamped to the editor's
+`MAX_EXPORT_PIXELS` (64 MP) and `MAX_EXPORT_EDGE` (8192, both referenced directly), never enlarged,
+Long arithmetic, and the largest width that fits so a smaller budget never gives a larger scale. A wide sweep
+is therefore held by the 8192 edge, not the 24 MP budget (a 12-photo sweep at 35 percent overlap is about
+8192x745; eight 12 MP photos at 35 percent is about 8192x1271, 10 MP), and `Plan.limit` says which ceiling
+bit; the screen's "up to 24 megapixels" line is the budget and the "About W by H" line after Preview is the
+real figure. Photos are decoded at the canvas scale (`PanoCompositor.decodeSize`), not their own; the Android
+source must resize to that size or return something close (the compositor scales its sampling to the size it
+gets, but more than 2x the request breaks the memory plan). `OutOfMemoryError` is not caught inside
+`compose`: the job takes the next `PanoGeometry.ladder` rung on a NEW canvas (a pixel's validity is its
+alpha, so a dirty canvas from an aborted attempt reads as already drawn). An out-of-memory error during the
+small reads in phase 1 is not stepped down. The crop is in the pixels of the canvas it was found on: if the
+output is stepped down after the crop was found, recompute it, do not scale it up. The cropped copy at publish
+is a second bitmap, so the peak is about two canvases of native memory (arithmetic, not measured).
+
+## 91. The offline source scan reads panorama comments too
+
+`:app:verifyOfflineSourceReferences` scans `src/main` and `src/offline` `*.kt` line by line, comments
+included (#43). The pano package is in `src/main`, so a KDoc that names a banned class or call, even to say
+the code does not use it, fails the offline build. Write "network" or "the web", never the class names. The
+tests are not scanned, but keep them clean as well. `PanoramaWriter` and the host use only MediaStore,
+`ExifInterface` and bitmap classes; there is no network code in the package, no dependency, no native code and
+no manifest change.
+
+## 92. The aligner returns `confident = false` instead of a wrong offset; the UI must say which photo
+
+`PairAligner.align` always returns an `Offset`; trust only `.confident`. Confidence needs score >= 0.55 AND
+overlap >= 15 percent of the smaller image AND >= 4096 overlap pixels AND no distinct rival slide (more than 4
+px away) within 0.05 of the best score; a true overlap under 15 percent is found but refused, so tell people to
+overlap by at least a third. The rival-slide rule is what refuses fences, stripes, gradients and window grids
+(it also refuses a small smooth patch whose peak is wide), and that is deliberate. The false-positive scan
+(unrelated scenes, 0 to 10 percent overlap, flat sky, 16 seeds) lives in `PairAlignerConfidenceTest`: do not
+lower `minScore` or `minConfidentOverlap` without re-running it; the margin is thin (false-positive maximum
+0.48, true-positive minimum 0.61). The offset convention is "the SECOND image's top-left in the FIRST image's
+grid" (a left-to-right sweep has dx > 0); offsets are at the aligner's ~1200 px working size, in
+cylinder-warped space, and are scaled to native with `Layout.scaledPositions(nativeWidth / workingWidth)`
+once, not per pair. `PanoLayout` uses only offsets inside the chosen run, so a broken pair's guess never
+leaks in. `cannotJoin` is the photo AFTER the first broken pair (0-based); `isolated` (matches neither
+neighbour) is the only case with a single culprit, so for a break between two good photos the screen says
+"Photo N doesn't overlap enough." (the pair), and offers Remove. The job requires the whole selection to join,
+in the order given, and does not drop or sort photos.
+
+## 93. The panorama's real-photo quality is unproven, and its worst failures are silent
+
+Every figure for the panorama comes from procedural scenes (1/f noise, hard edges, gradients, with gain, bias,
+noise, vignetting, roll, shear, jitter, a moving blob and a parallax layer). No real photograph has gone
+through any of it and nothing has run on a device. Measured on those scenes, and NOT detected by the app
+(every pair stays "confident"): roll (0.5 degrees costs 2 to 4 px of working-size error, 1 degree 5 to 8),
+parallax (the aligner locks onto the near layer and its error equals the layer shift; the far scene ghosts),
+a focal-length tag wrong by about 10 percent (13 to 15 grey levels of seam error, no note), and an additive
+exposure offset (a scalar gain leaves 10 to 26 percent of a step). Detected: a photo with no tag
+(`LENS_GUESSED` note) and a big mover in the overlap (the join is refused, which is the right direction to
+fail; a mover over about a fifth of a 25 percent overlap loses 4 of 18 pairs). Do not describe the panorama
+in a store text, help line or release note as dependable. The kill criterion's second half stands: three real
+handheld sweeps (still and turning; one with a walking person; one indoors) compared with the phone's own
+panorama mode (`docs/device-test/batch-7-checklist.md`).
+
+## 94. Two cylinder warps agree to rounding, and nothing shares their code
+
+The aligner's grey copy (`PanoramaJob.warpToGrey`) and the compositor's column maths are two
+implementations of one convention: pixel centres at half-integers, the warped image of width
+`warpedSize(w,h,f).width` centred at Wc/2 and h/2, column u = (i + 0.5) - Wc/2, plane x = f tan(u/f), row
+stretch 1/cos(u/f), bilinear in 1/256 px, the photo's rectangle on the canvas is [pos, pos + Wc) x [pos.y,
+pos.y + h). A half-pixel disagreement shifts every seam. `PanoramaWarpTest` pins them equal (mean <= 0.4,
+max <= 2 grey levels; shifting the offset by half a pixel fails it); change one and run it. The warp must use
+the same `f`, scaled to the working size, for the grey copy. The warp truncating instead of rounding the
+sample position once gave 1-level errors at integer positions; the compositor rounds. The job also requires
+one camera: all photos the same upright size within 1 percent and focal/diagonal within 5 percent of the
+first (27 vs 28 mm is accepted), else `MIXED`, because positions share one cylinder unit.
+
+## 95. Exposure is one luma multiplier per photo, solved from block medians
+
+`ExposureGain` measures the median of 32 px block ratios over each overlap (a plain ratio of means was 26.6
+percent wrong with a figure over a quarter of the overlap; the median was 0.03 percent), drops pixels <= 4 or
+>= 251 from both images, needs >= 6 usable blocks, and solves for gains with mean 1 limited to 0.5 to 2. The
+returned gain is the multiplier to APPLY to every channel (a brighter photo gets the smaller gain);
+white balance is not corrected. `clamped = true` means the seam will show, not that it was solved. Pure gain
+changes are matched to under 0.1 percent; gain plus bias, vignetting and a mover over most of the overlap are
+not (measured 10 to 26 percent leftover step at +-10 to 25 grey of bias). `measure` indexes both images
+directly and trusts the offsets it is given; `measureAll` guards them. Measure on the cylinder-warped working
+grey, with `layout.positions` in the same unit.
+
+## 96. Blend and crop contracts: binary alpha, two photos at a time, a full-canvas mask
+
+`SeamBlend.blendBand` blends exactly two bands, the first on the left, with a cosine feather centred on the
+overlap middle (clamped to the overlap width, so a thin overlap becomes a hard cut). Alpha is validity: 0 = no
+data, anything else = data, partial alpha is not blended, and a pixel with data in one photo only takes that
+photo. Three photos in the same columns are blended in sequence into the running canvas, so the result
+depends on the draw order (left to right by position, ties by index). Blending is in encoded sRGB values, not
+linear light. A feather spreads misalignment into a ghost, it does not fix it (a 2 px error scored the same as
+a hard cut). `AutoCrop.cropRect` is hole-free by construction (a coarse cell counts only if every pixel is
+valid, then tightened, then verified at full size) but not guaranteed optimal; it needs a full-canvas
+`BooleanArray` (24 MB at 24 MP) whose size is checked as a Long. The compositor's result does not depend on
+band height, worker count or list order (tested bit for bit); keep it so.
+
+## 97. Panorama lifecycle: what survives, what stops, and one latent `JobRunner` race
+
+Process death keeps the screen's step, chosen photos and order (`PanoramaDraft.encode`, restorable entry) and
+nothing else: no preview, no running job. A half-written MediaStore row is `IS_PENDING` (hidden, discarded
+later) and a leftover staging JPEG in `cache/panorama-staging` is deleted by the next publish once older than
+an hour. Any failure or cancel during the copy deletes the pending row; nothing is created before the crop is
+encoded, the job's look has passed and the coroutine is active. A save is cancelled when the screen leaves
+composition (as the wall's print is), because its host reads the live browsable list of `ExperimentalScreen`
+(#33); rotation does not (the activity handles configChanges), and Back inside the screen does not.
+`JobRunner.launch` adds the job to its list after `scope.launch` returns, so a body that can finish on another
+thread before `launch` returns leaves a stale entry for ever; `PanoramaJob.run` always suspends first
+(`withContext(Default)`) and the view-model scope is `Main.immediate`, so it is safe, and tests use
+`Dispatchers.Unconfined`. The app-wide outcome collector also posts "Joining a panorama finished." for a
+successful job whose value is not a String, besides the screen's own strip (nothing silenced it). API 26 to 28
+inserts without `RELATIVE_PATH`, so the file lands in the default Pictures folder (unverified). The gallery
+selection action "Stitch panorama" was not built (about 80 lines over five files, two of them hot); the
+Experimental entry is the only way in, and the seam, if wanted, is a one-shot launch request carrying the
+chosen ids.
+
+## 98. Panorama test hygiene
+
+Tests that use `SyntheticPanoScene.rig()` cache scenes (10 to 20 MB each) in a static map and must clear it in
+`@AfterClass`. Tests that decode on a worker call `NativeWarmUp.warmUpNativeImageDecoder()` (#88). The job
+tests run the real aligner and compositor (about 1.3 minutes a class); two ordering tests depend on the first
+pass doing exactly one decode per photo and the compose pass reading left to right in index order. The "only
+two photos alive" test relies on a collection within about 400 ms of `System.gc()`; it failed when the
+compositor was made to retain photos (so it can fail) and has not false-failed, but a pathological GC could
+make it flaky. `PANO-*` lines in the test output (`PANO-LIMIT`, `PANO-BLEND`, `PANO-CROP`, `PANO-COMPOSE`,
+`PANO-TIME`, `PANO-JOB-MEASURE`) are the measurements the docs quote. Roborazzi runs in record mode, so no pano
+screenshot test proves how anything looks. The writer tests use a recording MediaStore stand-in that cannot
+refuse to open a file (the copy failure is simulated with a read-only descriptor) and Robolectric's JPEG
+encoder, which differs from a device's in size, not dimensions.
