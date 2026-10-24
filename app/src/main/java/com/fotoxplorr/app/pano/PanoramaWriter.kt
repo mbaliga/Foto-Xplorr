@@ -79,7 +79,8 @@ class BitmapPanoCanvas(val bitmap: Bitmap) : PanoramaCanvas {
  *   visible and can be scanned while the bytes are copied, the file lands in the root of `Pictures/`,
  *   and a name already taken is looked up by display name across every folder. A process kill during
  *   the copy leaves a truncated JPEG that nothing here removes (only the cache is swept on the next
- *   run). A cancel or an exception still deletes the row.
+ *   run). A cancel or an exception still deletes the row. (The job cannot read photos on API 26
+ *   and 27 today, see `decodeUpright` in the architecture notes, so in practice this is Android 9.)
  * - **A cancel at the very end**: the last stage (clearing the pending flag and re-asserting the
  *   date) cannot be interrupted, but the caller's cancellation is only noticed when [publish]
  *   returns, so [publish] deletes the row it just made and rethrows; "Cancelled." never has a file behind it.
