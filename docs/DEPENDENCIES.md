@@ -32,3 +32,13 @@ Flavours column to `offline` / `connect` / both the first time a module actually
 | Module | Coordinate | Version | Why |
 |---|---|---|---|
 | `:feature:ai-remote` | `org.maplibre.gl:android-sdk` (`compileOnly`) | 13.0.2 | `MapRequestCap` passes an OkHttp client to the map library's `HttpRequestUtil` so offline region downloads keep to the tile provider's limit of 4 requests in flight. The app cannot name an OkHttp type, so the wrapper lives in the module that owns OkHttp. The same artifact is already `connectImplementation` in `:app`; this line adds nothing to either flavour's runtime classpath. See ADR-015. |
+
+## Considered and not added
+
+The panorama utility (`pano/`, owner item #24) adds no row: it is pure Kotlin with no new dependency, no native
+code and no manifest change. OpenCV was measured and rejected for it: its Maven artifact is about 117.7 MB as an
+AAR, which adds about 24.8 MB to each installed arm64 APK (the native libraries are stored uncompressed) and
+about 141 MB to the universal APK (184 MB measured, about 325 MB with it), and it has no `Stitcher` binding (the
+Java classes stop at `calib3d`, `features2d` and `imgproc`; the C++ stitching module is compiled in but nothing
+calls it from Kotlin), so it would still need our own blender and exposure code, or a JNI layer the repo has no
+NDK build for.
