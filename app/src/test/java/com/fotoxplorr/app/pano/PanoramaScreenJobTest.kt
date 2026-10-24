@@ -376,6 +376,32 @@ class PanoramaScreenJobTest {
         waitForText(PanoCopy.SAVE_FAILED)
         assertEquals("said once, not in the strip and again in the page", 1, compose.onAllNodes(hasText(PanoCopy.SAVE_FAILED)).fetchSemanticsNodes().size)
         compose.onNodeWithText(PanoCopy.SAVE_FAILED).assert(polite)
+        assertPinnedAbovePage(PanoCopy.SAVE_FAILED)
+    }
+
+    @Test
+    fun `a failed save that names a photo says it in the pinned strip, with Remove still in the page`() {
+        // The person taps Save at the bottom of a page that scrolls: the sentence must not be up in the page.
+        val a = CylinderRig(count = 2, seed = 5)
+        val b = CylinderRig(count = 2, seed = 6)
+        val all = List(4) { a.asset(it) }
+        val host = FakeHost(all, { PanoSize(640, 480) }, { 28 }) { i, w, h -> if (i < 2) a.render(i, w, h) else b.render(i - 2, w, h) }
+        compose.setContent { Screen(all, host, FakeSink()) }
+        pickPhotos(a, 0, 1, 2, 3)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitFor { compose.onAllNodes(hasText("doesn't overlap enough.", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+
+        val sentence = textOf("doesn't overlap enough.")
+        assertEquals("said once", 1, compose.onAllNodes(hasText(sentence)).fetchSemanticsNodes().size)
+        assertPinnedAbovePage(sentence)
+        compose.onNodeWithText(PanoCopy.remove(3)).assertExists()
+    }
+
+    /** The page is one scrolling column that starts with the order hint; a pinned line sits wholly above it. */
+    private fun assertPinnedAbovePage(text: String) {
+        val line = compose.onNodeWithText(text).fetchSemanticsNode().boundsInRoot
+        val page = compose.onNodeWithText(PanoCopy.ORDER_HINT).fetchSemanticsNode().boundsInRoot
+        assertTrue("\"$text\" is above the scrolling page, not in it", line.bottom <= page.top)
     }
 
     @Test

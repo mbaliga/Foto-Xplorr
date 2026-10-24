@@ -304,8 +304,9 @@ internal fun PanoramaScreen(
         Header(onBack = ::back)
         JobStrip(
             saving = saving,
-            // On the arrange step a failure is said with its Remove button, further down the page.
-            result = shownResult.takeUnless { it is SaveResult.Failed && draft.step == PanoramaStep.ARRANGE },
+            // A save's failure is said here on every step: Save is at the bottom of a page that scrolls, so a line up in
+            // the page may be out of sight when the save ends. The page keeps only the flag and Remove for the photo.
+            result = shownResult,
             leaveHeld = leaveHeld,
             onCancel = { saving?.cancel?.invoke() },
             onOpen = { asset -> onOpenAsset(asset, assets) },
@@ -327,6 +328,7 @@ internal fun PanoramaScreen(
                 saving = saving != null,
                 canSave = runner != null,
                 problem = (shownCheck as? Check.Failed)?.problem ?: (shownResult as? SaveResult.Failed)?.problem,
+                sayProblem = shownCheck is Check.Failed,
                 onMove = { index, by -> edit { it.moved(index, by) } },
                 onRemove = { id -> edit { it.removed(id) } },
                 onSort = { edit { it.sortedByDate(byId) } },
@@ -506,6 +508,7 @@ private fun ArrangeStep(
     saving: Boolean,
     canSave: Boolean,
     problem: PanoramaProblem?,
+    sayProblem: Boolean,
     onMove: (Int, Int) -> Unit,
     onRemove: (Long) -> Unit,
     onSort: () -> Unit,
@@ -557,7 +560,8 @@ private fun ArrangeStep(
             if (draft.arranged) PanoButton(PanoCopy.SORT_BY_DATE, { moved = null; onSort() })
             if (!draft.canJoin) Text(PanoCopy.NEED_PHOTOS, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkFaint)
             if (problem != null) {
-                Text(problem.text, modifier = Modifier.polite(), style = MaterialTheme.typography.bodyMedium)
+                // A preview's failure is said here, above the button that ran it; a save's is in the pinned strip.
+                if (sayProblem) Text(problem.text, modifier = Modifier.polite(), style = MaterialTheme.typography.bodyMedium)
                 val photo = problem.photo
                 val id = photo?.let { draft.ids.getOrNull(it - 1) }
                 if (photo != null && id != null) PanoButton(PanoCopy.remove(photo), { moved = null; onRemove(id) })
