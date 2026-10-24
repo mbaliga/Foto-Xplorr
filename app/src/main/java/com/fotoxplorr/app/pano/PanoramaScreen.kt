@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -61,9 +63,11 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
@@ -104,7 +108,15 @@ import kotlinx.coroutines.launch
  * "may this photo still be exported" check belongs to the host composition that is going away, and a
  * job that outlived it would be reading a stale list. Back inside the screen steps from arranging to
  * choosing first; the strip, the preview and a running save stay as they are. The save's progress bar and
- * Cancel show on both steps.
+ * Cancel show on both steps. While a save runs, the first Back that would leave is held (the line "Leaving
+ * this screen stops the save." is then read out) and the next one leaves, so a reflexive second press does
+ * not throw away a long save. Only the outcome of a save THIS screen started is shown: a cancel that
+ * finishes after the screen was left is not put on the next one.
+ *
+ * **What a screen reader hears.** How a save ended, a photo that did not join, the saving line and the
+ * preview picture are polite live regions; the photo just moved is one too (its new place), and the strip
+ * scrolls to keep it in view, so the person can press the same button again. A message that names a photo
+ * is shown only while the photos are the ones it was made for.
  *
  * **Process death.** One `rememberSaveable` keeps the step, the chosen photo ids in strip order and
  * whether the order was set by hand ([PanoramaDraft]). Not kept: thumbnails, the preview picture and its
@@ -153,7 +165,7 @@ private sealed interface Check {
 private sealed interface SaveResult {
     class Saved(val done: PanoramaOutcome.Done) : SaveResult
 
-    class Failed(val problem: PanoramaProblem) : SaveResult
+    class Failed(val ids: List<Long>, val problem: PanoramaProblem) : SaveResult
 
     data object Cancelled : SaveResult
 }
@@ -186,9 +198,15 @@ internal fun PanoramaScreen(
     var previewProgress by remember { mutableFloatStateOf(0f) }
     var previewJob by remember { mutableStateOf<Job?>(null) }
     var result by remember { mutableStateOf<SaveResult?>(null) }
+    // The saves this screen started (job id -> the photos it was made for): only their outcomes are shown.
+    val started = remember { mutableMapOf<String, List<Long>>() }
+    var leaveHeld by remember { mutableStateOf(false) }
 
     val jobs by (runner?.jobs ?: NO_JOBS).collectAsState()
     val saving = jobs.firstOrNull { it.title == PanoCopy.JOB_TITLE }
+
+    // Read from the runner itself, not from `saving`: two taps before the next redraw both see the old one.
+    fun saveRunning(): Boolean = runner?.jobs?.value?.any { it.title == PanoCopy.JOB_TITLE } == true
 
     fun cancelPreview() {
         previewJob?.cancel()
@@ -212,24 +230,28 @@ internal fun PanoramaScreen(
         if (latestDraft.hasInnerStep) {
             cancelPreview()
             edit { it.backed() }
+        } else if (saveRunning() && !leaveHeld) {
+            // Leaving stops the save, and the line saying so is on screen: the next Back is the person's answer.
+            leaveHeld = true
         } else {
             onClose()
         }
     }
 
-    // Back inside the screen first; with nothing to step back to this is off and the host closes it.
-    BackHandler(enabled = draft.hasInnerStep) { back() }
+    // Back inside the screen first; with nothing to step back to and no save to protect this is off and the host closes it.
+    BackHandler(enabled = draft.hasInnerStep || saving != null) { back() }
 
     LaunchedEffect(runner) {
         runner?.outcomes?.collect { outcome ->
-            if (outcome.title != PanoCopy.JOB_TITLE) return@collect
+            // Not ours (a save of an earlier screen of this kind, cancelled when it was left): nothing to show.
+            val ids = started.remove(outcome.id) ?: return@collect
             result = outcome.result.fold(
                 onSuccess = { value -> (value as? PanoramaOutcome.Done)?.let { SaveResult.Saved(it) } },
                 onFailure = { error ->
                     when (error) {
                         is CancellationException -> SaveResult.Cancelled
-                        is PanoramaFailure -> SaveResult.Failed(PanoramaProblem.of(error.message.orEmpty()))
-                        else -> SaveResult.Failed(PanoramaProblem.of(PanoCopy.FAILED))
+                        is PanoramaFailure -> SaveResult.Failed(ids, PanoramaProblem.of(error.message.orEmpty()))
+                        else -> SaveResult.Failed(ids, PanoramaProblem.of(PanoCopy.FAILED))
                     }
                 },
             )
@@ -244,7 +266,7 @@ internal fun PanoramaScreen(
 
     fun startPreview() {
         val chosen = latestDraft.assets(byId)
-        if (!latestDraft.canJoin || chosen.size != latestDraft.ids.size || check == Check.Running || saving != null) return
+        if (!latestDraft.canJoin || chosen.size != latestDraft.ids.size || check == Check.Running || saveRunning()) return
         val ids = latestDraft.ids
         result = null
         previewProgress = 0f
@@ -262,10 +284,10 @@ internal fun PanoramaScreen(
 
     fun startSave() {
         val chosen = latestDraft.assets(byId)
-        if (runner == null || !latestDraft.canJoin || chosen.size != latestDraft.ids.size || saving != null) return
+        if (runner == null || !latestDraft.canJoin || chosen.size != latestDraft.ids.size || saveRunning()) return
         cancelPreview()
         result = null
-        PanoramaJob.launch(runner, PanoramaRequest(chosen), newHost(), newSink())
+        started[PanoramaJob.launch(runner, PanoramaRequest(chosen), newHost(), newSink()).id] = latestDraft.ids
     }
 
     // A preview or a failure belongs to the photos it was made for; after any change it is not shown.
@@ -275,11 +297,16 @@ internal fun PanoramaScreen(
         else -> c
     }
 
+    // A failure that names a photo belongs to the photos it was made for, like a preview does.
+    val shownResult = result.takeUnless { it is SaveResult.Failed && it.ids != draft.ids }
+
     Column(modifier.fillMaxSize()) {
         Header(onBack = ::back)
         JobStrip(
             saving = saving,
-            result = result,
+            // On the arrange step a failure is said with its Remove button, further down the page.
+            result = shownResult.takeUnless { it is SaveResult.Failed && draft.step == PanoramaStep.ARRANGE },
+            leaveHeld = leaveHeld,
             onCancel = { saving?.cancel?.invoke() },
             onOpen = { asset -> onOpenAsset(asset, assets) },
             assets = assets,
@@ -299,7 +326,7 @@ internal fun PanoramaScreen(
                 previewProgress = previewProgress,
                 saving = saving != null,
                 canSave = runner != null,
-                problem = (shownCheck as? Check.Failed)?.problem ?: (result as? SaveResult.Failed)?.problem,
+                problem = (shownCheck as? Check.Failed)?.problem ?: (shownResult as? SaveResult.Failed)?.problem,
                 onMove = { index, by -> edit { it.moved(index, by) } },
                 onRemove = { id -> edit { it.removed(id) } },
                 onSort = { edit { it.sortedByDate(byId) } },
@@ -337,6 +364,7 @@ private fun Header(onBack: () -> Unit) {
 private fun JobStrip(
     saving: RunningJob?,
     result: SaveResult?,
+    leaveHeld: Boolean,
     onCancel: () -> Unit,
     onOpen: (MediaAsset) -> Unit,
     assets: List<MediaAsset>,
@@ -348,23 +376,29 @@ private fun JobStrip(
             if (progress != null) {
                 LinearProgressIndicator(
                     progress = { progress.coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = PanoCopy.SAVING },
+                    modifier = Modifier.fillMaxWidth(),
                     color = Color.White,
                     trackColor = RoomStyle.InkFaint,
                 )
             } else {
                 LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = PanoCopy.SAVING },
+                    modifier = Modifier.fillMaxWidth(),
                     color = Color.White,
                     trackColor = RoomStyle.InkFaint,
                 )
             }
-            Text(PanoCopy.SAVING, style = MaterialTheme.typography.bodySmall)
-            Text(PanoCopy.LEAVING_CANCELS, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkFaint)
+            // The words are the bar's name too, so a screen reader hears them once: here, as the save begins.
+            Text(PanoCopy.SAVING, modifier = Modifier.polite(), style = MaterialTheme.typography.bodySmall)
+            Text(
+                PanoCopy.LEAVING_CANCELS,
+                modifier = if (leaveHeld) Modifier.polite() else Modifier,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (leaveHeld) RoomStyle.Ink else RoomStyle.InkFaint,
+            )
             PanoButton(PanoCopy.CANCEL, onCancel)
         } else when (result) {
             is SaveResult.Saved -> {
-                Text(PanoCopy.SAVED, style = MaterialTheme.typography.bodyMedium)
+                Text(PanoCopy.SAVED, modifier = Modifier.polite(), style = MaterialTheme.typography.bodyMedium)
                 result.done.notes.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkMuted) }
                 val asset = PanoramaDraft.savedAsset(assets, result.done.uri)
                 if (asset != null) {
@@ -373,8 +407,8 @@ private fun JobStrip(
                     Text(PanoCopy.NOT_LISTED_YET, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkFaint)
                 }
             }
-            is SaveResult.Failed -> Text(result.problem.text, style = MaterialTheme.typography.bodyMedium)
-            SaveResult.Cancelled -> Text(PanoCopy.CANCELLED, style = MaterialTheme.typography.bodyMedium)
+            is SaveResult.Failed -> Text(result.problem.text, modifier = Modifier.polite(), style = MaterialTheme.typography.bodyMedium)
+            SaveResult.Cancelled -> Text(PanoCopy.CANCELLED, modifier = Modifier.polite(), style = MaterialTheme.typography.bodyMedium)
             null -> Unit
         }
     }
@@ -452,11 +486,12 @@ private fun PickCell(asset: MediaAsset, position: Int?, enabled: Boolean, onTogg
 
 @Composable
 private fun NumberBadge(number: Int, modifier: Modifier = Modifier) {
+    // 24 dp at least, and wider (a pill) for two digits or a large font, so the number is never wrapped or cut.
     Box(
-        modifier.size(24.dp).background(Color.White, CircleShape),
+        modifier.defaultMinSize(24.dp, 24.dp).background(Color.White, CircleShape).padding(horizontal = 6.dp, vertical = 2.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text("$number", color = Color.Black, style = MaterialTheme.typography.labelMedium)
+        Text("$number", color = Color.Black, style = MaterialTheme.typography.labelMedium, maxLines = 1)
     }
 }
 
@@ -482,6 +517,13 @@ private fun ArrangeStep(
     val chosen = remember(draft.ids, byId) { draft.assets(byId) }
     val previewing = check == Check.Running
     val ready = check as? Check.Ready
+    // The strip is inset, so about one photo shows at a time on a phone: a photo that was moved is followed.
+    val listState = rememberLazyListState()
+    var moved by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(moved, draft.ids) {
+        val index = draft.ids.indexOf(moved ?: return@LaunchedEffect)
+        if (index >= 0) listState.animateScrollToItem(index)
+    }
     Column(
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -494,6 +536,7 @@ private fun ArrangeStep(
         // The strip takes horizontal drags, so it keeps clear of the shell's side edge zones (TRAPS #72).
         LazyRow(
             modifier = Modifier.fillMaxWidth().padding(horizontal = ShellEdges.inset).testTag(STRIP_TAG),
+            state = listState,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             itemsIndexed(chosen, key = { _, asset -> asset.id.value }) { index, asset ->
@@ -503,30 +546,31 @@ private fun ArrangeStep(
                     canLeft = draft.canMove(index, -1),
                     canRight = draft.canMove(index, +1),
                     flagged = problem?.photo == index + 1,
-                    onLeft = { onMove(index, -1) },
-                    onRight = { onMove(index, +1) },
-                    onRemove = { onRemove(asset.id.value) },
+                    announce = moved == asset.id.value,
+                    onLeft = { moved = asset.id.value; onMove(index, -1) },
+                    onRight = { moved = asset.id.value; onMove(index, +1) },
+                    onRemove = { moved = null; onRemove(asset.id.value) },
                 )
             }
         }
         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (draft.arranged) PanoButton(PanoCopy.SORT_BY_DATE, onSort)
+            if (draft.arranged) PanoButton(PanoCopy.SORT_BY_DATE, { moved = null; onSort() })
             if (!draft.canJoin) Text(PanoCopy.NEED_PHOTOS, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkFaint)
             if (problem != null) {
-                Text(problem.text, style = MaterialTheme.typography.bodyMedium)
+                Text(problem.text, modifier = Modifier.polite(), style = MaterialTheme.typography.bodyMedium)
                 val photo = problem.photo
                 val id = photo?.let { draft.ids.getOrNull(it - 1) }
-                if (photo != null && id != null) PanoButton(PanoCopy.remove(photo), { onRemove(id) })
+                if (photo != null && id != null) PanoButton(PanoCopy.remove(photo), { moved = null; onRemove(id) })
             }
 
             if (previewing) {
                 LinearProgressIndicator(
                     progress = { previewProgress.coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = PanoCopy.PREVIEWING },
+                    modifier = Modifier.fillMaxWidth(),
                     color = Color.White,
                     trackColor = RoomStyle.InkFaint,
                 )
-                Text(PanoCopy.PREVIEWING, style = MaterialTheme.typography.bodySmall)
+                Text(PanoCopy.PREVIEWING, modifier = Modifier.polite(), style = MaterialTheme.typography.bodySmall)
                 PanoButton(PanoCopy.CANCEL, onCancelPreview)
             } else {
                 PanoButton(PanoCopy.PREVIEW, onPreview, enabled = draft.canJoin && !saving)
@@ -553,7 +597,8 @@ private fun PreviewPicture(image: ImageBitmap) {
     Image(
         bitmap = image,
         contentDescription = PanoCopy.PREVIEW_DESCRIPTION,
-        modifier = Modifier.fillMaxWidth().aspectRatio(image.width.toFloat() / image.height).background(Color.Black),
+        // Polite: the picture appearing is how a screen reader learns the preview is done.
+        modifier = Modifier.fillMaxWidth().aspectRatio(image.width.toFloat() / image.height).background(Color.Black).polite(),
         contentScale = ContentScale.Fit,
     )
 }
@@ -566,6 +611,7 @@ private fun StripItem(
     canLeft: Boolean,
     canRight: Boolean,
     flagged: Boolean,
+    announce: Boolean,
     onLeft: () -> Unit,
     onRight: () -> Unit,
     onRemove: () -> Unit,
@@ -575,7 +621,11 @@ private fun StripItem(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(4f / 3f)
-                .semantics { contentDescription = PanoCopy.photoInStrip(position, asset.displayName) }
+                .semantics {
+                    contentDescription = PanoCopy.photoInStrip(position, asset.displayName)
+                    // The photo just moved says where it is now; the one it swapped with stays quiet.
+                    if (announce) liveRegion = LiveRegionMode.Polite
+                }
                 .then(if (flagged) Modifier.border(BorderStroke(3.dp, FLAGGED)) else Modifier),
         ) {
             MediaImage(asset, Modifier.fillMaxSize(), ContentScale.Crop)
@@ -596,6 +646,9 @@ private val STRIP_ITEM_WIDTH = 152.dp
 /** For tests: the strip is a lazy row, so a photo off the screen is not there until it is scrolled to. */
 internal const val STRIP_TAG = "panorama-strip"
 private val FLAGGED = Color(0xFFFF8A80)
+
+/** Read out by a screen reader when it appears or changes, without cutting off what it is saying. */
+private fun Modifier.polite(): Modifier = semantics { liveRegion = LiveRegionMode.Polite }
 
 /** A button with words, at least 48 dp tall. */
 @Composable

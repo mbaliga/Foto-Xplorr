@@ -12,17 +12,24 @@ import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleRegistry
@@ -310,6 +317,75 @@ class PanoramaScreenTest {
         next()
         compose.onNodeWithText(PanoCopy.SAVE).assertDoesNotExist()
         compose.onNodeWithText(PanoCopy.PREVIEW).assertIsEnabled()
+    }
+
+    @Test
+    @Config(sdk = [34], qualifiers = "w320dp-h2400dp-xhdpi")
+    fun `a photo that was moved stays in view on a narrow phone, so it can be moved again`() {
+        compose.setContent { Screen() }
+        pick("a.jpg", "b.jpg", "c.jpg", "d.jpg")
+        next()
+
+        // The strip is inset on both sides, so about one photo shows at a time and the second is cut off. A
+        // screen reader activates a button by its action, whether or not it is in view; nothing here scrolls the
+        // strip by hand, so the moved photo has to be brought into view by the screen.
+        fun activate(description: String) {
+            val action = compose.onNodeWithContentDescription(description).fetchSemanticsNode().config[SemanticsActions.OnClick].action!!
+            compose.runOnUiThread { action() }
+            compose.waitForIdle()
+        }
+
+        fun assertInView(position: Int, name: String) {
+            val moved = compose.onNodeWithContentDescription(PanoCopy.photoInStrip(position, name))
+            moved.assertExists()
+            val strip = compose.onNodeWithTag(STRIP_TAG).fetchSemanticsNode().boundsInRoot
+            val item = moved.fetchSemanticsNode().boundsInRoot
+            assertTrue("$name at $position is inside the strip: $item in $strip", item.left >= strip.left - 0.5f && item.right <= strip.right + 0.5f)
+        }
+
+        activate(PanoCopy.moveRight(2)) // b goes past the edge of what shows
+        assertInView(3, "b.jpg")
+        activate(PanoCopy.moveRight(3))
+        assertInView(4, "b.jpg")
+        activate(PanoCopy.moveLeft(4)) // and back, one place at a time
+        assertInView(3, "b.jpg")
+        activate(PanoCopy.moveLeft(3))
+        assertInView(2, "b.jpg")
+        activate(PanoCopy.moveLeft(2)) // b is first, and a was the first photo showing: a would scroll b out to the left
+        assertInView(1, "b.jpg")
+    }
+
+    @Test
+    fun `the photo that was moved is announced with its new place, and only that one`() {
+        compose.setContent { Screen() }
+        pick("a.jpg", "b.jpg", "c.jpg")
+        next()
+        button(PanoCopy.moveRight(1), 1).performClick()
+        compose.waitForIdle()
+
+        val polite = SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite)
+        strip(2, "a.jpg").assert(polite)
+        strip(1, "b.jpg").assert(!polite)
+        strip(3, "c.jpg").assert(!polite)
+    }
+
+    @Test
+    fun `the number on a chosen photo still reads at the largest font, even with two digits`() {
+        val many = List(12) { photo(it + 1L, "p%02d.jpg".format(it + 1), 1000L * (it + 1)) }
+        compose.setContent {
+            val base = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(base.density, fontScale = 2f)) { Screen(assets = many) }
+        }
+        many.forEach { compose.onNodeWithContentDescription(it.displayName).performClick() }
+        // Photos 10, 11 and 12 are the ones whose number is two digits wide.
+        listOf("10", "11", "12").forEach { digits ->
+            val node = compose.onAllNodesWithText(digits, useUnmergedTree = true).fetchSemanticsNodes().single()
+            val layouts = mutableListOf<TextLayoutResult>()
+            node.config[SemanticsActions.GetTextLayoutResult].action?.invoke(layouts)
+            val layout = layouts.single()
+            assertEquals("'$digits' is on one line", 1, layout.lineCount)
+            assertEquals("'$digits' is not cut off", digits.length, layout.getLineEnd(0, visibleEnd = true))
+        }
     }
 
     // ---- Back ---------------------------------------------------------------------------------------

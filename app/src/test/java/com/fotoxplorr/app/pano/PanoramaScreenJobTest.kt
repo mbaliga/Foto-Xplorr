@@ -6,10 +6,15 @@ import androidx.activity.OnBackPressedDispatcherOwner
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -75,6 +80,7 @@ class PanoramaScreenJobTest {
         host: FakeHost,
         sink: FakeSink,
         opened: MutableList<MediaAsset>? = null,
+        onClose: () -> Unit = {},
     ) {
         FotoXplorrTheme(GalleryPreferencesState()) {
             CompositionLocalProvider(LocalOnBackPressedDispatcherOwner provides owner) {
@@ -84,7 +90,7 @@ class PanoramaScreenJobTest {
                     newSink = { sink },
                     runner = runner,
                     onOpenAsset = { asset, _ -> opened?.add(asset) },
-                    onClose = {},
+                    onClose = onClose,
                 )
             }
         }
@@ -310,5 +316,141 @@ class PanoramaScreenJobTest {
         compose.onNodeWithText(PanoCopy.SAVE).assertIsNotEnabled()
         compose.onNodeWithText(PanoCopy.CANCEL).performClick()
         waitForText(PanoCopy.CANCELLED)
+    }
+
+    // ---- the screen's own care of a save ------------------------------------------------------------
+
+    @Test
+    fun `two Save taps before the screen redraws start one job, not two`() {
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        host.onDecode = { _, _ -> Thread.sleep(150) }
+        val sink = FakeSink()
+        compose.setContent { Screen(rig.assets(), host, sink) }
+        pickPhotos(rig, 0, 1, 2)
+
+        // Both activations arrive on the main thread before the screen is redrawn (a fast double tap, or a
+        // switch or TalkBack activating twice): the second sees the screen as the first did.
+        val save = compose.onNodeWithText(PanoCopy.SAVE).fetchSemanticsNode().config[SemanticsActions.OnClick].action!!
+        compose.runOnUiThread {
+            save()
+            save()
+        }
+        compose.waitForIdle()
+
+        assertEquals("one job on the list", 1, runner.jobs.value.count { it.title == PanoCopy.JOB_TITLE })
+        compose.onNodeWithText(PanoCopy.CANCEL).performClick()
+        waitForText(PanoCopy.CANCELLED)
+        assertTrue("nothing was published", sink.published.isEmpty())
+    }
+
+    @Test
+    fun `the preview picture and the saved line are announced as they appear`() {
+        val polite = SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite)
+        val rig = CylinderRig(count = 3)
+        compose.setContent { Screen(rig.assets(), rigHost(rig), FakeSink()) }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.PREVIEW).performClick()
+        waitFor { compose.onAllNodesWithContentDescription(PanoCopy.PREVIEW_DESCRIPTION).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription(PanoCopy.PREVIEW_DESCRIPTION).assert(polite)
+
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitForText(PanoCopy.SAVED)
+        compose.onNodeWithText(PanoCopy.SAVED).assert(polite)
+    }
+
+    @Test
+    fun `a failure is announced, and the progress is not read out twice`() {
+        val polite = SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite)
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        host.onDecode = { _, _ -> Thread.sleep(150) }
+        compose.setContent { Screen(rig.assets(), host, FakeSink().also { it.failWith = IOException("x") }) }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitFor(20_000) { runner.jobs.value.isNotEmpty() }
+        waitForText(PanoCopy.SAVING)
+        // The words are the Text; the bar adds no second copy of them.
+        assertTrue(compose.onAllNodesWithContentDescription(PanoCopy.SAVING).fetchSemanticsNodes().isEmpty())
+
+        waitForText(PanoCopy.SAVE_FAILED)
+        assertEquals("said once, not in the strip and again in the page", 1, compose.onAllNodes(hasText(PanoCopy.SAVE_FAILED)).fetchSemanticsNodes().size)
+        compose.onNodeWithText(PanoCopy.SAVE_FAILED).assert(polite)
+    }
+
+    @Test
+    fun `a failed save names a photo only while the photos are the ones it was made for`() {
+        // Photos 1 and 2 are one scene, 3 and 4 another: the save fails at a photo in the middle of the four.
+        val a = CylinderRig(count = 2, seed = 5)
+        val b = CylinderRig(count = 2, seed = 6)
+        val all = List(4) { a.asset(it) }
+        val host = FakeHost(all, { PanoSize(640, 480) }, { 28 }) { i, w, h -> if (i < 2) a.render(i, w, h) else b.render(i - 2, w, h) }
+        var assets by mutableStateOf(all)
+        compose.setContent { Screen(assets, host, FakeSink()) }
+        pickPhotos(a, 0, 1, 2, 3)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitFor { compose.onAllNodes(hasText("doesn't overlap enough.", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+
+        // A different photo is locked in the gallery meanwhile: the strip shifts without the person editing it,
+        // so the number in the message now points at another photo.
+        compose.runOnUiThread { assets = all.filter { it.id != a.asset(0).id } }
+        compose.waitForIdle()
+
+        assertTrue("the message is gone", compose.onAllNodes(hasText("doesn't overlap enough.", substring = true)).fetchSemanticsNodes().isEmpty())
+        (1..3).forEach { compose.onNodeWithText(PanoCopy.remove(it)).assertDoesNotExist() }
+    }
+
+    @Test
+    fun `Back while a save runs holds the first press that would leave, and the next one leaves`() {
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        host.onDecode = { _, _ -> Thread.sleep(150) }
+        var closed = 0
+        compose.setContent { Screen(rig.assets(), host, FakeSink(), onClose = { closed++ }) }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitFor(20_000) { runner.jobs.value.isNotEmpty() }
+        waitForText(PanoCopy.SAVING)
+
+        fun back() {
+            compose.runOnUiThread { owner.onBackPressedDispatcher.onBackPressed() }
+            compose.waitForIdle()
+        }
+        back() // arranging -> choosing, the save keeps going
+        compose.onNodeWithText(PanoCopy.PICK_HINT).assertExists()
+        assertEquals(0, closed)
+        assertTrue(runner.jobs.value.isNotEmpty())
+
+        back() // the first press that would leave is held, with the warning in view
+        assertEquals("the screen did not close", 0, closed)
+        assertTrue("and the save was not stopped", runner.jobs.value.isNotEmpty())
+        compose.onNodeWithText(PanoCopy.LEAVING_CANCELS).assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+
+        back() // the second one leaves
+        assertEquals(1, closed)
+
+        compose.onNodeWithText(PanoCopy.CANCEL).performClick()
+        waitForText(PanoCopy.CANCELLED)
+    }
+
+    @Test
+    fun `a cancel that finishes after the screen was left is not shown on the next screen`() {
+        val rig = CylinderRig(count = 3)
+        val host = rigHost(rig)
+        host.onDecode = { _, _ -> Thread.sleep(300) }
+        var generation by mutableStateOf(0)
+        compose.setContent { key(generation) { Screen(rig.assets(), host, FakeSink()) } }
+        pickPhotos(rig, 0, 1, 2)
+        compose.onNodeWithText(PanoCopy.SAVE).performClick()
+        waitFor(20_000) { runner.jobs.value.isNotEmpty() }
+
+        // Leave and come back at once: the first screen's save is told to stop, and has not finished doing so.
+        compose.runOnUiThread { generation++ }
+        compose.waitForIdle()
+        waitFor(20_000) { runner.jobs.value.isEmpty() }
+        compose.waitForIdle()
+
+        compose.onNodeWithText(PanoCopy.CANCELLED).assertDoesNotExist()
+        compose.onNodeWithText(PanoCopy.SAVED).assertDoesNotExist()
     }
 }
