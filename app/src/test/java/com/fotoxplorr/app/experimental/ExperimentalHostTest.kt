@@ -138,17 +138,28 @@ class ExperimentalHostTest {
         assertTrue(duplicateIds(builtInExperiments).isEmpty())
         // These are saved state and the "Open the app on"-style stable names: a rename is a break.
         assertEquals(
-            listOf("aquarium", "wall-mockup", "similarity", "wall", "preview", "compass", "ai"),
+            listOf("aquarium", "wall-mockup", "panorama", "similarity", "wall", "preview", "compass", "ai"),
             builtInExperiments.map { it.id },
         )
         assertEquals("ai", builtInExperiments.last().id)
         assertEquals(ExperimentGroup.SETUP, builtInExperiments.last().group)
         assertEquals("Compass view", builtInExperiments.first { it.id == "compass" }.title)
         assertEquals(
-            listOf("aquarium", "wall-mockup"),
+            listOf("aquarium", "wall-mockup", "panorama"),
             builtInExperiments.filter { it.group == ExperimentGroup.MAKE }.map { it.id },
         )
         assertTrue("the old street and photo map cards are gone", builtInExperiments.none { it.title.contains("map", ignoreCase = true) })
+    }
+
+    @Test
+    fun `the panorama entry is registered in Make with its own copy, a stable id, and comes back after a kill`() {
+        val entry = builtInExperiments.single { it.id == "panorama" }
+        assertEquals("Stitch a panorama", entry.title)
+        assertEquals(com.fotoxplorr.app.pano.PanoCopy.TITLE, entry.title)
+        assertEquals("the blurb is the copy object's one sentence", com.fotoxplorr.app.pano.PanoCopy.BLURB, entry.blurb)
+        assertEquals(ExperimentGroup.MAKE, entry.group)
+        assertTrue("opening it starts no work and asks no permission", entry.restorable)
+        assertEquals("panorama", idToRestore(builtInExperiments, idToSave("panorama", "before"), "after"))
     }
 
     @Test

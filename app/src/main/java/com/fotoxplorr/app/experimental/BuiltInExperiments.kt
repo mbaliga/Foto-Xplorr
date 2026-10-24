@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesomeMosaic
 import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.PanoramaHorizontal
 import androidx.compose.material.icons.outlined.PermMedia
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.ViewInAr
@@ -20,6 +21,8 @@ import com.fotoxplorr.app.aquarium.AquariumCopy
 import com.fotoxplorr.app.aquarium.AquariumExperience
 import com.fotoxplorr.app.experience.GalleryPreviewScreen
 import com.fotoxplorr.app.experience.PhotoWallScreen
+import com.fotoxplorr.app.pano.PanoCopy
+import com.fotoxplorr.app.pano.PanoramaExperience
 import com.fotoxplorr.app.spatial.SpatialPhotoSceneScreen
 import com.fotoxplorr.app.ui.HelpCopy
 import com.fotoxplorr.app.wall.WallCopy
@@ -62,6 +65,18 @@ internal val builtInExperiments: List<ExperimentEntry> = listOf(
         icon = Icons.Outlined.Wallpaper,
     ) { env, onClose ->
         WallExperience(env, onClose)
+    },
+    // Restorable: opening it starts no work and asks no permission. After process death it comes
+    // back on the step it was on with the same photos in the same order (PanoramaDraft); the preview
+    // and a save in progress do not.
+    ExperimentEntry(
+        id = "panorama",
+        title = PanoCopy.TITLE,
+        blurb = PanoCopy.BLURB,
+        group = ExperimentGroup.MAKE,
+        icon = Icons.Outlined.PanoramaHorizontal,
+    ) { env, onClose ->
+        PanoramaExperience(env, onClose)
     },
     // Explore.
     ExperimentEntry(
