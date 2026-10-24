@@ -109,6 +109,36 @@ class PanoramaWarpTest {
     }
 
     @Test
+    fun `the aligner and the exposure solver read the warped grey exactly, wide lens corners and all`() {
+        // The corners the cylinder leaves empty are a repeat of the photo's edge in this grey (see warpToGrey). Measured
+        // on a 14 mm and a 28 mm lens: the offsets are exact and a 12% exposure step is read to 0.2%; only the score
+        // pays (0.71 to 0.99), which stays far above the trust threshold.
+        var worstRatio = 0.0
+        var lowestScore = 1f
+        for (f35 in listOf(14, 28)) for (overlap in listOf(0.25, 0.4)) for (seed in listOf(5, 6)) {
+            val step = Math.round(CylinderRig(f35 = f35, seed = seed).warpedW * (1 - overlap)).toInt()
+            val rig = CylinderRig(f35 = f35, seed = seed, step = step, count = 3)
+            val gains = listOf(0.88, 1.0, 1.12)
+            val greys = (0 until 3).map { i ->
+                PanoramaJob.warpToGrey(rig.render(i, rig.photoW, rig.photoH, SyntheticPanoScene.Shot(gain = gains[i], noiseSigma = 4.0, seed = 3L + i)), rig.f)
+            }
+            for (i in 0 until 2) {
+                val dx = rig.lefts[i + 1] - rig.lefts[i]
+                val dy = rig.topsUsed[i + 1] - rig.topsUsed[i]
+                val o = PairAligner.align(greys[i], greys[i + 1])
+                assertTrue("f35 $f35 overlap $overlap seed $seed pair $i: got (${o.dx},${o.dy}) truth ($dx,$dy), score ${o.score}", o.confident && abs(o.dx - dx) <= 1 && abs(o.dy - dy) <= 1)
+                lowestScore = minOf(lowestScore, o.score)
+                val m = ExposureGain.measure(greys[i], greys[i + 1], dx, dy)
+                assertTrue("f35 $f35 overlap $overlap seed $seed pair $i: the exposure step was not read", m != null)
+                worstRatio = maxOf(worstRatio, abs(m!!.ratio / (gains[i] / gains[i + 1]) - 1.0))
+            }
+        }
+        println("PANO-JOB wide-lens warp: lowest score %.3f, worst exposure ratio error %.4f".format(lowestScore, worstRatio))
+        assertTrue("an exposure step is read to within 1%: $worstRatio", worstRatio < 0.01)
+        assertTrue("the corners cost score, not the answer: $lowestScore", lowestScore > 0.6f)
+    }
+
+    @Test
     fun `a photo of one pixel does not break the warp`() {
         val grey = PanoramaJob.warpToGrey(PanoPixels(1, 1, intArrayOf(0xFF808080.toInt())), 10.0)
         assertEquals(1, grey.height)
