@@ -32,15 +32,16 @@ import kotlin.math.sqrt
  * level cannot. A repeating texture OVER real content (siding, blinds, a picket fence in front of a
  * street) is invisible at the top level, which averages the fine period away, so the walk starts
  * at the right slide and then slips a whole period at a finer level, where the search window is
- * under half a period. So every slide within about 28 px of the answer is scored at half size, the
+ * under half a period. So every slide within about 48 px of the answer is scored at half size, the
  * best few local peaks are refined at full size and join the candidates: the right slide is found
  * and the comb of near-equal neighbours around it counts as rivals. And a wide, shallow peak
  * (faint clouds, a smooth wall: slides 6 to 8 px away score within [Params.shoulderMargin] of the
  * best) is ambiguous too, because the answer is only as good as the width of the peak. A texture
- * period longer than about 28 px at the working size is outside the rescan; the walk down is
- * trusted there. All of this is measured on procedural scenes ([PairAlignerTextureTest]); real
- * photographs may have a different share of wide peaks, so the margin may refuse stitches that
- * were good, which is the safe direction.
+ * period longer than about 48 px at the working size (about 160 px on a 4000 px photo) is outside the
+ * rescan and still unguarded: the walk down is trusted there. Measured on 108 stripe and grid
+ * cases of period 30 to 60, a radius of 28 left two confidently wrong. All of this is measured on
+ * procedural scenes ([PairAlignerTextureTest]); real photographs may have a different share of wide
+ * peaks, so the margin may refuse stitches that were good, which is the safe direction.
  *
  * ## Honest ceiling
  * Translation only. A frame held with more than about a degree of roll, shear from a rolling
@@ -338,8 +339,8 @@ object PairAligner {
         return true
     }
 
-    /** The rescan of step 3 covers this many pixels (at the input size) each way around the answer: periods up to about 28 px. */
-    private const val RESCAN_RADIUS = 28
+    /** The rescan of step 3 covers this many pixels (at the input size) each way around the answer: periods up to about 48 px. Periods beyond it are not guarded. */
+    private const val RESCAN_RADIUS = 48
 
     /** The ring of slides (pixels from the best, at the input size) that tells a wide peak from a sharp one. */
     private const val SHOULDER_NEAR = 6

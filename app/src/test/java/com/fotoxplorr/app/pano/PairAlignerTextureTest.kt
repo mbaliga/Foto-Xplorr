@@ -88,6 +88,29 @@ class PairAlignerTextureTest {
     }
 
     @Test
+    fun `a coarse period over content, 30 to 60 px, is never confidently a period out`() {
+        // Past the old +-28 px rescan: period 36 at 25 percent overlap (horizontal stripes and the grid) settled one period out
+        // with a score of 0.84 to 0.88 and said so confidently. 36 px at the working size is about 120 px on a 4000 px photo.
+        val wrong = ArrayList<String>()
+        var confidentRight = 0
+        var refused = 0
+        for (family in listOf(Family.VERTICAL_STRIPES, Family.HORIZONTAL_STRIPES, Family.GRID)) {
+            for (period in listOf(30, 36, 42, 48, 54, 60)) for (overlap in listOf(0.25, 0.45)) for (amplitude in listOf(15.0, 25.0, 40.0)) {
+                val c = run(family, period, overlap, amplitude)
+                when {
+                    c.offset.confident && c.error > 3 ->
+                        wrong += "${c.label}: confident about (${c.offset.dx},${c.offset.dy}), off by (${c.errX},${c.errY}), score ${c.offset.score}"
+                    c.offset.confident -> confidentRight++
+                    else -> refused++
+                }
+            }
+        }
+        println("coarse periodic over content: $confidentRight confident and right, $refused unsure, ${wrong.size} confidently wrong")
+        assertTrue("confidently wrong:\n" + wrong.joinToString("\n"), wrong.isEmpty())
+        assertTrue("the rescan refuses nearly everything ($refused unsure of ${confidentRight + refused})", confidentRight >= refused)
+    }
+
+    @Test
     fun `a fine period over content is either found or refused, the sine and clapboard cases that slipped a period`() {
         // The families and periods the audit's port of the aligner got confidently wrong (-12, +12, -20 px, -5/+12 in dy).
         val cases = listOf(
