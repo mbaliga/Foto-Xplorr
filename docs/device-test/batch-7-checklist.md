@@ -17,8 +17,10 @@ portrait-held sweep, a photo in a protected folder, a photo marked sensitive, an
 
 - [ ] Android 8.0 / 8.1: `decodeUpright` returns null on API 26 and 27 (PRODUCT-AND-ARCHITECTURE, Known limits),
       so the panorama cannot read photos there. Treat it as unverified on those releases.
-- [ ] Android 8 to 9: the writer inserts without `RELATIVE_PATH`, so the file lands in the default Pictures
-      folder, not `Pictures/Fotoz/Panoramas` (unverified).
+- [ ] Android 8 to 9: the writer inserts without `RELATIVE_PATH` and without `IS_PENDING`, so the file lands in
+      the default Pictures folder, not `Pictures/Fotoz/Panoramas`, and the row is visible while the bytes are
+      copied; kill the process mid-save on API 28 and look for a truncated JPEG (unverified; in practice API 28
+      only, since `decodeUpright` returns null on 26 and 27).
 - [ ] Every time and memory figure in sections 2 and 3 is a host-JVM figure or arithmetic; a phone is guessed at
       2 to 4 times slower. Replace the guesses with what you see.
 
@@ -59,13 +61,14 @@ visibly matches, and the exposure `gains`, `clamped` and `worstMismatch`.
 
 ## 3. Time and memory
 
-- [ ] Time per pair on the 1200 px working size (host: 150 to 200 ms; guess for a phone: 0.5 to 1.5 s) and a full
+- [ ] Time per pair on the 1200 px working size (host: about 375 ms since the rescan, median of 371 to 450; guess for a phone: 1 to 1.5 s, so 11 pairs is 10 to 17 s) and a full
       12-photo sweep including the grey decode; `ExposureGain.measureAll` for 12 photos at 65 percent overlap
       (up to about 21 pairs).
 - [ ] A full 8-photo job on a mid-range phone: small reads, 7 alignments, compose (host 1 to 2 s at 24 MP),
       mask and crop (host 0.04 to 0.45 s), JPEG compress, the staged copy into MediaStore.
 - [ ] **A 12 x 12 MP stress run** on the low-end phone: peak memory with a 24 MP Bitmap canvas, two decoded
-      photos of about 45 MB each as int arrays, four worker scratch pairs, the crop mask (24 MB) and, at publish,
+      photos of about 45 MB each as int arrays, two band buffers per worker (up to four workers; about 16 MB for a
+      typical sweep and 64 MB at worst, now counted in `PanoramaJob.sourceHeapBytes`), the crop mask (24 MB) and, at publish,
       the cropped copy (about two canvases of native memory; arithmetic gives about 145 MB heap plus 96 MB
       native, unmeasured). Does the OOM ladder fire and restart on a fresh canvas, and does it say "Saved smaller,
       to fit the memory."? Is an out-of-memory in `Bitmap.createBitmap` reported as an error or a native kill?
@@ -101,8 +104,8 @@ visibly matches, and the exposure `gains`, `clamped` and `worstMismatch`.
       JPEG compress, and in the middle of the MediaStore copy. No row in the gallery, no file in
       `Pictures/Fotoz/Panoramas`, no leftover in `cache/panorama-staging`, and it stops within about a second
       (an in-flight decode finishes first).
-- [ ] Kill the process mid-save: no visible row (a pending row is hidden), and the next panorama deletes any
-      staging file older than an hour.
+- [ ] Kill the process mid-save: no visible row on Android 10 and later (a pending row is hidden; on API 28
+      there is none), and the next panorama deletes any staging file older than an hour.
 - [ ] MediaStore: collision naming (`-panorama`, `-panorama-2`), a scanner rewriting `DATE_TAKEN`, the new album
       showing in other galleries, and Android 8 to 10 behaviour.
 - [ ] The Offline build has no network permission and the Connect build behaves the same (the panorama has no
@@ -120,3 +123,68 @@ visibly matches, and the exposure `gains`, `clamped` and `worstMismatch`.
       of 490 rows (about 18 percent at the edge photos of a 78 degree sweep).
 - [ ] The 0.25 drift warning against real 6 to 12 frame sweeps: how much vertical spread do they actually show,
       and does `Layout.isolated` name the right photo when an unrelated shot is inserted?
+
+## 7. After the audit fixes
+
+Added after the audit and fix rounds (commits 1d7507d to 3e6c93d, 238e06f to c920f1c, ccb24ff, 3289683). Every line
+is **unverified until run**: the fixes were measured on procedural scenes or under Robolectric with injected clicks
+and semantic actions, and nothing has run on a device. Run section 1 (the owner's three real sweeps) first, then
+these. (This is the "after the audit fixes" section; it is numbered 7 because sections 2 to 6 above already exist.)
+
+### Aligner (rescan, wide-peak rule)
+
+- [ ] On the three real sweeps from section 1, count how many neighbouring pairs the aligner now refuses that the
+      previous build stitched. The 48 px rescan's comb ambiguity and the 0.01 `Params.shoulderMargin` wide-peak
+      rule can both refuse good smooth or finely textured pairs (on procedural scenes 31 of 56 periodic cases and
+      all 16 faint-cloud pairs are refused; 3 of 48 horizon pairs lost).
+- [ ] Shoot one sweep with a repeating texture over real content (clapboard siding, venetian blinds, a picket or
+      mesh fence in front of a street), including a coarse repeat of about 100 to 200 px on the original photo: the
+      app should either stitch within a few pixels or say it cannot join, never ghost silently. Periods beyond about
+      48 working px (about 160 px on a 4000 px photo) are not covered by the rescan.
+- [ ] Shoot one sweep of a cloudy or smooth sky with a horizon, and one of a blurry or indoor low-light scene: note
+      whether it refuses (horizon and sky scenes are the expected refusals). If good pairs are refused, loosen
+      `Params.shoulderMargin`.
+- [ ] Time per pair on a real phone at the 1200 px working size (host is about 375 ms; guess 1 to 1.5 s) and the
+      whole 12-photo job.
+
+### Memory, lens and the writer
+
+- [ ] Peak Java heap on a 3 x 12 MP sweep and a 12 x 12 MP sweep on a 192 to 256 MB heap phone without
+      `largeHeap` (Android Studio memory profiler or `dumpsys meminfo`): does rung 0 finish, which rung does
+      `startRung` pick, and does any `OutOfMemoryError` redo the compose? Compare with `HEAP_SHARE` 0.4 and the
+      band buffers (two per worker, about 16 MB typical, 64 MB worst, arithmetic only).
+- [ ] Re-save one photo of a sweep through a messenger or an editor that strips EXIF (the others keep their tag):
+      the sweep must join, with the "Some photos did not say their lens" note, and the seams must be as good as the
+      all-tagged sweep.
+- [ ] One 16:9 sweep (the phone's 16:9 photo mode): the "Some photos look cropped" note appears; measure how much
+      the lines bend and how far the overlaps miss, and record whether the vendor's EXIF 35 mm value refers to the
+      cropped or the full sensor frame.
+- [ ] Press Cancel as the progress bar reaches 100 percent, many times: either "Cancelled." with no file in
+      `Pictures/Fotoz/Panoramas`, or Done; never "Cancelled." with a file.
+- [ ] Fill the phone's storage to under 8 MB free and save: expect "There is not enough space on the phone.", no
+      row, no staging file in `cache/panorama-staging`. Repeat with the photos on an SD card if the phone has one
+      (the check reads the cache volume only). Also try 8 to 15 MB free: the check may not fire and the sentence
+      may be the plain "could not be saved".
+- [ ] Android 9 (API 28): save, kill the process during the copy, and look for a truncated JPEG in the root of
+      Pictures; check the file lands in Pictures, not `Pictures/Fotoz/Panoramas`.
+- [ ] Delete or lock a photo of the sweep from the system gallery while the job runs: expect "Photo N is no longer
+      available." and no saved file (a locked photo no longer gets the "protected" sentence mid-job).
+
+### Screen
+
+- [ ] TalkBack: activate "Move photo 2 right" on a 4 to 5 photo strip. Focus must stay on a live button, the moved
+      photo is read as "Photo 3, <name>", and the strip has scrolled to it. Accessibility focus itself is not moved
+      by the code.
+- [ ] TalkBack: Preview finishing ("Preview of the joined panorama."), Save ending ("Panorama saved.",
+      "Cancelled.", a failure) and "Saving the panorama." are each announced once, politely, and the progress bar
+      is not read twice.
+- [ ] At 360 dp wide and system font scale 200 percent: choose 10 to 12 photos and confirm the numbers on the
+      badges are readable in the picker and in the strip.
+- [ ] Start a Save, press Back from arranging, then Back again: the first leaving Back only bolds "Leaving this
+      screen stops the save."; the next leaves and cancels. The rail scrub and Settings still leave immediately.
+      Press Back, Cancel, start a second save, press Back: is the first Back held again (a known gap)?
+- [ ] Double-tap Save quickly: only one "Joining a panorama" entry should appear in the activity shade.
+- [ ] On a small phone at the largest font with a preview shown, scroll the arrange page to Save and force a failed
+      save (for example with a full phone): the failure sentence appears in the pinned strip under the header
+      without scrolling, and TalkBack announces it once. A failed Preview is still printed in the scrolling page
+      above the Preview button and could be off screen.

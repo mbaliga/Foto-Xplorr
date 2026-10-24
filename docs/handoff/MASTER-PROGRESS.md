@@ -1018,7 +1018,9 @@ blob and a parallax layer). The checklist is `docs/device-test/batch-7-checklist
   "about 2.4k px for 26 mm" was wrong; it is 3004 px on 4000x3000), cylinder warp maths, and `plan`/`ladder`
   (24 MP default, the editor's 64 MP and 8192 px ceilings, never enlarged, a strictly shrinking out-of-memory ladder).
 - **Aligner** (`PairAligner`): normalised cross-correlation over a 5-level pyramid, integer working pixels
-  (about 1200 px), a `confident` flag that refuses thin, ambiguous or low-scoring matches.
+  (about 1200 px), a local rescan within 48 px (half-size scores, the best 4 local peaks refined at full size)
+  and a wide-peak check (slides 6 to 8 px away within 0.01 of the best), and a `confident` flag that refuses
+  thin, ambiguous or low-scoring matches.
 - **Layout and exposure** (`PanoLayout`, `ExposureGain`): chaining, runs split at a pair that does not join,
   the isolated photo named, vertical drift; one luma multiplier per photo from block-median ratios.
 - **Blend, crop, compositor** (`SeamBlend`, `AutoCrop`, `PanoCompositor`): a 32-column cosine feather with binary
@@ -1066,15 +1068,17 @@ gains: pure gain 0.8 to 1.25 matched within 0.1 percent (bar 2 percent), 10 to 2
 +-10 to 25 grey of bias. Compositor: planar tiles 0.34 mean grey levels with gains (7.17 without); a 12 percent
 wrong focal length is 1.4 levels worse on average and 3.4 times worse at the seams.
 
-Time on the 4-core host (a phone is guessed at 2 to 4 times slower; guesses, not measurements): aligner 150 to 200 ms
-per pair; compositor 1 to 2 s for a full 24 MP canvas, 0.14 to 0.4 s for normal sweeps; crop 40 to 450 ms.
-Memory (arithmetic): about 145 MB heap plus 96 MB native at 24 MP, about two canvases native at publish.
+Time on the 4-core host (a phone is guessed at 2 to 4 times slower; guesses, not measurements): aligner about 375 ms
+per pair on the host since the rescan (median 376, range 371 to 450; it was 150 to 200 ms before); compositor 1 to 2 s for a full 24 MP canvas, 0.14 to 0.4 s for normal sweeps; crop 40 to 450 ms.
+Memory (arithmetic): about 145 MB heap plus 96 MB native at 24 MP, about two canvases native at publish; the
+compositor's band buffers are two per worker (about 16 MB typical, 64 MB worst) and `startRung` picks the first
+OOM-ladder rung from `Runtime.maxMemory()` (40 percent share, a guess).
 A 12-photo sweep at 35 percent overlap is held by the 8192 px edge to about 8192x745.
 
 ### What deviated and why
 
 - The job refuses a mixed selection (different size, portrait among landscapes, a lens differing by more than 5
-  percent) and requires the whole selection to join; it does not drop the odd photo or sort. This is simpler and
+  percent between photos that have a lens tag; an untagged photo borrows the median tag of the others and adds a note) and requires the whole selection to join; it does not drop the odd photo or sort. This is simpler and
   safer than guessing; "join these N" is a follow-up.
 - Preview is the job itself on a 700,000 px canvas, so it shares every refusal and word; the price is that
   alignment is paid again on Save.
@@ -1099,6 +1103,65 @@ to keep the slice small, as instructed, and none is prepared beyond the swap-in 
   another thread first (TRAPS #97); not this unit's file, and the panorama cannot hit it.
 - The activity's app-wide outcome collector posts "Joining a panorama finished." in addition to the screen's strip.
 - `decodeUpright` still returns null on API 26 and 27, so the panorama is unverified there (as the wall is).
+
+### After the audit rounds (24 Oct 2026, measured on procedural scenes only)
+
+Three audits (core, Android seam, screen) with fixes and reviews. Fixed and tested: a texture laid over real
+content no longer gives a confident stitch a period out (23 of 56 cases confidently wrong before, 0 after, 31
+refused; the first 28 px rescan still let 2 of 108 coarse-period cases through, so it is 48 px: 95 right, 13
+refused, 0 wrong); a wide peak is refused (`shoulderMargin` 0.01); the compositor keeps two band buffers per
+worker, counted by `startRung`; the ladder starts from the Java heap; an untagged photo borrows the sweep's lens
+instead of making it MIXED; a cancel after the row is visible deletes it; a full phone has its own sentence; a
+cropped frame has a note; a vanished photo is named "no longer available"; the screen guards a double Save tap,
+keeps and announces a moved photo, announces outcomes once, ignores a stale cancel, holds the first Back that
+would stop a save, and says a failed save in the pinned strip. The new checks are in section 7 of the batch 7
+checklist; the docs corrections are in TRAPS #89 to #97.
+
+**Left open by those audits (unverified, none run on a device):**
+
+- Real-photo quality of the rescan and the wide-peak rule is unproven. The 0.01 margin refuses every faint-cloud
+  pair tried, so a blurry or heavily denoised real photo may be refused when it would have stitched; loosening
+  `Params.shoulderMargin` is a one-line change after the real sweeps. Horizon and sky scenes are the expected refusals.
+- The rescan covers periods up to about 48 working px (about 160 px on a 4000 px photo); longer periods rely on
+  the walk down, untested above 60 px. 31 of 56 periodic cases are now refused, some of which stitched right before.
+- `warpToGrey` repeats the edge row into the cylinder corners; the aligner score pays (0.71 to 0.997) but offsets
+  and exposure did not. A mean-fill was tried and scored worse. The real fix is a validity mask in `PairAligner` and
+  `ExposureGain.measure`, not built.
+- Memory is arithmetic: `HEAP_SHARE` 0.4 is a guess, the manifest has no `largeHeap`, and the scratch figures (16
+  MB typical, 64 MB worst) are not measured. The scratch-count test counts distinct arrays, not heap.
+- The cropped-frame focal length is noted (`CROPPED`), not corrected; the aspect test also flags a square or 5:4
+  photo, which may be over-cautious.
+- API 28 writer: no pending state, no `Pictures/Fotoz/Panoramas` folder, and a kill mid-copy can leave a truncated
+  JPEG; documented, not changed. The no-space check reads the app's cache volume only, so a full SD card shows the
+  plain "could not be saved". The 8 MiB threshold is below a 24 MP JPEG and is read after the partial file is
+  deleted, so a phone with 8 to 15 MB free may not say "not enough space" (review finding, not fixed; the tests
+  never exercise that gap).
+- Cancelling in the last millisecond deletes a finished file rather than reporting Done (the stated contract).
+- A photo locked mid-job now gets "Photo N is no longer available." rather than the protected sentence; the
+  start check, the final look and the writer still say protected. `PanoramaProblem.of` does not map
+  `noLongerAvailable(n)`, so that sentence has no "Remove photo N" button (review finding, not fixed;
+  `PanoramaDraftTest` covers only `cannotRead` and `cannotJoin`).
+- **MEDIUM, not fixed (files outside the screen unit):** the activity-wide `JobRunner.outcomes` collector in
+  `FotoXplorrActivity` also reports every panorama outcome: a failure opens the modal dialog with the job's raw
+  sentence over the screen (covering Remove), and a success posts "Joining a panorama finished.". Proposed patch:
+  `reportsItself: Boolean = false` on `JobRunner.launch`, carried on `JobOutcome`, honoured by the collector;
+  `PanoramaJob.launch` passes true; test the flag and a pure decision function for the collector.
+- **MEDIUM, not fixed (`PanoramaJob.kt`, `PanoramaDraft.kt`):** the "cannot join" flow names the photo after the
+  first break, not the stray photo; with a stray first photo the one-tap Remove removes a good photo and the set
+  still does not join. `PanoLayout.isolated` and `outside` are computed and ignored. Proposed patch: in `Steps.go`
+  name `layout.isolated.firstOrNull()` (or the first index of a prefix or suffix `outside` block), falling back to
+  `cannotJoin` only for a break between two equal-length runs; add stray-first and stray-last job tests.
+- LOW, not fixed: `PanoCopy.PICK_HINT` does not say what makes a sweep work (one spot, turning, each photo
+  overlapping the next) or that close objects can ghost; proposed "Pick photos taken from one spot, turning side to
+  side, each overlapping the next." A preview failure is still printed in the scrolling page and could be off
+  screen on a small phone.
+- LOW, screen review findings not fixed: the held-Back flag is never reset after the first hold (a second save in
+  one visit leaves at the first Back); a stale preview failure on the same photos masks a later save failure on
+  the arrange page; the held Back and the "Saving" strip also apply to a leftover job from an earlier visit; the
+  strip scrolls the moved photo to the start edge even when already fully in view. Leaving by the rail scrub or
+  Settings still cancels a save at once. TalkBack focus is not moved to the preview or the moved button.
+- Everything above was verified only under Robolectric with injected clicks and semantic actions, or on procedural
+  scenes; the screen test height (2400 dp) proves placement, not visibility on a short screen.
 
 ### Residual, for the owner
 

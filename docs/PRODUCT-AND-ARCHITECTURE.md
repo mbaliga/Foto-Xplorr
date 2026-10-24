@@ -115,7 +115,8 @@ sharing a photo does not silently share where it was taken.
     (`PhotoPrintAdapter`, no dependency). A banded Lanczos resampler (`LanczosResampler`) can enlarge a short
     photo to 300 dpi, labelled "Enlarged, no new detail". There is no camera and no AR: the wall is a photo.
   - **Stitch a panorama** (`pano/`) — pick 2 to 12 photos, arrange them with Move left, Move right and Remove
-    buttons (no dragging needed), Preview a small version with an "About W by H" size, then Save as a job.
+    buttons (no dragging needed; the strip follows a moved photo and announces its new place), Preview a small
+    version with an "About W by H" size, then Save as a job (the first Back that would leave a running save is held).
     A horizontal sweep from a standing-still turn only; it is pure Kotlin on the phone, see "The panorama
     package" in section 4. Real-photo quality is unproven.
 - **Photo scenes** — OpenGL-rendered 3D arrangements of the library (`experience/`, `spatial/`),
@@ -675,8 +676,8 @@ no manifest change. A pure core has no Android types; one Android seam sits arou
 - **Pure core.** `PanoGeometry` (focal length in pixels from the 35 mm tag or a 78 degree diagonal guess,
   cylinder forward/inverse maths, `place`, and `plan`/`ladder`, which cap the canvas at 24 MP and the editor's
   64 MP / 8192 px ceilings and step down by 0.5625 in pixels per rung); `PairAligner` (normalised
-  cross-correlation over a 5-level pyramid at about 1200 px, vertical search +-height/4, and a `confident` flag
-  that refuses thin, ambiguous or low-scoring matches); `PanoLayout` (chains the pairwise offsets, splits runs
+  cross-correlation over a 5-level pyramid at about 1200 px, vertical search +-height/4, a local rescan within
+  48 px and a wide-peak check, and a `confident` flag that refuses thin, ambiguous or low-scoring matches); `PanoLayout` (chains the pairwise offsets, splits runs
   at a pair that does not join, names the photo that does not, vertical drift); `ExposureGain` (one luma
   multiplier per photo from block-median ratios); `SeamBlend` (a cosine feather behind `blendBand`, binary alpha);
   `AutoCrop` (largest hole-free rectangle, coarse grid then full-size check); `PanoCompositor` (banded cylinder
@@ -685,9 +686,9 @@ no manifest change. A pure core has no Android types; one Android seam sits arou
 - **The one Android seam.** `PanoramaHost` (`ExperimentPanoramaHost` over `ExperimentEnv`: `mayExport`,
   `decodeUpright` through `env.decode`, the EXIF focal length) and `PanoramaSink` (`PanoramaWriter`: a Bitmap
   canvas, a staged JPEG at quality 92, a pending MediaStore row in `Pictures/Fotoz/Panoramas`, the first
-  photo's date, no metadata, the row deleted on any failure or cancel). `PanoramaJob.run` is the whole chain
+  photo's date, no metadata, the row deleted on any failure or cancel; a full phone is its own sentence). `PanoramaJob.run` is the whole chain
   (small 1200 px reads, grey cylinder warp, align, layout, gains, then compose at the canvas scale down the OOM
-  ladder, re-checking protection four times); `PanoramaJob.launch` runs it through `JobRunner` titled
+  ladder, which starts at a rung chosen from the Java heap, re-checking protection four times); `PanoramaJob.launch` runs it through `JobRunner` titled
   "Joining a panorama" with progress and cancel.
 - **The screen.** `PanoramaExperience` (registered as `panorama` under Make, restorable): `PanoramaDraft` is the
   pure state (step, chosen ids, arranged order, one saved string), `PanoramaPreviewRun` is the same job on a

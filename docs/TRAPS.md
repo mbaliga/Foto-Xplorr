@@ -1214,9 +1214,10 @@ Everything the panorama reads goes through `ExperimentEnv.decode` (`decodeUprigh
 check, #33 and #34); the focal length is read from EXIF directly, only for a photo that may be exported, and
 not through the location reader (focal length is not a place, and the redacted view keeps it).
 `PanoramaJob` asks `mayExport` (a) for every photo before any pixel or EXIF is read, (b) inside every decode
-(a null there becomes the protected sentence if `mayExport` is now false, else "Photo N could not be read."),
-(c) once for all photos right after the last draw, and (d) in the writer right before the MediaStore row is
-created. Nothing is staged anywhere another app can see before (d); the staging JPEG is in app cache. A new
+(a null there becomes "Photo N is no longer available." if `mayExport` is now false, because the host cannot
+tell a lock from a deletion and the sentence blames neither, else "Photo N could not be read."), (c) once for
+all photos right after the last draw, and (d) in the writer right before the MediaStore row is created. The
+start check (a), the final look (c) and the writer's check (d) still give the protected sentence. Nothing is staged anywhere another app can see before (d); the staging JPEG is in app cache. A new
 `PanoSource` or `PanoramaHost` must keep (b): a photo protected while the job runs has to abort it, not leak
 into the output. `PanoSource.decode` is blocking and the host's is suspending (`runBlocking` on the
 compositor's IO thread), so a cancel cannot interrupt a decode that is in flight; it finishes, then the next
@@ -1239,7 +1240,13 @@ gets, but more than 2x the request breaks the memory plan). `OutOfMemoryError` i
 alpha, so a dirty canvas from an aborted attempt reads as already drawn). An out-of-memory error during the
 small reads in phase 1 is not stepped down. The crop is in the pixels of the canvas it was found on: if the
 output is stepped down after the crop was found, recompute it, do not scale it up. The cropped copy at publish
-is a second bitmap, so the peak is about two canvases of native memory (arithmetic, not measured).
+is a second bitmap, so the peak is about two canvases of native memory (arithmetic, not measured). Only the
+canvas is native: each decoded source is an `IntArray` on the Java heap (4 bytes per pixel, two alive at a
+time), and `PanoramaJob.startRung` picks the first ladder rung whose two sources fit 40 percent of
+`Runtime.maxMemory()` (`HEAP_SHARE`, a guess, unmeasured; the manifest has no `largeHeap`). The compositor
+also keeps two band buffers per worker, allocated once at the widest strip times the band (about 16 MB for a
+typical sweep, 64 MB at worst, arithmetic); `PanoCompositor.scratchBytes` is counted in
+`PanoramaJob.sourceHeapBytes` so `startRung` sees it.
 
 ## 91. The offline source scan reads panorama comments too
 
@@ -1256,8 +1263,18 @@ no manifest change.
 overlap >= 15 percent of the smaller image AND >= 4096 overlap pixels AND no distinct rival slide (more than 4
 px away) within 0.05 of the best score; a true overlap under 15 percent is found but refused, so tell people to
 overlap by at least a third. The rival-slide rule is what refuses fences, stripes, gradients and window grids
-(it also refuses a small smooth patch whose peak is wide), and that is deliberate. The false-positive scan
-(unrelated scenes, 0 to 10 percent overlap, flat sky, 16 seeds) lives in `PairAlignerConfidenceTest`: do not
+(it also refuses a small smooth patch whose peak is wide), and that is deliberate. The rival set includes a
+local rescan within 48 px of the answer (every slide scored at half size, the best 4 local peaks refined at
+full size), so a texture laid over real content is refused as well as a pure pattern (without the rescan, 23
+of 56 periodic-over-content cases were confidently one or more periods out; with a 28 px rescan 2 of 108
+coarse-period cases still were; at 48 px 0 of 108 were). A wide peak is a separate check: slides 6 to 8 px from
+the best that score within `Params.shoulderMargin` (0.01) make the answer ambiguous. It refuses every
+faint-cloud sky tried (8 and 14 grey levels of spread) and lost 3 of 48 correct horizon pairs, so a blurry or
+smooth real photo may be refused when it would have stitched; loosen it after the real sweeps. Texture
+periods beyond about 48 working px (about 160 px on a 4000 px photo) are not covered by the rescan (the walk
+down is trusted there; untested above 60 px). "Never a confident wrong answer" is measured on procedural
+scenes only. The false-positive scan (unrelated scenes, 0 to 10 percent overlap, flat sky, 16 seeds) lives in
+`PairAlignerConfidenceTest`, and the periodic-over-content and faint-cloud scenes in `PairAlignerTextureTest`: do
 lower `minScore` or `minConfidentOverlap` without re-running it; the margin is thin (false-positive maximum
 0.48, true-positive minimum 0.61). The offset convention is "the SECOND image's top-left in the FIRST image's
 grid" (a left-to-right sweep has dx > 0); offsets are at the aligner's ~1200 px working size, in
@@ -1277,7 +1294,10 @@ through any of it and nothing has run on a device. Measured on those scenes, and
 parallax (the aligner locks onto the near layer and its error equals the layer shift; the far scene ghosts),
 a focal-length tag wrong by about 10 percent (13 to 15 grey levels of seam error, no note), and an additive
 exposure offset (a scalar gain leaves 10 to 26 percent of a step). Detected: a photo with no tag
-(`LENS_GUESSED` note) and a big mover in the overlap (the join is refused, which is the right direction to
+(`LENS_GUESSED` note; an untagged photo now borrows the median tag of the others, so it no longer makes the
+sweep `MIXED`, while two tagged photos on different lenses or sizes still do), a photo not within 2 percent of
+4:3 or 3:2 (`CROPPED` note: the tag is relative to the lens's whole frame, so the pixel focal length is too
+small and lines may bend; noted, not corrected, unmeasured on a real photo) and a big mover in the overlap (the join is refused, which is the right direction to
 fail; a mover over about a fifth of a 25 percent overlap loses 4 of 18 pairs). Do not describe the panorama
 in a store text, help line or release note as dependable. The kill criterion's second half stands: three real
 handheld sweeps (still and turning; one with a walking person; one indoors) compared with the phone's own
@@ -1324,9 +1344,15 @@ band height, worker count or list order (tested bit for bit); keep it so.
 ## 97. Panorama lifecycle: what survives, what stops, and one latent `JobRunner` race
 
 Process death keeps the screen's step, chosen photos and order (`PanoramaDraft.encode`, restorable entry) and
-nothing else: no preview, no running job. A half-written MediaStore row is `IS_PENDING` (hidden, discarded
-later) and a leftover staging JPEG in `cache/panorama-staging` is deleted by the next publish once older than
-an hour. Any failure or cancel during the copy deletes the pending row; nothing is created before the crop is
+nothing else: no preview, no running job. A half-written MediaStore row is `IS_PENDING` on Android 10 and later
+(hidden, discarded later); on API 26 to 28 there is no `IS_PENDING` and no `RELATIVE_PATH`, so the row is
+visible while the bytes are copied, the file lands in the root of Pictures, and a kill mid-copy leaves a
+truncated JPEG that nothing removes (in practice API 28 only, since `decodeUpright` returns null on 26 and
+27). A leftover staging JPEG in `cache/panorama-staging` is deleted by the next publish once older than
+an hour. Any failure or cancel during the copy deletes the pending row, and a cancel that arrives after the row was
+made visible also deletes it (`publish` removes the uri it had made), so "Cancelled." never has a file
+behind it; a failed write on a phone with under 8 MiB free (or an ENOSPC in the cause chain) is its own
+sentence, "There is not enough space on the phone."; nothing is created before the crop is
 encoded, the job's look has passed and the coroutine is active. A save is cancelled when the screen leaves
 composition (as the wall's print is), because its host reads the live browsable list of `ExperimentalScreen`
 (#33); rotation does not (the activity handles configChanges), and Back inside the screen does not.
@@ -1335,7 +1361,11 @@ thread before `launch` returns leaves a stale entry for ever; `PanoramaJob.run` 
 (`withContext(Default)`) and the view-model scope is `Main.immediate`, so it is safe, and tests use
 `Dispatchers.Unconfined`. The app-wide outcome collector also posts "Joining a panorama finished." for a
 successful job whose value is not a String, besides the screen's own strip (nothing silenced it). API 26 to 28
-inserts without `RELATIVE_PATH`, so the file lands in the default Pictures folder (unverified). The gallery
+inserts without `RELATIVE_PATH` or `IS_PENDING`, so the file lands in the default Pictures folder and is
+visible while copied (unverified). On the screen: Save reads the runner's live job list, so a second tap
+before a redraw cannot start a second save; the first Back that would leave while a save runs is held (the
+next one leaves and cancels); outcomes from a job this screen instance did not start are ignored; a failure
+is shown only while the photos are the ones it was made for. The gallery
 selection action "Stitch panorama" was not built (about 80 lines over five files, two of them hot); the
 Experimental entry is the only way in, and the seam, if wanted, is a one-shot launch request carrying the
 chosen ids.
