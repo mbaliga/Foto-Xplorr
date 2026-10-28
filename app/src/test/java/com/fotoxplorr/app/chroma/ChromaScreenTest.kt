@@ -55,9 +55,14 @@ class ChromaScreenTest {
         onMeasure: (ShotRole, Boolean, Boolean) -> Unit = { _, _, _ -> },
         onCancel: () -> Unit = {},
         onAgain: () -> Unit = {},
+        shown: ReadingView? = null,
+        actions: ResultActions? = null,
+        notice: String? = null,
     ) {
         FotoXplorrTheme(GalleryPreferencesState()) {
-            Column { ChromaControls(state, outcome, cardKept, useCard, onUseCard, live, steady, onAsk, onSettings, onMeasure, onCancel, onAgain) }
+            Column {
+                ChromaControls(state, outcome, cardKept, useCard, onUseCard, live, steady, onAsk, onSettings, onMeasure, onCancel, onAgain, shown, actions, notice)
+            }
         }
     }
 
@@ -169,15 +174,19 @@ class ChromaScreenTest {
             flashShare = 0.9,
             signalToNoise = 40.0,
         )
+        val outcome = Outcome.Reading(ChromaReading(measurement, report), withCard = true)
+        val saved = ReadingView.savedFrom(outcome, 5)!!
         var again = 0
         compose.setContent {
-            Controls(CaptureState.Done(facts), outcome = Outcome.Reading(ChromaReading(measurement, report), withCard = true), onAgain = { again++ })
+            Controls(CaptureState.Done(facts), outcome = outcome, shown = ReadingView.of(saved, outcome), onAgain = { again++ })
         }
         compose.onNodeWithText(report.description).assertIsDisplayed()
-        compose.onNodeWithText("${report.hex}  RGB 200 100 50").assertIsDisplayed()
+        compose.onNodeWithText("#C86432").assertIsDisplayed()
+        compose.onNodeWithText("RGB 200 100 50").assertIsDisplayed()
         compose.onNodeWithContentDescription("${report.description}, ${report.hex}").assertIsDisplayed()
-        compose.onNodeWithText(ChromaCopy.MEASURED).assertIsDisplayed()
+        compose.onNodeWithText(ChromaCopy.ACCURACY_CALIBRATED).assertIsDisplayed()
         compose.onNodeWithText(ChromaCopy.SAME_DISTANCE_ASSUMED).assertIsDisplayed()
+        compose.onNodeWithText(ChromaCopy.step(3)).assertIsDisplayed()
         compose.onNodeWithText(ChromaCopy.AGAIN).assertHeightIsAtLeast(48.dp).performClick()
         assertEquals(1, again)
     }
@@ -185,8 +194,32 @@ class ChromaScreenTest {
     @Test
     fun aRoomOnlyReadingSaysItIsNotTheTrueColour() {
         val report = ColourReport.of(ChromaTestKit.argb(90, 120, 200))
-        compose.setContent { Controls(CaptureState.Done(noFlash), outcome = Outcome.RoomLight(report)) }
+        val outcome = Outcome.RoomLight(report)
+        val shown = ReadingView.of(ReadingView.savedFrom(outcome, 1)!!, outcome)
+        compose.setContent { Controls(CaptureState.Done(noFlash), outcome = outcome, shown = shown) }
         compose.onNodeWithText(ChromaCopy.AMBIENT_NOTE).assertIsDisplayed()
+    }
+
+    @Test
+    fun whileTheColourIsOnItsWayThereIsAWordAndNoCard() {
+        val report = ColourReport.of(ChromaTestKit.argb(90, 120, 200))
+        compose.setContent { Controls(CaptureState.Done(noFlash), outcome = Outcome.RoomLight(report)) }
+        compose.onNodeWithText(ChromaCopy.SHOOTING).assertIsDisplayed()
+        assertEquals(0, compose.onAllNodesWithText(ChromaCopy.AMBIENT_NOTE).fetchSemanticsNodes().size)
+    }
+
+    @Test
+    fun theStepsAreNamedAndTheCardStepSaysItIsOptional() {
+        compose.setContent { Controls(CaptureState.Ready(facts)) }
+        compose.onNodeWithText(ChromaCopy.step(2)).assertIsDisplayed()
+        compose.onNodeWithText(ChromaCopy.STEP_CARD).assertIsDisplayed()
+    }
+
+    @Test
+    fun withTheCardWantedTheFirstStepIsShown() {
+        compose.setContent { Controls(CaptureState.Ready(facts), useCard = true, cardKept = false) }
+        compose.onNodeWithText(ChromaCopy.step(1)).assertIsDisplayed()
+        assertEquals(0, compose.onAllNodesWithText(ChromaCopy.step(2)).fetchSemanticsNodes().size)
     }
 
     @Test
@@ -215,7 +248,7 @@ class ChromaScreenTest {
             onOpenAsset = { _, _ -> }, context = context, currentBrowsableIds = { emptySet() },
         )
         var closed = 0
-        compose.setContent { FotoXplorrTheme(GalleryPreferencesState()) { ChromaIdExperience(env) { closed++ } } }
+        compose.setContent { FotoXplorrTheme(GalleryPreferencesState()) { ChromaId(env) { closed++ } } }
         compose.onNodeWithText(ChromaCopy.NO_CAMERA).assertIsDisplayed()
         compose.onNodeWithText(ChromaCopy.PRIVACY).assertIsDisplayed()
         compose.onNodeWithContentDescription("Back").performClick()

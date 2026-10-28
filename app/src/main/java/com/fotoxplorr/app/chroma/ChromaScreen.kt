@@ -9,9 +9,9 @@ import android.provider.Settings
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -28,25 +28,26 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -56,6 +57,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -63,9 +66,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.fotoxplorr.app.experimental.ExperimentEnv
+import com.fotoxplorr.app.palettebuilder.PaletteLibrary
+import com.fotoxplorr.app.palettebuilder.PaletteStore
 import com.fotoxplorr.app.ui.PaneScaffold
 import com.fotoxplorr.app.ui.RoomStyle
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlin.math.min
 
 /**
@@ -73,35 +79,218 @@ import kotlin.math.min
  * because it uses the camera and asks a permission). It reads nothing from [env]: the pictures are the
  * camera's own and no library photo is involved, so `mayExport` and `decode` do not apply.
  *
+ * ## The flow
+ * Three steps: 1 an optional white card beside the surface, 2 hold the phone near it and keep still (with
+ * live words on distance, steadiness and a washed-out view), 3 the result: a swatch, the colour in words,
+ * hex, RGB, Lab and LCh, the three nearest names with their distance, and one line on how far to trust it.
+ * From the result: copy the hex, compare it with a past reading (two swatches and a verdict), save it to a
+ * palette, and measure again. A list of past readings is one button away. No camera picture is shown after
+ * a measurement: the view is covered by the sampled colour, and the camera's own frames are gone.
+ *
  * ## The permission
  * Asked here, when the experiment opens, with [ChromaCopy.PRIVACY] on screen as the reason; never at app
  * start. A refusal shows [ChromaCopy.CAMERA_DENIED] with Ask again and Settings.
  *
  * ## What is released, and when
- * Pause (and leaving) stops the job: the camera, session, image reader and thread are released and the
- * gyroscope is unregistered. Resume opens them again. Nothing is kept across that.
+ * Pause (and leaving, and opening the history, compare or palette view) stops the job: the camera, session,
+ * image reader and thread are released and the gyroscope is unregistered. Coming back opens them again.
  *
  * ## What is saved
- * Nothing. The pictures live in memory for the few seconds a measurement takes and are overwritten
- * once the answer is worked out; no photo, no number and no setting is written anywhere. A card
- * measurement is kept as numbers only while the light stays held, and is dropped by leaving, pausing,
- * turning the phone (the activity is recreated) or measuring the card again. The "use a card" switch
- * survives turning the phone; the card step then starts over.
+ * The camera pictures: nothing; they live in memory for the few seconds a measurement takes and are
+ * overwritten once the answer is worked out. Every finished colour is added to the history
+ * ([ChromaHistoryStore], `filesDir/chroma/history.txt`, plain text, the last 50, a colour a kind and a time
+ * each; delete-all is on the history view). A colour goes to a palette only when asked, through the palette
+ * builder's own store ([ChromaPalettes]). A card measurement is kept as numbers only while the light stays
+ * held, and is dropped by leaving, pausing, turning the phone or measuring the card again.
+ *
+ * ## Process death and rotation
+ * Kept through both: the view, the colour on screen, the colours picked for a comparison or a palette, the
+ * card switch and whether the permission was asked. Not kept: the camera (it reopens), a card measurement
+ * and the live words. After a kill the colour on screen is also the newest line of the history.
  *
  * Nothing here has run on a device. There is no drag, so the shell's edge zones (TRAPS #72) do not matter.
+ * The inner views register a Back handler that returns to measuring (TRAPS #78); Back from measuring closes.
  */
 @Composable
-fun ChromaIdExperience(@Suppress("UNUSED_PARAMETER") env: ExperimentEnv, onClose: () -> Unit) {
-    val context = LocalContext.current
-    val choice = remember { CameraProbe.choose(context.applicationContext) }
-    PaneScaffold(title = ChromaCopy.TITLE, onBack = onClose) {
-        if (choice == null) {
-            Column(Modifier.padding(horizontal = RoomStyle.GutterStart, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(ChromaCopy.NO_CAMERA, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                Text(ChromaCopy.PRIVACY, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkFaint)
+fun ChromaId(@Suppress("UNUSED_PARAMETER") env: ExperimentEnv, onClose: () -> Unit) {
+    val app = LocalContext.current.applicationContext
+    val choice = remember { CameraProbe.choose(app) }
+    val history = remember { ChromaHistoryStore(ChromaHistoryStore.directoryIn(app.filesDir)) }
+    val palettes = remember { PaletteStore(PaletteStore.directoryIn(app.filesDir)) }
+    ChromaIdScreen(choice, history, palettes, onClose)
+}
+
+/** The four views of the tool; the camera is open only in [MEASURE]. */
+internal enum class ChromaView { MEASURE, HISTORY, COMPARE, SAVE }
+
+/** A reading in saved state: its history line, or the empty string for none. */
+private val ReadingSaver = Saver<SavedReading?, String>(
+    save = { it?.toLine().orEmpty() },
+    restore = { SavedReading.fromLine(it) },
+)
+
+/**
+ * The tool with its stores handed in, so a test can give it in-memory ones and no camera ([choice] null
+ * shows the no-camera message, and the history, compare and palette views still work).
+ */
+@Composable
+internal fun ChromaIdScreen(choice: CameraChoice?, history: ChromaHistory, palettes: PaletteLibrary, onClose: () -> Unit) {
+    var view by rememberSaveable { mutableStateOf(ChromaView.MEASURE) }
+    var shown by rememberSaveable(stateSaver = ReadingSaver) { mutableStateOf<SavedReading?>(null) }
+    var subject by rememberSaveable(stateSaver = ReadingSaver) { mutableStateOf<SavedReading?>(null) }
+    var other by rememberSaveable(stateSaver = ReadingSaver) { mutableStateOf<SavedReading?>(null) }
+    var useCard by rememberSaveable { mutableStateOf(false) }
+    var asked by rememberSaveable { mutableStateOf(false) }
+
+    var loaded by remember { mutableStateOf<HistoryLoad?>(null) }
+    var targets by remember { mutableStateOf<List<PaletteTarget>?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
+
+    LaunchedEffect(history) { loaded = history.load() }
+
+    fun go(next: ChromaView) {
+        notice = null
+        view = next
+    }
+
+    fun copy(hex: String) {
+        clipboard.setText(AnnotatedString(hex))
+        notice = ChromaCopy.copied(hex)
+    }
+
+    fun reading(r: SavedReading) {
+        shown = r
+        notice = null
+        scope.launch {
+            val ok = history.add(r)
+            loaded = history.load()
+            if (!ok) notice = ChromaCopy.HISTORY_NOT_ADDED
+        }
+    }
+
+    fun openCompare(r: SavedReading) {
+        subject = r
+        other = null
+        go(ChromaView.COMPARE)
+    }
+
+    fun openSave(r: SavedReading) {
+        subject = r
+        targets = null
+        go(ChromaView.SAVE)
+        scope.launch {
+            val saved = palettes.load()
+            targets = ChromaPalettes.targets(r.argb, saved.palettes, ChromaPalettes.partnerFor(r, loaded?.readings.orEmpty()))
+            if (saved.unreadable) notice = ChromaCopy.PALETTE_FAILED
+        }
+    }
+
+    fun pickTarget(r: SavedReading, target: PaletteTarget) {
+        scope.launch {
+            val result = ChromaPalettes.save(palettes, r.argb, target)
+            notice = when (result) {
+                is HandoffResult.Added -> ChromaCopy.addedTo(result.name)
+                is HandoffResult.Created -> ChromaCopy.createdPalette(result.name)
+                is HandoffResult.Full -> ChromaCopy.paletteFull(result.name)
+                is HandoffResult.AlreadyThere -> ChromaCopy.paletteHasIt(result.name)
+                HandoffResult.ListFull -> ChromaCopy.PALETTE_LIST_FULL
+                HandoffResult.Failed -> ChromaCopy.PALETTE_FAILED
             }
-        } else {
-            ChromaCameraBody(choice)
+            val saved = palettes.load()
+            targets = ChromaPalettes.targets(r.argb, saved.palettes, ChromaPalettes.partnerFor(r, loaded?.readings.orEmpty()))
+        }
+    }
+
+    fun deleteAll() {
+        scope.launch {
+            val ok = history.clear()
+            loaded = history.load()
+            notice = if (ok) ChromaCopy.DELETED else ChromaCopy.DELETE_FAILED
+        }
+    }
+
+    PaneScaffold(title = ChromaCopy.TITLE, onBack = { if (view != ChromaView.MEASURE) go(ChromaView.MEASURE) else onClose() }) {
+        BackHandler(enabled = view != ChromaView.MEASURE) { go(ChromaView.MEASURE) }
+        when (view) {
+            ChromaView.MEASURE -> {
+                val actions = remember {
+                    ResultActions(
+                        onCopy = { shown?.let { copy(it.hex) } },
+                        onCompare = { shown?.let(::openCompare) },
+                        onSave = { shown?.let(::openSave) },
+                    )
+                }
+                if (choice == null) {
+                    Column(
+                        Modifier.padding(horizontal = RoomStyle.GutterStart, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(ChromaCopy.NO_CAMERA, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                        Text(ChromaCopy.PRIVACY, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkFaint)
+                        ChromaButton(ChromaCopy.HISTORY, { go(ChromaView.HISTORY) })
+                    }
+                } else {
+                    ChromaCameraBody(
+                        choice = choice,
+                        shown = shown,
+                        notice = notice,
+                        actions = actions,
+                        useCard = useCard,
+                        onUseCard = { useCard = it },
+                        asked = asked,
+                        onAsked = { asked = true },
+                        onReading = ::reading,
+                        onClear = {
+                            shown = null
+                            notice = null
+                        },
+                        onHistory = { go(ChromaView.HISTORY) },
+                    )
+                }
+            }
+            ChromaView.HISTORY -> HistoryPanel(
+                load = loaded,
+                notice = notice,
+                onCopy = { copy(it.hex) },
+                onCompare = ::openCompare,
+                onSave = ::openSave,
+                onDeleteAll = ::deleteAll,
+                onBack = { go(ChromaView.MEASURE) },
+                modifier = Modifier.fillMaxSize(),
+            )
+            ChromaView.COMPARE -> {
+                val first = subject
+                if (first == null) {
+                    LaunchedEffect(Unit) { go(ChromaView.MEASURE) }
+                } else {
+                    ComparePanel(
+                        subject = first,
+                        other = other,
+                        candidates = CompareView.candidates(first, loaded?.readings.orEmpty()),
+                        onPick = { other = it },
+                        onPickAgain = { other = null },
+                        onBack = { go(ChromaView.MEASURE) },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+            ChromaView.SAVE -> {
+                val colour = subject
+                if (colour == null) {
+                    LaunchedEffect(Unit) { go(ChromaView.MEASURE) }
+                } else {
+                    SavePanel(
+                        colour = colour,
+                        targets = targets,
+                        notice = notice,
+                        onPick = { pickTarget(colour, it) },
+                        onBack = { go(ChromaView.MEASURE) },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
         }
     }
 }
@@ -110,7 +299,19 @@ private fun hasCameraPermission(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
 @Composable
-private fun ChromaCameraBody(choice: CameraChoice) {
+private fun ChromaCameraBody(
+    choice: CameraChoice,
+    shown: SavedReading?,
+    notice: String?,
+    actions: ResultActions,
+    useCard: Boolean,
+    onUseCard: (Boolean) -> Unit,
+    asked: Boolean,
+    onAsked: () -> Unit,
+    onReading: (SavedReading) -> Unit,
+    onClear: () -> Unit,
+    onHistory: () -> Unit,
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -119,10 +320,11 @@ private fun ChromaCameraBody(choice: CameraChoice) {
     val source = remember(choice) { Camera2Source(context.applicationContext, choice, surfaceFlow) }
     val job = remember(source) { ChromaJob(source, motion, scope) }
     val gyro = remember { GyroSensor(context.applicationContext, motion) }
+    val latestAsked by rememberUpdatedState(asked)
+    val latestOnAsked by rememberUpdatedState(onAsked)
+    val latestOnReading by rememberUpdatedState(onReading)
 
     var permitted by remember { mutableStateOf(hasCameraPermission(context)) }
-    var asked by rememberSaveable { mutableStateOf(false) }
-    var useCard by rememberSaveable { mutableStateOf(false) }
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         permitted = granted
@@ -130,7 +332,7 @@ private fun ChromaCameraBody(choice: CameraChoice) {
     }
 
     fun ask() {
-        asked = true
+        latestOnAsked()
         job.needPermission()
         launcher.launch(Manifest.permission.CAMERA)
     }
@@ -143,7 +345,7 @@ private fun ChromaCameraBody(choice: CameraChoice) {
                     permitted = hasCameraPermission(context)
                     when {
                         permitted -> job.open()
-                        !asked -> ask()
+                        !latestAsked -> ask()
                         else -> job.permissionResult(false)
                     }
                 }
@@ -169,6 +371,12 @@ private fun ChromaCameraBody(choice: CameraChoice) {
     val live by source.live.collectAsState()
     val steady by gyro.steady.collectAsState()
 
+    // A finished colour goes up to the screen, which shows it and adds it to the history; the job's own
+    // outcome is then only needed for the cautions that belong to this measurement.
+    LaunchedEffect(outcome) {
+        ReadingView.savedFrom(outcome, System.currentTimeMillis())?.let { latestOnReading(it) }
+    }
+
     val rotationDegrees = (LocalView.current.display?.rotation ?: Surface.ROTATION_0) * 90
     val aspect = PreviewShape.displayAspect(
         choice.facts.previewWidth,
@@ -176,10 +384,12 @@ private fun ChromaCameraBody(choice: CameraChoice) {
         choice.sensorOrientation,
         rotationDegrees,
     )
+    val resultOn = shown != null
+    val measuring = state is CaptureState.Locking || state is CaptureState.Ambient || state is CaptureState.Flash
 
     Column(Modifier.fillMaxSize()) {
         if (permitted) {
-            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f).padding(horizontal = RoomStyle.GutterStart)) {
+            BoxWithConstraints(Modifier.fillMaxWidth().weight(if (resultOn) 0.3f else 1f).padding(horizontal = RoomStyle.GutterStart)) {
                 val h = min(maxHeight.value, maxWidth.value / aspect.toFloat()).dp
                 val w = (h.value * aspect.toFloat()).dp
                 PreviewBox(
@@ -192,12 +402,23 @@ private fun ChromaCameraBody(choice: CameraChoice) {
                     onGone = { job.stop() },
                     modifier = Modifier.align(Alignment.Center),
                 )
+                // Once there is a colour the live view is covered by it, and nothing of the picture is seen.
+                // The view stays in the tree so the camera keeps running and "Measure again" is instant.
+                if (shown != null) {
+                    Box(
+                        Modifier
+                            .align(Alignment.Center)
+                            .size(w, h)
+                            .background(Color(shown.argb))
+                            .clearAndSetSemantics { },
+                    )
+                }
             }
         }
         Column(
             Modifier
                 .fillMaxWidth()
-                .heightIn(max = 320.dp)
+                .then(if (resultOn) Modifier.weight(0.7f) else Modifier.heightIn(max = 320.dp))
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = RoomStyle.GutterStart, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -208,7 +429,7 @@ private fun ChromaCameraBody(choice: CameraChoice) {
                 cardKept = cardKept,
                 useCard = useCard,
                 onUseCard = { want ->
-                    useCard = want
+                    onUseCard(want)
                     if (!want) job.forgetCard()
                 },
                 live = live,
@@ -220,13 +441,21 @@ private fun ChromaCameraBody(choice: CameraChoice) {
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                     )
                 },
-                onMeasure = { role, ambientOnly, relock -> job.measure(role, ambientOnly, relock) },
+                onMeasure = { role, ambientOnly, relock ->
+                    onClear()
+                    job.measure(role, ambientOnly, relock)
+                },
                 onCancel = job::cancel,
                 onAgain = {
+                    onClear()
                     job.again()
                     if (job.state.value == CaptureState.Idle && permitted) job.open()
                 },
+                shown = shown?.let { ReadingView.of(it, outcome) },
+                actions = actions,
+                notice = notice,
             )
+            if (!measuring) ChromaButton(ChromaCopy.HISTORY, onHistory)
             Text(ChromaCopy.PRIVACY, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkFaint)
         }
     }
@@ -298,8 +527,19 @@ internal fun ChromaControls(
     onMeasure: (ShotRole, Boolean, Boolean) -> Unit,
     onCancel: () -> Unit,
     onAgain: () -> Unit,
+    /** The colour on screen, or null; it is step 3 and replaces the measuring controls. */
+    shown: ReadingView? = null,
+    actions: ResultActions? = null,
+    notice: String? = null,
 ) {
     val polite = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+    if (shown != null && (state is CaptureState.Ready || state is CaptureState.Locked || state is CaptureState.Done)) {
+        StepHeader(ChromaStep.RESULT)
+        Text(ChromaCopy.STEP_RESULT, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkMuted)
+        ReadingCard(shown, actions, notice)
+        ChromaButton(ChromaCopy.AGAIN, onAgain, primary = true)
+        return
+    }
     when (state) {
         CaptureState.Idle, CaptureState.NeedsPermission -> {
             Text(ChromaCopy.PRIVACY, modifier = polite)
@@ -314,6 +554,7 @@ internal fun ChromaControls(
         is CaptureState.Ready, is CaptureState.Locked -> {
             val facts = state.cameraFacts!!
             if (outcome != null) Result(outcome)
+            StepHeader(ChromaStep.of(state, useCard, cardKept, resultShown = false))
             if (!facts.hasFlash) {
                 Text(ChromaCopy.NO_FLASH, modifier = polite)
                 Guidance(facts, live, steady)
@@ -348,7 +589,8 @@ internal fun ChromaControls(
             ChromaButton(ChromaCopy.CANCEL, onCancel)
         }
         is CaptureState.Done -> {
-            if (outcome == null) {
+            // A colour is on its way to the screen (shown is set a moment after the outcome); a refusal ends here.
+            if (outcome == null || outcome is Outcome.Reading || outcome is Outcome.RoomLight) {
                 Text(ChromaCopy.SHOOTING, modifier = polite)
                 LinearProgressIndicator(Modifier.fillMaxWidth(), color = Color.White, trackColor = RoomStyle.InkFaint)
             } else {
@@ -398,6 +640,7 @@ private fun Guidance(facts: CameraFacts, live: LiveView, steady: Boolean?) {
     }
 }
 
+/** The switch for the optional first step, with what the step is. */
 @Composable
 private fun CardSwitch(on: Boolean, onChange: (Boolean) -> Unit) {
     Row(
@@ -408,68 +651,22 @@ private fun CardSwitch(on: Boolean, onChange: (Boolean) -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(ChromaCopy.USE_CARD, modifier = Modifier.weight(1f))
+        Column(Modifier.weight(1f)) {
+            Text(ChromaCopy.USE_CARD)
+            Text(ChromaCopy.STEP_CARD, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkMuted)
+        }
         Switch(checked = on, onCheckedChange = null)
     }
 }
 
-/** The finished reading, in words and numbers as well as the swatch, so colour alone never carries it. */
+/** What is said of a measurement that gave no colour: a refusal in one sentence, or that the card is in. */
 @Composable
 private fun Result(outcome: Outcome) {
     val polite = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
     when (outcome) {
         Outcome.CardKept -> Text(ChromaCopy.CARD_KEPT, modifier = polite)
         is Outcome.Refused -> Text(outcome.reason.message, modifier = polite)
-        is Outcome.RoomLight -> {
-            ReportBlock(outcome.report, polite)
-            Text(ChromaCopy.AMBIENT_NOTE, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkMuted)
-        }
-        is Outcome.Reading -> {
-            ReportBlock(outcome.reading.report, polite)
-            val notes = buildList {
-                if (outcome.withCard) add(ChromaCopy.MEASURED)
-                outcome.reading.measurement.cautions.forEach { add(it.message) }
-            }
-            notes.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkMuted) }
-        }
-    }
-}
-
-@Composable
-private fun ReportBlock(report: ColourReport, modifier: Modifier) {
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            Modifier
-                .size(72.dp)
-                .background(Color(report.argb or (0xFF shl 24)))
-                .border(BorderStroke(1.dp, RoomStyle.InkFaint))
-                .semantics { contentDescription = "${report.description}, ${report.hex}" },
-        )
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(report.description, style = MaterialTheme.typography.titleMedium)
-            Text("${report.hex}  RGB ${report.red} ${report.green} ${report.blue}", style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkMuted)
-            report.nearest.forEach {
-                Text(ChromaCopy.nearest(it.name, it.deltaE), style = MaterialTheme.typography.bodySmall, color = RoomStyle.InkMuted)
-            }
-        }
-    }
-}
-
-/** A button with words, at least 48 dp tall. */
-@Composable
-private fun ChromaButton(label: String, onClick: () -> Unit, primary: Boolean = false) {
-    if (primary) {
-        Button(
-            onClick = onClick,
-            modifier = Modifier.heightIn(min = 48.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
-        ) { Text(label) }
-    } else {
-        OutlinedButton(
-            onClick = onClick,
-            modifier = Modifier.heightIn(min = 48.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = RoomStyle.Ink),
-            border = BorderStroke(1.dp, RoomStyle.InkFaint),
-        ) { Text(label) }
+        // A colour is shown by the result step, from the screen's copy of it.
+        is Outcome.RoomLight, is Outcome.Reading -> Unit
     }
 }

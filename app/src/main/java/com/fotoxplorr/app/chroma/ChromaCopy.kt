@@ -23,8 +23,7 @@ internal object ChromaCopy {
     const val NOT_ADDING_UP = "The numbers do not add up; avoid shiny surfaces and keep the card flat."
 
     // What a reading admits.
-    const val APPROXIMATE = "Approximate: no card, so the flash is assumed to be neutral white."
-    const val MEASURED = "Measured against your card."
+    const val APPROXIMATE = "No card, so the flash is assumed to be neutral white."
     const val LIGHTNESS_GUESSED = "Without a card, how light or dark it is is only a guess."
     const val SAME_DISTANCE_ASSUMED = "Assumes the card and the surface were the same distance away."
     const val DISTANCE_COMPENSATED = "Corrected for the card being a different distance away."
@@ -122,11 +121,73 @@ internal object ChromaCopy {
     const val MOVE_FARTHER = "Move a little farther."
     const val WASHED_OUT_LIVE = "Part of the view is washed out; step back or shade it."
 
-    fun holdAbout(cm: Int): String = "Hold about $cm cm away."
+    fun holdAbout(cm: Int): String = "Hold about $cm cm away, keep still."
     fun distanceNow(cm: Int): String = "About $cm cm now."
+
+    // The three steps.
+    fun step(number: Int): String = "Step $number of 3"
+    const val STEP_CARD = "Place a white card beside the surface. This step is optional."
+    const val STEP_RESULT = "Here is the colour."
 
     // The result.
     const val RESULT_HEADING = "Colour"
     const val NEAREST = "Nearest names"
     fun nearest(name: String, deltaE: Double): String = "%s (difference %.1f)".format(name, deltaE)
+    const val ACCURACY_APPROXIMATE = "Approximate: good for comparing swatches, not lab-grade."
+    const val ACCURACY_CALIBRATED = "Calibrated to your card."
+    fun rgbLine(r: Int, g: Int, b: Int): String = "RGB $r $g $b"
+    fun labLine(l: Double, a: Double, b: Double): String = "Lab %.1f %.1f %.1f".format(l, a, b)
+    fun lchLine(l: Double, c: Double, h: Double): String = "LCh %.1f %.1f %.0f\u00B0".format(l, c, h)
+    const val COPY_HEX = "Copy hex"
+    fun copied(hex: String): String = "Copied $hex."
+    const val COMPARE = "Compare with another reading"
+    const val SAVE_TO_PALETTE = "Save to a palette"
+    const val HISTORY = "Past readings"
+
+    // Comparing, in the tool's own screen.
+    const val COMPARE_TITLE = "Compare two readings"
+    const val COMPARE_THIS = "This one"
+    const val COMPARE_OTHER = "The other"
+    const val COMPARE_PICK = "Pick a reading to compare with."
+    const val COMPARE_NOTHING = "Measure another colour first; there is nothing to compare with yet."
+    const val COMPARE_PICK_OTHER = "Pick a different reading"
+    fun differenceLine(deltaE: Double): String = "Difference %.1f".format(deltaE)
+    const val COMPARE_NOTE = "A reading without a card is approximate, so a small difference may not be real."
+
+    // The palette list.
+    const val SAVE_PICK = "Pick a palette to add this colour to."
+    const val SAVE_NONE = "No saved palettes yet."
+    fun addTo(name: String, size: Int): String = "Add to $name ($size colours)"
+    fun paletteFull(name: String): String = "$name is full."
+    fun paletteHasIt(name: String): String = "$name already has this colour."
+    fun newPaletteWith(name: String): String = "New palette $name with this and the last reading"
+    const val NEW_NEEDS_TWO = "A new palette needs two colours; measure another first."
+    fun addedTo(name: String): String = "Added to $name."
+    fun createdPalette(name: String): String = "Saved as $name."
+    const val PALETTE_LIST_FULL = "The palette list is full."
+    const val PALETTE_FAILED = "The palette could not be saved."
+
+    // The history.
+    const val HISTORY_KEPT = "Colours and times stay on this phone; no picture is kept."
+    const val HISTORY_EMPTY = "No readings yet."
+    const val HISTORY_DAMAGED = "Some lines of the history could not be read and were left out."
+    const val HISTORY_UNREADABLE = "The history could not be read; delete it to start again."
+    const val HISTORY_NOT_ADDED = "This reading could not be added to the history."
+    const val DELETE_ALL = "Delete all readings"
+    const val DELETE_SURE = "Delete every past reading?"
+    const val DELETE_YES = "Yes, delete them"
+    const val DELETE_NO = "Keep them"
+    const val DELETED = "All readings deleted."
+    const val DELETE_FAILED = "The readings could not be deleted."
+    const val MEASURE_NEW = "Back to measuring"
+    const val KIND_APPROXIMATE = "Approximate"
+    const val KIND_CALIBRATED = "Calibrated"
+    const val KIND_ROOM = "Room light"
+    const val COMPARE_SHORT = "Compare"
+    const val SAVE_SHORT = "Save"
+    const val COMPARE_WITH_THIS = "Compare with this one"
+    fun copyHexOf(hex: String): String = "Copy $hex"
+    fun compareHex(hex: String): String = "Compare $hex with another reading"
+    fun compareWithHex(hex: String): String = "Compare with $hex"
+    fun saveHex(hex: String): String = "Save $hex to a palette"
 }
