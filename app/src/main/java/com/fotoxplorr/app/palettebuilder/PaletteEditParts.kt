@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -55,7 +56,8 @@ private val TILE_GAP = 8.dp
 internal fun SwatchStrip(palette: Palette, selected: Int, onPick: (Int) -> Unit, modifier: Modifier = Modifier) {
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val perRow = ((maxWidth + TILE_GAP) / (TILE + TILE_GAP)).toInt().coerceAtLeast(1)
-        Column(verticalArrangement = Arrangement.spacedBy(TILE_GAP)) {
+        // One group, so a screen reader announces the swatches as one choice among several, not as loose buttons.
+        Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(TILE_GAP)) {
             palette.colors.chunked(perRow).forEachIndexed { row, colours ->
                 Row(horizontalArrangement = Arrangement.spacedBy(TILE_GAP)) {
                     colours.forEachIndexed { column, colour ->
@@ -128,11 +130,14 @@ internal fun Stepper(
 /** The picked colour's three steppers. Hue is in degrees, the other two in percent. */
 @Composable
 internal fun HslSteppers(read: HslReadout, onNudge: (HslChannel, Int) -> Unit) {
+    // A grey (no saturation) has no hue to turn: the buttons wait and a line says why.
+    val hasHue = read.saturation > 0
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Stepper(
             PaletteBuilderCopy.HUE, PaletteBuilderCopy.degrees(read.hue), HUE_FINE, HUE_COARSE,
-            canLower = true, canRaise = true,
+            canLower = hasHue, canRaise = hasHue,
         ) { onNudge(HslChannel.HUE, it) }
+        if (!hasHue) PbCaption(PaletteBuilderCopy.HUE_GREY, Modifier.polite())
         Stepper(
             PaletteBuilderCopy.SATURATION, PaletteBuilderCopy.percent(read.saturation), PERCENT_FINE, PERCENT_COARSE,
             canLower = read.saturation > 0, canRaise = read.saturation < 100,

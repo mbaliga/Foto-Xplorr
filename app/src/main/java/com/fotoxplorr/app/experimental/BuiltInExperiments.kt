@@ -99,8 +99,9 @@ internal val builtInExperiments: List<ExperimentEntry> = listOf(
         PanoramaExperience(env, onClose)
     },
     // Restorable, all four: opening one starts no work and asks no permission. Each keeps its own draft
-    // (reel, mood board and palette autosave to private files; the GIF/video maker keeps its choices
-    // in saved state), so after a kill the person is put back where they were. A render or a save
+    // (reel and mood board autosave to private files; the palette builder keeps its draft in saved
+    // state and writes the saved list only on Save; the GIF/video maker keeps its choices in saved
+    // state), so after a kill the person is put back where they were. A render or a save
     // that was running is gone with no file. None of them reads a photo except through ExperimentEnv.
     ExperimentEntry(
         id = "reel",

@@ -1,5 +1,8 @@
 package com.fotoxplorr.app.palettebuilder
 
+import java.util.Locale
+import kotlin.math.floor
+
 /**
  * Every word the palette builder shows. One short sentence each (owner feedback #6). Names no library,
  * sensor or file format beyond the file the person asked for.
@@ -26,7 +29,7 @@ internal object PaletteBuilderCopy {
     const val VISION_PROTAN = "Red-weak eyes"
     const val VISION_DEUTAN = "Green-weak eyes"
     const val VISION_TRITAN = "Blue-weak eyes"
-    const val VISION_ALL_CLEAR = "These stay apart for every kind of eye."
+    const val VISION_ALL_CLEAR = "No pair blurs for the three kinds of colour blindness checked."
     const val VISION_BLUR = "Some of these blur together."
 
     // Export.
@@ -105,6 +108,7 @@ internal object PaletteBuilderCopy {
     const val MOVE_LEFT = "Move left"
     const val MOVE_RIGHT = "Move right"
     const val UNDO = "Undo"
+    const val HUE_GREY = "A grey has no hue."
     const val AT_MAX = "A palette holds up to 12 colours."
     const val AT_MIN = "A palette needs at least 2 colours."
     const val HARMONY_HINT = "Rebuild around the picked colour, keeping locked ones."
@@ -131,7 +135,17 @@ internal object PaletteBuilderCopy {
     fun contrastSummary(pass: Int, total: Int): String = "$pass of $total pairs read well."
 
     fun contrastCell(text: Int, background: Int, ratio: Double, level: String): String =
-        "Colour $text on colour $background, ${"%.1f".format(ratio)} to 1, $level"
+        "Colour $text on colour $background, ${shownRatio(ratio)} to 1, $level"
+
+    /**
+     * [ratio] cut (not rounded) to one decimal, so a shown 4.5 is always at least the 4.5 a tick needs: 4.47 reads
+     * 4.4, never "4.5, hard to read". Latin digits whatever the phone's language, as the words around them are.
+     */
+    internal fun shownRatio(ratio: Double): String {
+        var tenths = floor(ratio * 10)
+        if (tenths / 10.0 > ratio) tenths -= 1
+        return String.format(Locale.ROOT, "%.1f", tenths / 10.0)
+    }
 
     fun collision(first: Int, second: Int, type: String): String = "Colours $first and $second look alike to ${type.lowercase()}."
 
@@ -174,7 +188,7 @@ internal object PaletteBuilderCopy {
     const val SHARE_TITLE = "Share"
     const val SHARE_FAILED = "Nothing could be shared."
     const val SHARE_CHOOSER = "Share palette"
-    const val SOURCE_PROTECTED = "A photo these colours came from is protected now."
+    const val SOURCE_PROTECTED = "A photo these colours came from is protected or missing."
 
     fun shareAs(label: String): String = "Share as $label"
 }

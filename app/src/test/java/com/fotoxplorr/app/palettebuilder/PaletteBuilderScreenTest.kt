@@ -13,6 +13,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -326,6 +327,31 @@ class PaletteBuilderScreenTest {
     }
 
     @Test
+    fun `a grey has no hue, so Hue waits and says why, and Saturation still works`() {
+        compose.setContent { Screen() }
+        click(PaletteBuilderCopy.FROM_COLOUR)
+        compose.onNodeWithTag(COLOUR_TAG).performTextReplacement("#808080")
+        click(PaletteBuilderCopy.COLOUR_START)
+        compose.onNodeWithText(PaletteBuilderCopy.HUE_GREY).assertExists()
+        for (by in listOf(15, 3)) {
+            compose.onNodeWithContentDescription(PaletteBuilderCopy.raise(PaletteBuilderCopy.HUE, by)).assertIsNotEnabled()
+            compose.onNodeWithContentDescription(PaletteBuilderCopy.lower(PaletteBuilderCopy.HUE, by)).assertIsNotEnabled()
+        }
+        compose.onNodeWithContentDescription(PaletteBuilderCopy.raise(PaletteBuilderCopy.SATURATION, 10)).assertIsEnabled()
+        clickDescription(PaletteBuilderCopy.raise(PaletteBuilderCopy.SATURATION, 10))
+        compose.onNodeWithText(PaletteBuilderCopy.HUE_GREY).assertDoesNotExist()
+        compose.onNodeWithContentDescription(PaletteBuilderCopy.raise(PaletteBuilderCopy.HUE, 15)).assertIsEnabled()
+    }
+
+    @Test
+    fun `a colour keeps its Hue buttons`() {
+        compose.setContent { Screen() }
+        startFromColour()
+        compose.onNodeWithText(PaletteBuilderCopy.HUE_GREY).assertDoesNotExist()
+        compose.onNodeWithContentDescription(PaletteBuilderCopy.raise(PaletteBuilderCopy.HUE, 15)).assertIsEnabled()
+    }
+
+    @Test
     fun `a harmony rebuilds the palette and Undo gives it back`() {
         compose.setContent { Screen() }
         startFromColour()
@@ -370,6 +396,16 @@ class PaletteBuilderScreenTest {
     }
 
     @Test
+    fun `each contrast cell is one spoken item and the swatches are one choice of several`() {
+        compose.setContent { Screen() }
+        startFromColour()
+        // The "Aa" in a cell and the numbers round the grid are not read out on their own.
+        compose.onAllNodes(hasText("Aa")).assertCountEquals(0)
+        compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.SelectableGroup)).assertCountEquals(1)
+        assertEquals(20, compose.onAllNodes(hasContentDescription("Colour ", substring = true) and hasContentDescription(" to 1,", substring = true)).fetchSemanticsNodes().size)
+    }
+
+    @Test
     fun `two near colours are flagged as blurring together for some eyes`() {
         compose.setContent { Screen() }
         click(PaletteBuilderCopy.FROM_COLOUR)
@@ -396,6 +432,48 @@ class PaletteBuilderScreenTest {
         waitForText(PaletteBuilderCopy.SAVED_REPLACED)
         assertEquals(1, library.palettes.size)
         assertEquals(6, library.palettes.single().size)
+    }
+
+    @Test
+    fun `a second palette made without a new name does not replace the first one saved`() {
+        compose.setContent { Screen() }
+        startFromColour()
+        click(PaletteBuilderCopy.SAVE)
+        waitForText(PaletteBuilderCopy.SAVED)
+        assertEquals(listOf(PaletteBuilderCopy.DEFAULT_NAME), library.palettes.map { it.name })
+
+        pressBack()
+        startFromColour()
+        click(PaletteBuilderCopy.SAVE)
+        waitForText(PaletteBuilderCopy.SAVED)
+        assertFalse("nothing was replaced", exists(PaletteBuilderCopy.SAVED_REPLACED))
+        assertEquals(listOf(PaletteBuilderCopy.DEFAULT_NAME + " 2", PaletteBuilderCopy.DEFAULT_NAME), library.palettes.map { it.name })
+    }
+
+    @Test
+    fun `saving a palette opened from the list again replaces it, as the notice says`() {
+        library = MemoryLibrary(listOf(Palette.of("Sea", listOf(0xFF0066AA.toInt(), 0xFFEEEEEE.toInt()))!!))
+        compose.setContent { Screen() }
+        waitForText(PaletteBuilderCopy.savedRow("Sea", 2))
+        clickDescription(PaletteBuilderCopy.openSaved("Sea"))
+        click(PaletteBuilderCopy.ADD)
+        click(PaletteBuilderCopy.SAVE)
+        waitForText(PaletteBuilderCopy.SAVED_REPLACED)
+        assertEquals(listOf("Sea"), library.palettes.map { it.name })
+        assertEquals(3, library.palettes.single().size)
+    }
+
+    @Test
+    fun `two saved palettes whose names differ only where lower-casing and the store disagree both show`() {
+        // The store treats names as equal ignoring case; lower-casing a dotted capital I gives two characters.
+        val one = Palette.of("\u0130", listOf(0xFF0066AA.toInt(), 0xFFEEEEEE.toInt()))!!
+        val two = Palette.of("i\u0307", listOf(0xFF003355.toInt(), 0xFFFFCC00.toInt()))!!
+        assertEquals(one.name.lowercase(), two.name.lowercase())
+        assertFalse(one.name.equals(two.name, ignoreCase = true))
+        library = MemoryLibrary(listOf(one, two))
+        compose.setContent { Screen() }
+        waitForText(PaletteBuilderCopy.savedRow(one.name, 2))
+        compose.onNodeWithText(PaletteBuilderCopy.savedRow(two.name, 2)).assertExists()
     }
 
     @Test

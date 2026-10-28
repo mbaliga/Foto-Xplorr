@@ -80,14 +80,14 @@ internal fun ContrastSection(palette: Palette, modifier: Modifier = Modifier) {
                 Row {
                     Box(Modifier.size(HEADER, 20.dp))
                     for (t in 0 until n) {
-                        Box(Modifier.size(cell, 20.dp), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(cell, 20.dp).clearAndSetSemantics { }, contentAlignment = Alignment.Center) {
                             Text("${t + 1}", style = MaterialTheme.typography.labelSmall, color = RoomStyle.InkMuted)
                         }
                     }
                 }
                 for (b in 0 until n) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(HEADER, cell), contentAlignment = Alignment.CenterStart) {
+                        Box(Modifier.size(HEADER, cell).clearAndSetSemantics { }, contentAlignment = Alignment.CenterStart) {
                             Text("${b + 1}", style = MaterialTheme.typography.labelSmall, color = RoomStyle.InkMuted)
                         }
                         for (t in 0 until n) {
@@ -116,7 +116,8 @@ private fun ContrastCell(text: Int, background: Int, textArgb: Int, backgroundAr
     Box(
         Modifier
             .size(size)
-            .semantics {
+            // One spoken item: the "Aa" and the mark inside it are not read out again.
+            .clearAndSetSemantics {
                 contentDescription = PaletteBuilderCopy.contrastCell(
                     text + 1, background + 1, ratio, if (passes) PaletteBuilderCopy.CONTRAST_PASS else PaletteBuilderCopy.CONTRAST_NO,
                 )
