@@ -11,7 +11,15 @@ import kotlinx.coroutines.flow.StateFlow
  *   capability). If it cannot, the exposure is frozen by the auto-exposure lock instead.
  * @property aeLock the auto-exposure lock is available.
  * @property awbLock the auto-white-balance lock is available. Without it the white balance may drift
- *   between the shots; [LockCheck] notices a drift the camera reports, it cannot stop one.
+ *   between the shots; [LockCheck] notices a drift the camera reports, it cannot stop one, so a camera
+ *   with no lock must report its gains ([reportsGains]) or it is refused ([lockKind]).
+ * @property reportsGains the camera lists the white-balance gains among the results it returns with each
+ *   frame, so a drift of the balance can be seen. It is a listing: a frame that comes back without them is
+ *   still treated as unwatched ([LockCheck.slipped]).
+ * @property knownTone the camera can be asked for the standard sRGB tone curve, and the request does ask. The
+ *   subtraction needs pixel codes that are sRGB of linear light, which a phone's own contrast curve is not.
+ *   When false the phone's curve is in the codes and every reading carries [Caution.TONE_CURVE_UNKNOWN].
+ * @property focusCalibration how far the lens distance in the results can be believed (see [FocusCalibration]).
  * @property captureWidth the size the two measuring shots are taken at: small on purpose, this is
  *   colour measurement, not photography.
  * @property previewWidth the size of the on-screen preview; same shape as the capture size.
@@ -28,17 +36,48 @@ internal class CameraFacts(
     val previewWidth: Int,
     val previewHeight: Int,
     val minFocusDiopters: Float?,
+    val reportsGains: Boolean,
+    val knownTone: Boolean,
+    val focusCalibration: FocusCalibration,
 ) {
-    /** How the exposure is held between the shots, or [LockKind.NONE] when the camera cannot. */
+    /**
+     * How the exposure is held between the shots, or [LockKind.NONE] when the camera cannot: it cannot hold
+     * the exposure, or it can neither hold the white balance nor report what it is doing with it.
+     */
     val lockKind: LockKind
         get() = when {
+            !awbLock && !reportsGains -> LockKind.NONE
             manualSensor -> LockKind.MANUAL
             aeLock -> LockKind.AE_LOCK
             else -> LockKind.NONE
         }
+
+    /** The largest card-to-surface distance ratio the solver may correct for, given how far the lens distance can be believed. */
+    val distanceLimit: Double
+        get() = if (focusCalibration == FocusCalibration.APPROXIMATE) FlashSolver.APPROXIMATE_FOCUS_DISTANCE_LIMIT else FlashSolver.DISTANCE_LIMIT
 }
 
 internal enum class LockKind { MANUAL, AE_LOCK, NONE }
+
+/**
+ * What the camera says about its lens-distance figure (LENS_INFO_FOCUS_DISTANCE_CALIBRATION). The solver's
+ * inverse-square correction rests on that figure, so a phone that calls it a relative number must not
+ * be believed.
+ */
+internal enum class FocusCalibration {
+    /** In real units, to within the camera's stated error. */
+    CALIBRATED,
+
+    /** Roughly in real units: the correction is allowed only over a short range. */
+    APPROXIMATE,
+
+    /** Only a relative number for ordering focus positions, or not said at all: no distance is taken from it. */
+    UNCALIBRATED,
+    ;
+
+    /** Whether the reported distance may be turned into metres at all. */
+    val usable: Boolean get() = this != UNCALIBRATED
+}
 
 /**
  * What a frame was actually taken with, as the camera reported it for that frame. Null means the
@@ -144,12 +183,17 @@ internal object LockCheck {
     /** How far apart two readings may be, as a fraction. Frame-to-frame reporting is exact when locked. */
     const val TOLERANCE = 0.02
 
-    /** True when [a] and [b] disagree about the exposure time, ISO or white balance by more than [TOLERANCE]. */
-    fun slipped(a: ShotFacts, b: ShotFacts): Boolean {
+    /**
+     * True when [a] and [b] disagree about the exposure time, ISO or white balance by more than [TOLERANCE].
+     * With no white-balance lock ([awbLocked] false) the balance is only as steady as the camera's gains say,
+     * so a frame that reports none cannot show that it held and counts as a slip.
+     */
+    fun slipped(a: ShotFacts, b: ShotFacts, awbLocked: Boolean = true): Boolean {
         if (apart(a.exposureNanos?.toDouble(), b.exposureNanos?.toDouble())) return true
         if (apart(a.iso?.toDouble(), b.iso?.toDouble())) return true
         val ga = a.gains
         val gb = b.gains
+        if (!awbLocked && (ga == null || gb == null)) return true
         if (ga != null && gb != null && ga.size == gb.size) {
             for (i in ga.indices) if (apart(ga[i].toDouble(), gb[i].toDouble())) return true
         }

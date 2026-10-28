@@ -201,6 +201,32 @@ class FlashSolverTest {
     }
 
     @Test
+    fun aLensThatOnlyRoughlyKnowsItsDistanceIsHeldToATighterLimit() {
+        val card = CardPatches(cardAmbient(), cardFlash(), cardRho, distanceMetres = 0.20)
+        val ratio = 1.4
+        val falloff = 1.0 / (ratio * ratio)
+        val sf = patch(rho.r * (room.r + led.r * falloff), rho.g * (room.g + led.g * falloff), rho.b * (room.b + led.b * falloff))
+        // Within the usual 1.5 it is corrected; under the approximate-focus limit of 1.25 it is refused, not guessed at.
+        assertTrue(FlashSolver.solve(surfaceAmbient(), sf, card, surfaceDistanceMetres = 0.20 * ratio) is Answer.Value)
+        assertEquals(
+            Refusal.DISTANCE_TOO_DIFFERENT,
+            refusal(FlashSolver.solve(surfaceAmbient(), sf, card, surfaceDistanceMetres = 0.20 * ratio, distanceLimit = FlashSolver.APPROXIMATE_FOCUS_DISTANCE_LIMIT)),
+        )
+        // And a ratio inside that limit still works under it.
+        val ok = FlashSolver.solve(surfaceAmbient(), surfaceFlash(), card, surfaceDistanceMetres = 0.22, distanceLimit = FlashSolver.APPROXIMATE_FOCUS_DISTANCE_LIMIT)
+        assertTrue(ok is Answer.Value)
+        assertTrue(FlashSolver.APPROXIMATE_FOCUS_DISTANCE_LIMIT < FlashSolver.DISTANCE_LIMIT)
+    }
+
+    @Test
+    fun aToneCurveThatCouldNotBeSetIsAStandingCaution() {
+        val card = CardPatches(cardAmbient(), cardFlash(), cardRho)
+        assertFalse(Caution.TONE_CURVE_UNKNOWN in measured(FlashSolver.solve(surfaceAmbient(), surfaceFlash(), card)).cautions)
+        assertTrue(Caution.TONE_CURVE_UNKNOWN in measured(FlashSolver.solve(surfaceAmbient(), surfaceFlash(), card, toneKnown = false)).cautions)
+        assertTrue(Caution.TONE_CURVE_UNKNOWN in measured(FlashSolver.solve(surfaceAmbient(), surfaceFlash(), toneKnown = false)).cautions)
+    }
+
+    @Test
     fun onlyOneDistanceKnownMeansTheyAreAssumedEqual() {
         val card = CardPatches(cardAmbient(), cardFlash(), cardRho, distanceMetres = null)
         val m = measured(FlashSolver.solve(surfaceAmbient(), surfaceFlash(), card, surfaceDistanceMetres = 0.3))

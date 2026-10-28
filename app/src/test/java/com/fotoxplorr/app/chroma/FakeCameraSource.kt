@@ -42,6 +42,9 @@ internal class FakeCameraSource(
     var focusSettled = true
     var focusDiopters = 10f
 
+    /** False hands out shots with no white-balance gains, as a camera that does not report them does. */
+    var gainsReported = true
+
     private val rng = Random(7)
 
     override suspend fun open() {
@@ -68,7 +71,8 @@ internal class FakeCameraSource(
         for (c in 0..2) peak = maxOf(peak, 0.85 * (room[c] + led[c]))
         val frame = ChromaTestKit.frame(rho, light, 0.7 / peak, 0.01, 0.0, rng)
         val e = if (torch) exposureWhenFlash ?: exposureNanos else exposureNanos
-        val shot = Shot(frame, ShotFacts(e, 100, floatArrayOf(1.9f, 1f, 1f, 1.5f), focusDiopters, focusSettled))
+        val gains = if (gainsReported) floatArrayOf(1.9f, 1f, 1f, 1.5f) else null
+        val shot = Shot(frame, ShotFacts(e, 100, gains, focusDiopters, focusSettled))
         shots += shot
         return shot
     }
@@ -91,11 +95,18 @@ internal class FakeCameraSource(
             hasFlash: Boolean = true,
             manualSensor: Boolean = true,
             aeLock: Boolean = true,
+            awbLock: Boolean = true,
+            reportsGains: Boolean = true,
+            knownTone: Boolean = true,
+            focusCalibration: FocusCalibration = FocusCalibration.CALIBRATED,
         ) = CameraFacts(
             hasFlash = hasFlash,
             manualSensor = manualSensor,
             aeLock = aeLock,
-            awbLock = true,
+            awbLock = awbLock,
+            reportsGains = reportsGains,
+            knownTone = knownTone,
+            focusCalibration = focusCalibration,
             captureWidth = ChromaTestKit.SIZE,
             captureHeight = ChromaTestKit.SIZE,
             previewWidth = 640,

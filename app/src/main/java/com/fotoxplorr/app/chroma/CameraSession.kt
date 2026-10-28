@@ -39,6 +39,10 @@ internal class CameraChoice(
     val facts: CameraFacts,
     val sensorOrientation: Int,
     val maxFrameDurationNanos: Long?,
+    /** The camera lists fast noise reduction, which the request asks for (heavy smoothing would flatten the patch). */
+    val fastNoiseReduction: Boolean,
+    /** The camera lists "edge enhancement off", which the request asks for (sharpening is a nonlinearity). */
+    val edgeEnhancementOff: Boolean,
 )
 
 internal object CameraProbe {
@@ -75,6 +79,14 @@ internal object CameraProbe {
         val preview = CaptureSize.pickPreview(previews) ?: return null
         val capture = CaptureSize.pickCapture(yuv, preview) ?: return null
         val caps = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.toList().orEmpty()
+        val toneModes = chars.get(CameraCharacteristics.TONEMAP_AVAILABLE_TONE_MAP_MODES)?.toList().orEmpty()
+        val noiseModes = chars.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)?.toList().orEmpty()
+        val edgeModes = chars.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES)?.toList().orEmpty()
+        val resultKeys = try {
+            chars.availableCaptureResultKeys
+        } catch (e: RuntimeException) {
+            emptyList()
+        }
         val facts = CameraFacts(
             hasFlash = chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true,
             manualSensor = CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR in caps,
@@ -85,13 +97,26 @@ internal object CameraProbe {
             previewWidth = preview.width,
             previewHeight = preview.height,
             minFocusDiopters = chars.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE),
+            reportsGains = CaptureResult.COLOR_CORRECTION_GAINS in resultKeys,
+            // The request asks for the sRGB preset curve when the camera lists preset curves at all.
+            knownTone = CameraCharacteristics.TONEMAP_MODE_PRESET_CURVE in toneModes,
+            focusCalibration = focusCalibration(chars.get(CameraCharacteristics.LENS_INFO_FOCUS_DISTANCE_CALIBRATION)),
         )
         return CameraChoice(
             id = id,
             facts = facts,
             sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0,
             maxFrameDurationNanos = chars.get(CameraCharacteristics.SENSOR_INFO_MAX_FRAME_DURATION),
+            fastNoiseReduction = CameraCharacteristics.NOISE_REDUCTION_MODE_FAST in noiseModes,
+            edgeEnhancementOff = CameraCharacteristics.EDGE_MODE_OFF in edgeModes,
         )
+    }
+
+    /** A camera that does not say is taken as uncalibrated: its distance is then not used. */
+    private fun focusCalibration(value: Int?): FocusCalibration = when (value) {
+        CameraCharacteristics.LENS_INFO_FOCUS_DISTANCE_CALIBRATION_CALIBRATED -> FocusCalibration.CALIBRATED
+        CameraCharacteristics.LENS_INFO_FOCUS_DISTANCE_CALIBRATION_APPROXIMATE -> FocusCalibration.APPROXIMATE
+        else -> FocusCalibration.UNCALIBRATED
     }
 }
 
@@ -111,6 +136,12 @@ internal object CameraProbe {
  * off; without it, the auto-exposure lock is used. White balance is locked either way when the camera
  * has the lock. Focus is separate ([focus]) and is settled once per pair, because the distance of
  * that pair is wanted.
+ *
+ * ## What the request asks the camera not to do
+ * The repeating request asks for the standard sRGB tone curve (when the camera lists preset curves),
+ * fast noise reduction and no edge enhancement, each only if the camera lists it. Without that the codes
+ * carry the phone's own contrast curve and the difference of two frames is not the flash term.
+ * [CameraFacts.knownTone] says whether the curve was asked for; nothing here checks that it was applied.
  *
  * ## The flash is a torch
  * The second shot is taken with the torch held on, not with a flash burst. A torch is steady, so
@@ -304,6 +335,14 @@ internal class Camera2Source(
         b.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
 
         val f = choice.facts
+        // The subtraction needs sRGB of linear light, not the phone's contrast curve, smoothing or sharpening.
+        // Each is only asked for when the camera lists it; whether a phone then honours it is unverified.
+        if (f.knownTone) {
+            b.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_PRESET_CURVE)
+            b.set(CaptureRequest.TONEMAP_PRESET_CURVE, CaptureRequest.TONEMAP_PRESET_CURVE_SRGB)
+        }
+        if (choice.fastNoiseReduction) b.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_FAST)
+        if (choice.edgeEnhancementOff) b.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_OFF)
         val fixedFocus = f.minFocusDiopters != null && f.minFocusDiopters == 0f
         b.set(
             CaptureRequest.CONTROL_AF_MODE,
@@ -376,7 +415,7 @@ internal class Camera2Source(
         snaps.value = snap
         // The room reading is only meaningful before the torch and the hold change the exposure.
         if (snap.count % LIVE_EVERY == 0L && held == null && !torch) {
-            val metres = if (snap.focusSettled) FocusDistance.metresFromDiopters(snap.focusDiopters) else null
+            val metres = if (snap.focusSettled && choice.facts.focusCalibration.usable) FocusDistance.metresFromDiopters(snap.focusDiopters) else null
             _live.update { it.copy(distanceMetres = metres, brightRoom = RoomLight.isBright(snap.exposureNanos, snap.iso)) }
         }
     }

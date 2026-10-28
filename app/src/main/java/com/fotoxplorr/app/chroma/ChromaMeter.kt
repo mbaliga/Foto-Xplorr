@@ -59,12 +59,24 @@ internal object ChromaMeter {
         return Answer.Value(CardPatches(ca, cf, card.reflectance, card.pair.distanceMetres))
     }
 
-    /** [measure] with a card already reduced to its patches by [sampleCard]. */
-    fun measureAgainst(surface: FlashPair, card: CardPatches?): Answer<ChromaReading> {
+    /**
+     * [measure] with a card already reduced to its patches by [sampleCard]. [distanceLimit] and [toneKnown] are
+     * what the camera lets the solver trust (see [CameraFacts.distanceLimit] and [CameraFacts.knownTone]).
+     */
+    fun measureAgainst(
+        surface: FlashPair,
+        card: CardPatches?,
+        distanceLimit: Double = FlashSolver.DISTANCE_LIMIT,
+        toneKnown: Boolean = true,
+    ): Answer<ChromaReading> {
         val s = samplePair(surface) ?: return Answer.Refused(Refusal.SIZE_MISMATCH)
         val surfaceAmbient = s.first.orNull() ?: return (s.first as Answer.Refused)
         val surfaceFlash = s.second.orNull() ?: return (s.second as Answer.Refused)
-        return when (val r = FlashSolver.solve(surfaceAmbient, surfaceFlash, card, surface.distanceMetres)) {
+        val solved = FlashSolver.solve(
+            surfaceAmbient, surfaceFlash, card, surface.distanceMetres,
+            distanceLimit = distanceLimit, toneKnown = toneKnown,
+        )
+        return when (val r = solved) {
             is Answer.Refused -> r
             is Answer.Value -> Answer.Value(ChromaReading(r.value, ColourReport.of(r.value.lab)))
         }

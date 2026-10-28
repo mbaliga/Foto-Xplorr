@@ -123,6 +123,41 @@ class ChromaGuidanceTest {
     }
 
     @Test
+    fun withoutAWhiteBalanceLockAMissingGainCannotProveTheLightHeld() {
+        val withGains = ShotFacts(10_000_000L, 100, floatArrayOf(1.9f, 1f, 1f, 1.5f), 10f, true)
+        val noGains = ShotFacts(10_000_000L, 100, null, 10f, true)
+        // The balance was locked: a camera that says nothing about gains is trusted as before.
+        assertFalse(LockCheck.slipped(noGains, noGains, awbLocked = true))
+        // It was not: the pair could have been taken under two balances, and nothing says otherwise.
+        assertTrue(LockCheck.slipped(noGains, noGains, awbLocked = false))
+        assertTrue(LockCheck.slipped(withGains, noGains, awbLocked = false))
+        // The gains are reported and agree: fine without a lock.
+        assertFalse(LockCheck.slipped(withGains, withGains, awbLocked = false))
+        assertTrue(LockCheck.slipped(withGains, ShotFacts(10_000_000L, 100, floatArrayOf(1.9f, 1f, 1f, 1.8f), 10f, true), awbLocked = false))
+    }
+
+    @Test
+    fun aWhiteBalanceThatCanNeitherBeHeldNorWatchedIsRefusedAtOpen() {
+        assertEquals(LockKind.NONE, FakeCameraSource.facts(awbLock = false, reportsGains = false).lockKind)
+        // Either one is enough: held, or watched.
+        assertEquals(LockKind.MANUAL, FakeCameraSource.facts(awbLock = true, reportsGains = false).lockKind)
+        assertEquals(LockKind.MANUAL, FakeCameraSource.facts(awbLock = false, reportsGains = true).lockKind)
+        assertEquals(LockKind.AE_LOCK, FakeCameraSource.facts(manualSensor = false, awbLock = false, reportsGains = true).lockKind)
+    }
+
+    @Test
+    fun anUncalibratedLensDistanceIsNeverUsedAndAnApproximateOneIsHeldTight() {
+        assertFalse(FocusCalibration.UNCALIBRATED.usable)
+        assertTrue(FocusCalibration.APPROXIMATE.usable && FocusCalibration.CALIBRATED.usable)
+        assertEquals(FlashSolver.DISTANCE_LIMIT, FakeCameraSource.facts().distanceLimit, 0.0)
+        assertEquals(
+            FlashSolver.APPROXIMATE_FOCUS_DISTANCE_LIMIT,
+            FakeCameraSource.facts(focusCalibration = FocusCalibration.APPROXIMATE).distanceLimit,
+            0.0,
+        )
+    }
+
+    @Test
     fun theLockKindPrefersManualThenTheAeLockThenRefuses() {
         assertEquals(LockKind.MANUAL, FakeCameraSource.facts(manualSensor = true, aeLock = true).lockKind)
         assertEquals(LockKind.AE_LOCK, FakeCameraSource.facts(manualSensor = false, aeLock = true).lockKind)

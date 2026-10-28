@@ -18,8 +18,8 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChromaJobTest {
 
-    private class Rig(scope: TestScope, flash: Boolean = true) {
-        val camera = FakeCameraSource(FakeCameraSource.facts(hasFlash = flash))
+    private class Rig(scope: TestScope, flash: Boolean = true, facts: CameraFacts = FakeCameraSource.facts(hasFlash = flash)) {
+        val camera = FakeCameraSource(facts)
         val motion = MotionWindow()
         val job = ChromaJob(camera, motion, CoroutineScope(StandardTestDispatcher(scope.testScheduler)), StandardTestDispatcher(scope.testScheduler))
     }
@@ -367,6 +367,68 @@ class ChromaJobTest {
         val m = (r.job.outcome.value as Outcome.Reading).reading.measurement
         assertTrue(Caution.DISTANCE_COMPENSATED in m.cautions)
         assertFalse(Caution.SAME_DISTANCE_ASSUMED in m.cautions)
+    }
+
+    private suspend fun TestScope.cardThenSurface(facts: CameraFacts, surfaceDiopters: Float): Rig {
+        val r = Rig(this, flash = true, facts = facts)
+        r.job.permissionResult(true)
+        advanceUntilIdle()
+        r.camera.rho = LinearRgb(0.85, 0.85, 0.85)
+        r.camera.focusDiopters = 10f // card at 10 cm
+        r.job.measure(ShotRole.CARD)
+        advanceUntilIdle()
+        r.camera.rho = LinearRgb(0.3, 0.2, 0.1)
+        r.camera.focusDiopters = surfaceDiopters
+        r.job.measure(ShotRole.SURFACE, relock = false)
+        advanceUntilIdle()
+        return r
+    }
+
+    @Test
+    fun aLensWhoseDistanceIsOnlyRelativeGivesNoDistanceToTheSolver() = runTest {
+        val r = cardThenSurface(FakeCameraSource.facts(focusCalibration = FocusCalibration.UNCALIBRATED), surfaceDiopters = 8f)
+        val m = (r.job.outcome.value as Outcome.Reading).reading.measurement
+        assertTrue(Caution.SAME_DISTANCE_ASSUMED in m.cautions)
+        assertFalse(Caution.DISTANCE_COMPENSATED in m.cautions)
+    }
+
+    @Test
+    fun aLensWhoseDistanceIsRoughHoldsTheCorrectionToATighterLimit() = runTest {
+        // 10 cm and 14 cm: a ratio of 1.4, corrected when the lens is calibrated, refused when it is only roughly right.
+        val calibrated = cardThenSurface(FakeCameraSource.facts(), surfaceDiopters = 7f)
+        assertTrue((calibrated.job.outcome.value as Outcome.Reading).reading.measurement.cautions.contains(Caution.DISTANCE_COMPENSATED))
+        val rough = cardThenSurface(FakeCameraSource.facts(focusCalibration = FocusCalibration.APPROXIMATE), surfaceDiopters = 7f)
+        assertEquals(Refusal.DISTANCE_TOO_DIFFERENT, (rough.job.outcome.value as Outcome.Refused).reason)
+    }
+
+    @Test
+    fun aToneCurveThatCouldNotBeSetIsNamedInTheReading() = runTest {
+        val r = cardThenSurface(FakeCameraSource.facts(knownTone = false), surfaceDiopters = 10f)
+        assertTrue(Caution.TONE_CURVE_UNKNOWN in (r.job.outcome.value as Outcome.Reading).reading.measurement.cautions)
+        val known = cardThenSurface(FakeCameraSource.facts(), surfaceDiopters = 10f)
+        assertFalse(Caution.TONE_CURVE_UNKNOWN in (known.job.outcome.value as Outcome.Reading).reading.measurement.cautions)
+    }
+
+    @Test
+    fun aGainlessCameraWithNoWhiteBalanceLockNeverGetsPastOpen() = runTest {
+        val camera = FakeCameraSource(FakeCameraSource.facts(awbLock = false, reportsGains = false))
+        val job = ChromaJob(camera, MotionWindow(), CoroutineScope(StandardTestDispatcher(testScheduler)), StandardTestDispatcher(testScheduler))
+        job.permissionResult(true)
+        advanceUntilIdle()
+        assertEquals(CaptureFailure.NO_LOCK, (job.state.value as CaptureState.Failed).failure)
+        assertEquals(1, camera.closeCount)
+    }
+
+    @Test
+    fun aPairWithNoGainsAndNoWhiteBalanceLockIsRefusedNotMeasured() = runTest {
+        val r = Rig(this, flash = true, facts = FakeCameraSource.facts(awbLock = false, reportsGains = true))
+        r.job.permissionResult(true)
+        advanceUntilIdle()
+        r.camera.gainsReported = false
+        r.job.measure(ShotRole.SURFACE)
+        advanceUntilIdle()
+        assertEquals(CaptureFailure.LOCK_SLIPPED, (r.job.state.value as CaptureState.Failed).failure)
+        assertTrue(r.camera.shots.all(::allZero))
     }
 
     @Test

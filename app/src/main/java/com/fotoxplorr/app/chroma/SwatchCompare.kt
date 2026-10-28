@@ -88,7 +88,8 @@ internal object SwatchCompare {
  * into metres for the solver's distance correction, or null when it is not a usable close distance
  * (zero, negative, not a number, or outside 5 cm to 2 m, where the flash falloff correction would be
  * extrapolating). How accurate a phone's reported focus distance is varies by model and is not
- * checked here.
+ * checked here; whether the camera calls it calibrated is ([FocusCalibration]), and an uncalibrated one
+ * is not used at all.
  */
 internal object FocusDistance {
     const val NEAREST_METRES = 0.05

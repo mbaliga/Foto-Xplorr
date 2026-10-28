@@ -23,6 +23,9 @@ internal enum class Caution(val message: String) {
 
     /** The flash signal was close to the refusal limit. */
     SMALL_SIGNAL(ChromaCopy.SMALL_SIGNAL),
+
+    /** The camera's own tone curve is in the pixels, so they are not quite sRGB of linear light. */
+    TONE_CURVE_UNKNOWN(ChromaCopy.TONE_CURVE_UNKNOWN),
 }
 
 /** A white or grey reference card shot in the same two ways, and how light it is. */
@@ -155,6 +158,9 @@ internal object FlashSolver {
      */
     const val DISTANCE_LIMIT = 1.5
 
+    /** The same limit when the lens distance is only roughly in real units ([FocusCalibration.APPROXIMATE]). */
+    const val APPROXIMATE_FOCUS_DISTANCE_LIMIT = 1.25
+
     /** Distances this close (within 5%) are treated as equal and not corrected. */
     private const val SAME_DISTANCE_TOLERANCE = 1.05
 
@@ -211,6 +217,8 @@ internal object FlashSolver {
      * @param surfaceDistanceMetres the flash-to-surface distance when known, used only with a card.
      * @param assumedLed the LED colour assumed WITHOUT a card, in the camera's locked white balance;
      *   only its proportions matter. Neutral by default.
+     * @param distanceLimit the largest card-to-surface distance ratio that is corrected, else refused.
+     * @param toneKnown false when the phone's own tone curve is in the pixels (see [CameraFacts.knownTone]).
      */
     fun solve(
         ambient: Patch,
@@ -218,6 +226,8 @@ internal object FlashSolver {
         card: CardPatches? = null,
         surfaceDistanceMetres: Double? = null,
         assumedLed: LinearRgb = LinearRgb(1.0, 1.0, 1.0),
+        distanceLimit: Double = DISTANCE_LIMIT,
+        toneKnown: Boolean = true,
     ): Answer<Measurement> {
         val surface = when (val r = difference(ambient, flash)) {
             is Answer.Refused -> return r
@@ -245,7 +255,7 @@ internal object FlashSolver {
             val dc = card.distanceMetres
             if (ds != null && dc != null) {
                 val ratio = ds / dc
-                if (ratio > DISTANCE_LIMIT || ratio < 1.0 / DISTANCE_LIMIT) return Answer.Refused(Refusal.DISTANCE_TOO_DIFFERENT)
+                if (ratio > distanceLimit || ratio < 1.0 / distanceLimit) return Answer.Refused(Refusal.DISTANCE_TOO_DIFFERENT)
                 if (ratio > SAME_DISTANCE_TOLERANCE || ratio < 1.0 / SAME_DISTANCE_TOLERANCE) {
                     distanceFactor = ratio * ratio
                     cautions += Caution.DISTANCE_COMPENSATED
@@ -274,6 +284,7 @@ internal object FlashSolver {
             rho = DoubleArray(3) { raw[it] * k }
         }
 
+        if (!toneKnown) cautions += Caution.TONE_CURVE_UNKNOWN
         val reflectance = LinearRgb(rho[0], rho[1], rho[2])
         return Answer.Value(
             Measurement(

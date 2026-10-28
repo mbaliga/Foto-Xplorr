@@ -29,6 +29,7 @@ internal object ChromaCopy {
     const val DISTANCE_COMPENSATED = "Corrected for the card being a different distance away."
     const val CLAMPED = "A little above the card's white; clipped to white."
     const val SMALL_SIGNAL = "A weak flash signal; the colour may be off."
+    const val TONE_CURVE_UNKNOWN = "This camera's own contrast is in the picture; the colour may be off."
 
     // Plain words for a colour.
     const val BLACK = "black"
@@ -83,7 +84,7 @@ internal object ChromaCopy {
     const val CAMERA_BUSY = "The camera is in use by another app."
     const val CAMERA_LOST = "The camera stopped; try again."
     const val CAMERA_FAILED = "The camera could not take the pictures; try again."
-    const val NO_LOCK = "This camera cannot hold its exposure still, so it cannot read a colour."
+    const val NO_LOCK = "This camera cannot hold its exposure and colours still, so it cannot read a colour."
     const val LOCK_SLIPPED = "The camera changed its exposure between the shots; try again."
     const val MOVED = "You moved between the shots; hold still and try again."
     const val TIMED_OUT = "The camera took too long; try again."

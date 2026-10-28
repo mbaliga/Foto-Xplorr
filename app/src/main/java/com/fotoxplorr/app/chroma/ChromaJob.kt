@@ -146,13 +146,13 @@ internal class ChromaJob(
             source.endShots()
             motion.endWindow()
             if (motion.moved) throw CameraProblem(CaptureFailure.MOVED)
-            if (flash != null && LockCheck.slipped(ambient.facts, flash.facts)) throw CameraProblem(CaptureFailure.LOCK_SLIPPED)
+            if (flash != null && LockCheck.slipped(ambient.facts, flash.facts, facts.awbLock)) throw CameraProblem(CaptureFailure.LOCK_SLIPPED)
             val held = cardFacts
-            if (!lockFirst && held != null && LockCheck.slipped(held, ambient.facts)) throw CameraProblem(CaptureFailure.LOCK_SLIPPED)
+            if (!lockFirst && held != null && LockCheck.slipped(held, ambient.facts, facts.awbLock)) throw CameraProblem(CaptureFailure.LOCK_SLIPPED)
             if (flash != null) dispatch(CaptureEvent.FlashTaken)
 
             val heldCard = card
-            val (result, newCard) = withContext(compute) { conclude(role, ambient, flash, heldCard) }
+            val (result, newCard) = withContext(compute) { conclude(role, ambient, flash, heldCard, facts) }
             if (newCard != null) {
                 // Kept as numbers for this lock; the pictures are cleared in the finally below.
                 card = newCard
@@ -183,20 +183,22 @@ internal class ChromaJob(
      * Works out the answer, and the card's patches when [role] is the card and it read well. Runs off the
      * main thread and touches no field of the job: it only reads what it is handed.
      */
-    private fun conclude(role: ShotRole, ambient: Shot, flash: Shot?, heldCard: CardPatches?): Pair<Outcome, CardPatches?> {
+    private fun conclude(role: ShotRole, ambient: Shot, flash: Shot?, heldCard: CardPatches?, facts: CameraFacts): Pair<Outcome, CardPatches?> {
         if (flash == null) {
             return when (val r = AmbientOnly.read(ambient.frame)) {
                 is Answer.Value -> Outcome.RoomLight(r.value)
                 is Answer.Refused -> Outcome.Refused(r.reason)
             } to null
         }
-        val pair = FlashPair(ambient.frame, flash.frame, distanceMetres = flash.distanceMetres)
+        // A lens distance that is only a relative number is not a distance: the solver then assumes both are equal.
+        val metres = if (facts.focusCalibration.usable) flash.distanceMetres else null
+        val pair = FlashPair(ambient.frame, flash.frame, distanceMetres = metres)
         return when (role) {
             ShotRole.CARD -> when (val c = ChromaMeter.sampleCard(CardPair(pair))) {
                 is Answer.Value -> Outcome.CardKept to c.value
                 is Answer.Refused -> Outcome.Refused(c.reason) to null
             }
-            ShotRole.SURFACE -> when (val r = ChromaMeter.measureAgainst(pair, heldCard)) {
+            ShotRole.SURFACE -> when (val r = ChromaMeter.measureAgainst(pair, heldCard, facts.distanceLimit, facts.knownTone)) {
                 is Answer.Value -> Outcome.Reading(r.value, withCard = heldCard != null) to null
                 is Answer.Refused -> Outcome.Refused(r.reason) to null
             }
