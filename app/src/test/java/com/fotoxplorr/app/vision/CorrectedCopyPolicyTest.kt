@@ -20,10 +20,13 @@ class CorrectedCopyPolicyTest {
         id: Long = 7,
         sensitive: Set<Long> = emptySet(),
         sdk: Int = q,
+        unlocked: Set<String> = locked, // a photo on screen from a locked folder means it is open
+        trashed: Boolean = false,
     ) = colourVisionCopyAllowed(
-        ColourVisionKit.asset(id = id, relativePath = relativePath),
+        ColourVisionKit.asset(id = id, relativePath = relativePath).copy(isTrashed = trashed),
         sensitiveIds = sensitive.map { MediaId(it) }.toSet(),
         lockedFolders = locked,
+        unlockedFolders = unlocked,
         sdk = sdk,
     )
 
@@ -69,5 +72,21 @@ class CorrectedCopyPolicyTest {
         // The writer's own check is exact-case, so a lower-case DCIM would send the copy to the fallback folder.
         assertFalse(allowed("dcim/private"))
         assertTrue(allowed("DCIM/Private"))
+    }
+
+    @Test
+    fun `an archived or trashed photo is not a reason to refuse - only a lock and a sensitive mark are`() {
+        // The policy takes no archive list at all, so the Archive album's photos are copied like any
+        // other; a trashed one is still the person's photo, shown in the viewer from the Trash album.
+        assertTrue(allowed("DCIM/Camera/", trashed = true))
+    }
+
+    @Test
+    fun `a folder locked again while the job runs is refused, even where the copy would stay inside it`() {
+        // Unlocked for the session: the photo is on screen, and a copy beside it is allowed.
+        assertTrue(allowed("DCIM/Private/", unlocked = setOf("path:dcim/private")))
+        assertTrue(allowed("DCIM/Private/"))
+        // Not unlocked (the lock came back): the photo may no longer be read at all.
+        assertFalse(allowed("DCIM/Private/", unlocked = emptySet()))
     }
 }

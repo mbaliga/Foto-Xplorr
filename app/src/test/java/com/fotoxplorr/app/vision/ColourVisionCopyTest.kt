@@ -12,7 +12,7 @@ class ColourVisionCopyTest {
     /** Every user-facing sentence of the viewer and the check, found by name so a new one is covered by adding it here. */
     private val sentences = listOf(
         VisionCopy.NOT_FOR_VIDEO, VisionCopy.FILTER_ONLY, VisionCopy.PATTERNS_NEED_TYPE, VisionCopy.SAVE_CAPTION,
-        VisionCopy.SAVE_NEED_TYPE, VisionCopy.SAVE_SENSITIVE, VisionCopy.SAVE_NO_JOBS, VisionCopy.WORKING, VisionCopy.SAVING,
+        VisionCopy.SAVE_NEED_TYPE, VisionCopy.SAVE_SENSITIVE, VisionCopy.SAVE_NOT_ALLOWED, VisionCopy.SAVE_NO_JOBS, VisionCopy.WORKING, VisionCopy.SAVING,
         VisionCopy.COPY_SAVED, VisionCopy.COPY_SAVED_SMALLER, VisionCopy.COPY_CANCELLED, VisionCopy.COPY_PROTECTED,
         VisionCopy.COPY_CANNOT_READ, VisionCopy.COPY_NO_SPACE, VisionCopy.COPY_OUT_OF_MEMORY, VisionCopy.COPY_FAILED,
         VisionCopy.DALTONIZE_NOTE, VisionCopy.NAME_A_COLOUR, VisionCopy.PATTERNS, VisionCopy.NO_CONFUSION,
@@ -99,6 +99,13 @@ class ColourVisionCopyTest {
     @Test
     fun `a sensitive photo is never copied`() {
         assertEquals(SaveBlock.SENSITIVE, saveBlock(on, VisionSupport.FULL, sensitive = true, canSave = true, hasRunner = true))
+    }
+
+    @Test
+    fun `a photo the host will not let be copied says so before the tap, after sensitive and before the job list`() {
+        assertEquals(SaveBlock.NOT_ALLOWED, saveBlock(on, VisionSupport.FULL, sensitive = false, canSave = true, hasRunner = true, mayCopy = false))
+        assertEquals(SaveBlock.SENSITIVE, saveBlock(on, VisionSupport.FULL, sensitive = true, canSave = true, hasRunner = true, mayCopy = false))
+        assertEquals(SaveBlock.NOT_ALLOWED, saveBlock(on, VisionSupport.FULL, sensitive = false, canSave = true, hasRunner = false, mayCopy = false))
     }
 
     @Test

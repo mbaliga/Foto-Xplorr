@@ -21,7 +21,7 @@ import java.io.IOException
 /**
  * What the viewer lets the corrected-copy job read: a still photo from this library, and only while
  * [allowed] says so (the viewer's own test: not marked sensitive, and, where the host wires one, still
- * in the gallery's browsable list and [colourVisionCopyAllowed]). Pixels come from [decodeUpright] (TRAPS #34).
+ * still allowed by [colourVisionCopyAllowed]). Pixels come from [decodeUpright] (TRAPS #34).
  */
 internal class ViewerCopyHost(
     context: Context,
@@ -38,23 +38,27 @@ internal class ViewerCopyHost(
 /**
  * Whether a corrected copy of [asset] may be made now, by what the host knows live: not for a photo
  * marked sensitive (any photo, not only the one on screen: the job can outlive a swipe, and the
- * copy cannot carry the mark), and not from a locked folder unless the copy lands in that same
- * folder. The editor's writer puts a copy beside the original only when MediaStore accepts that
- * folder ([safeRelativePath]; `DCIM/` and `Pictures/` only, exact case), and otherwise in
- * `Pictures/Fotoz/`, which the lock does not cover, so a copy of a photo from a private
- * `Download/` or WhatsApp folder would be an unprotected gallery photo. Before Android 10 the
- * writer sets no folder at all, so a locked folder is refused there. Pure; [sdk] is a parameter
- * for the test.
+ * copy cannot carry the mark), not from a locked folder that is locked again ([unlockedFolders]
+ * holds the ones open for this session), and not from a locked folder unless the copy lands in that
+ * same folder. An archived or trashed photo is the person's own and may be copied: the browsable
+ * list is for what the gallery shows, not for what a copy may be made of. The editor's writer puts
+ * a copy beside the original only when MediaStore accepts that folder ([safeRelativePath]; `DCIM/`
+ * and `Pictures/` only, exact case), and otherwise in `Pictures/Fotoz/`, which the lock does not
+ * cover, so a copy of a photo from a private `Download/` or WhatsApp folder would be an unprotected
+ * gallery photo. Before Android 10 the writer sets no folder at all, so a locked folder is refused
+ * there. Pure; [sdk] is a parameter for the test.
  */
 internal fun colourVisionCopyAllowed(
     asset: MediaAsset,
     sensitiveIds: Set<MediaId>,
     lockedFolders: Set<String>,
+    unlockedFolders: Set<String>,
     sdk: Int = Build.VERSION.SDK_INT,
 ): Boolean {
     if (asset.id in sensitiveIds) return false
     val folder = folderIdentity(asset).key
     if (folder.value !in lockedFolders) return true
+    if (folder.value !in unlockedFolders) return false
     if (sdk < Build.VERSION_CODES.Q) return false
     return folderIdentity(bucketName = null, relativePath = safeRelativePath(asset.relativePath)).key == folder
 }

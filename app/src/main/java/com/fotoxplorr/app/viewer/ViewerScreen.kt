@@ -332,9 +332,9 @@ fun ViewerScreen(
     /**
      * Whether the colour-vision "Save a corrected copy" job may still read and copy [MediaAsset]. Asked
      * before it reads and again right before it makes the file, so a host answers from live state:
-     * the gallery's browsable list (TRAPS #33), the sensitive marks of EVERY photo (the job can
-     * outlive a swipe) and where the copy would land for a photo in a locked folder
-     * (`colourVisionCopyAllowed`). The default says yes, which leaves only the viewer's own check: the
+     * the sensitive marks of EVERY photo (the job can outlive a swipe), a folder locked again and
+     * where the copy would land for a photo in a locked folder (`colourVisionCopyAllowed`, TRAPS #33);
+     * an archived or trashed photo may be copied. The default says yes, which leaves only the viewer's own check: the
      * copy is refused for the photo on screen while it is marked sensitive.
      */
     colourVisionMayCopy: (MediaAsset) -> Boolean = { true },

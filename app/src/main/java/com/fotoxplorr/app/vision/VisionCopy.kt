@@ -43,6 +43,7 @@ internal object VisionCopy {
     const val SAVE_CAPTION = "The original stays as it is, and the copy keeps no location."
     const val SAVE_NEED_TYPE = "Pick which colours first."
     const val SAVE_SENSITIVE = "Not for photos marked sensitive."
+    const val SAVE_NOT_ALLOWED = "This photo cannot be copied from its folder."
     const val SAVE_NO_JOBS = "Saving is not available here."
     const val SAVE_CANCEL = "Cancel"
     const val SEVERITY_SLIDER = "How strong, in steps of ten percent"

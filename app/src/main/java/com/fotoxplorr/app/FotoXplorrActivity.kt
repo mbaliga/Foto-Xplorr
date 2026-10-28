@@ -1658,15 +1658,16 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             },
             // The corrected-copy job asks twice (before it reads and before it writes) and a swipe
             // or a lock can come between, so this reads the stores live, for any photo and not only
-            // the one on screen: the browsable list, the sensitive marks, and a locked folder's copy
-            // landing outside it (TRAPS #33).
+            // the one on screen: the sensitive marks, a folder locked again, and a locked folder's
+            // copy landing outside it (TRAPS #33). Not the browsable list: an archived or trashed
+            // photo is opened in the viewer from its album and may be copied like any other.
             colourVisionMayCopy = { candidate ->
-                browsableNow(listOf(candidate)).isNotEmpty() &&
-                    colourVisionCopyAllowed(
-                        candidate,
-                        sensitiveStore.observe().value,
-                        privateFolderStore.observeLockedFolders().value,
-                    )
+                colourVisionCopyAllowed(
+                    candidate,
+                    sensitiveStore.observe().value,
+                    privateFolderStore.observeLockedFolders().value,
+                    privateFolderStore.observeUnlockedFolders().value,
+                )
             },
         )
     } else {

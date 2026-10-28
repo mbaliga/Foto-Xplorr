@@ -41,18 +41,20 @@ import com.fotoxplorr.app.ui.RoomToggle
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /** Why the corrected-copy row cannot be used right now, or null when it can. */
-internal enum class SaveBlock { NEEDS_TYPE, SENSITIVE, NO_RUNNER, NOT_PHOTO_FILE }
+internal enum class SaveBlock { NEEDS_TYPE, SENSITIVE, NOT_ALLOWED, NO_RUNNER, NOT_PHOTO_FILE }
 
 /**
  * The reason, if any, that "Save a copy" is off. In the order a person can fix them: pick a type
  * first; a file whose pixels cannot be read, or one the library does not own ([canSave] false, e.g.
  * opened from another app), has no copy; a photo marked [sensitive] is not copied (the copy would not
- * carry the mark); and with no job list there is nowhere to run it. Pure.
+ * carry the mark); a photo the host will not let be copied ([mayCopy] false: a locked folder whose
+ * copy would land outside it, or one locked again) says so before the tap; and with no job list there is nowhere to run it. Pure.
  */
-internal fun saveBlock(choice: ColourVisionChoice, support: VisionSupport, sensitive: Boolean, canSave: Boolean, hasRunner: Boolean): SaveBlock? = when {
+internal fun saveBlock(choice: ColourVisionChoice, support: VisionSupport, sensitive: Boolean, canSave: Boolean, hasRunner: Boolean, mayCopy: Boolean = true): SaveBlock? = when {
     !choice.filtering -> SaveBlock.NEEDS_TYPE
     support != VisionSupport.FULL || !canSave -> SaveBlock.NOT_PHOTO_FILE
     sensitive -> SaveBlock.SENSITIVE
+    !mayCopy -> SaveBlock.NOT_ALLOWED
     !hasRunner -> SaveBlock.NO_RUNNER
     else -> null
 }
@@ -172,7 +174,7 @@ internal fun ColumnScope.ColourVisionRoomSection(
         )
     }
 
-    val block = saveBlock(choice, support, sensitive, canSave, hasRunner = viewer.runner != null)
+    val block = saveBlock(choice, support, sensitive, canSave, hasRunner = viewer.runner != null, mayCopy = mayCopy(asset))
     RoomRow(
         label = if (choice.kind == VisionKind.HELP) VisionCopy.SAVE_HELP else VisionCopy.SAVE_SIMULATED,
         caption = when {
@@ -180,6 +182,7 @@ internal fun ColumnScope.ColourVisionRoomSection(
             saving != null -> VisionCopy.SAVING
             block == SaveBlock.NEEDS_TYPE -> VisionCopy.SAVE_NEED_TYPE
             block == SaveBlock.SENSITIVE -> VisionCopy.SAVE_SENSITIVE
+            block == SaveBlock.NOT_ALLOWED -> VisionCopy.SAVE_NOT_ALLOWED
             block == SaveBlock.NOT_PHOTO_FILE -> VisionCopy.FILTER_ONLY
             block == SaveBlock.NO_RUNNER -> VisionCopy.SAVE_NO_JOBS
             else -> VisionCopy.SAVE_CAPTION

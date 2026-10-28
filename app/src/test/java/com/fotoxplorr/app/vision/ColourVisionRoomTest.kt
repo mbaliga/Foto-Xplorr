@@ -50,6 +50,7 @@ class ColourVisionRoomTest {
         sensitive: Boolean = false,
         canSave: Boolean = true,
         withGroup: Boolean = true,
+        mayCopy: Boolean = true,
     ) {
         compose.setContent {
             FotoXplorrTheme(GalleryPreferencesState()) {
@@ -69,7 +70,7 @@ class ColourVisionRoomTest {
                     onSetLoopAnimations = {},
                     onSetAutoplayVideos = {},
                     colourVisionSection = if (withGroup) {
-                        { ColourVisionRoomSection(viewer, asset, support, sensitive, canSave) { true } }
+                        { ColourVisionRoomSection(viewer, asset, support, sensitive, canSave) { mayCopy } }
                     } else {
                         null
                     },
@@ -250,6 +251,14 @@ class ColourVisionRoomTest {
         compose.onNodeWithText(VisionCopy.DEUTAN).performClick()
         compose.waitForIdle()
         compose.onNodeWithText(VisionCopy.SAVE_SENSITIVE).assertExists()
+    }
+
+    @Test
+    fun `a photo the host will not let be copied says why on the save row`() {
+        show(mayCopy = false)
+        compose.onNodeWithText(VisionCopy.DEUTAN).performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText(VisionCopy.SAVE_NOT_ALLOWED).assertExists()
     }
 
     @Test
