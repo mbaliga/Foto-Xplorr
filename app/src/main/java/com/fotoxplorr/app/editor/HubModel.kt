@@ -26,7 +26,7 @@ package com.fotoxplorr.app.editor
  * (open tool, open group, deeper shown) is small enough for `rememberSaveable` as strings; see
  * [HubState.restore], which tolerates an id or group that no longer exists.
  *
- * Pure Kotlin, no Android imports. Not yet wired into [EditorScreen]; see [ToolCatalog].
+ * Pure Kotlin, no Android imports. [EditorScreen] draws it through [HubSession] and [HubRingPanel].
  */
 object HubModel {
 
@@ -104,8 +104,9 @@ object HubModel {
      */
     fun groupPage(group: ToolGroup, usage: ToolUsage, deeperShown: Boolean): GroupPage {
         val specs = ToolCatalog.inGroup(group)
+        // An action is never promoted, whatever an older memory holds for it: Reset and Revert stay one tap deeper.
         val front = specs
-            .filter { it.rarity != Rarity.RARELY || usage.score(it.id) >= PROMOTE_MILLI }
+            .filter { it.rarity != Rarity.RARELY || (it.centreEligible && usage.score(it.id) >= PROMOTE_MILLI) }
             .toMutableList()
         while (front.size > FRONT_MAX) {
             // Lowest effective score out; on a tie the later catalogue entry goes first.
@@ -135,9 +136,14 @@ object HubModel {
     fun openTool(state: HubState, id: String): HubState =
         if (ToolCatalog.has(id)) state.copy(openTool = id) else state
 
-    /** One real use of [id] (see [ToolUsage]'s note on what counts). Changes the counts, never the centre. */
+    /**
+     * One real use of [id] (see [ToolUsage]'s note on what counts). Changes the counts, never the
+     * centre. An [PanelKind.ACTION] is not a use: pressing "Reset all" twice must not learn it onto
+     * the front of its group's page.
+     */
     fun record(state: HubState, id: String): HubState =
-        state.copy(memory = state.memory.copy(usage = state.memory.usage.record(id)))
+        if (ToolCatalog.get(id)?.centreEligible == false) state
+        else state.copy(memory = state.memory.copy(usage = state.memory.usage.record(id)))
 
     /** Let the centre catch up with use. The caller's job whenever the hub comes back into view. */
     fun settle(state: HubState, size: Int = CENTRE_SIZE): HubState =

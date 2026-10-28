@@ -9,8 +9,8 @@ internal enum class HubLayout { RING, LIST }
  *
  * The ring only works where five 48 dp buttons fit side by side with their short labels, which
  * is a portrait phone at a normal text size. Everything else (landscape, a tablet, a narrow
- * window, a large font) gets the list: every group as a heading with its tools under it, scrolling
- * if it must. That is the "non-gesture, nothing hidden" layout, so it is also the fallback.
+ * window, a short window, a large font) gets the list: every group as a heading with its tools
+ * under it, scrolling if it must. That is the "non-gesture, nothing hidden" layout, so it is also the fallback.
  *
  * Nothing here has been tried on a device; the thresholds are judgement, named so they can move.
  */
@@ -25,6 +25,12 @@ internal object HubRingLayout {
     /** Under this a fifth of the width (less the gutters) is under 48 dp. */
     const val MIN_RING_WIDTH_DP = 300
 
+    /**
+     * Under this an upright window (split screen, a small phone with a tall bar) has no room for the
+     * ring's pages and a photo worth looking at. A judgement, not measured on a device.
+     */
+    const val MIN_RING_HEIGHT_DP = 560
+
     /** How far the middle ring button sits below the two end ones. */
     const val ARC_DEPTH_DP = 14f
 
@@ -32,6 +38,7 @@ internal object HubRingLayout {
         widthDp > heightDp -> HubLayout.LIST
         widthDp >= MIN_LIST_WIDTH_DP -> HubLayout.LIST
         widthDp < MIN_RING_WIDTH_DP -> HubLayout.LIST
+        heightDp < MIN_RING_HEIGHT_DP -> HubLayout.LIST
         fontScale > MAX_RING_FONT_SCALE -> HubLayout.LIST
         else -> HubLayout.RING
     }

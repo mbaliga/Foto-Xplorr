@@ -367,4 +367,29 @@ class HubModelTest {
     fun `an empty memory encodes and decodes to itself`() {
         assertEquals(HubMemory.EMPTY, HubMemory.decode(HubMemory.EMPTY.encode()))
     }
+
+    // ---- actions are not uses ----
+
+    @Test
+    fun `an action is never recorded as a use, so it cannot be learned into the front page`() {
+        var state = HubState()
+        repeat(4) {
+            state = HubModel.record(HubModel.record(state, ToolIds.RESET), ToolIds.REVERT)
+        }
+        assertTrue("actions leave no trace", state.memory.usage.isEmpty)
+        val page = HubModel.groupPage(ToolGroup.CROP_STRAIGHTEN, state.memory.usage, deeperShown = true)
+        assertEquals(listOf(ToolIds.CROP, ToolIds.STRAIGHTEN, ToolIds.ROTATE), ids(page.front))
+        assertEquals(listOf(ToolIds.FLIP, ToolIds.RESET, ToolIds.REVERT), ids(page.deeper))
+        // A real tool is still counted.
+        assertFalse(HubModel.record(HubState(), ToolIds.FLIP).memory.usage.isEmpty)
+    }
+
+    @Test
+    fun `an action stays deeper even if an older memory holds a score for it`() {
+        val old = used(*times(5, ToolIds.RESET), *times(5, ToolIds.FLIP))
+        val page = HubModel.groupPage(ToolGroup.CROP_STRAIGHTEN, old, deeperShown = true)
+        assertTrue("a rarely used tool that was really used is still promoted", ToolIds.FLIP in ids(page.front))
+        assertTrue(ToolIds.RESET in ids(page.deeper))
+        assertEquals(ToolCatalog.inGroup(ToolGroup.CROP_STRAIGHTEN).size, page.front.size + page.deeper.size)
+    }
 }

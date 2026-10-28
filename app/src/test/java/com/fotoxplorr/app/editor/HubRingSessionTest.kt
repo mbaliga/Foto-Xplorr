@@ -141,4 +141,21 @@ class HubRingSessionTest {
         HubSession.fresh(store)
         assertEquals(1, store.saves) // the settled cold-start centre, once
     }
+
+    @Test
+    fun `pressing an action counts nothing and the page stays as it was`() {
+        val store = FakeStore()
+        val session = HubSession.fresh(store)
+        repeat(3) {
+            session.home()
+            session.ring(ToolGroup.CROP_STRAIGHTEN)
+            session.open(ToolIds.RESET)
+            session.applied()
+            session.closeTool()
+        }
+        assertTrue(store.memory.usage.isEmpty)
+        session.home()
+        session.ring(ToolGroup.CROP_STRAIGHTEN)
+        assertFalse(ToolIds.RESET in session.view.groupPage!!.front.map { it.id })
+    }
 }

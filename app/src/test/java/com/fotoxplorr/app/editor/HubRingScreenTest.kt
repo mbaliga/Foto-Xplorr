@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertWidthIsAtLeast
@@ -252,6 +253,42 @@ class HubRingScreenTest {
         compose.onNodeWithText(HubCopy.TOOL_PRESETS).assertExists()
         compose.onNodeWithText(HubCopy.BACK).performClick()
         assertTrue(atHome())
+    }
+
+    @Test
+    fun `the labelled Back of a group page leaves the page even with More shown`() {
+        compose.setContent { Host() }
+        ring(ToolGroup.LIGHT).performClick()
+        compose.onNodeWithContentDescription(HubRingCopy.moreDescription(3, shown = false)).performClick()
+        compose.onNodeWithText(HubCopy.TOOL_CURVES).assertExists()
+        compose.onNodeWithText(HubCopy.BACK).performClick()
+        assertTrue("one tap on Back is home", atHome())
+        // The system Back still steps: More first, then the page.
+        ring(ToolGroup.LIGHT).performClick()
+        compose.onNodeWithContentDescription(HubRingCopy.moreDescription(3, shown = false)).performClick()
+        back()
+        assertFalse(shown(HubCopy.TOOL_CURVES))
+        compose.onNodeWithText(HubCopy.TOOL_HIGHLIGHTS).assertExists()
+    }
+
+    @Test
+    fun `the list keeps its scroll place when a tool is opened and closed`() {
+        compose.setContent { Host(fontScale = 2f) }
+        // Vignette is the last tool of the last group: far below the first screenful.
+        compose.onNodeWithText(HubCopy.TOOL_VIGNETTE).performScrollTo().performClick()
+        compose.onNodeWithText("Editing ${HubCopy.TOOL_VIGNETTE}").assertExists()
+        compose.onNodeWithText(HubCopy.BACK).performClick()
+        compose.onNodeWithText(HubCopy.TOOL_VIGNETTE).assertIsDisplayed()
+    }
+
+    @Test
+    @Config(sdk = [34], qualifiers = "w360dp-h500dp-xhdpi")
+    fun `a short upright window gets the list, so the photo is not squeezed`() {
+        compose.setContent { Host() }
+        ToolGroup.entries.forEach {
+            assertEquals(0, compose.onAllNodesWithContentDescription(HubCopy.groupDescription(it, deeperOf(it))).fetchSemanticsNodes().size)
+        }
+        ToolCatalog.all.forEach { assertTrue(it.title, shown(it.title)) }
     }
 
     @Test

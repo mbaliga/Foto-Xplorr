@@ -24,6 +24,20 @@ class HubRingLayoutTest {
     }
 
     @Test
+    fun `a short window gets the list even when it is narrow and upright`() {
+        assertEquals("split screen", HubLayout.LIST, HubRingLayout.kindFor(360, 500, 1.0f))
+        assertEquals(
+            "just under the line",
+            HubLayout.LIST, HubRingLayout.kindFor(360, HubRingLayout.MIN_RING_HEIGHT_DP - 1, 1.0f),
+        )
+        assertEquals(
+            "on the line",
+            HubLayout.RING, HubRingLayout.kindFor(360, HubRingLayout.MIN_RING_HEIGHT_DP, 1.0f),
+        )
+        assertEquals("a small phone is still a ring", HubLayout.RING, HubRingLayout.kindFor(360, 640, 1.0f))
+    }
+
+    @Test
     fun `a ring button never gets less than 48 dp of the narrowest ring`() {
         // 16 dp gutters either side, five buttons.
         assertTrue((HubRingLayout.MIN_RING_WIDTH_DP - 32) / ToolGroup.entries.size >= 48)

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -70,8 +71,10 @@ import kotlin.math.roundToInt
  * A non-drag path to everything: every tool is a button on the centre or on exactly one group's
  * page (tested), "More" is a button, and Back is a button as well as the system Back.
  *
- * Landscape, a tablet, a narrow window or a large font get [HubLayout.LIST] instead: every group
- * as a heading with its tools under it, scrolling inside [controlsMaxHeight].
+ * Landscape, a tablet, a narrow or short window or a large font get [HubLayout.LIST] instead: every
+ * group as a heading with its tools under it, scrolling inside [controlsMaxHeight]. The ring's own
+ * pages (the centre, a group's tools) are capped at the same height and scroll if a font just under
+ * the threshold wraps them into more rows than fit.
  *
  * Accessibility: every target is at least 48 dp; the ring buttons say their group and how many
  * tools sit inside; the current group is marked by fill, bold and underline together, and exposes
@@ -102,6 +105,9 @@ internal fun HubRingPanel(
         if (layout == HubLayout.LIST && view.openTool == null && view.groupPage != null) session.home()
     }
 
+    // Held here, not in HubList: the list leaves composition while a tool is open, and a person
+    // who scrolled to Curves would otherwise come back to the top.
+    val listScroll = rememberScrollState()
     val open = view.openTool
     val page = view.groupPage.takeIf { layout == HubLayout.RING }
     val title = when {
@@ -123,12 +129,18 @@ internal fun HubRingPanel(
                 }
             }
 
-            layout == HubLayout.LIST -> HubList(session, view, controlsMaxHeight)
+            layout == HubLayout.LIST -> HubList(session, view, controlsMaxHeight, listScroll)
 
             page != null -> {
-                PageHeader(HubCopy.groupTitle(page.group), onBack = { session.back() })
+                // The labelled Back leaves the page in one tap, whether or not More is open; the
+                // system Back steps (More, then the page).
+                PageHeader(HubCopy.groupTitle(page.group), onBack = session::home)
                 FlowRow(
-                    Modifier.fillMaxWidth().semantics { isTraversalGroup = true },
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = controlsMaxHeight)
+                        .verticalScroll(rememberScrollState())
+                        .semantics { isTraversalGroup = true },
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -142,7 +154,7 @@ internal fun HubRingPanel(
             }
 
             else -> {
-                CentreHub(view.centre, onOpen = { session.open(it.id) })
+                CentreHub(view.centre, controlsMaxHeight, onOpen = { session.open(it.id) })
                 GroupRing(view.activeGroup, usage, compact = false, onTap = session::ring)
             }
         }
@@ -152,7 +164,7 @@ internal fun HubRingPanel(
 /** The centre: the few tools used most, in slots that only move when the model says so. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CentreHub(tools: List<ToolSpec>, onOpen: (ToolSpec) -> Unit) {
+private fun CentreHub(tools: List<ToolSpec>, maxHeight: Dp, onOpen: (ToolSpec) -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -170,7 +182,7 @@ private fun CentreHub(tools: List<ToolSpec>, onOpen: (ToolSpec) -> Unit) {
             modifier = Modifier.semantics { heading() },
         )
         FlowRow(
-            Modifier.fillMaxWidth(),
+            Modifier.fillMaxWidth().heightIn(max = maxHeight).verticalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -254,10 +266,10 @@ private fun ArcRow(depth: Dp, modifier: Modifier, content: @Composable () -> Uni
 /** Every group with all its tools, front ones first; for landscape, tablets and large fonts. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun HubList(session: HubSession, view: HubView, controlsMaxHeight: Dp) {
+private fun HubList(session: HubSession, view: HubView, controlsMaxHeight: Dp, scroll: ScrollState) {
     val usage = session.state.memory.usage
     Column(
-        Modifier.fillMaxWidth().heightIn(max = controlsMaxHeight).verticalScroll(rememberScrollState()),
+        Modifier.fillMaxWidth().heightIn(max = controlsMaxHeight).verticalScroll(scroll),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         ListHeading(HubCopy.CENTRE_LABEL)
