@@ -375,7 +375,7 @@ internal object Dither {
      * null mask, whose alpha is below the cutoff) gets [transparentIndex] and neither takes nor gives
      * error. With [strength] above zero, Floyd-Steinberg error diffusion is run in serpentine order
      * with the error scaled by [strength] (1 is the classic filter, 0 is plain nearest colour).
-     * The error is clamped per pixel so one far-off colour cannot smear a long streak.
+     * The error is clamped to 128 levels a channel per pixel so one colour the palette cannot reach does not smear a long streak.
      */
     fun map(
         argb: IntArray,
@@ -452,5 +452,5 @@ internal object Dither {
         row[at + 2] += eb * k
     }
 
-    private const val MAX_ERROR = 48f
+    private const val MAX_ERROR = 128f
 }

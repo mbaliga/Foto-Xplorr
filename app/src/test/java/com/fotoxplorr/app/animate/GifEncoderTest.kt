@@ -327,7 +327,7 @@ class GifEncoderTest {
 
     @Test
     fun `unusual canvas shapes round trip`() {
-        for ((w, h) in listOf(1 to 1, 1 to 200, 300 to 1, 2 to 2, 3 to 5, 255 to 3)) {
+        for ((w, h) in listOf(1 to 1, 1 to 200, 300 to 1, 2 to 2, 3 to 5, 255 to 3, 65_535 to 1, 1 to 65_535)) {
             val rnd = Random((w * 31 + h).toLong())
             val frames = List(3) { AnimFrame(IntArray(w * h) { AnimTestKit.argb(255, rnd.nextInt(4) * 80, rnd.nextInt(4) * 80, 40) }, 100) }
             val back = decode(GifEncoder.encode(AnimSequence(w, h, frames, 0)))
@@ -369,6 +369,27 @@ class GifEncoderTest {
                 assertArrayEquals("trial $trial frame $i ($mode, clear=$clear)", frames[i].pixels, at.second)
             }
         }
+    }
+
+    @Test
+    fun `a stream with no palette sample falls back to frame palettes when the scene changes colour`() {
+        val w = 64
+        val h = 48
+        fun ramp(red: Boolean, shift: Int) = IntArray(w * h) {
+            val v = ((it % w) * 3 + it / w) % 200
+            if (red) AnimTestKit.argb(255, 50 + v, 20 + v / 8, 10 + (v + shift) % 30) else AnimTestKit.argb(255, 10 + (v + shift) % 30, 20 + v / 8, 50 + v)
+        }
+        val frames = List(6) { ramp(it < 3, it) }
+        fun worst(mode: PaletteMode): Double {
+            val out = ByteArrayOutputStream()
+            val enc = GifStreamEncoder(w, h, 0, false, GifOptions(paletteMode = mode, ditherStrength = 0f, maxColors = 48), out)
+            for (f in frames) enc.addFrame(f, 100)
+            enc.finish()
+            val back = decode(out.toByteArray())
+            return frames.indices.maxOf { AnimTestKit.mse(frames[it], back.frames[it].pixels) }
+        }
+        // The file palette was built from the first (red) frame alone, so the blue ones need their own.
+        assertTrue(worst(PaletteMode.AUTO) < worst(PaletteMode.GLOBAL) * 0.85)
     }
 
     @Test

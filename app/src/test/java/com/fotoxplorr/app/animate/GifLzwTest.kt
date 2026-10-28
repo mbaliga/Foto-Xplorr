@@ -75,16 +75,44 @@ class GifLzwTest {
     }
 
     @Test
-    fun `a deferred clear, a table that stops growing at 4096 with no clear code, still decodes`() {
-        // Hand-build: literal codes only, 4094 of them after the clear would not fill the table; so make
-        // the decoder fill it with a long repeating pattern encoded by the real encoder minus its clear codes.
-        val rnd = Random(3)
-        val d = ByteArray(40_000) { rnd.nextInt(8).toByte() }
-        val packed = GifLzw.encode(d, d.size, 3)
-        // The real encoder clears when full; decoding it must work, and so must decoding with an extra
-        // run of 12-bit codes after the table is full: simulated by checking the decoder never adds past 4096.
-        val out = ByteArray(d.size)
-        assertEquals(d.size, GifLzw.decode(packed, packed.size, 3, out, d.size).count)
+    fun `a deferred clear, a table that fills and then simply stops growing, still decodes`() {
+        // Hand-written stream, literal codes only and NO clear code: the table fills after 3838 codes at
+        // minimum code size 8, the width reaches 12 bits, and 600 more codes follow at 12 bits.
+        val mc = 8
+        val clear = 1 shl mc
+        val rnd = Random(6)
+        val pixels = IntArray(3838 + 600 + 1) { rnd.nextInt(256) }
+        val out = java.io.ByteArrayOutputStream()
+        var acc = 0L
+        var n = 0
+        fun put(code: Int, width: Int) {
+            acc = acc or (code.toLong() shl n)
+            n += width
+            while (n >= 8) {
+                out.write((acc and 255).toInt())
+                acc = acc ushr 8
+                n -= 8
+            }
+        }
+        var bits = mc + 1
+        var next = clear + 2
+        put(clear, bits)
+        for ((i, p) in pixels.withIndex()) {
+            put(p, bits)
+            if (i > 0 && next < 4096) {
+                next++
+                if (next == (1 shl bits) && bits < 12) bits++
+            }
+        }
+        put(clear + 1, bits)
+        if (n > 0) out.write((acc and 255).toInt())
+        val data = out.toByteArray()
+        assertEquals("table filled and width is 12", 4096, next)
+        val dst = ByteArray(pixels.size)
+        val r = GifLzw.decode(data, data.size, mc, dst, pixels.size)
+        assertEquals(GifLzw.End.FULL, r.end)
+        assertEquals(pixels.size, r.count)
+        for (i in pixels.indices) assertEquals("pixel $i", pixels[i], dst[i].toInt() and 255)
     }
 
     @Test
