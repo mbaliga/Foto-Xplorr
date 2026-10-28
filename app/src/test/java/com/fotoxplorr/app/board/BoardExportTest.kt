@@ -8,6 +8,8 @@ import com.fotoxplorr.app.board.BoardTestKit.photo
 import com.fotoxplorr.app.editor.MaxEdgePreset
 import com.fotoxplorr.app.editor.OutputFormat
 import com.fotoxplorr.app.jobs.JobRunner
+import java.io.IOException
+import java.util.Collections
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -15,21 +17,20 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import java.io.IOException
-import java.util.Collections
 
 /** A [BoardSink] that keeps what it was given, and fails or looks the way a test says. */
 internal class FakeBoardSink : BoardSink {
@@ -376,6 +377,32 @@ class BoardExportTest {
         assertEquals("${BoardCopy.DEFAULT_NAME}.png", BoardExportJob.fileName("...", OutputFormat.PNG) { false })
         assertEquals("ab.png", BoardExportJob.fileName("a\nb", OutputFormat.PNG) { false })
         assertTrue(BoardExportJob.fileName("x".repeat(500), OutputFormat.PNG) { false }.length <= 84)
+    }
+
+    private fun listed(id: Long, uri: String = "content://media/external/images/media/$id") = com.fotoxplorr.app.media.MediaAsset(
+        id = com.fotoxplorr.core.model.MediaId(id), contentUriString = uri, displayName = "x.png", mimeType = "image/png",
+        bucketName = null, dateTakenMillis = 0, dateModifiedSeconds = 0, width = 1, height = 1, sizeBytes = 1,
+        relativePath = null, isFavorite = false, isTrashed = false,
+    )
+
+    @Test
+    fun `a saved picture is found in the gallery's list by its row number, however the volume is spelled`() {
+        val list = listOf(listed(5), listed(9))
+        assertEquals(9L, BoardExportJob.savedAsset(list, "content://media/external_primary/images/media/9")!!.id.value)
+        assertEquals(5L, BoardExportJob.savedAsset(list, "content://media/external/images/media/5")!!.id.value)
+        assertNull(BoardExportJob.savedAsset(list, "content://media/external/images/media/6"))
+        assertNull(BoardExportJob.savedAsset(list, ""))
+        assertNull(BoardExportJob.savedAsset(emptyList(), "content://media/external/images/media/5"))
+    }
+
+    @Test
+    fun `the size an export would be is told before saving`() {
+        val b = colourBoard()
+        assertEquals(200, BoardExportJob.outputSize(b, MaxEdgePreset.ORIGINAL).width)
+        val big = Board(CanvasSize(4000, 2000), BoardBackground.Colour(BoardTestKit.WHITE), listOf(layer(1, 2000f, 1000f, 4000f, 2000f)), 2)
+        val small = BoardExportJob.outputSize(big, MaxEdgePreset.SMALL)
+        assertEquals(1024, small.width)
+        assertEquals(512, small.height)
     }
 
     @Test

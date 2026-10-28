@@ -104,3 +104,17 @@ class PreviewPhotoCache(
         const val DEFAULT_MAX_BYTES = 48L * 1024 * 1024
     }
 }
+
+/**
+ * A [BoardPhotoSource] that forwards to whichever source it was last pointed at. The screen builds a new
+ * host source when the library's list or the board's set of photos changes, and the preview's memory
+ * ([PreviewPhotoCache]) is kept across that: it asks this, which asks the newest.
+ */
+class SwitchingPhotoSource(first: BoardPhotoSource) : BoardPhotoSource {
+    @Volatile
+    var current: BoardPhotoSource = first
+
+    override fun isAvailable(ref: PhotoRef): Boolean = current.isAvailable(ref)
+
+    override suspend fun decode(ref: PhotoRef, limits: DecodeLimits): Bitmap? = current.decode(ref, limits)
+}

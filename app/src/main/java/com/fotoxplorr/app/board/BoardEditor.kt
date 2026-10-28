@@ -139,6 +139,9 @@ object BoardEditing {
 
     fun restack(e: BoardEditor, move: StackMove): BoardEditor = onSelected(e, null) { b, l -> BoardOps.restack(b, l.id, move) }
 
+    /** The same for the layer named, picked or not (the layer list moves any layer). */
+    fun restack(e: BoardEditor, id: Long, move: StackMove): BoardEditor = commit(e, BoardOps.restack(e.board, id, move))
+
     /** Locking works on a layer that is locked (that is the way out), so it names the layer. */
     fun setLocked(e: BoardEditor, id: Long, locked: Boolean): BoardEditor = commit(e, BoardOps.setLocked(e.board, id, locked))
 

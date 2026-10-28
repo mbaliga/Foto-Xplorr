@@ -13,7 +13,7 @@ internal object BoardCopy {
 
     /** Drawn on the preview where a photo is missing; read out by the layer list. */
     const val MISSING_PHOTO = "Photo missing"
-    const val NOT_A_SUBJECT = "Marks needed"
+    const val NOT_A_SUBJECT = "The whole photo shows until the subject is marked."
 
     fun canvas(preset: CanvasPreset): String = when (preset) {
         CanvasPreset.SQUARE -> "Square"
@@ -56,7 +56,6 @@ internal object BoardCopy {
     // ---- the screen ----
 
     const val BACK = "Back"
-    const val CLOSE = "Close"
     const val CANCEL = "Cancel"
     const val DONE = "Done"
     const val UNDO = "Undo"
@@ -64,15 +63,12 @@ internal object BoardCopy {
     const val EXPORT = "Export"
     const val RENAME = "Rename"
     const val NAME_LABEL = "Name"
-    const val SAVE_NAME = "Save"
-    const val DEFAULT_NAME = "Mood board"
+    const val DEFAULT_NAME = "Untitled board"
     const val NOTHING_PICKED = "Pick a layer first."
     const val LOCKED_NOTE = "Unlock this layer to change it."
-    const val HIDDEN_LAYER_NOTE = "This layer is off the board."
-    const val SNAP_ON = "Snap on"
-    const val SNAP_OFF = "Snap off"
+    const val SNAP = "Snap to guides"
     const val PREVIEW_PENDING = "Drawing the board."
-    const val NEWER_VERSION = "This board is from a newer version. Saving may drop parts of it."
+    const val NEWER_VERSION = "This board is from a newer version, so saving may drop parts of it."
     const val LOCKED_PICK_NOTE = "Locked layers are picked in Layers."
 
     fun partsLost(skippedLayers: Int, droppedMasks: Int): String {
@@ -93,7 +89,7 @@ internal object BoardCopy {
     const val TOOL_LAYER = "Layer"
     const val TOOL_LOOK = "Look"
     const val TOOL_LAYERS = "Layers"
-    const val TOOL_CANVAS = "Canvas"
+    const val TOOL_CANVAS = "Board"
     const val TOOL_COLOURS = "Colours"
 
     // ---- add ----
@@ -132,14 +128,12 @@ internal object BoardCopy {
     const val TO_FRONT = "To front"
     const val TO_BACK = "To back"
     const val LOCK = "Lock"
-    const val UNLOCK = "Unlock"
     const val DUPLICATE = "Duplicate"
     const val DELETE = "Delete"
-    const val SHOW_LAYER_ON_BOARD = "Pick"
 
     fun sizeNow(scale: Float): String = "Size ${(scale * 100f).roundToInt()}%"
 
-    fun turnNow(degrees: Float): String = "Turn ${degrees.roundToInt()} degrees"
+    fun turnNow(degrees: Float): String = "Turn ${degrees.roundToInt()}°"
 
     fun opacityNow(opacity: Float): String = "Opacity ${(opacity * 100f).roundToInt()}%"
 
@@ -154,8 +148,12 @@ internal object BoardCopy {
 
     // ---- look: opacity, blend, mask ----
 
-    const val MORE = "More"
-    const val LESS = "Less"
+    const val OPACITY_LESS = "Less opaque"
+    const val OPACITY_MORE = "More opaque"
+    const val FEATHER_LESS = "Harder edge"
+    const val FEATHER_MORE = "Softer edge"
+    const val RADIUS_LESS = "Less rounded"
+    const val RADIUS_MORE = "More rounded"
     const val BLEND_HEADING = "Blend"
     const val MASK_HEADING = "Mask"
     const val MASK_NONE = "No mask"
@@ -171,7 +169,7 @@ internal object BoardCopy {
     const val PRESET_HEXAGON = "Hexagon"
     const val PRESET_STAR = "Star"
     const val NEED_THREE_POINTS = "A shape needs three points."
-    const val MARK_HINT = "Tap the subject. Switch to Not subject to tap what to leave out."
+    const val MARK_HINT = "Tap the subject, or switch to Not subject and tap what to leave out."
     const val MARK_SUBJECT = "Subject"
     const val MARK_NOT_SUBJECT = "Not subject"
     const val UNDO_MARK = "Undo mark"
@@ -179,7 +177,7 @@ internal object BoardCopy {
     const val SUBJECT_SLOW = "Cutting out takes a moment."
     const val SUBJECT_PHOTOS_ONLY = "Subject works on photos."
     const val SUBJECT_EDGE_NOTE = "The cut-out is redrawn each time, so its edge may differ a little from the Lift tool."
-    const val SELECTED = "Selected"
+    const val COLOUR_OF_LAYER = "Colour"
 
     fun featherNow(feather: Float): String = "Soft edge ${(feather * 100f).roundToInt()}%"
 
@@ -201,12 +199,16 @@ internal object BoardCopy {
 
     const val NO_LAYERS = "Nothing on the board yet."
 
-    fun layerRow(name: String, picked: Boolean, locked: Boolean, missing: Boolean): String = buildString {
-        append(name)
-        if (missing) append(", ").append(MISSING_PHOTO.lowercase())
-        if (locked) append(", locked")
-        if (picked) append(", picked")
-    }
+    const val STATUS_PICKED = "Picked"
+    const val STATUS_LOCKED = "Locked"
+
+    fun lockLayer(name: String) = "Lock $name"
+
+    fun unlockLayer(name: String) = "Unlock $name"
+
+    fun forwardLayer(name: String) = "Move $name forward"
+
+    fun backwardLayer(name: String) = "Move $name backward"
 
     // ---- canvas and colours ----
 
@@ -266,7 +268,6 @@ internal object BoardCopy {
     // ---- export ----
 
     const val JOB_TITLE = "Saving a mood board"
-    const val EXPORT_HEADING = "Save a picture"
     const val FORMAT_HEADING = "File type"
     const val SIZE_HEADING = "Size"
     const val FORMAT_PNG = "PNG"
@@ -279,8 +280,8 @@ internal object BoardCopy {
     const val NOT_LISTED_YET = "It will show in the gallery in a moment."
     const val OPEN_IT = "Open"
     const val CANCELLED = "Cancelled."
-    const val NEW_FILE_NOTE = "It is a new file. Your photos are not changed."
-    const val MISSING_PHOTOS_NOTE = "Some photos can't be used. They may be gone or protected."
+    const val NEW_FILE_NOTE = "It saves as a new file and never changes your photos."
+    const val MISSING_PHOTOS_NOTE = "Some photos can't be used because they may be gone or protected."
     const val SHOW_MISSING = "Pick the first one"
 
     fun problem(problem: BoardExportProblem): String = when (problem) {
@@ -294,4 +295,6 @@ internal object BoardCopy {
 
     fun sizeNote(width: Int, height: Int, steppedDown: Boolean): String =
         if (steppedDown) "Saved smaller than asked, $width by $height, to fit in memory." else "$width by $height pixels."
+
+    fun aboutSize(width: Int, height: Int): String = "About $width by $height pixels."
 }

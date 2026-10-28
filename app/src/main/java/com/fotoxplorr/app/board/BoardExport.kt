@@ -7,12 +7,14 @@ import com.fotoxplorr.app.editor.OutputFormat
 import com.fotoxplorr.app.hyle.ActivityKind
 import com.fotoxplorr.app.jobs.JobHandle
 import com.fotoxplorr.app.jobs.JobRunner
+import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.core.model.MediaId
+import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import java.io.IOException
 
 /** Why an export did not save. Each one has a sentence in [BoardCopy.problem]. */
 enum class BoardExportProblem { EMPTY, PHOTOS_UNAVAILABLE, PROTECTED, TOO_BIG, NO_SPACE, SAVE_FAILED }
@@ -101,6 +103,20 @@ interface BoardSink {
  * rest makes the steps uneven); encoding and copying are the rest. Nothing here has run on a device.
  */
 object BoardExportJob {
+
+    /** The size, in pixels, an export of [board] would be drawn at under [maxEdge]: what the screen says before saving. */
+    fun outputSize(board: Board, maxEdge: MaxEdgePreset): RenderSize =
+        BoardRenderPlan.sizeForEdge(board.canvas, BoardRenderPlan.exportEdge(board, ExportOptions(maxEdge = maxEdge)))
+
+    /**
+     * The library row that is the picture just saved at [uri], if the gallery's list has it yet. Matched by
+     * the row id at the end of the uri (the volume part of a MediaStore uri is spelled several ways), then
+     * by the whole string.
+     */
+    fun savedAsset(assets: List<MediaAsset>, uri: String): MediaAsset? {
+        val id = uri.substringAfterLast('/').toLongOrNull()?.let(::MediaId)
+        return assets.firstOrNull { (id != null && it.id == id) || (uri.isNotEmpty() && it.contentUriString == uri) }
+    }
 
     private const val DRAWN_SHARE = 0.8f
     private const val ENCODE_START = 0.85f

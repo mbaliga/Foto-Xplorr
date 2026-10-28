@@ -24,15 +24,6 @@ object BoardColours {
         NamedColour(BoardCopy.COLOUR_BROWN, 0xFF6D4C41.toInt()),
     )
 
-    /** What a new board's background starts as. */
-    val DEFAULT_BACKGROUND: Int = BASICS.first().argb
-
     /** The ink a new text starts in when the person has not chosen one. */
     val DEFAULT_INK: Int = BASICS.first { it.name == BoardCopy.COLOUR_BLACK }.argb
-
-    /** `#RRGGBB` of an opaque or see-through colour (the alpha is not part of the name). */
-    fun hex(argb: Int): String = "#%06X".format(argb and 0xFFFFFF)
-
-    /** The basic colour that is exactly [argb], if there is one. */
-    fun named(argb: Int): NamedColour? = BASICS.firstOrNull { it.argb == argb }
 }
