@@ -71,4 +71,62 @@ internal object ChromaCopy {
     const val B_MORE_VIVID = "The second is more vivid."
     const val B_DULLER = "The second is duller."
     const val HUE_DIFFERS = "The shade of colour differs."
+
+    // The camera, the permission and what is kept.
+    const val PRIVACY = "Needs the camera to read a colour; the pictures stay in memory and are never saved or sent."
+    const val ALLOW_CAMERA = "Allow the camera"
+    const val ASK_AGAIN = "Ask again"
+    const val OPEN_SETTINGS = "Settings"
+    const val CAMERA_DENIED = "The camera is off for Fotoz; allow it in Settings to use this tool."
+
+    // Why the camera could not do it.
+    const val NO_CAMERA = "This phone has no camera this tool can use."
+    const val CAMERA_BUSY = "The camera is in use by another app."
+    const val CAMERA_LOST = "The camera stopped; try again."
+    const val CAMERA_FAILED = "The camera could not take the pictures; try again."
+    const val NO_LOCK = "This camera cannot hold its exposure still, so it cannot read a colour."
+    const val LOCK_SLIPPED = "The camera changed its exposure between the shots; try again."
+    const val MOVED = "You moved between the shots; hold still and try again."
+    const val TIMED_OUT = "The camera took too long; try again."
+
+    // Flash.
+    const val NO_FLASH = "This phone has no flash, so the true colour cannot be found."
+    const val AMBIENT_ONLY = "Read without flash"
+    const val AMBIENT_NOTE = "No flash: this is the colour under the room's light, not the true colour."
+
+    // The steps.
+    const val USE_CARD = "Use a white card"
+    const val CARD_STEP = "Fill the view with the card, then measure it."
+    const val SURFACE_STEP = "Card measured; now aim at the surface and measure it."
+    const val NO_CARD_STEP = "Aim at a plain, matt surface and measure it."
+    const val MEASURE = "Measure"
+    const val MEASURE_CARD = "Measure the card"
+    const val MEASURE_SURFACE = "Measure the surface"
+    const val RETAKE_CARD = "Measure the card again"
+    const val AGAIN = "Measure again"
+    const val CANCEL = "Cancel"
+    const val BACK = "Back"
+    const val OPENING = "Opening the camera."
+    const val SETTING_LIGHT = "Setting the light; hold still."
+    const val SHOOTING = "Measuring; hold still."
+    const val CARD_KEPT = "Card measured."
+    const val CANCELLED = "Cancelled."
+    const val STOPPED_NOTE = "Your card measurement is dropped when you leave or turn the phone."
+    const val PREVIEW_DESCRIPTION = "Camera view. Aim the middle of it at the surface."
+
+    // Live guidance.
+    const val STEADY = "Steady."
+    const val HOLD_STILL = "Hold still."
+    const val GOOD_DISTANCE = "Good distance."
+    const val MOVE_CLOSER = "Move a little closer."
+    const val MOVE_FARTHER = "Move a little farther."
+    const val WASHED_OUT_LIVE = "Part of the view is washed out; step back or shade it."
+
+    fun holdAbout(cm: Int): String = "Hold about $cm cm away."
+    fun distanceNow(cm: Int): String = "About $cm cm now."
+
+    // The result.
+    const val RESULT_HEADING = "Colour"
+    const val NEAREST = "Nearest names"
+    fun nearest(name: String, deltaE: Double): String = "%s (difference %.1f)".format(name, deltaE)
 }

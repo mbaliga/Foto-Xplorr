@@ -48,6 +48,28 @@ internal object ChromaMeter {
         }
     }
 
+    /**
+     * The card's two patches, so its frames can be dropped at once. A card is good only for the
+     * exposure it was shot under: the caller keeps the numbers while that lock is held and no longer.
+     */
+    fun sampleCard(card: CardPair): Answer<CardPatches> {
+        val c = samplePair(card.pair) ?: return Answer.Refused(Refusal.SIZE_MISMATCH)
+        val ca = c.first.orNull() ?: return (c.first as Answer.Refused)
+        val cf = c.second.orNull() ?: return (c.second as Answer.Refused)
+        return Answer.Value(CardPatches(ca, cf, card.reflectance, card.pair.distanceMetres))
+    }
+
+    /** [measure] with a card already reduced to its patches by [sampleCard]. */
+    fun measureAgainst(surface: FlashPair, card: CardPatches?): Answer<ChromaReading> {
+        val s = samplePair(surface) ?: return Answer.Refused(Refusal.SIZE_MISMATCH)
+        val surfaceAmbient = s.first.orNull() ?: return (s.first as Answer.Refused)
+        val surfaceFlash = s.second.orNull() ?: return (s.second as Answer.Refused)
+        return when (val r = FlashSolver.solve(surfaceAmbient, surfaceFlash, card, surface.distanceMetres)) {
+            is Answer.Refused -> r
+            is Answer.Value -> Answer.Value(ChromaReading(r.value, ColourReport.of(r.value.lab)))
+        }
+    }
+
     private fun samplePair(p: FlashPair): Pair<Answer<Patch>, Answer<Patch>>? {
         if (p.ambient.width != p.flash.width || p.ambient.height != p.flash.height) return null
         return PatchSampler.sample(p.ambient, p.region, keepDark = true) to PatchSampler.sample(p.flash, p.region)
