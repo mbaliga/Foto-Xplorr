@@ -134,6 +134,7 @@ class ReelCompositionTest {
         assertEquals(3_000L, item.mediaItem.localConfiguration!!.imageDurationMs)
         assertEquals(30, item.frameRate)
         assertEquals("file:///cache/still-r1.jpg", item.mediaItem.localConfiguration!!.uri.toString())
+        assertEquals("said outright, not guessed from the name", "image/jpeg", item.mediaItem.localConfiguration!!.mimeType)
         val effects = item.effects.videoEffects
         assertEquals(2, effects.size)
         assertTrue(effects[0] is ReelKenBurns)
@@ -144,6 +145,7 @@ class ReelCompositionTest {
     @Test
     fun `a title card and a picture that keeps its own shape are only stretched`() {
         val cards = build(plan(ReelProject(listOf(card(1), still(2))))).sequences[0].editedMediaItems
+        assertEquals("a card is a PNG", "image/png", cards[0].mediaItem.localConfiguration!!.mimeType)
         assertEquals("a card has no move", 1, cards[0].effects.videoEffects.size)
         assertEquals("a fixed shape does move a still", 1, cards[0].effects.videoEffects.count { it is Presentation })
         val original = build(plan(ReelProject(listOf(still(1, motion = ReelMotion.ZoomIn())), aspect = ReelAspect.ORIGINAL))).sequences[0].editedMediaItems.single()

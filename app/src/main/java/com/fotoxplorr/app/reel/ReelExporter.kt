@@ -4,9 +4,12 @@ import android.content.Context
 import android.graphics.Matrix
 import android.media.MediaFormat
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.media3.common.C
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.OverlaySettings
 import androidx.media3.common.VideoCompositorSettings
 import androidx.media3.common.util.Size
@@ -29,6 +32,7 @@ import com.fotoxplorr.app.video.hdrModeFor
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -165,6 +169,8 @@ object ReelComposition {
             val picture = staged.pictures[item.id] ?: error("no picture for item ${item.id}")
             val mediaItem = MediaItem.Builder()
                 .setUri(Uri.fromFile(picture.file))
+                // Said outright: the library would guess an image from the file name's ending.
+                .setMimeType(if (picture.file.name.endsWith(".png", ignoreCase = true)) MimeTypes.IMAGE_PNG else MimeTypes.IMAGE_JPEG)
                 .setImageDurationMs(item.durationUs / 1000L)
                 .build()
             val effects = ArrayList<Effect>()
@@ -215,8 +221,13 @@ class TransformerReelEncoder(context: Context) : ReelEncoder {
     override suspend fun encode(plan: ReelRenderPlan, staged: ReelStaged, output: File, onProgress: (Float) -> Unit) {
         try {
             withContext(Dispatchers.Main.immediate) { run(plan, staged, output, onProgress) }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: ExportException) {
             throw ReelEncodeException(ReelFailures.classify(e, plan.hasAudio), e.message ?: "The export failed.", e)
+        } catch (e: RuntimeException) {
+            // The library refusing a composition it cannot run (start() throws for one): a smaller, plainer rung may be accepted.
+            throw ReelEncodeException(ReelFailureKind.STEP_DOWN, e.message ?: "The export could not start.", e)
         }
     }
 
@@ -243,7 +254,11 @@ class TransformerReelEncoder(context: Context) : ReelEncoder {
                     }
                 })
                 transformer.start(composition, output.absolutePath)
-                continuation.invokeOnCancellation { transformer.cancel() }
+                // The handler runs on whichever thread cancelled; the library wants its own thread for cancel.
+                continuation.invokeOnCancellation {
+                    val looper = transformer.applicationLooper
+                    if (Looper.myLooper() == looper) transformer.cancel() else Handler(looper).post { transformer.cancel() }
+                }
             }
         } finally {
             poller.cancel()

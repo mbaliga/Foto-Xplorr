@@ -62,8 +62,8 @@ interface ReelHost {
 
     /**
      * Write the photo, upright, as an image file at [into] shaped for [spec] (large enough for the motion's
-     * closest window, never enlarged; for [ReelFit.CONTAIN] already placed whole on a black frame), and say
-     * its size. Null when it may not be read or cannot be.
+     * closest window, and the decode never enlarges; for [ReelFit.CONTAIN] already placed whole, as large as it
+     * fits, on a black frame), and say its size. Null when it may not be read or cannot be.
      */
     suspend fun stagePhoto(asset: MediaAsset, spec: StageSpec, into: File): StagedPicture?
 
