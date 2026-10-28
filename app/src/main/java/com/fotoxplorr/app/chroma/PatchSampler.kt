@@ -29,12 +29,14 @@ internal class Patch(
  * Robust sampling of a plain area of a frame.
  *
  * A pixel is left out when any channel is at or above [CLIP_CODE] (the sensor or the JPEG clipped
- * it, so its true level is higher and unknowable) or when every channel is below [DARK_CODE] (the
- * black level and the noise floor dominate). The remaining pixels give a per-channel median, which
- * ignores a speck of dust, a hair, a highlight, or a stray edge pixel that a mean would let through.
+ * it, so its true level is higher and unknowable). Dark pixels are KEPT: on a dark surface the codes
+ * scatter about the floor, and dropping the low ones would leave a median taken over the noisy upper half,
+ * too light. The remaining pixels give a per-channel median, which ignores a speck of dust, a hair, a
+ * highlight, or a stray edge pixel that a mean would let through.
  *
  * It REFUSES rather than guess (a patch's evenness is judged only above [EVENNESS_MIN_LUMINANCE]): more than [MAX_CLIPPED_SHARE] of the patch clipped is [Refusal.CLIPPED];
- * fewer than half of the pixels usable is [Refusal.TOO_DARK]; a patch whose luminance spread is wider
+ * a median brightest-channel code below [DARK_CODE] (where the black level and the noise floor dominate)
+ * is [Refusal.TOO_DARK]; a patch whose luminance spread is wider
  * than [MAX_UNEVENNESS] times its median (two surfaces, a shadow edge) is [Refusal.UNEVEN].
  *
  * Very large regions are subsampled on a regular grid to about [MAX_SAMPLES] pixels; medians of a
@@ -44,11 +46,10 @@ internal object PatchSampler {
     /** A pixel with a channel at or above this code is treated as clipped (sRGB 250 is linear 0.96). */
     const val CLIP_CODE = 250
 
-    /** A pixel whose brightest channel is below this code is treated as crushed to black. */
+    /** A patch whose median brightest-channel code is below this is crushed to black: too dark to read. */
     const val DARK_CODE = 8
 
     const val MAX_CLIPPED_SHARE = 0.10
-    const val MIN_USED_SHARE = 0.5
     const val MAX_UNEVENNESS = 0.6
     const val MAX_SAMPLES = 90_000
     const val MIN_SAMPLES = 64
@@ -58,8 +59,8 @@ internal object PatchSampler {
 
     /**
      * @param keepDark true for an AMBIENT frame: a room with no light is a true answer there (the
-     *   frame is black and the whole flash frame is the flash's), so dark pixels are kept, not
-     *   rejected, and the frame is never refused as too dark. Clipping is still refused.
+     *   frame is black and the whole flash frame is the flash's), so the frame is never refused as too
+     *   dark. Clipping is still refused.
      */
     fun sample(frame: ChromaFrame, region: PatchRegion = PatchRegion.CENTRE, keepDark: Boolean = false): Answer<Patch> {
         val x0 = (region.left * frame.width).toInt().coerceIn(0, frame.width - 1)
@@ -90,7 +91,7 @@ internal object PatchSampler {
                 seen++
                 if (top >= CLIP_CODE) {
                     clipped++
-                } else if (keepDark || top >= DARK_CODE) {
+                } else {
                     r[used] = ColourSpace.decode(pr)
                     g[used] = ColourSpace.decode(pg)
                     b[used] = ColourSpace.decode(pb)
@@ -104,7 +105,8 @@ internal object PatchSampler {
         if (seen < MIN_SAMPLES) return Answer.Refused(Refusal.TOO_SMALL)
         val clippedShare = clipped.toDouble() / seen
         if (clippedShare > MAX_CLIPPED_SHARE) return Answer.Refused(Refusal.CLIPPED)
-        if (!keepDark && used < seen * MIN_USED_SHARE) return Answer.Refused(Refusal.TOO_DARK)
+        val medCode = codes.copyOf(used).also { it.sort() }[used / 2]
+        if (!keepDark && medCode < DARK_CODE) return Answer.Refused(Refusal.TOO_DARK)
 
         val rs = r.copyOf(used).also { it.sort() }
         val gs = g.copyOf(used).also { it.sort() }
@@ -114,7 +116,6 @@ internal object PatchSampler {
         val evenness = if (medLum >= EVENNESS_MIN_LUMINANCE) (quantile(lum, 0.75) - quantile(lum, 0.25)) / medLum else 0.0
         if (evenness > MAX_UNEVENNESS) return Answer.Refused(Refusal.UNEVEN)
 
-        val medCode = codes.copyOf(used).also { it.sort() }[used / 2]
         val floor = ColourSpace.stepAt(medCode) / 3.0
         val medians = doubleArrayOf(median(rs), median(gs), median(bs))
         val sorted = arrayOf(rs, gs, bs)

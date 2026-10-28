@@ -67,6 +67,32 @@ class PatchSamplerTest {
     }
 
     @Test
+    fun aDarkSurfacesNoisyLowHalfIsKeptSoTheMedianIsNotPulledUp() {
+        // Black cloth under the torch: codes scatter about the floor. Half the pixels read 7 and half 9; dropping
+        // the ones under 8 would report 9 and make the surface (and its flash difference) too light.
+        val f = ChromaTestKit.flat(8, 8, 8)
+        for (y in 0 until f.height) for (x in 0 until f.width) {
+            val code = if ((x + y) % 2 == 0) 7 else 9
+            f.argb[y * f.width + x] = ChromaTestKit.argb(code, code, code)
+        }
+        val p = value(PatchSampler.sample(f))
+        val honest = (ColourSpace.decode(7) + ColourSpace.decode(9)) / 2.0
+        assertEquals(honest, p.linear.g, 1e-12)
+        assertTrue(p.linear.g < ColourSpace.decode(9))
+        assertEquals(400, p.used)
+    }
+
+    @Test
+    fun aPatchWhoseMedianIsBelowTheFloorIsTooDarkWhateverTheBrighterPixelsSay() {
+        val f = ChromaTestKit.flat(5, 5, 5)
+        // A third of the patch is a brighter speck: the middle pixel is still under the floor.
+        for (y in 0 until f.height) for (x in 0 until f.width) if (x % 3 == 0) f.argb[y * f.width + x] = ChromaTestKit.argb(60, 60, 60)
+        assertEquals(Refusal.TOO_DARK, reason(PatchSampler.sample(f)))
+        // Just at the floor is readable.
+        assertTrue(PatchSampler.sample(ChromaTestKit.flat(PatchSampler.DARK_CODE, PatchSampler.DARK_CODE, PatchSampler.DARK_CODE)) is Answer.Value)
+    }
+
+    @Test
     fun anAmbientFrameOfAnUnlitRoomIsKeptWhenAskedTo() {
         val black = ChromaTestKit.flat(0, 1, 0)
         assertEquals(Refusal.TOO_DARK, reason(PatchSampler.sample(black)))
