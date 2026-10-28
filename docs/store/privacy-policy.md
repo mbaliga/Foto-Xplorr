@@ -6,7 +6,7 @@
 > permission (versionCode 5): until then it still describes an audio library and
 > background playback that no longer exist.
 
-**Last updated: 21 October 2026**
+**Last updated: 28 October 2026**
 
 Fotoz (previously called Foto Xplorr) is a photo and video gallery and editor for
 Android (package `com.fotoxplorr.app`), made by A System of Cells. It can see every
@@ -29,7 +29,8 @@ network request even if it wanted to.
 
 The app reads the photos and videos already on your device to show, organise and
 edit them. That is the whole reason it asks for media access. It does not ask for
-access to your music or other audio files, and it has no audio library.
+access to your music or other audio files, and it has no audio library. (One tool lets you
+pick a single sound file to put under a video; see "The camera, and a sound file" below.)
 
 - **Nothing is uploaded.** There is no cloud, no sync and no backup.
 - **Nothing is used to train anything.**
@@ -82,6 +83,23 @@ Separately, an optional compass view can use your device's **current** location
 that screen is open, and never logged, stored, or sent anywhere. The map itself is
 **offline**: it downloads no tiles and contacts no map service.
 
+## The camera, and a sound file
+
+The camera is used by **one optional tool, Chroma ID**, which reads the colour of a surface
+from two pictures, one with the phone's torch off and one with it on. Fotoz asks for the
+camera permission when you open that tool, never when the app starts. The camera is open only
+while that tool is on screen. The two pictures are small, are kept in memory for a few seconds
+while the colour is worked out, are then erased, and are **never saved and never sent
+anywhere**. The tool keeps only the colours it measured (a colour, how it was measured and a
+time; the last 50) in the app's private storage, with a button to delete them all. No picture
+and no place is kept. No other part of Fotoz uses the camera, and Fotoz does not use the
+microphone.
+
+The reel maker can put **one sound file you choose** under the video it makes. You pick the
+file with Android's own file picker, so Fotoz needs no audio permission and cannot see your
+other music. The file is read only while the video is being made, and nothing is played back
+in Fotoz. The new video is saved on your device; nothing is sent anywhere.
+
 ## Organising is reversible
 
 Collections group your media without moving the underlying files. A move copies the
@@ -112,7 +130,7 @@ storage. Your audio files themselves are never touched.
 ## Permissions, and why each exists
 
 This is the permission list of the offline build's merged manifest, as built. There
-is no audio permission and no media-playback service.
+is no audio permission, no microphone permission and no media-playback service.
 
 | Permission | Why |
 |---|---|
@@ -122,6 +140,7 @@ is no audio permission and no media-playback service.
 | `ACCESS_MEDIA_LOCATION` | So the location embedded in your own photos is not redacted by the system before the app reads it. |
 | `ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION` | Only for the optional compass view, only while it is open. |
 | `WRITE_EXTERNAL_STORAGE` (Android 9 and below only) | Needed on those versions to save an edit, a conversion, or a metadata change; newer Android handles this per-file instead. |
+| `CAMERA` | Only for the optional Chroma ID tool, only while it is open. Optional: Fotoz installs and works on a phone with no camera. |
 | `POST_NOTIFICATIONS` | To show progress for a conversion, export or copy while the app is in the background. On Android 13 and later the app asks once, the first time such a job runs. |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `FOREGROUND_SERVICE_MEDIA_PROCESSING` | To keep a long conversion, export or copy running, with a visible notification, if you leave the app. |
 | `WAKE_LOCK` | Added automatically by the video player library the app is built with. The app's own code does not hold a wake lock. |

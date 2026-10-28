@@ -11,16 +11,14 @@ BROWSE
   grouped by month or day and room made so nothing sits under it.
 • Search by filename, folder, media type, tag, date range or camera.
 • Sort by newest, oldest, name or size. Pinch through 1 to 6 columns to a
-  sheet of tiny month stamps; scroll down or sideways; narrow it all to a
-  range of months. Choose what a long press does.
+  sheet of tiny month stamps; scroll down or sideways; narrow it to a range
+  of months.
 • A full-screen viewer with EXIF/XMP details, swipe, zoom, pan, a favourite
   heart, and a slideshow with its own play, pause and skip bar.
-• Choose what shows behind transparent photos: a grid, white or black.
 • A full video player with variable speed, subtitle and audio-track
   selection, gestures, resume position, and Picture-in-Picture.
 • RAW (best effort), SVG, and animated GIF, WebP and AVIF.
-• System, light and dark themes with several accent palettes; tablet and
-  ChromeOS-friendly layouts.
+• Light and dark themes with accent palettes; tablet and ChromeOS layouts.
 
 EDIT
 • A real photo editor: exposure, contrast, highlights/shadows, white balance,
@@ -50,12 +48,15 @@ DISCOVER
 • Location metadata extracted from your own files, on demand, on device.
 • An offline coordinate map that downloads no tiles, plus an optional on-device
   compass view.
-• Experimental extras, all optional: draw a fish and watch it swim, and try
-  pictures on a photo of your wall at real print sizes. Save a print-ready JPEG
-  as a new file, without the place, or send it to your printer. It uses a photo
-  of the wall, not the camera, and asks for no permission.
-• Stitch a panorama: join 2 to 12 side-to-side photos on your phone. Close
-  objects can ghost and it makes no 360 degree spheres. No place is saved.
+• Experimental extras, all optional: draw a fish and watch it swim, and hang
+  pictures on a photo of your wall at real print sizes, saved as a new JPEG
+  without the place or sent to your printer.
+• Stitch a panorama (close objects can ghost), make a reel, a GIF or a mood
+  board, build a palette from your photos, check colours for colour blindness.
+  New files only, with no place saved.
+• Chroma ID reads a surface's colour with the camera and flash. The camera is
+  used only there; its pictures are never saved or sent.
+• No music library. A reel can carry one sound file you pick.
 • In the connect build only: save small map areas to use without a connection.
   Nothing is downloaded until you tap Download, and the map provider then sees
   the area and your IP address.

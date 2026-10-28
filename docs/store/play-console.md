@@ -39,7 +39,7 @@ answers must not be carried over from a previous submission.
 
 The table is the offline flavor's **merged** manifest (`app/build/intermediates/
 merged_manifests/offlineDebug/...`), checked against `app/src/main/AndroidManifest.xml`
-on 21 Oct 2026. Re-check it against a fresh merged manifest before each submission.
+on 21 Oct 2026 (the `CAMERA` row and its three optional camera features were added on 28 Oct 2026 and checked against the merged offlineDebug manifest then: no audio permission, no `INTERNET`). Re-check it against a fresh merged manifest before each submission.
 
 | Permission | Why | Notes |
 |---|---|---|
@@ -49,6 +49,7 @@ on 21 Oct 2026. Re-check it against a fresh merged manifest before each submissi
 | `WRITE_EXTERNAL_STORAGE` | Legacy path for saving an edit/conversion/metadata change. | Carries `android:maxSdkVersion="28"` — Android 9 and below only; every write on newer Android goes through per-file consent instead. |
 | `ACCESS_MEDIA_LOCATION` | Reads GPS embedded in the user's own photos, which Android 10+ otherwise redacts. | This, not `ACCESS_FINE_LOCATION`, is what the metadata/map features actually need — see below. |
 | `ACCESS_COARSE_LOCATION` / `ACCESS_FINE_LOCATION` | A real feature now: an optional on-device compass view orients using the device's current position while that screen is open. | Declared and used; disclose in Data safety as "approximate/precise location, used for App functionality, not shared." |
+| `CAMERA` | The optional Chroma ID tool reads a surface's colour from two small camera pictures (torch off, torch on), asked when the tool is opened and used only while it is on screen. Pictures stay in memory and are erased; nothing is saved or sent (ADR-017). | A regular runtime permission, no special declaration form. Declared with `camera.any`, `camera` and `camera.autofocus` all `required="false"`, so Play does not hide Fotoz from a phone with no camera. **No** microphone or audio permission: the reel maker's sound file comes from the system document picker. |
 | `POST_NOTIFICATIONS` | The progress notification for a conversion, export or copy/move. | Requested once on Android 13+, the first time such a job runs (not at launch, and not for any audio feature). |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `FOREGROUND_SERVICE_MEDIA_PROCESSING` | `JobForegroundService` keeps a conversion/export/copy job alive and cancellable when the app is backgrounded. | Declared service types are `dataSync\|mediaProcessing` only. **The foreground-service declaration form must list data sync and media processing, and no longer media playback.** |
 | `WAKE_LOCK` | Contributed by the Media3 ExoPlayer library's own manifest, not requested by the app (no app code takes a wake lock; the screen stays on during playback through a window flag). | Standard for a video player. It is in the merged manifest, so the policy lists it. |
@@ -69,6 +70,12 @@ leaves the device.
 | Location used but not collected? | Yes — approximate/precise location, App functionality only, not shared, user cannot request deletion because nothing is retained |
 | Encrypted in transit? | N/A — no network permission |
 | Deletion? | Users can delete data in the app (uninstall removes everything the app stored) |
+
+Batch 8 added the camera (Chroma ID) and a picked sound file (reel maker). Neither changes the
+answers above: camera pictures are held in memory and erased, the colour history and the sound file
+stay on the device, so the form still reads **no data collected, no data shared**. Do not tick
+"Photos and videos", "Audio files" or "Audio" as collected; if the form asks about hardware, the
+camera is used by one optional tool and the microphone is not used. Full wording: ADR-017.
 
 Claims that must stay true for this build: photos and videos are never uploaded;
 no remote indexing; similarity, face/pet/identity recognition, and metadata writes
@@ -112,7 +119,8 @@ on ChromeOS.
       release: it must say Fotoz and drop the audio permission and background playback.
 - [ ] Re-answer the **permissions declaration** and **foreground service** forms without
       audio or media playback; re-check **Data safety** (still: no data collected or shared;
-      location used for the compass only, on device).
+      location used for the compass only, on device; the camera used by Chroma ID only, nothing kept
+      but colours, ADR-017). Republish the hosted privacy policy with its new camera and sound-file section.
 - [ ] Screenshots from a **prepared photo library**, not your real one: the
       timeline grid, the editor mid-edit, the video editor, the full-screen viewer with
       metadata, the actions room's quick strip, plus a tablet shot. No Audio screens.
