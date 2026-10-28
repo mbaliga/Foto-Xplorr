@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -49,6 +50,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -68,14 +71,14 @@ import kotlinx.coroutines.withContext
 import com.fotoxplorr.app.ui.HelpCopy
 
 /**
- * Which set of controls the bottom bar is showing.
+ * Which panel hosts the open tool's controls.
  *
- * Grouped the way a photographer works rather than by what the code does: light before colour
- * before detail, because fixing exposure changes what the colour looks like and sharpening before
- * either amplifies whatever you were about to correct. All of them are always offered, in one
- * scrollable strip -- there used to be a Simple/Pro switch beside it, and its layout starved the
- * switch to zero width so Curves could not be reached at all (docs/TRAPS.md, the LazyRow note).
- * [CURVES] sits third because it is the tool people come looking for.
+ * These used to be the tabs of one scrollable strip; the hub ([HubRingPanel]) replaced the strip,
+ * and a tool now names its host here by [ToolSpec.hostTab] (the catalogue's test holds the two in
+ * step). The order is the old strip's: light before colour before detail, because fixing exposure
+ * changes what the colour looks like and sharpening before either amplifies whatever you were
+ * about to correct. [label] is the old tab's name: nothing draws it any more, but the catalogue's
+ * test reads this enum and the titles from this file to keep the hub honest about what exists.
  */
 private enum class EditTool(val label: String) {
     LIGHT("Light"),
@@ -160,9 +163,13 @@ fun EditorScreen(
     var recipe by remember(asset.id) { mutableStateOf(EditRecipe()) }
     var history by remember(asset.id) { mutableStateOf(EditHistory.of(EditRecipe())) }
 
-    // Saveable, so a process kill while the user is mid-edit (the editor is a full-screen host,
-    // and Android reclaims those freely) returns them to the tab they were on rather than Light.
-    var tool by rememberSaveable(stateSaver = EditToolSaver) { mutableStateOf(EditTool.LIGHT) }
+    // The hub: which tool is open, which group page is showing, and what the person uses most. The
+    // page it is on is saveable (a process kill returns to it); the use counts go to SharedPreferences.
+    val hub = rememberHubSession(rememberHubMemoryStore(context))
+    val openSpec = hub.view.openTool
+    val openId = openSpec?.id
+    // The panel that hosts the open tool; null on the hub itself and on a group page.
+    val tool: EditTool? = openSpec?.let { spec -> EditTool.entries.firstOrNull { it.name == spec.hostTab } }
     // Hoisted out of CurvesEditor, which leaves composition whenever another tab is open: state
     // kept inside it would reset to RGB every time the user stepped away and back.
     var curveChannel by rememberSaveable(stateSaver = CurveChannelSaver) { mutableStateOf(CurveChannel.RGB) }
@@ -556,6 +563,7 @@ fun EditorScreen(
                                     val ny = (tap.y - imageRect.top) / imageRect.height
                                     if (nx in 0f..1f && ny in 0f..1f) {
                                         recipe = recipe.copy(heals = recipe.heals + HealSpot(nx, ny, healRadius))
+                                        hub.applied()
                                     }
                                 }
                                 EditTool.CROP -> { /* CropOverlay below owns every gesture here. */ }
@@ -585,7 +593,7 @@ fun EditorScreen(
                             crop = recipe.crop,
                             imageRect = imageRect,
                             lockedAspect = lockedAspect,
-                            onCropChange = { recipe = recipe.copy(crop = it) },
+                            onCropChange = { recipe = recipe.copy(crop = it); hub.applied() },
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
@@ -659,218 +667,280 @@ fun EditorScreen(
                 }
             }
 
-            // ONE strip, full width, scrollable. It used to share a Row with a "Pro tools" chip,
-            // and a LazyRow without a width of its own takes everything the Row offers, so the
-            // chip behind it was measured at nothing and the tabs it controlled were unreachable.
-            LazyRow(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(EditTool.entries.toList(), key = { it.name }) { entry ->
-                    val selected = entry == tool
-                    Text(
-                        entry.label,
-                        color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier
-                            .background(
-                                if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
-                                RoundedCornerShape(50),
-                            )
-                            .clickable { tool = entry }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                    )
-                }
-            }
-
             val adjust = recipe.adjustments
             // Reads `recipe` afresh rather than the `adjust` captured at composition: the curve
             // graph can fire several edits between two recompositions (an insert then a move), and
             // each must build on the one before it, not on the snapshot the first one started from.
+            // Every adjustment a tool makes goes through here, which is also how the hub counts the
+            // first change of an opening as one use.
             fun set(block: Adjustments.() -> Adjustments) {
                 recipe = recipe.copy(adjustments = recipe.adjustments.block())
+                hub.applied()
             }
+            // The open tool is the only one whose control is drawn, so a tool shows its own slider
+            // and not the rest of its old tab's.
+            fun shows(id: String) = openId == id
 
-            // The curve graph is OUTSIDE the scrolling column below, on purpose: a vertical drag
-            // on a control point inside a verticalScroll is contested by the scroll container and
-            // the panel moves instead of the point.
-            if (tool == EditTool.CURVES) {
-                CurvesEditor(
-                    curveFor = { channel -> recipe.adjustments.curveFor(channel) },
-                    onCurveChange = { channel, curve -> set { withCurve(channel, curve) } },
-                    channel = curveChannel,
-                    onChannelChange = { curveChannel = it },
-                    histogram = histogram,
-                    onDragActive = { curveDragging = it },
-                )
-            }
-
-            // Every other tool's controls scroll within a cap, so a tab with many sliders (Light,
-            // Detail, HSL) cannot grow past the photo; the cap leaves the preview at least half
-            // the screen.
+            // The tool chrome. Controls inside a tool scroll within a cap, so a tool with many
+            // sliders (HSL) cannot grow past the photo; the cap leaves the preview at least half
+            // the screen, less the hub's own header and ring.
             val controlsCap = (LocalConfiguration.current.screenHeightDp * CONTROLS_MAX_SCREEN_FRACTION).dp
-            if (tool != EditTool.CURVES) Column(
-                Modifier.heightIn(max = controlsCap).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                when (tool) {
-                    EditTool.LIGHT -> {
-                        // Exposure is in stops, so its range is not the -1..1 the others use: a photo
-                        // that needs rescuing needs two stops, not a fraction of one.
-                        LabelledSlider("Exposure", adjust.exposure, range = -2f..2f, unit = " EV") {
-                            set { copy(exposure = it) }
+            val toolCap = (controlsCap - HUB_CHROME_DP.dp).coerceAtLeast(MIN_TOOL_CAP_DP.dp)
+            HubRingPanel(hub, controlsMaxHeight = controlsCap) { _ ->
+                // The curve graph is OUTSIDE the scrolling column below, on purpose: a vertical drag
+                // on a control point inside a verticalScroll is contested by the scroll container and
+                // the panel moves instead of the point.
+                if (tool == EditTool.CURVES) {
+                    CurvesEditor(
+                        curveFor = { channel -> recipe.adjustments.curveFor(channel) },
+                        onCurveChange = { channel, curve -> set { withCurve(channel, curve) } },
+                        channel = curveChannel,
+                        onChannelChange = { curveChannel = it },
+                        histogram = histogram,
+                        onDragActive = { curveDragging = it },
+                    )
+                } else Column(
+                    Modifier.heightIn(max = toolCap).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    when (tool) {
+                        null -> Unit
+
+                        EditTool.LIGHT -> {
+                            // Exposure is in stops, so its range is not the -1..1 the others use: a photo
+                            // that needs rescuing needs two stops, not a fraction of one.
+                            if (shows(ToolIds.EXPOSURE)) {
+                                LabelledSlider("Exposure", adjust.exposure, range = -2f..2f, unit = " EV") {
+                                    set { copy(exposure = it) }
+                                }
+                            }
+                            if (shows(ToolIds.CONTRAST)) {
+                                LabelledSlider("Contrast", adjust.contrast) { set { copy(contrast = it) } }
+                            }
+                            // Highlights/Shadows/Whites/Blacks are the finer, region-targeted half of tone.
+                            if (shows(ToolIds.HIGHLIGHTS)) {
+                                LabelledSlider("Highlights", adjust.highlights) { set { copy(highlights = it) } }
+                            }
+                            if (shows(ToolIds.SHADOWS)) {
+                                LabelledSlider("Shadows", adjust.shadows) { set { copy(shadows = it) } }
+                            }
+                            if (shows(ToolIds.WHITES)) {
+                                LabelledSlider("Whites", adjust.whites) { set { copy(whites = it) } }
+                            }
+                            if (shows(ToolIds.BLACKS)) {
+                                LabelledSlider("Blacks", adjust.blacks) { set { copy(blacks = it) } }
+                            }
                         }
-                        LabelledSlider("Contrast", adjust.contrast) { set { copy(contrast = it) } }
-                        // Highlights/Shadows/Whites/Blacks are the finer, region-targeted half of tone.
-                        LabelledSlider("Highlights", adjust.highlights) { set { copy(highlights = it) } }
-                        LabelledSlider("Shadows", adjust.shadows) { set { copy(shadows = it) } }
-                        LabelledSlider("Whites", adjust.whites) { set { copy(whites = it) } }
-                        LabelledSlider("Blacks", adjust.blacks) { set { copy(blacks = it) } }
-                    }
 
-                    EditTool.COLOUR -> {
-                        LabelledSlider("Temperature", adjust.temperature) { set { copy(temperature = it) } }
-                        LabelledSlider("Saturation", adjust.saturation) { set { copy(saturation = it) } }
-                        // Tint and Vibrance are the more surgical pair -- a green/magenta cast and a
-                        // saturation boost that spares skin tones.
-                        LabelledSlider("Tint", adjust.tint) { set { copy(tint = it) } }
-                        LabelledSlider("Vibrance", adjust.vibrance) { set { copy(vibrance = it) } }
-                    }
+                        EditTool.COLOUR -> {
+                            if (shows(ToolIds.TEMPERATURE)) {
+                                LabelledSlider("Temperature", adjust.temperature) { set { copy(temperature = it) } }
+                            }
+                            if (shows(ToolIds.SATURATION)) {
+                                LabelledSlider("Saturation", adjust.saturation) { set { copy(saturation = it) } }
+                            }
+                            // Tint and Vibrance are the more surgical pair -- a green/magenta cast and a
+                            // saturation boost that spares skin tones.
+                            if (shows(ToolIds.TINT)) {
+                                LabelledSlider("Tint", adjust.tint) { set { copy(tint = it) } }
+                            }
+                            if (shows(ToolIds.VIBRANCE)) {
+                                LabelledSlider("Vibrance", adjust.vibrance) { set { copy(vibrance = it) } }
+                            }
+                        }
 
-                    EditTool.PRESETS -> {
-                        PresetsPanel(
-                            userPresets = userPresets,
-                            currentAdjustments = adjust,
-                            onApply = { preset -> recipe = recipe.copy(adjustments = preset.adjustments) },
-                            onSaveCurrent = { name -> presetStore.save(name, adjust); refreshPresets() },
-                            onRename = { preset, newName -> presetStore.rename(preset, newName); refreshPresets() },
-                            onDelete = { preset -> presetStore.delete(preset); refreshPresets() },
-                        )
-                    }
+                        EditTool.PRESETS -> {
+                            PresetsPanel(
+                                userPresets = userPresets,
+                                currentAdjustments = adjust,
+                                onApply = { preset ->
+                                    recipe = recipe.copy(adjustments = preset.adjustments)
+                                    hub.applied()
+                                },
+                                onSaveCurrent = { name -> presetStore.save(name, adjust); refreshPresets() },
+                                onRename = { preset, newName -> presetStore.rename(preset, newName); refreshPresets() },
+                                onDelete = { preset -> presetStore.delete(preset); refreshPresets() },
+                            )
+                        }
 
-                    EditTool.DETAIL -> {
-                        // These run neighbourhood passes rather than a lookup, so they are the slow
-                        // ones, grouped together so it is obvious which controls cost time.
-                        LabelledSlider("Sharpen", adjust.sharpen, range = 0f..1f) { set { copy(sharpen = it) } }
-                        LabelledSlider("Clarity", adjust.clarity, range = 0f..1f) { set { copy(clarity = it) } }
-                        LabelledSlider("Denoise", adjust.denoise, range = 0f..1f) { set { copy(denoise = it) } }
-                        LabelledSlider("Vignette", adjust.vignette) { set { copy(vignette = it) } }
-                    }
+                        EditTool.DETAIL -> {
+                            // These run neighbourhood passes rather than a lookup, so they are the slow
+                            // ones, grouped together so it is obvious which controls cost time.
+                            if (shows(ToolIds.SHARPEN)) {
+                                LabelledSlider("Sharpen", adjust.sharpen, range = 0f..1f) { set { copy(sharpen = it) } }
+                            }
+                            if (shows(ToolIds.CLARITY)) {
+                                LabelledSlider("Clarity", adjust.clarity, range = 0f..1f) { set { copy(clarity = it) } }
+                            }
+                            if (shows(ToolIds.DENOISE)) {
+                                LabelledSlider("Denoise", adjust.denoise, range = 0f..1f) { set { copy(denoise = it) } }
+                            }
+                            // Filed under Effects in the hub, hosted here because its maths is the same pass.
+                            if (shows(ToolIds.VIGNETTE)) {
+                                LabelledSlider("Vignette", adjust.vignette) { set { copy(vignette = it) } }
+                            }
+                        }
 
-                    // Drawn above, outside this scrolling column -- see the CurvesEditor call.
-                    EditTool.CURVES -> Unit
+                        // Drawn above, outside this scrolling column -- see the CurvesEditor call.
+                        EditTool.CURVES -> Unit
 
-                    EditTool.HSL -> {
-                        HslPanel(hsl = adjust.hsl, onChange = { set { copy(hsl = it) } })
-                    }
+                        EditTool.HSL -> {
+                            HslPanel(hsl = adjust.hsl, onChange = { set { copy(hsl = it) } })
+                        }
 
-                    EditTool.CROP -> {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(AspectPreset.entries.toList(), key = { it.name }) { preset ->
-                                val selected = preset == selectedAspect
-                                Text(
-                                    preset.label,
-                                    color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    modifier = Modifier
-                                        .background(
-                                            if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
-                                            RoundedCornerShape(50),
-                                        )
-                                        .clickable {
-                                            selectedAspect = preset
-                                            val imageAspect = source?.let {
-                                                if (it.height > 0) it.width.toFloat() / it.height else 1f
-                                            } ?: 1f
-                                            recipe = recipe.copy(
-                                                crop = when (preset) {
-                                                    AspectPreset.FREE -> recipe.crop
-                                                    AspectPreset.ORIGINAL -> CropRect.FULL
-                                                    else -> recipe.crop.fitTo(preset.ratio!!, imageAspect)
-                                                },
+                        EditTool.CROP -> {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(AspectPreset.entries.toList(), key = { it.name }) { preset ->
+                                    val selected = preset == selectedAspect
+                                    Text(
+                                        preset.label,
+                                        color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        // Bold as well as filled: the chosen ratio is not shown by colour alone.
+                                        fontWeight = if (selected) FontWeight.Bold else null,
+                                        modifier = Modifier
+                                            .background(
+                                                if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
+                                                RoundedCornerShape(50),
                                             )
-                                        }
-                                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                                )
+                                            .selectable(selected = selected, role = Role.RadioButton) {
+                                                selectedAspect = preset
+                                                val imageAspect = source?.let {
+                                                    if (it.height > 0) it.width.toFloat() / it.height else 1f
+                                                } ?: 1f
+                                                recipe = recipe.copy(
+                                                    crop = when (preset) {
+                                                        AspectPreset.FREE -> recipe.crop
+                                                        AspectPreset.ORIGINAL -> CropRect.FULL
+                                                        else -> recipe.crop.fitTo(preset.ratio!!, imageAspect)
+                                                    },
+                                                )
+                                                hub.applied()
+                                            }
+                                            .chipHeight()
+                                            .padding(horizontal = 14.dp),
+                                    )
+                                }
                             }
+                            Text(
+                                HelpCopy.Hint.CROP,
+                                color = Color.White.copy(alpha = 0.5f),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
                         }
-                        Text(
-                            HelpCopy.Hint.CROP,
-                            color = Color.White.copy(alpha = 0.5f),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
 
-                    EditTool.ROTATE -> {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = { recipe = recipe.rotatedClockwise() }) {
-                                Text("Rotate 90°", color = Color.White)
+                        EditTool.ROTATE -> {
+                            if (shows(ToolIds.ROTATE)) {
+                                TextButton(
+                                    onClick = { recipe = recipe.rotatedClockwise(); hub.applied() },
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) {
+                                    Text("Rotate 90°", color = Color.White)
+                                }
                             }
-                            TextButton(onClick = { recipe = recipe.copy(flipHorizontal = !recipe.flipHorizontal) }) {
-                                Text(if (recipe.flipHorizontal) "Unflip" else "Flip", color = Color.White)
+                            if (shows(ToolIds.FLIP)) {
+                                TextButton(
+                                    onClick = { recipe = recipe.copy(flipHorizontal = !recipe.flipHorizontal); hub.applied() },
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) {
+                                    Text(if (recipe.flipHorizontal) "Unflip" else "Flip", color = Color.White)
+                                }
                             }
-                            TextButton(onClick = { recipe = EditRecipe(); history = EditHistory.of(recipe) }) {
-                                Text("Reset all", color = Color.White.copy(alpha = 0.7f))
-                            }
-                        }
-                        // "Revert to original" is stronger than "Reset all": it also forgets the
-                        // autosave, so re-opening this photo later starts blank rather than offering
-                        // to continue an edit the user just explicitly threw away.
-                        TextButton(
-                            enabled = !recipe.isIdentity || recipeStore.has(asset),
-                            onClick = {
-                                recipe = recipeStore.revert(asset)
-                                history = EditHistory.of(recipe)
-                            },
-                        ) {
-                            Text("Revert to original", color = Color(0xFFEF5350))
-                        }
-                        // Free rotation, solved as a crop problem rather than refused: dragging this
-                        // past zero exposes triangular gaps at the corners, which EditRenderer hides
-                        // by auto-cropping inward via StraightenGeometry -- so the preview itself is
-                        // already showing exactly what export will produce, corners and all.
-                        LabelledSlider(
-                            "Straighten",
-                            recipe.straightenDegrees,
-                            range = -STRAIGHTEN_LIMIT_DEGREES..STRAIGHTEN_LIMIT_DEGREES,
-                            unit = "°",
-                        ) { recipe = recipe.copy(straightenDegrees = it) }
-                    }
-
-                    EditTool.HEAL -> {
-                        // Ported from PR #9: tap the photograph (handled
-                        // in the preview Box's own pointerInput above) to place a spot, a spot-size
-                        // slider, remove-last / clear-all, and a spot count.
-                        Text(
-                            HelpCopy.Hint.HEAL,
-                            color = Color.White.copy(alpha = 0.7f),
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                        LabelledSlider(
-                            "Spot size",
-                            healRadius,
-                            range = HealSpot.MIN_RADIUS..HealSpot.MAX_RADIUS,
-                        ) { healRadius = it }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(
-                                enabled = recipe.heals.isNotEmpty(),
-                                onClick = { recipe = recipe.copy(heals = recipe.heals.dropLast(1)) },
-                            ) {
-                                Text("Remove last", color = Color.White)
-                            }
-                            TextButton(
-                                enabled = recipe.heals.isNotEmpty(),
-                                onClick = { recipe = recipe.copy(heals = emptyList()) },
-                            ) {
-                                Text("Clear all", color = Color.White.copy(alpha = 0.7f))
-                            }
-                            if (recipe.heals.isNotEmpty()) {
+                            // The two clears are opened like any tool and act on their own button, so
+                            // a mis-tap on a list of tools cannot lose the work (it takes a second
+                            // tap), and neither is ever offered in the hub's centre. After acting,
+                            // the tool closes: there is nothing left to do in it.
+                            if (shows(ToolIds.RESET)) {
                                 Text(
-                                    "${recipe.heals.size} ${if (recipe.heals.size == 1) "spot" else "spots"}",
-                                    color = Color.White.copy(alpha = 0.55f),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    modifier = Modifier.align(Alignment.CenterVertically),
+                                    HubRingCopy.RESET_NOTE,
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    style = MaterialTheme.typography.bodySmall,
                                 )
+                                TextButton(
+                                    onClick = {
+                                        recipe = EditRecipe()
+                                        history = EditHistory.of(recipe)
+                                        hub.applied()
+                                        hub.closeTool()
+                                    },
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) {
+                                    Text("Reset all", color = Color.White.copy(alpha = 0.7f))
+                                }
+                            }
+                            // "Revert to original" is stronger than "Reset all": it also forgets the
+                            // autosave, so re-opening this photo later starts blank rather than offering
+                            // to continue an edit the user just explicitly threw away.
+                            if (shows(ToolIds.REVERT)) {
+                                Text(
+                                    HubRingCopy.REVERT_NOTE,
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                TextButton(
+                                    enabled = !recipe.isIdentity || recipeStore.has(asset),
+                                    onClick = {
+                                        recipe = recipeStore.revert(asset)
+                                        history = EditHistory.of(recipe)
+                                        hub.applied()
+                                        hub.closeTool()
+                                    },
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) {
+                                    Text("Revert to original", color = Color(0xFFEF5350))
+                                }
+                            }
+                            // Free rotation, solved as a crop problem rather than refused: dragging this
+                            // past zero exposes triangular gaps at the corners, which EditRenderer hides
+                            // by auto-cropping inward via StraightenGeometry -- so the preview itself is
+                            // already showing exactly what export will produce, corners and all.
+                            if (shows(ToolIds.STRAIGHTEN)) {
+                                LabelledSlider(
+                                    "Straighten",
+                                    recipe.straightenDegrees,
+                                    range = -STRAIGHTEN_LIMIT_DEGREES..STRAIGHTEN_LIMIT_DEGREES,
+                                    unit = "°",
+                                ) { recipe = recipe.copy(straightenDegrees = it); hub.applied() }
+                            }
+                        }
+
+                        EditTool.HEAL -> {
+                            // Ported from PR #9: tap the photograph (handled
+                            // in the preview Box's own pointerInput above) to place a spot, a spot-size
+                            // slider, remove-last / clear-all, and a spot count.
+                            Text(
+                                HelpCopy.Hint.HEAL,
+                                color = Color.White.copy(alpha = 0.7f),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                            LabelledSlider(
+                                "Spot size",
+                                healRadius,
+                                range = HealSpot.MIN_RADIUS..HealSpot.MAX_RADIUS,
+                            ) { healRadius = it }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(
+                                    enabled = recipe.heals.isNotEmpty(),
+                                    onClick = { recipe = recipe.copy(heals = recipe.heals.dropLast(1)); hub.applied() },
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) {
+                                    Text("Remove last", color = Color.White)
+                                }
+                                TextButton(
+                                    enabled = recipe.heals.isNotEmpty(),
+                                    onClick = { recipe = recipe.copy(heals = emptyList()); hub.applied() },
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) {
+                                    Text("Clear all", color = Color.White.copy(alpha = 0.7f))
+                                }
+                                if (recipe.heals.isNotEmpty()) {
+                                    Text(
+                                        "${recipe.heals.size} ${if (recipe.heals.size == 1) "spot" else "spots"}",
+                                        color = Color.White.copy(alpha = 0.55f),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        modifier = Modifier.align(Alignment.CenterVertically),
+                                    )
+                                }
                             }
                         }
                     }
@@ -1185,17 +1255,27 @@ internal fun LabelledSlider(
     onChange: (Float) -> Unit,
 ) {
     Column {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(label, color = Color.White, style = MaterialTheme.typography.bodyMedium)
                 // Double-tap-free way back to neutral. A slider you can only approach zero on is
-                // a slider you cannot undo, and "close to zero" is visible in a photograph.
+                // a slider you cannot undo, and "close to zero" is visible in a photograph. 48 dp
+                // tall, and named for a screen reader, which would otherwise hear only "reset".
                 if (value != 0f) {
                     Text(
                         "reset",
                         color = Color.White.copy(alpha = 0.4f),
                         style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.clickable { onChange(0f) },
+                        modifier = Modifier
+                            .clickable(role = Role.Button) { onChange(0f) }
+                            .semantics { contentDescription = "Reset $label" }
+                            .heightIn(min = 48.dp)
+                            .wrapContentHeight(Alignment.CenterVertically)
+                            .padding(horizontal = 6.dp),
                     )
                 }
             }
@@ -1224,18 +1304,23 @@ private const val PREVIEW_VIEWPORT_EDGE_PX = 1080
  */
 private const val CONTROLS_MAX_SCREEN_FRACTION = 0.40f
 
+/**
+ * What the hub spends round an open tool: its title and Back row plus the compact ring, about
+ * 48 dp each and the gaps. Taken off the tool's own cap so the whole bottom stays near the
+ * fraction above. Not measured on a device.
+ */
+private const val HUB_CHROME_DP = 104
+
+/** A tool's controls never get less than this to scroll in, even on a very short window. */
+private const val MIN_TOOL_CAP_DP = 120
+
 /** Long edge of the copy of the source the preview is rendered from while a curve point is dragged. */
 private const val DRAG_PREVIEW_EDGE_PX = 640
 
 /** Long edge of the copy the histogram is measured from. A statistic converges long before this. */
 private const val HISTOGRAM_EDGE_PX = 256
 
-/** Tab and channel as their names, so the saved state is a String rather than a private enum. */
-private val EditToolSaver = Saver<EditTool, String>(
-    save = { it.name },
-    restore = { name -> EditTool.entries.firstOrNull { it.name == name } },
-)
-
+/** The curve channel as its name, so the saved state is a String rather than an enum. */
 private val CurveChannelSaver = Saver<CurveChannel, String>(
     save = { it.name },
     restore = { name -> CurveChannel.entries.firstOrNull { it.name == name } },
