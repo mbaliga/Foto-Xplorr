@@ -3,7 +3,7 @@
 Every device-only claim from batch 8, grouped per tool, in the shape of `batch-7-checklist.md`: the colour-vision
 viewer and check, the editor hub, the palette builder, animated pictures (GIF, APNG, MP4), the reel maker, the mood
 board and Chroma ID. See `docs/handoff/MASTER-PROGRESS.md` (Batch 8), `docs/adr/ADR-017-camera-and-soundtrack.md` and
-TRAPS #99 to #124. **Nothing in this batch has run on a device.** Every number below that is not marked "measured" is a
+TRAPS #99 to #125. **Nothing in this batch has run on a device.** Every number below that is not marked "measured" is a
 guess. Unit tests and Robolectric proved wiring, arithmetic on synthetic data and file effects; Roborazzi runs in record
 mode, so no screenshot test proves how anything looks. **None of the lines below is claimed as verified.**
 
@@ -89,14 +89,15 @@ and a plain white card; a tungsten bulb, daylight, an LED lamp.
 
 ## 2. Editor hub (hub-and-ring)
 
-- [ ] **On a phone (360 dp):** the five *Used most* tools plus five ring groups fit with 48 dp targets and no scrolling;
+- [ ] **On a phone (360 dp):** the five *Used most* tools plus five ring groups fit with 48 dp targets (the centre and a group
+      page are capped at the controls height and scroll if they do not fit);
       the centre with two rows of pills + ring + auto-fix chips on the home page, and header + control + compact ring
       with a tool open; the preview keeps close to half of the screen. Curves is the tightest (header 48 + graph +
       channel tabs + 48 ring). `HUB_CHROME_DP = 104` and `MIN_TOOL_CAP_DP = 120` are estimates.
 - [ ] The arc: do the five ring buttons read as a smile cupping the centre, is 14 dp of depth enough or too much, does
       the middle button sit where a one-handed thumb rests?
 - [ ] **On a tablet and in landscape:** the grouped list shows (no ring), every tool present, a deep tool is one scroll
-      and one tap; width 600 dp and up, under 300 dp and landscape all switch to the list. Rotate mid-tool: the switch is
+      and one tap; width 600 dp and up, under 300 dp, height under 560 dp and landscape all switch to the list. Rotate mid-tool: the switch is
       clean, and a group page restored from portrait does not leave a hidden Back step.
 - [ ] **Large fonts:** at 130 percent the labels `Colour`, `Detail`, `Effects` must not ellipsise in a fifth of 328 dp;
       above 130 percent the list shows. At 200 percent the largest group (Light, 4 front + 3 deeper) fits with More
@@ -107,9 +108,11 @@ and a plain white card; a tungsten bulb, daylight, an LED lamp.
 - [ ] Selected group is recognisable without colour (filled pill + bold + underline; a bar under the icon in the compact
       ring); the same for the bold aspect, HSL band and preset chips. Check in greyscale or with the colour-vision filter
       from section 1.
-- [ ] Touch: every pill, Back, More, chip, TextButton and the slider `reset` is 48 dp tall (the panels' chips and buttons
-      are by modifier only). A thumb can hit the compact ring while a slider is mid-drag without nudging the slider.
-- [ ] System Back and the visible Back button step: tool, More, group page, leave the editor. With the Save sheet or the
+- [ ] Touch: every pill, Back, More, chip, TextButton and the slider row (the `reset` row keeps a constant 48 dp height) is 48
+      dp tall, and so are the Curves channel tabs and shortcut chips and the Save-current-preset button (the panels' chips
+      and buttons are by modifier only). A thumb can hit the compact ring while a slider is mid-drag without nudging the slider.
+- [ ] System Back steps: tool, More, group page, leave the editor. The visible Back button on a group page leaves the page in
+      one tap even with More open. With the Save sheet or the
       Continue-editing dialog open Back is still theirs. The gesture-navigation back swipe from the screen edge near the
       ring and near the crop handles.
 - [ ] Process death: kill the app with a tool open on a group page; expect the same tool and page, the same use counts, a
@@ -157,7 +160,8 @@ and a plain white card; a tungsten bulb, daylight, an LED lamp.
       Google Photos, Messages, Gmail, WhatsApp and iOS Safari and Messages: partial delta frames, the transparent index,
       disposal 1 and 2, the 2 cs minimum delay and the loop count. Only the JDK GIF reader and this package's own decoder
       have read the files; **no APNG viewer has**. A plain viewer shows frame 1 of an APNG (saved as `.png`). Does Fotoz's
-      own viewer play the saved `.gif` and `.png`, and how is the saved file listed (`-animation.png`)?
+      own viewer play the saved `.gif` and `.png`, and how is the saved file listed (`-animation.png`; an APNG saved on Android 8 or 9, with no folder, is offered for remaking by
+      that name)?
 - [ ] **Size estimates.** For 3, 10 and 30 photos at GIF, APNG and video, compare `About X MB, could be Y to Z MB` with the
       saved file's real size (the planner was fitted on synthetic scenes; video is a bitrate guess of 0.15 bit per pixel
       with a 400 kbit/s floor). The 4 MiB large-GIF warning threshold: does it feel right on real photos with the
@@ -289,7 +293,7 @@ and a plain white card; a tungsten bulb, daylight, an LED lamp.
       in Layers, the preview draws the grey placeholder, Save is refused naming it, and a lock during a long save means
       nothing is written. Photos moved or restored are found again by name, size and date.
 - [ ] Process death with a board open and a panel up: board, pick and panel return, undo history does not; a board over 200k
-      characters comes back from its autosaved file (the last second of edits is lost). TalkBack: tool chips as tabs, steppers
+      characters comes back on the saved-boards list and opens from its autosaved file (the last second of edits is lost). TalkBack: tool chips as tabs, steppers
       announce their value, layer rows say picked / locked / missing, swatches say names and hex, the board says its layer
       count; every drag has a button equivalent.
 
@@ -300,9 +304,10 @@ Use a printed colour chart or a paint card with known values, and a plain white 
 - [ ] **Against a real colour card under three lights.** For 6 to 10 swatches (including a saturated red, a mid green, a
       pale yellow, a mid grey, a dark brown) take readings **with and without the white card** under **tungsten, daylight and
       an LED lamp**, in a bright room and a dim one. Record the shown hex, the three nearest names and the dE to the card's
-      value (CIEDE2000). Synthetic frames gave a mean dE of 0.4 to 0.8 with the card and about 8 (lightness guessed) without;
-      a real phone is expected to be noticeably worse. With the card: is it within 3? Without: is the hue and chroma usable
-      and does the screen say `Approximate`?
+      value (CIEDE2000). Synthetic frames gave a mean dE of 0.4 to 0.8 with the card; without one the shade is recovered to a mean
+      of about 0.3 with a neutral LED when lightness is set aside, and the shown colour is at a fixed middle lightness. A real
+      phone is expected to be noticeably worse. With the card: is it within 3 to 6? Without: is the hue usable, and does the
+      screen say `Approximate`, show no lightness word and say `How light or dark it is was not measured.`?
 - [ ] **Linearity.** Shoot a grey card at three torch distances and check flash-minus-ambient scales by 1/d^2. How badly do the
       phone's tone curve and local tone mapping break the method? Is raw (DNG) worth building?
 - [ ] Does the phone's torch stay constant between the two frames (no pre-flash or ramp), and can the camera hold exposure,
@@ -323,11 +328,12 @@ Use a printed colour chart or a paint card with known values, and a plain white 
       washed-out warning appears before a measurement would be refused as clipped and clears when stepping back.
 - [ ] The real LED colour: measure the no-card error against a swatch book for the actual phone (the table assumes 15 to 30
       percent LED tint). Is the BT.601 full-range YUV conversion right on real phones?
-- [ ] **Permission and lifecycle.** The dialog appears on first open (not at app start) with the sentence behind it; Ask
-      again and Settings work after a refusal and after `don't ask again`; granting in Settings and coming back opens the
+- [ ] **Permission and lifecycle.** The screen opens with the reason sentence and an Allow button; the dialog comes from the
+      button (not at app start). After one refusal Ask again shows the dialog again; after `don't ask again` only Settings
+      is offered; granting in Settings and coming back opens the
       camera. Pause (home, recents, a phone call, the permission dialog) closes the camera and unregisters the gyroscope;
-      coming back reopens; the system camera app can use the camera right after leaving; rotation restarts the camera cleanly
-      and drops a kept card. The preview is upright in portrait, landscape and reverse landscape (the white box sits over
+      coming back reopens; the system camera app can use the camera right after leaving; turning the phone releases the camera, reopens it for the new orientation and drops a kept
+      card. The preview is upright in portrait, landscape and reverse landscape (the white box sits over
       what is measured).
 - [ ] After a measurement the opaque swatch box covers the live view on every phone (a `SurfaceView` can punch through or
       sit above a Compose sibling) and the camera keeps running behind it so `Measure again` is instant; the swatch matches
@@ -356,3 +362,158 @@ Use a printed colour chart or a paint card with known values, and a plain white 
 - [ ] Protected folder and sensitive photos: none of the tools shows them; locking a folder while a tool is open refuses the
       next save, preview or export with the tool's own sentence.
 - [ ] The Experimental page shows the two new privacy lines and they are true for the build in your hand.
+
+## 9. After the audit fixes
+
+Added after each tool was audited, fixed and reviewed. **None of these has been run; every line is unverified until it is.**
+They check the fixes above, not new features. Where a line repeats a figure, it is a guess.
+
+### 9a. Colour vision
+
+- [ ] Time the exact filter on the 3 MP viewer picture and on the 12 MP copy on a low-end phone (`encode8` is now a binary
+      search over step edges; nothing has been timed), and the Preview-to-Exact swap on dark and saturated photos.
+- [ ] Corrected copy of a photo in a locked folder: `DCIM/Private` lands beside the original and stays hidden; a locked
+      Download or WhatsApp folder is refused, the save row is greyed with `This photo cannot be copied from its folder.` (does
+      it read as one line on a small phone?). Also try Android 8 and 9, where no folder is set and a locked folder is refused.
+- [ ] Open a photo from the Archive album, turn on a colour filter, tap Save a corrected copy: it saves and shows in the
+      gallery. A trashed photo: if it cannot be decoded from the trash, the person sees `The photo could not be read.`
+- [ ] Lock the folder again while a copy is running: the job fails with `This photo cannot be copied.` and leaves no
+      MediaStore row. Mark the photo sensitive and swipe away mid-copy: the copy is refused with the same sentence.
+- [ ] Corrected copy: check in the gallery details that no location is present; a transparent PNG stays transparent; a WebP
+      stays WebP; a HEIC gives JPEG; the names are `-edited.png` and so on.
+- [ ] Daltonize on a landscape with foliage and on a face: does the in-gamut correction still help, with no flat channel? No
+      person has judged whether it helps.
+- [ ] Rough view: open an animated GIF, an SVG and a RAW with a filter on, and read the chip `rough view` and the room
+      caption. Open a HEIC the device cannot decode and read the `Photo not readable` chip and the room line.
+- [ ] Zoom to 6x on a 12 MP photo with a filter on and off: the exact picture is a 2048 px / 3 MP decode and will look softer.
+- [ ] Pattern overlay at 1x and 4x zoom: do the 8 px-period strokes read as distinct patterns (lines, dots, crosses) or as one
+      texture?
+- [ ] TalkBack: turn Name colours on and read `Main colours: ...` in the room; a double-tap on the photo names only the
+      centre point.
+- [ ] Start a copy and turn the filter off from the chip: the Cancel button and the saved or failed notice must still appear.
+- [ ] Plates on real people on a few screens: whether a typical eye ever gets Hard, how often a lookalike slip happens, and
+      whether `You saw every number on this screen.` reads as a clearance next to `A pass does not rule out a mild
+      difference.`
+
+### 9b. Editor hub
+
+- [ ] Heal: drag Spot size away from the default, tap `reset`, tap the photo: no crash, and the radius is the default.
+- [ ] Exposure and every other slider: the first drag away from 0 does not move the slider or resize the photo; every slider
+      row is 48 dp tall at rest (check HSL and Straighten still look acceptable).
+- [ ] Curves on a 640 dp phone and at 1.3x font: how small the photo gets with header, tabs, chips, graph and compact ring;
+      decide whether the graph should shrink.
+- [ ] A 5-inch phone at 1.3x font: the Light group page with More open and the centre (home) page, with and without auto-fix
+      chips; they should scroll inside the cap and not squeeze the photo past usable. Is a 640 dp phone with three-button
+      navigation on the right side of the 560 dp line?
+- [ ] Split-screen portrait (about 360 x 500 dp): the list layout shows and every tool is reachable.
+- [ ] List layout at large font: scroll to Curves or Vignette, open it, press Back: the list is at the same place.
+- [ ] Group page with More open: the labelled Back leaves the page in one tap; the system Back steps More, then the page.
+- [ ] Press Reset all twice, then open Crop and straighten: it is still deeper, not on the front page.
+- [ ] Curves tabs and chips with TalkBack: a tab says selected, chips read as buttons, targets are 48 dp, the selected state
+      is visible in greyscale (bold).
+
+### 9c. Palette builder
+
+- [ ] TalkBack on the contrast grid: each cell reads once as `Colour a on colour b, x to 1, Reads well / Hard to read`, with no
+      separate `Aa` and no bare header digits. On the swatch strip: the swatches are announced as radio buttons in one group.
+- [ ] Phone set to Arabic or Persian: share a palette as GIMP text, paste it into GIMP, Inkscape and Krita, and confirm the
+      numbers import.
+- [ ] Grey swatch on the Edit page: the Hue buttons look disabled, the caption `A grey has no hue.` shows and is spoken, and
+      Saturation raises the grey into a colour. After a Saturation step down to 0, where does focus land?
+- [ ] Make two palettes from photos in a row and save each without renaming: the Saved list shows `My palette` and `My palette
+      2`, and the name field shows the new name. Delete a row and check where focus lands.
+- [ ] Name a palette `Mood ===`, background the app and kill the process from the system, then return: the draft and its undo
+      list are back. Swipe the app away from recents instead: the draft is gone (saved state only).
+- [ ] A 12-colour complementary or triad harmony from a very dark or very light colour: no two swatches look identical.
+- [ ] Real recolour of a 12 MP photo: how long it takes (unmeasured).
+
+### 9d. Animated pictures
+
+- [ ] A video whose first frame is missing at t=0 (edit list, first sync frame after 0): the clip animation is made with a
+      later first frame instead of `The video could not be read.` Does a mid-clip gap now jump back to a key frame
+      (`OPTION_CLOSEST_SYNC`) instead of repeating the held frame?
+- [ ] Android 8 and 9 (unscaled read) with a 4K clip on a low-memory phone: `There is not enough memory to make this.` appears
+      at once, not after several step-downs. Does a job that would have fit after one smaller step now fail early?
+- [ ] Kill the app mid video-animation save (swipe away), reopen, start any animation: `animate-staging/frames-*` is gone
+      once older than an hour (adb or Settings > storage).
+- [ ] A real GIF whose last frame has a short row of data: the remade animation keeps all frames and the note reads as
+      damaged, not as a cut.
+- [ ] A 12-photo faded slideshow in the preview, and a 40-photo one as a GIF at the 120-frame cap: every photo shows for its
+      full hold; fades become cuts where frames were dropped.
+- [ ] Android 8 and 9: an APNG saved by this app (default folder) appears under Remake / files.
+- [ ] Cancel an animation of a video clip right at the open moment: no leaked retriever (logcat shows no
+      `MediaMetadataRetriever` finalizer warning).
+
+### 9e. Reel maker
+
+- [ ] Kill the app mid-export, reopen the reel maker, open the Make panel: the `job-*` folder under `cache/reel-staging` is
+      gone once an hour old (`adb shell run-as`); a live export is not touched when the panel is reopened during it.
+- [ ] A truncated or corrupt audio file that passes the `MediaExtractor` probe: the export fails once with the parse error and
+      the sound question appears, with no second render. Repeat with a truncated clip and no sound file: `A photo, clip or
+      sound file could not be read.` With both a clip and a sound, which file does the question blame?
+- [ ] A library with RAW or DNG files: the draft and the picker do not offer them; a GIF as a still exports as its first
+      frame. On Android 8 and 9, a HEIC (and below Android 12 an AVIF): is it still offered and does it fail the whole video?
+- [ ] Replace and remove a sound file, then delete a reel: the persisted grant count (`dumpsys` or
+      `ContentResolver.getPersistedUriPermissions`) drops, and the backup folder grant is still there. Kill the app within a
+      second of replacing a sound file: does the saved reel still name a file it can read?
+- [ ] A sound shorter than the reel: `The sound ends before the video does.` shows and the fade lands at the file end. A
+      clip with no audio track plus `keep the clips' sound`: the result line matches the MP4.
+- [ ] An Original-shape reel whose first photo is stored sideways with an EXIF turn: compare the editor preview frame with the
+      exported video's orientation.
+- [ ] A reel name with an emoji at character 60 and at character 100: the saved file name in `Movies/Fotoz/Reels` shows no
+      replacement character.
+
+### 9f. Mood board
+
+- [ ] Add a portrait phone photo (EXIF-rotated) and a landscape one: the boxes are the right shape, nothing is squeezed, the
+      export matches the screen; add 20 or more photos and note how long Add takes to close the picker. Tap Add photo,
+      Back, Add photo again during the read: the old add does not land in the new picker.
+- [ ] Open an old board that has a portrait photo: it shows centre-cropped, not squeezed, in its landscape box.
+- [ ] Open a saved board, wait, go back: its place in the list does not jump to the top. Open a board from a newer build or
+      with a damaged layer, change nothing, leave, reopen: the file is unchanged. Do the same after a process kill with
+      the board open.
+- [ ] Kill the process with the editor open and the library not yet loaded: after restore the photos replace the grey
+      placeholders without an edit. Lock a photo's folder with the board open: the preview shows a placeholder for it.
+- [ ] Text in capitals, bold, CJK and emoji at several sizes in a fresh text box: no clipped last line on screen or in the
+      saved file; the selection frame may be shorter than the text.
+- [ ] On an Android 8 or 9 device: a Multiply layer on a transparent background shows in the preview and the PNG.
+- [ ] Colours panel: start Find colours, press Back out of the board, start New board: the Colours panel is empty.
+- [ ] A two-finger pinch on a layer sitting at 13 or 17 degrees: its angle does not jump to 15; a deliberate twist still
+      snaps near 15, 30 and 45.
+- [ ] Tap just outside a layer with a soft edge: it is selected. TalkBack reads the turn buttons (`-15°` and so on) as before.
+- [ ] A photo layer scaled very small near the export edge, locked after the render starts: is it still refused?
+
+### 9g. Chroma ID
+
+- [ ] No card: measure black cloth and white paper in the same room. Both come out as the same middle-lightness swatch with a
+      similar shade, with no lightness word and `How light or dark it is was not measured.` on the card; the hue is still
+      right; the nearest name is grey, never Black or White.
+- [ ] After a no-card reading, press Measure again: the preview is not near-black in a dim room, and the distance hint,
+      washed-out warning and bright-room flag react again within about a second.
+- [ ] Same dark surface read with and without a card, then Compare: it says too close to call, not `more vivid`. A dark surface in
+      a no-flash room reading: the strength word matches a no-card reading of it.
+- [ ] Home, screen-off or Back in the middle of a measurement, 20 times: no crash (logcat for `IllegalStateException` on
+      `chroma-camera`) and the system camera app opens right away. Back out quickly while the camera is opening: it does not
+      stay `in use`.
+- [ ] Per phone, log `LENS_INFO_FOCUS_DISTANCE_CALIBRATION`, the tone-map modes and the available result keys. On an
+      uncalibrated phone: no live distance hint, and a card reading carries `Assumes the card and the surface were the same
+      distance away.` On an approximate phone: a card at 10 cm and a surface at 13 cm is refused.
+- [ ] Read `TONEMAP_MODE` (and the curve) from the capture results: is the sRGB preset really applied while `CONTROL_MODE` is
+      AUTO and the torch is on? Measure a grey card at three torch distances and check flash-minus-ambient follows 1/d^2. Does
+      asking for fast noise reduction or edge off make any request fail on any phone?
+- [ ] A phone with `CONTROL_AWB_LOCK_AVAILABLE` false and no `MANUAL_SENSOR`: it is refused at open with the new sentence, or
+      (if it reports gains) does `LOCK_SLIPPED` fire?
+- [ ] Rotate the phone (0 to 180 degrees, portrait to landscape) with the tool open: the camera restarts, a kept card is
+      dropped (the stopped note), and the preview is upright and not stretched. Rotate on the result card: the colour
+      stays. Rotate during a measurement: it cancels cleanly.
+- [ ] Permission: a fresh install shows the reason and the Allow button before any dialog. Deny once: Ask again shows the
+      dialog again. Deny again or choose `don't ask again`: only Settings is offered, and granting there then returning opens
+      the camera.
+- [ ] Delete all readings from the history, then Back to measuring: no colour is left on screen, in Compare or in the palette
+      save view.
+- [ ] A very dark surface (black cloth) in a dim room with the torch on: is it refused as too dark, or read without a light
+      bias? Does the flash patch sit above code 8?
+- [ ] A grey card (0.18) and tinted paper used as the card: the result still reads `With card` and is off, as the notes say;
+      decide whether a reflectance setting is wanted.
+- [ ] Save a no-card colour to a palette: the palette holds it at the fixed middle lightness with nothing on the palette
+      page saying so.
