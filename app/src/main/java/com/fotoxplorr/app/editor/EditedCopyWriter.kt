@@ -95,6 +95,11 @@ class EditedCopyWriter(context: Context) {
      * the size actually written when encoding [bitmap] ran out of memory and a smaller rung of
      * [exportEdgeLadder] had to be used instead (a copy is still worth saving smaller).
      *
+     * [keepLocation] is true for the editor's own copy beside the original, which carries the
+     * photo's place like the original does. A caller that makes a copy the person did not ask to
+     * carry the place passes false, and no `GPS*` tag and no XMP location reaches the new file
+     * (the same strip [saveTo] makes, without its proof read).
+     *
      * @return the new file's content Uri.
      */
     suspend fun save(
@@ -104,13 +109,14 @@ class EditedCopyWriter(context: Context) {
         quality: Int = format.exportQuality(),
         onMetadata: (MetadataCopy) -> Unit = {},
         onSteppedDown: (width: Int, height: Int) -> Unit = { _, _ -> },
+        keepLocation: Boolean = true,
     ): Result<Uri> = withContext(Dispatchers.IO) {
         runCatching {
             val staged = encodeSteppingDown(bitmap, format, quality)
             val tempFile = staged.file
             try {
                 if (staged.steppedDown) onSteppedDown(staged.width, staged.height)
-                onMetadata(applySourceMetadata(source, tempFile, format))
+                onMetadata(applySourceMetadata(source, tempFile, format, keepLocation))
 
                 val name = editedName(source.displayName, format)
                 val values = ContentValues().apply {

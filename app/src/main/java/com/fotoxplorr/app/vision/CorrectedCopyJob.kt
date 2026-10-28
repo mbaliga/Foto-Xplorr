@@ -77,9 +77,13 @@ internal class CorrectedCopyNoSpaceException(cause: Throwable? = null) : IOExcep
  * ## What the copy carries
  * The sink is the editor's own writer ([com.fotoxplorr.app.editor.EditedCopyWriter.save]), so the
  * copy has what an edited copy has: the original's EXIF, XMP and capture date, orientation reset to
- * upright. That includes the place a photo was taken, exactly as the editor's Save does for a copy
- * kept in this library; it is NOT the stripped export of `saveTo`. The name is the original's stem
- * plus `-edited`, because that writer has one marker.
+ * upright. It does NOT carry the place the photo was taken: the sink passes `keepLocation = false`
+ * (no `GPS*` tag and no XMP location), because nobody asked for a copy that can be shared with the
+ * place in it. The format is the original's (JPEG, PNG or WebP; JPEG for anything else), so a
+ * transparent picture stays transparent. The name is the original's stem plus `-edited`, because
+ * that writer has one marker. The copy lands beside the original only where MediaStore accepts
+ * that folder, and otherwise in `Pictures/Fotoz/`; a photo in a locked folder is only copied where
+ * it would land in that folder ([colourVisionCopyAllowed]).
  *
  * ## Cancel and process death
  * Cancelling stops the job between bands of rows and before the file is made. Nothing is saved if the

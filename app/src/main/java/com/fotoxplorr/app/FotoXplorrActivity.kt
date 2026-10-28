@@ -127,6 +127,7 @@ import com.fotoxplorr.app.video.VideoConversionWriter
 import com.fotoxplorr.app.videoeditor.VideoEditorScreen
 import com.fotoxplorr.app.viewer.ExternalViewerActivity
 import com.fotoxplorr.app.viewer.ViewerScreen
+import com.fotoxplorr.app.vision.colourVisionCopyAllowed
 import com.fotoxplorr.core.model.MediaId
 import dev.aarso.crashrecovery.CrashRecovery
 import kotlinx.coroutines.Dispatchers
@@ -1654,6 +1655,18 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     selectedAssetId = picked.id
                     slideshowActive = false
                 }
+            },
+            // The corrected-copy job asks twice (before it reads and before it writes) and a swipe
+            // or a lock can come between, so this reads the stores live, for any photo and not only
+            // the one on screen: the browsable list, the sensitive marks, and a locked folder's copy
+            // landing outside it (TRAPS #33).
+            colourVisionMayCopy = { candidate ->
+                browsableNow(listOf(candidate)).isNotEmpty() &&
+                    colourVisionCopyAllowed(
+                        candidate,
+                        sensitiveStore.observe().value,
+                        privateFolderStore.observeLockedFolders().value,
+                    )
             },
         )
     } else {

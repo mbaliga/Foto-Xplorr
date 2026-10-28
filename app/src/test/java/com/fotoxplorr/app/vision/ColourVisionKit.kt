@@ -14,10 +14,12 @@ internal object ColourVisionKit {
         mime: String = "image/jpeg",
         external: Boolean = false,
         modified: Long = 100L,
+        relativePath: String? = "DCIM/Camera/",
+        uri: String = "content://fake/$id",
     ) = MediaAsset(
-        id = MediaId(id), contentUriString = "content://fake/$id", displayName = name, mimeType = mime,
+        id = MediaId(id), contentUriString = uri, displayName = name, mimeType = mime,
         bucketName = null, dateTakenMillis = 1_700_000_000_000L, dateModifiedSeconds = modified,
-        width = 8, height = 6, sizeBytes = 0, relativePath = "DCIM/Camera/", isFavorite = false, isTrashed = false,
+        width = 8, height = 6, sizeBytes = 0, relativePath = relativePath, isFavorite = false, isTrashed = false,
         isExternal = external,
     )
 
