@@ -22,8 +22,10 @@ internal class FilterError(val maxSteps: Int, val meanSteps: Double)
  * a margin), in 8-bit steps of the worst channel. Over every grid colour the full-severity simulate
  * matrices are off by up to 83 to 89 steps (mean 17 to 19); over muted colours (channels within 30
  * percent of each other, most of a photograph) by up to 27 to 33 steps (mean 2.5 to 3.5). The
- * daltonize matrix is far worse (up to 111 to 117 steps overall, 91 to 103 over muted colours, mean
- * about 10 over muted) because its gain pushes more colours past the gamut edge.
+ * daltonize matrix is far worse against the exact correction, which is scaled per colour to stay in
+ * the gamut ([Daltonizer.fitInto]) where a colour matrix can only clamp: up to 227 to 242 steps over
+ * every grid colour (a saturated colour the exact path leaves almost alone is thrown to the edge by
+ * the matrix), 60 to 61 over muted colours, mean 10 to 13 over muted.
  *
  * So: [simulate] is acceptable as a LIVE PREVIEW of a photo; [daltonize] as a filter is only a rough
  * hint; anything the person saves or shares must use the exact per-pixel path ([Simulation.simulateAll],

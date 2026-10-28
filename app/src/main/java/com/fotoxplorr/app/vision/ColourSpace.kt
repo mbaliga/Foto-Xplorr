@@ -18,6 +18,11 @@ internal class Lab(val l: Double, val a: Double, val b: Double) {
 internal object ColourSpace {
     private val DECODE = DoubleArray(256) { toLinear(it / 255.0) }
 
+    // The linear value at which the 8-bit sRGB result steps from k to k + 1, i.e. where the encoded
+    // value is (k + 0.5) / 255. encode8 counts how many of these a value has reached, which is the
+    // rounded curve without a pow per channel (a 12 MP copy has 36 million channels to encode).
+    private val STEP_EDGES = DoubleArray(255) { toLinear((it + 0.5) / 255.0) }
+
     // Linear sRGB -> XYZ (D65), IEC 61966-2-1.
     private const val XR = 0.4124564
     private const val XG = 0.3575761
@@ -46,8 +51,19 @@ internal object ColourSpace {
     /** One 8-bit sRGB channel to linear. */
     fun decode8(v: Int): Double = DECODE[v and 0xFF]
 
-    /** Linear to one 8-bit sRGB channel, rounded and clamped. */
-    fun encode8(v: Double): Int = (fromLinear(v) * 255.0 + 0.5).toInt()
+    /**
+     * Linear to one 8-bit sRGB channel, rounded and clamped (NaN gives 0). The same step the curve
+     * `round(fromLinear(v) * 255)` gives, found by a binary search of [STEP_EDGES] instead of a power.
+     */
+    fun encode8(v: Double): Int {
+        var lo = 0
+        var hi = STEP_EDGES.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (v >= STEP_EDGES[mid]) lo = mid + 1 else hi = mid
+        }
+        return lo
+    }
 
     fun red(argb: Int) = (argb shr 16) and 0xFF
     fun green(argb: Int) = (argb shr 8) and 0xFF

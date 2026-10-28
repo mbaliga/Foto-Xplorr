@@ -38,7 +38,6 @@ internal object ColourVisionRenderer {
     suspend fun filter(src: Bitmap, key: FilterKey, onProgress: (Float) -> Unit = {}): Bitmap {
         val width = src.width
         val height = src.height
-        val matrix = key.matrix()
         val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         var finished = false
         try {
@@ -49,7 +48,7 @@ internal object ColourVisionRenderer {
                 currentCoroutineContext().ensureActive()
                 val n = min(rows, height - y)
                 src.getPixels(band, 0, width, 0, y, width, n)
-                for (i in 0 until n * width) band[i] = ColourSpace.applyLinear(matrix, band[i])
+                key.applyTo(band, n * width)
                 out.setPixels(band, 0, width, 0, y, width, n)
                 y += n
                 onProgress(y.toFloat() / height)

@@ -101,6 +101,18 @@ internal data class FilterKey(val deficiency: Deficiency, val kind: VisionKind, 
         VisionKind.HELP -> Daltonizer.matrix(deficiency, severity)
     }
 
+    /**
+     * Filters the first [count] pixels of [pixels] in place by the exact path: a simulation is the
+     * clamped matrix product, a correction stays inside the gamut ([Daltonizer.fitInto]).
+     */
+    fun applyTo(pixels: IntArray, count: Int) {
+        val m = matrix()
+        when (kind) {
+            VisionKind.SIMULATE -> for (i in 0 until count) pixels[i] = ColourSpace.applyLinear(m, pixels[i])
+            VisionKind.HELP -> Daltonizer.daltonizeInPlace(pixels, count, m)
+        }
+    }
+
     /** The 20-float colour matrix for a live preview only (see [GpuFilter] for how far off it can be). */
     fun previewMatrix(): FloatArray = when (kind) {
         VisionKind.SIMULATE -> GpuFilter.simulate(deficiency, severity)

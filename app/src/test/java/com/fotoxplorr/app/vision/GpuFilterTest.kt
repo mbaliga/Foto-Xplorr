@@ -70,9 +70,11 @@ class GpuFilterTest {
             val all = GpuFilter.error(GpuFilter.daltonize(d), exact)
             val muted = GpuFilter.error(GpuFilter.daltonize(d), exact, mutedOnly = true)
             println("GPU-FILTER daltonize $d all max=${all.maxSteps} mean=${"%.1f".format(all.meanSteps)} muted max=${muted.maxSteps} mean=${"%.1f".format(muted.meanSteps)}")
-            assertTrue("$d all max ${all.maxSteps}", all.maxSteps in 100..125)
-            assertTrue("$d muted max ${muted.maxSteps}", muted.maxSteps in 80..110)
-            assertTrue("$d muted mean ${muted.meanSteps}", muted.meanSteps in 7.0..13.0)
+            // The reference is the in-gamut fit (Daltonizer.fitInto), which a plain clamped matrix cannot match
+            // for a saturated colour, so the worst case is a different picture; photographs sit in the muted rows.
+            assertTrue("$d all max ${all.maxSteps}", all.maxSteps in 200..260)
+            assertTrue("$d muted max ${muted.maxSteps}", muted.maxSteps in 45..75)
+            assertTrue("$d muted mean ${muted.meanSteps}", muted.meanSteps in 8.0..15.0)
         }
     }
 
