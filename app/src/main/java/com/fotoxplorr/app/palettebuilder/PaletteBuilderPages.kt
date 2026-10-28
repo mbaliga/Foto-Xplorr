@@ -19,7 +19,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -99,7 +99,8 @@ internal fun StartPage(
             else -> {
                 if (saved.damaged) item(key = "saved-damaged") { PbCaption(PaletteBuilderCopy.SAVED_DAMAGED) }
                 if (saved.palettes.isEmpty()) item(key = "saved-none") { PbCaption(PaletteBuilderCopy.NO_SAVED) }
-                items(saved.palettes, key = { "saved-" + it.name.lowercase() }) { palette ->
+                // By place, not by name: the store's idea of "the same name" and lower-casing do not always agree, and a repeated key crashes the list.
+                itemsIndexed(saved.palettes, key = { index, _ -> "saved-$index" }) { _, palette ->
                     SavedRow(palette, asking = confirming.equals(palette.name, ignoreCase = true), onOpen = { onOpenSaved(palette) }, onAskDelete = onAskDelete, onDelete = onDelete)
                 }
             }

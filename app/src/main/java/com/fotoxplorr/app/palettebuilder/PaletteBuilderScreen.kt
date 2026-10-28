@@ -176,6 +176,9 @@ internal fun PaletteBuilderScreen(
     /** The draft as it is now, including an edit made a moment ago in the same handler. */
     fun current(): PaletteDraft = saved.reconciled(latestById.keys)
 
+    /** The names in the saved list, so a new palette does not take one by default and replace it on Save. */
+    fun savedNames(): List<String> = savedList?.palettes?.map { it.name }.orEmpty()
+
     fun cancelReading() {
         readJob?.cancel()
         readJob = null
@@ -265,7 +268,7 @@ internal fun PaletteBuilderScreen(
             val outcome = withContext(Dispatchers.Default) { PhotoPalettes.build(chosen, host) { readProgress = it } }
             readJob = null
             when (outcome) {
-                is PhotoPaletteResult.Ready -> edit { it.started(outcome.palette, outcome.sources) }
+                is PhotoPaletteResult.Ready -> edit { it.started(outcome.palette, outcome.sources, savedNames()) }
                 is PhotoPaletteResult.Failed -> readError = outcome.message
             }
         }
@@ -273,7 +276,7 @@ internal fun PaletteBuilderScreen(
 
     fun startFromColour() {
         val argb = ColorMath.parseHex(hex) ?: return
-        edit { it.fromColour(argb) }
+        edit { it.fromColour(argb, savedNames()) }
     }
 
     fun savePalette(name: String) {

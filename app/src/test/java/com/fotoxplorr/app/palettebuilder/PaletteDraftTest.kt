@@ -32,6 +32,18 @@ class PaletteDraftTest {
     }
 
     @Test
+    fun `a new palette takes the first default name no saved palette has`() {
+        val taken = listOf(PaletteBuilderCopy.DEFAULT_NAME, "my PALETTE 2")
+        assertEquals(PaletteBuilderCopy.DEFAULT_NAME, PaletteDraft().fromColour(blue).palette!!.name)
+        assertEquals(PaletteBuilderCopy.DEFAULT_NAME + " 3", PaletteDraft().fromColour(blue, taken).palette!!.name)
+        val made = Palette.of(PaletteBuilderCopy.DEFAULT_NAME, listOf(red, blue))!!
+        assertEquals(PaletteBuilderCopy.DEFAULT_NAME + " 3", PaletteDraft().started(made, listOf(1L), taken).palette!!.name)
+        // A name the person chose is theirs: taking it is how a palette is replaced, and the notice says so.
+        val chosen = Palette.of("Sea", listOf(red, blue))!!
+        assertEquals("Sea", PaletteDraft().started(chosen, listOf(1L), listOf("Sea")).palette!!.name)
+    }
+
+    @Test
     fun `a palette made from photos remembers them, and one opened from the saved list does not`() {
         val made = PaletteDraft().started(palette(red, blue), listOf(7L, 9L))
         assertEquals(listOf(7L, 9L), made.sources)
@@ -372,6 +384,21 @@ class PaletteDraftTest {
             line.replaceFirst("RECOLOUR;", "RECOLOUR;-1;") + "\n", line.replace("11,12", "11,x") + "\n",
         )
         for (text in bad) assertEquals("[$text]", PaletteDraft(), PaletteDraft.decode(text))
+    }
+
+    @Test
+    fun `a name that holds the undo marker still reads back with its colours and undo list`() {
+        for (name in listOf("===", "a===", "Mood ===", "===\u00a0x", "---", "a---", "x ===")) {
+            val p = palette(red, blue, 0xFF00AA00.toInt(), name = name)
+            val d = PaletteDraft().started(p).selecting(1).removed().copy(page = BuilderPage.EDIT)
+            assertEquals("[$name] has undo", 1, d.undo.size)
+            assertEquals("[$name]", d, PaletteDraft.decode(d.encode()))
+            val noUndo = PaletteDraft().started(p)
+            assertEquals("[$name] no undo", noUndo, PaletteDraft.decode(noUndo.encode()))
+            // The earlier palette on the undo list may carry such a name too.
+            val named = d.renamed(name)
+            assertEquals("[$name] renamed", named, PaletteDraft.decode(named.encode()))
+        }
     }
 
     @Test

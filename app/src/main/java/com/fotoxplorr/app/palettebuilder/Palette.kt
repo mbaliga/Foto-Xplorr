@@ -86,6 +86,24 @@ data class Palette(val name: String, val colors: List<PaletteColor>) {
             return cut.trimEnd().ifEmpty { PaletteBuilderCopy.DEFAULT_NAME }
         }
 
+        /**
+         * [name] if no name in [taken] equals it ignoring case (the saved list's own rule), else [name] with
+         * ` 2`, ` 3` ... after it: the first that is free, the number kept inside [MAX_NAME_LENGTH].
+         */
+        fun freeName(name: String, taken: Collection<String>): String {
+            fun isTaken(candidate: String) = taken.any { it.equals(candidate, ignoreCase = true) }
+            if (!isTaken(name)) return name
+            var number = 2
+            while (true) {
+                val suffix = " $number"
+                var head = name.take(MAX_NAME_LENGTH - suffix.length)
+                if (head.isNotEmpty() && Character.isHighSurrogate(head.last())) head = head.dropLast(1)
+                val candidate = cleanName(head.trimEnd() + suffix)
+                if (!isTaken(candidate)) return candidate
+                number++
+            }
+        }
+
         /** A palette from plain colours (alpha dropped, none locked); null when the count is outside 2..12. */
         fun of(name: String, argbs: List<Int>): Palette? =
             if (argbs.size !in MIN_COLORS..MAX_COLORS) null

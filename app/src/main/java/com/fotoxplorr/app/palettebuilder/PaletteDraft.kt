@@ -104,18 +104,24 @@ internal data class PaletteDraft(
 
     // ---- starting and replacing ---------------------------------------------------------------------
 
-    /** A new palette made from photos [from] (or from nothing, an empty list) opens on the edit page. */
-    fun started(made: Palette, from: List<Long> = emptyList()): PaletteDraft =
-        copy(page = BuilderPage.EDIT, palette = made, selected = 0, sources = from, undo = emptyList(), dirty = true, generation = generation + 1)
+    /**
+     * A new palette made from photos [from] (or from nothing, an empty list) opens on the edit page. A palette
+     * still called the default name takes the first free one of [taken] (the saved names), so saving a second
+     * palette made the same way does not silently replace the first; a name the person chose is left alone.
+     */
+    fun started(made: Palette, from: List<Long> = emptyList(), taken: Collection<String> = emptyList()): PaletteDraft {
+        val named = if (made.name == PaletteBuilderCopy.DEFAULT_NAME) made.renamed(Palette.freeName(made.name, taken)) else made
+        return copy(page = BuilderPage.EDIT, palette = named, selected = 0, sources = from, undo = emptyList(), dirty = true, generation = generation + 1)
+    }
 
     /** A palette from the saved list: not dirty, and it carries no photos (the saved text holds only colours). */
     fun opened(saved: Palette): PaletteDraft =
         copy(page = BuilderPage.EDIT, palette = saved, selected = 0, sources = emptyList(), undo = emptyList(), dirty = false, generation = generation + 1)
 
     /** A palette grown from one colour: [START_COLOURS] colours, the neighbours of it round the wheel, the colour first. */
-    fun fromColour(argb: Int): PaletteDraft {
+    fun fromColour(argb: Int, taken: Collection<String> = emptyList()): PaletteDraft {
         val colours = Harmony.generate(argb, HarmonyKind.ANALOGOUS, START_COLOURS)
-        return started(Palette.of(PaletteBuilderCopy.DEFAULT_NAME, colours) ?: return this)
+        return started(Palette.of(PaletteBuilderCopy.DEFAULT_NAME, colours) ?: return this, taken = taken)
     }
 
     // ---- the picked swatch and its numbers ----------------------------------------------------------
@@ -315,7 +321,7 @@ internal data class PaletteDraft(
             val generation = parts[9].toIntOrNull()?.takeIf { it >= 0 } ?: return PaletteDraft()
 
             val body = text.substring(cut + 1)
-            val markAt = body.indexOf(UNDO_MARK)
+            val markAt = markerAt(body)
             val paletteText = if (markAt < 0) body else body.substring(0, markAt)
             val undoText = if (markAt < 0) "" else body.substring(markAt + UNDO_MARK.length)
             val palette = if (paletteText.isBlank()) null else PaletteCodec.decode(paletteText)
@@ -336,6 +342,16 @@ internal data class PaletteDraft(
                 dirty = dirty && palette != null,
                 generation = generation,
             )
+        }
+
+        /**
+         * Where the undo marker line starts in [body], or -1. Only a whole line `===` counts: a palette whose name ends
+         * in `===` writes `name ...===`, which holds the same characters but is not the marker.
+         */
+        private fun markerAt(body: String): Int {
+            if (body.startsWith(UNDO_MARK)) return 0
+            val at = body.indexOf("\n" + UNDO_MARK)
+            return if (at < 0) -1 else at + 1
         }
 
         /** More source ids than this are not kept: a palette is read from six photos at most. */
