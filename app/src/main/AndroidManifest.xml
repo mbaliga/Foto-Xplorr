@@ -66,6 +66,9 @@
     <!-- Held only while the encrypted backup (or its check) runs, so the copy goes on with the screen
          off. A normal permission, no prompt; released when the job ends, and by its own timeout. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Asked for only inside the Chroma ID experiment, when it is opened (never at app start). The
+         pictures it takes stay in memory; the experiment saves and sends nothing. -->
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <uses-feature
         android:glEsVersion="0x00030000"
@@ -75,6 +78,17 @@
         android:required="false" />
     <uses-feature
         android:name="android.hardware.location.gps"
+        android:required="false" />
+    <!-- The CAMERA permission would otherwise imply a required camera and autofocus, and the store
+         would hide the app from phones without one. The camera is only for the Chroma ID experiment. -->
+    <uses-feature
+        android:name="android.hardware.camera.any"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
         android:required="false" />
 
     <!--
