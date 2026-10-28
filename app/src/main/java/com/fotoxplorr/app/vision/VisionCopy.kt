@@ -36,7 +36,8 @@ internal object VisionCopy {
     const val PATTERNS_LABEL = "Patterns"
     const val PATTERNS_NEED_TYPE = "Pick which colours first."
     const val NOT_FOR_VIDEO = "Colour vision is for photos, not video."
-    const val FILTER_ONLY = "Only the colour view works for this file."
+    const val FILTER_ONLY = "Only a rough colour view works for this file."
+    const val UNREADABLE = "This photo could not be read, so it is shown as it is."
     const val SAVE_HELP = "Save a corrected copy"
     const val SAVE_SIMULATED = "Save this view as a copy"
     const val SAVE_CAPTION = "The original stays as it is, and the copy keeps no location."
@@ -47,11 +48,23 @@ internal object VisionCopy {
     const val SEVERITY_SLIDER = "How strong, in steps of ten percent"
     const val WORKING = "Working on the colours."
 
-    /** The chip over the photo while a filter is on; a tap turns it off. */
-    fun badge(deficiency: Deficiency, kind: VisionKind): String = when (kind) {
-        VisionKind.SIMULATE -> "${deficiencyLabel(deficiency)}, as seen"
-        VisionKind.HELP -> "${deficiencyLabel(deficiency)}, adjusted"
+    /**
+     * The chip over the photo while a filter is on; a tap turns it off. A [rough] view is the live
+     * colour-matrix preview that will not be replaced by the exact picture (a file that cannot be read
+     * as one still), off by as much as 80 to 120 steps on saturated or dark colours, so it is not
+     * called "as seen".
+     */
+    fun badge(deficiency: Deficiency, kind: VisionKind, rough: Boolean = false): String = when {
+        rough -> "${deficiencyLabel(deficiency)}, rough view"
+        kind == VisionKind.SIMULATE -> "${deficiencyLabel(deficiency)}, as seen"
+        else -> "${deficiencyLabel(deficiency)}, adjusted"
     }
+
+    /** The chip when the photo could not be read and is shown as it is. */
+    const val BADGE_UNREAD = "Photo not readable, shown as it is"
+
+    /** The main colours of the photo, as a line a screen reader reads (the way to name colours without touching the photo). */
+    fun mainColours(names: List<String>): String = "Main colours: ${names.joinToString(", ")}."
 
     const val BADGE_TURN_OFF = "Turn colour vision off"
 
@@ -107,7 +120,8 @@ internal object VisionCopy {
     const val CHECK_AGAIN = "Try again"
     const val CHECK_WORKING = "Making the pictures."
     const val PLATE_DESCRIPTION = "Coloured dots with a number hidden in them."
-    const val RESULT_TYPICAL = "This looks like typical colour vision on this screen."
+    const val RESULT_TYPICAL = "You saw every number on this screen."
+    const val RESULT_PASS_NOTE = "A pass does not rule out a mild difference."
     const val RESULT_RED_GREEN = "This looks like it may be hard to tell red from green."
     const val RESULT_BLUE_YELLOW = "This looks like it may be hard to tell blue from yellow."
     const val RESULT_MIXED = "This looks mixed, so try again in good light."
@@ -122,7 +136,7 @@ internal object VisionCopy {
     fun resultLines(verdict: CheckVerdict): List<String> {
         val headline = when (verdict) {
             CheckVerdict.Unreliable -> listOf(PLATE_CHECK_SCREEN)
-            CheckVerdict.Typical -> listOf(RESULT_TYPICAL)
+            CheckVerdict.Typical -> listOf(RESULT_TYPICAL, RESULT_PASS_NOTE)
             CheckVerdict.Mixed -> listOf(RESULT_MIXED)
             is CheckVerdict.Hard -> buildList {
                 if (verdict.redGreen) add(RESULT_RED_GREEN)

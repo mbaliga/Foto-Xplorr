@@ -165,6 +165,23 @@ internal object TestPlates {
         return PlateScore(correct, total, controlSeen)
     }
 
+    // The seven strokes of a digit as bits (a top, b top right, c bottom right, d bottom, e bottom left,
+    // f top left, g middle); a 1 is read as its two right-hand strokes, as on a seven-segment display.
+    private val SEGMENTS = intArrayOf(
+        0b0111111, 0b0000110, 0b1011011, 0b1001111, 0b1100110,
+        0b1101101, 0b1111101, 0b0000111, 0b1111111, 0b1101111,
+    )
+
+    /**
+     * Whether [a] and [b] differ by exactly one stroke of a seven-segment digit (3 and 9, 5 and 6,
+     * 6 and 8, 0 and 8, 1 and 7 ...), the slip a typical eye makes on a small, speckled digit. A
+     * digit outside 0..9 looks like nothing, and a digit does not look like itself.
+     */
+    fun looksLike(a: Int, b: Int): Boolean {
+        if (a !in 0..9 || b !in 0..9 || a == b) return false
+        return Integer.bitCount(SEGMENTS[a] xor SEGMENTS[b]) == 1
+    }
+
     private class Segment(val x0: Double, val y0: Double, val x1: Double, val y1: Double)
 
     private fun seg(x0: Double, y0: Double, x1: Double, y1: Double) = Segment(x0, y0, x1, y1)

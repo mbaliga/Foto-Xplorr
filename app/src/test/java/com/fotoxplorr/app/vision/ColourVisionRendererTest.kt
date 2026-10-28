@@ -162,4 +162,31 @@ class ColourVisionRendererTest {
         val b = ColourVisionRenderer.hatch(ColourVisionRenderer.index(src), key)
         assertArrayEquals(a.argb, b.argb)
     }
+
+    @Test
+    fun `the main colours are named biggest first, each name once`() = runBlocking {
+        // Three quarters dark green, a sixth sand, the rest grey-ish white.
+        val green = VisionTestKit.argb(20, 90, 30)
+        val sand = VisionTestKit.argb(226, 202, 118)
+        val white = VisionTestKit.argb(250, 250, 250)
+        val src = ColourVisionKit.bitmap(48, 8) { x, _ -> if (x < 36) green else if (x < 44) sand else white }
+        val names = ColourVisionRenderer.mainColours(ColourVisionRenderer.index(src))
+        assertEquals(3, names.size)
+        assertEquals(names.distinct(), names)
+        assertEquals(ColourNamer.label(green), names[0])
+        assertEquals(ColourNamer.label(sand), names[1])
+        assertEquals(ColourNamer.label(white), names[2])
+    }
+
+    @Test
+    fun `a flat picture has one main colour`() = runBlocking {
+        val names = ColourVisionRenderer.mainColours(ColourVisionRenderer.index(ColourVisionKit.bitmap(10, 10) { _, _ -> VisionTestKit.argb(90, 90, 90) }))
+        assertEquals(1, names.size)
+    }
+
+    @Test
+    fun `an empty index has no main colours`() {
+        val names = ColourVisionRenderer.mainColours(ColourIndexImage(IntArray(0), ByteArray(0), 0, 0))
+        assertTrue(names.isEmpty())
+    }
 }

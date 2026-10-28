@@ -167,4 +167,28 @@ class ColourVisionChoiceTest {
         assertTrue(displayPlan(deutan, ready, exactAllowed = false) is DisplayPlan.Preview)
         assertNotNull((displayPlan(deutan, ready, exactAllowed = false) as DisplayPlan.Preview).matrix)
     }
+
+    @Test
+    fun `a photo that could not be read is drawn as it is, not through a wrong simulation`() {
+        val ready = FilterKey(Deficiency.DEUTAN, VisionKind.SIMULATE, 10)
+        assertTrue(displayPlan(deutan, null, exactAllowed = true, unreadable = true) is DisplayPlan.Original)
+        assertTrue(displayPlan(deutan, ready, exactAllowed = true, unreadable = true) is DisplayPlan.Original)
+        assertTrue(displayPlan(deutan, null, exactAllowed = true, unreadable = false) is DisplayPlan.Preview)
+    }
+
+    @Test
+    fun `the job list is looked up once a library photo has had a filter, and kept for the viewer's life`() {
+        val wanted = RunnerWanted()
+        assertFalse("nobody who never filters pays for the look-up", wanted.update(canSave = true, filtering = false))
+        assertTrue(wanted.update(canSave = true, filtering = true))
+        // Turning the filter off must not drop a copy that is still being made: its notice and its Cancel need the list.
+        assertTrue(wanted.update(canSave = true, filtering = false))
+    }
+
+    @Test
+    fun `a file the library does not own never wants the job list`() {
+        val wanted = RunnerWanted()
+        assertFalse(wanted.update(canSave = false, filtering = true))
+        assertFalse(wanted.update(canSave = false, filtering = false))
+    }
 }

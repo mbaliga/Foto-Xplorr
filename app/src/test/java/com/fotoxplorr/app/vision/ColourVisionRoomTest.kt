@@ -265,6 +265,40 @@ class ColourVisionRoomTest {
     }
 
     @Test
+    fun `a photo that could not be read says it is shown as it is`() {
+        val asset = ColourVisionKit.asset()
+        viewer.update { it.withDeficiency(Deficiency.DEUTAN) }
+        viewer.markUnreadable(PhotoKey(asset))
+        show(asset = asset)
+        compose.onNodeWithText(VisionCopy.UNREADABLE).assertExists()
+    }
+
+    @Test
+    fun `a readable photo does not say that`() {
+        viewer.update { it.withDeficiency(Deficiency.DEUTAN) }
+        show()
+        compose.onNodeWithText(VisionCopy.UNREADABLE).assertDoesNotExist()
+    }
+
+    @Test
+    fun `with names on the main colours are listed as text, the way in that needs no touch on the photo`() {
+        val names = listOf("dark green", "sand", "grey")
+        viewer.update { it.withNaming(true) }
+        viewer.putOriginal(PhotoKey(ColourVisionKit.asset()), ColourVisionKit.bitmap(4, 4) { _, _ -> 0xFF808080.toInt() })
+        viewer.putMainColours(names)
+        show()
+        compose.onNodeWithText(VisionCopy.mainColours(names)).assertExists()
+    }
+
+    @Test
+    fun `with names off the main colours are not listed`() {
+        val names = listOf("sand")
+        viewer.putMainColours(names)
+        show()
+        compose.onNodeWithText(VisionCopy.mainColours(names)).assertDoesNotExist()
+    }
+
+    @Test
     fun `for a video the group is one sentence and no controls`() {
         show(asset = ColourVisionKit.asset(mime = "video/mp4", name = "v.mp4"), support = VisionSupport.NONE)
         compose.onNodeWithText(VisionCopy.ROOM_EYEBROW).assertExists()

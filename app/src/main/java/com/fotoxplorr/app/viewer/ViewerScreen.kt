@@ -1101,6 +1101,7 @@ fun ViewerScreen(
             if (!modeActive && colourSupport != VisionSupport.NONE) {
                 ColourVisionOverlay(
                     viewer = colourVision,
+                    photo = colourPhotoKey,
                     support = colourSupport,
                     container = containerSize,
                     bottomReserve = ViewerChromePolicy.videoBottomInsetDp(filmstripShown).dp,

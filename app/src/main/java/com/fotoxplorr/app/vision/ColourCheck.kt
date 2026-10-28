@@ -52,7 +52,10 @@ internal object ColourCheck {
     /**
      * Reads [answers] (one per picture, null for "I see nothing"; a missing one is not seen). The
      * control missed gives [CheckVerdict.Unreliable]. An axis counts as hard when BOTH of its pictures
-     * were missed: one miss in two is as likely a slip. Either red-green axis counts as red-green.
+     * were missed: one miss in two is as likely a slip. A number read as a lookalike of the right one
+     * ([TestPlates.looksLike]: a 3 read as a 9, a 5 as a 6) is a slip of a typical eye on a small
+     * digit, so it counts as a miss for the run (the verdict is at most mixed) but not toward an axis;
+     * "I see nothing" and any other wrong number count toward it. Either red-green axis counts as red-green.
      */
     fun verdict(plates: List<Plate>, answers: List<Int?>): CheckVerdict {
         val score = TestPlates.score(plates, answers)
@@ -61,9 +64,11 @@ internal object ColourCheck {
         var missed = 0
         plates.forEachIndexed { i, plate ->
             if (plate.control) return@forEachIndexed
-            if (answers.getOrNull(i) != plate.digit) {
+            val answer = answers.getOrNull(i)
+            if (answer != plate.digit) {
                 missed++
-                missedByAxis[plate.axis] = (missedByAxis[plate.axis] ?: 0) + 1
+                val slip = answer != null && TestPlates.looksLike(answer, plate.digit)
+                if (!slip) missedByAxis[plate.axis] = (missedByAxis[plate.axis] ?: 0) + 1
             }
         }
         val redGreen = (missedByAxis[Deficiency.PROTAN] ?: 0) >= PER_AXIS || (missedByAxis[Deficiency.DEUTAN] ?: 0) >= PER_AXIS

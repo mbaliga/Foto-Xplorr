@@ -16,6 +16,16 @@ internal class ColourIndexImage(
     val height: Int,
 )
 
+/** The cluster colours of this picture, the most pixels first (ties by cluster number, so it is stable). */
+internal fun ColourIndexImage.centresByShare(): List<Int> {
+    val counts = IntArray(centres.size)
+    for (b in index) {
+        val id = b.toInt()
+        if (id in counts.indices) counts[id]++
+    }
+    return centres.indices.sortedWith(compareBy({ -counts[it] }, { it })).map { centres[it] }
+}
+
 /**
  * Deterministic k-means in CIE Lab: k-means++ seeding from a seeded generator, then a fixed number of
  * Lloyd passes over an evenly strided sample of at most [SAMPLE] pixels, then every pixel goes to its

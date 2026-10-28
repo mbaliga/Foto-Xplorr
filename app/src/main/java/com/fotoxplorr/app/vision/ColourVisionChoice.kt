@@ -7,8 +7,10 @@ internal enum class VisionKind { SIMULATE, HELP }
  * What the colour-vision control in the viewer's view options holds. One immutable value, so the
  * rules about it ("a pattern needs a type", "strength is one of ten steps") are plain functions a
  * JVM test can hold. It is a per-viewing choice: nothing here is written to a file or to the
- * library, and it is kept while the person swipes the filmstrip and across a rotation
- * ([encode]/[decode] feed the saver), not across closing the viewer or the process being killed.
+ * library, and it is kept while the person swipes the filmstrip, across a rotation and across the
+ * system killing the process behind the screen ([encode]/[decode] feed `rememberSaveable`, which
+ * puts the line into the saved instance state), and lost when the viewer is closed. What was
+ * computed from a photo (pictures, names, the notice) and a copy being made are not kept.
  *
  * @property deficiency which kind of hard-to-see colour to work for, or null for Off.
  * @property severityStep strength in tenths, 1..[STEPS]; [STEPS] is full dichromacy. A stepper and a
@@ -139,13 +141,37 @@ internal sealed interface DisplayPlan {
  * falls back to the live preview, so the screen answers a tap at once.
  *
  * @param exactAllowed false for an image that cannot be shown as one still picture (an animated
- *   one) or whose pixels cannot be read.
+ *   one, a vector, a RAW): only the rough preview is possible, and it stays.
  * @param ready the filter of the exact picture held now, or null for none.
+ * @param unreadable true once a read of a photo that should be readable has failed (the platform
+ *   cannot decode it): the original is drawn rather than a rough preview that would be taken for
+ *   how the colours look.
  */
-internal fun displayPlan(choice: ColourVisionChoice, ready: FilterKey?, exactAllowed: Boolean = true): DisplayPlan {
+internal fun displayPlan(
+    choice: ColourVisionChoice,
+    ready: FilterKey?,
+    exactAllowed: Boolean = true,
+    unreadable: Boolean = false,
+): DisplayPlan {
     val key = choice.filterKey ?: return DisplayPlan.Original
+    if (unreadable) return DisplayPlan.Original
     if (exactAllowed && ready != null && ready.deficiency == key.deficiency && ready.kind == key.kind) {
         return DisplayPlan.Exact(ready)
     }
     return DisplayPlan.Preview(key.previewMatrix())
+}
+
+/**
+ * Whether the viewer wants the app's job list: once a library photo has had a filter on, and then for
+ * as long as the viewer lives. Turning the filter off must not drop the list while a corrected copy
+ * is being made, or the notice about how it ended is lost and the Cancel button goes with it. Nothing
+ * is looked up by anyone who never turns a filter on, nor for a file the library does not own.
+ */
+internal class RunnerWanted {
+    private var seen = false
+
+    fun update(canSave: Boolean, filtering: Boolean): Boolean {
+        if (canSave && filtering) seen = true
+        return canSave && seen
+    }
 }

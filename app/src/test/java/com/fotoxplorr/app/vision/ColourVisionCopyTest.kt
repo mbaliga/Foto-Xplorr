@@ -19,7 +19,8 @@ class ColourVisionCopyTest {
         VisionCopy.CHECK_BLURB, VisionCopy.CHECK_INTRO, VisionCopy.CHECK_SETUP, VisionCopy.CHECK_WORKING,
         VisionCopy.PLATE_DESCRIPTION, VisionCopy.PLATE_DISCLAIMER, VisionCopy.PLATE_QUESTION, VisionCopy.PLATE_CHECK_SCREEN,
         VisionCopy.RESULT_TYPICAL, VisionCopy.RESULT_RED_GREEN, VisionCopy.RESULT_BLUE_YELLOW, VisionCopy.RESULT_MIXED,
-        VisionCopy.RESULT_DOCTOR, VisionCopy.RESULT_VIEWER, VisionCopy.BLURB,
+        VisionCopy.RESULT_DOCTOR, VisionCopy.RESULT_VIEWER, VisionCopy.BLURB, VisionCopy.UNREADABLE,
+        VisionCopy.mainColours(listOf("grey", "sand", "dark green")), VisionCopy.RESULT_PASS_NOTE,
     )
 
     @Test
@@ -48,6 +49,19 @@ class ColourVisionCopyTest {
         assertEquals("Hard to see red, as seen", VisionCopy.badge(Deficiency.PROTAN, VisionKind.SIMULATE))
         assertEquals("Hard to see green, adjusted", VisionCopy.badge(Deficiency.DEUTAN, VisionKind.HELP))
         assertEquals("Hard to see blue, adjusted", VisionCopy.badge(Deficiency.TRITAN, VisionKind.HELP))
+    }
+
+    @Test
+    fun `a rough view says so on the chip, for either kind, and never claims to be as seen`() {
+        assertEquals("Hard to see red, rough view", VisionCopy.badge(Deficiency.PROTAN, VisionKind.SIMULATE, rough = true))
+        assertEquals("Hard to see green, rough view", VisionCopy.badge(Deficiency.DEUTAN, VisionKind.HELP, rough = true))
+        assertFalse(VisionCopy.badge(Deficiency.TRITAN, VisionKind.SIMULATE, rough = true).contains("as seen"))
+    }
+
+    @Test
+    fun `the main colours read as one sentence with every name in it`() {
+        assertEquals("Main colours: grey, sand, dark green.", VisionCopy.mainColours(listOf("grey", "sand", "dark green")))
+        assertEquals("Main colours: grey.", VisionCopy.mainColours(listOf("grey")))
     }
 
     @Test

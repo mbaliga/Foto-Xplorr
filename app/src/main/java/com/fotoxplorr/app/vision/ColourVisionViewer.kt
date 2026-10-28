@@ -114,10 +114,12 @@ internal fun visionSupport(asset: MediaAsset, animated: Boolean): VisionSupport 
 
 /**
  * Everything the viewer holds for the colour-vision tools: the person's [choice] (kept across the
- * filmstrip swipe because the holder is not keyed on the photo, and across a rotation by its saver),
+ * filmstrip swipe because the holder is not keyed on the photo, and across a rotation or the system
+ * killing the process by its saver, which `rememberSaveable` writes into the saved instance state),
  * and, for the photo on screen, what was computed from it. All of that is dropped when the photo
  * changes and none of it is written anywhere: the file, the library and the preferences are not
- * touched.
+ * touched. After a process death only the choice comes back; the pictures, the names, the notice and
+ * a copy that was being made do not.
  *
  * Memory: while anything needs pixels there is one decoded picture of at most [ColourVisionRenderer.VIEW_LIMITS]
  * (about 12 MB), and with a filter on a second of the same size; both are released when the filter,
@@ -157,8 +159,46 @@ internal class ColourVisionViewer(initial: ColourVisionChoice) {
     /** The app's job list, once a library photo has a filter on (see [rememberColourVisionViewer]). */
     var runner: JobRunner? by mutableStateOf(null)
 
-    /** The index of the shown photo, kept so a change of strength re-plans without quantising again. */
-    internal var index: ColourIndexImage? = null
+    private class KeyedIndex(val key: PhotoKey, val image: ColourIndexImage)
+
+    private var indexed: KeyedIndex? by mutableStateOf(null)
+
+    /**
+     * The index of the shown photo, kept so a change of strength re-plans without quantising again.
+     * A state, so the pattern layer is planned when it lands. Readers who know which photo they mean
+     * ask [indexFor].
+     */
+    val index: ColourIndexImage? get() = indexed?.image
+
+    /** The index made for [key], or null when none is held for that photo (and the photo is still the one read). */
+    fun indexFor(key: PhotoKey): ColourIndexImage? = indexed?.takeIf { it.key == key && originalKey == key }?.image
+
+    /**
+     * Keeps [image] as the index of the photo [key] unless the viewer has moved to another photo
+     * meanwhile: it is made off the main thread and can finish after a swipe, and photo A's index
+     * must not give photo B its patterns.
+     */
+    fun putIndex(key: PhotoKey, image: ColourIndexImage) {
+        if (originalKey == key) indexed = KeyedIndex(key, image)
+    }
+
+    /** The names of the shown photo's main colours, biggest share first; empty until the index is made. */
+    var mainColours: List<String> by mutableStateOf(emptyList())
+        private set
+
+    fun putMainColours(value: List<String>) {
+        mainColours = value
+    }
+
+    private var unreadableKey: PhotoKey? by mutableStateOf(null)
+
+    /** Whether the read of [key] failed (the platform could not decode it, or there was no memory). */
+    fun failedToRead(key: PhotoKey): Boolean = unreadableKey == key
+
+    /** Notes that the read of [key] failed, so nothing is drawn through a rough preview as if it were the photo. */
+    fun markUnreadable(key: PhotoKey) {
+        unreadableKey = key
+    }
 
     fun update(change: (ColourVisionChoice) -> ColourVisionChoice) {
         val next = change(choice)
@@ -170,7 +210,8 @@ internal class ColourVisionViewer(initial: ColourVisionChoice) {
     fun putOriginal(key: PhotoKey, value: Bitmap?) {
         original = value
         originalKey = if (value == null) null else key
-        index = null
+        indexed = null
+        mainColours = emptyList()
     }
 
     fun putFiltered(value: FilteredPicture?) {
@@ -196,7 +237,9 @@ internal class ColourVisionViewer(initial: ColourVisionChoice) {
         filtered = null
         hatch = HatchState.Idle
         name = null
-        index = null
+        indexed = null
+        mainColours = emptyList()
+        unreadableKey = null
     }
 
     /**
@@ -264,8 +307,9 @@ internal class ColourVisionViewer(initial: ColourVisionChoice) {
  * - makes the pattern layer ([ColourVisionRenderer.index], [ColourVisionRenderer.hatch]);
  * - clears the colour name and the saved-copy notice after a few seconds.
  *
- * Process death: the choice is saved with the screen's state (rotation) and nothing else is. Nothing
- * here has run on a device.
+ * Process death: the choice is saved with the screen's instance state (a rotation, or the system
+ * killing the process behind the screen) and nothing else is: not the pictures, the names, the
+ * notice or a copy being made. Nothing here has run on a device.
  */
 @Composable
 internal fun rememberColourVisionViewer(asset: MediaAsset, support: VisionSupport, canSave: Boolean): ColourVisionViewer {
@@ -277,7 +321,8 @@ internal fun rememberColourVisionViewer(asset: MediaAsset, support: VisionSuppor
     // The job list, looked up only for a library photo once a filter is on: the viewer opened from
     // another app has no use for it, and nobody who never turns this on pays for the look-up.
     val owner = LocalViewModelStoreOwner.current
-    val wantsRunner = canSave && choice.filtering
+    val wanted = remember { RunnerWanted() }
+    val wantsRunner = wanted.update(canSave, choice.filtering)
     val runner = remember(owner, wantsRunner) {
         if (!wantsRunner) null else runCatching { owner?.let { ViewModelProvider(it)[AppStateViewModel::class.java].jobRunner } }.getOrNull()
     }
@@ -291,6 +336,7 @@ internal fun rememberColourVisionViewer(asset: MediaAsset, support: VisionSuppor
             orNull { decodeUpright(context.applicationContext, asset.contentUri, ColourVisionRenderer.VIEW_LIMITS) }
         }
         viewer.putOriginal(PhotoKey(asset), decoded?.bitmap)
+        if (decoded == null) viewer.markUnreadable(PhotoKey(asset))
     }
 
     val filterKey = choice.filterKey
@@ -306,17 +352,39 @@ internal fun rememberColourVisionViewer(asset: MediaAsset, support: VisionSuppor
         if (out != null) viewer.putFiltered(FilteredPicture(filterKey, out))
     }
 
-    LaunchedEffect(viewer.original, choice.hatching, choice.deficiency, choice.severityStep) {
+    // The colour index, made once for the photo when the names or the patterns need it: the patterns
+    // plan from it and the main colours are read from it. It is kept with the photo it was made for.
+    LaunchedEffect(viewer.original, choice.naming || choice.hatching) {
         val source = viewer.original
-        val deficiency = choice.deficiency
-        if (!choice.hatching || source == null || deficiency == null) {
+        val key = viewer.originalKey
+        if (source == null || key == null || !(choice.naming || choice.hatching)) return@LaunchedEffect
+        if (viewer.indexFor(key) != null) return@LaunchedEffect
+        val made = withContext(Dispatchers.Default) {
+            orNull { ColourVisionRenderer.index(source).let { it to ColourVisionRenderer.mainColours(it) } }
+        }
+        if (made == null) {
             viewer.putHatch(HatchState.Idle)
+            return@LaunchedEffect
+        }
+        viewer.putIndex(key, made.first)
+        if (viewer.indexFor(key) != null) viewer.putMainColours(made.second)
+    }
+
+    LaunchedEffect(viewer.index, choice.hatching, choice.deficiency, choice.severityStep) {
+        val deficiency = choice.deficiency
+        if (!choice.hatching || deficiency == null || viewer.original == null) {
+            viewer.putHatch(HatchState.Idle)
+            return@LaunchedEffect
+        }
+        val image = viewer.originalKey?.let { viewer.indexFor(it) }
+        if (image == null) {
+            // The index is still being made; this runs again when it lands.
+            viewer.putHatch(HatchState.Working)
             return@LaunchedEffect
         }
         viewer.putHatch(HatchState.Working)
         val state = withContext(Dispatchers.Default) {
             orNull {
-                val image = viewer.index ?: ColourVisionRenderer.index(source).also { viewer.index = it }
                 val layer = ColourVisionRenderer.hatch(image, FilterKey(deficiency, choice.kind, choice.severityStep))
                 if (layer.width == 0) {
                     HatchState.NoneAlike
@@ -402,17 +470,23 @@ internal fun ColourVisionPhoto(
     val choice = viewer.choice
     val current = viewer.holds(PhotoKey(asset))
     val ready = viewer.filtered.takeIf { current }
-    val plan = remember(choice.deficiency, choice.kind, choice.severityStep, ready?.key, support) {
+    val unreadable = viewer.failedToRead(PhotoKey(asset))
+    val plan = remember(choice.deficiency, choice.kind, choice.severityStep, ready?.key, support, unreadable) {
         if (support == VisionSupport.NONE) {
             DisplayPlan.Original
         } else {
-            displayPlan(choice, ready?.key, exactAllowed = support == VisionSupport.FULL)
+            displayPlan(choice, ready?.key, exactAllowed = support == VisionSupport.FULL, unreadable = unreadable)
         }
     }
     when (plan) {
         is DisplayPlan.Exact -> {
             val picture = ready?.takeIf { it.key == plan.key }
             if (picture != null) {
+                // The backdrop behind a see-through photo is fitted to the size the picture drew at; the
+                // exact picture is a smaller copy of the same shape, so it reports its own size.
+                LaunchedEffect(picture.bitmap) {
+                    onImageSize?.invoke(androidx.compose.ui.geometry.Size(picture.bitmap.width.toFloat(), picture.bitmap.height.toFloat()))
+                }
                 val image = remember(picture.bitmap) { picture.bitmap.asImageBitmap() }
                 Image(
                     bitmap = image,
@@ -476,6 +550,7 @@ internal fun Modifier.colourMatrixLayer(matrix: FloatArray): Modifier {
 @Composable
 internal fun ColourVisionOverlay(
     viewer: ColourVisionViewer,
+    photo: PhotoKey,
     support: VisionSupport,
     container: IntSize,
     bottomReserve: Dp,
@@ -485,7 +560,12 @@ internal fun ColourVisionOverlay(
         val choice = viewer.choice
         val deficiency = choice.deficiency
         if (deficiency != null && support != VisionSupport.NONE) {
-            val text = VisionCopy.badge(deficiency, choice.kind)
+            // A rough view is the live preview that will not be replaced by the exact picture: say so.
+            val text = if (viewer.failedToRead(photo)) {
+                VisionCopy.BADGE_UNREAD
+            } else {
+                VisionCopy.badge(deficiency, choice.kind, rough = support == VisionSupport.VIEW_ONLY)
+            }
             val off = VisionCopy.BADGE_TURN_OFF
             Box(
                 modifier = Modifier

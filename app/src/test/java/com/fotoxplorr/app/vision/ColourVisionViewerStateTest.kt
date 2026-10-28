@@ -157,4 +157,61 @@ class ColourVisionViewerStateTest {
     private object SaverScopeStub : androidx.compose.runtime.saveable.SaverScope {
         override fun canBeSaved(value: Any): Boolean = true
     }
+
+    // ---- the index belongs to the photo it was made from ----
+
+    private fun indexOf(colour: Int) = ColourIndex.quantize(IntArray(16) { colour }, 4, 4, 2)
+
+    @Test
+    fun `an index made for another photo is not taken`() {
+        val viewer = loaded()
+        val other = PhotoKey(ColourVisionKit.asset(id = 4))
+        viewer.putIndex(other, indexOf(red))
+        assertNull("photo A's index must not land on photo B", viewer.indexFor(key))
+        assertNull(viewer.index)
+    }
+
+    @Test
+    fun `an index made after the viewer moved on is dropped`() {
+        val viewer = loaded()
+        val next = PhotoKey(ColourVisionKit.asset(id = 4))
+        viewer.resetPhoto()
+        viewer.putOriginal(next, halves())
+        viewer.putIndex(key, indexOf(red))
+        assertNull(viewer.indexFor(next))
+        viewer.putIndex(next, indexOf(blue))
+        assertNotNull(viewer.indexFor(next))
+        assertNull("and it is for that photo only", viewer.indexFor(key))
+    }
+
+    @Test
+    fun `a new photo drops the index and the names made from it`() {
+        val viewer = loaded()
+        viewer.putIndex(key, indexOf(red))
+        viewer.putMainColours(listOf("red"))
+        viewer.resetPhoto()
+        assertNull(viewer.index)
+        assertTrue(viewer.mainColours.isEmpty())
+    }
+
+    @Test
+    fun `putting an original again clears what was made from the old one`() {
+        val viewer = loaded()
+        viewer.putIndex(key, indexOf(red))
+        viewer.putOriginal(key, halves())
+        assertNull(viewer.index)
+    }
+
+    // ---- a read that failed ----
+
+    @Test
+    fun `a failed read is remembered for that photo only, and cleared with it`() {
+        val viewer = ColourVisionViewer(ColourVisionChoice(Deficiency.DEUTAN))
+        assertFalse(viewer.failedToRead(key))
+        viewer.markUnreadable(key)
+        assertTrue(viewer.failedToRead(key))
+        assertFalse(viewer.failedToRead(PhotoKey(ColourVisionKit.asset(id = 4))))
+        viewer.resetPhoto()
+        assertFalse(viewer.failedToRead(key))
+    }
 }

@@ -92,6 +92,14 @@ internal object ColourVisionRenderer {
         }
     }
 
+    /**
+     * The names of [image]'s colours, the biggest share of the picture first, each name once: the
+     * non-touch way to ask what colours a photo has. Clusters are by Lab distance, so two clusters can
+     * share a word, and then it is said once.
+     */
+    fun mainColours(image: ColourIndexImage): List<String> =
+        image.centresByShare().map { ColourNamer.label(it) }.distinct()
+
     /** The pattern layer for [image] under [key]: the plan for its type and strength, drawn near screen size. */
     fun hatch(image: ColourIndexImage, key: FilterKey): HatchLayer =
         HatchOverlay.render(image, HatchPlanner.plan(image.centres, key.deficiency, key.severity))

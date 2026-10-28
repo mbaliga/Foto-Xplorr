@@ -120,6 +120,59 @@ class ColourCheckTest {
         assertEquals(CheckVerdict.Hard(redGreen = true, blueYellow = false), ColourCheck.verdict(plates, answers))
     }
 
+    // ---- a typical eye misreading a seven-segment digit ----
+
+    /** A run with chosen digits, so the lookalikes are known: control 1, deutan 3 and 5, protan 8 and 0, tritan 2 and 4. */
+    private val fixed = listOf(
+        Plate(1, Deficiency.DEUTAN, true, emptyList()),
+        Plate(3, Deficiency.DEUTAN, false, emptyList()),
+        Plate(5, Deficiency.DEUTAN, false, emptyList()),
+        Plate(8, Deficiency.PROTAN, false, emptyList()),
+        Plate(0, Deficiency.PROTAN, false, emptyList()),
+        Plate(2, Deficiency.TRITAN, false, emptyList()),
+        Plate(4, Deficiency.TRITAN, false, emptyList()),
+    )
+
+    @Test
+    fun `digits one stroke apart look alike, and others do not`() {
+        val pairs = listOf(3 to 9, 5 to 9, 5 to 6, 6 to 8, 8 to 9, 0 to 8, 1 to 7)
+        for ((a, b) in pairs) {
+            assertTrue("$a and $b", TestPlates.looksLike(a, b))
+            assertTrue("$b and $a", TestPlates.looksLike(b, a))
+        }
+        assertFalse(TestPlates.looksLike(3, 6))
+        assertFalse(TestPlates.looksLike(2, 5))
+        assertFalse(TestPlates.looksLike(4, 7))
+        assertFalse("a digit is not a lookalike of itself", TestPlates.looksLike(3, 3))
+        assertFalse(TestPlates.looksLike(-1, 3))
+    }
+
+    @Test
+    fun `reading a digit as its lookalike on both pictures of an axis is a slip, not a finding`() {
+        // 3 read as 9 and 5 read as 6: the usual misreads of a typical eye on one axis.
+        val answers = listOf<Int?>(1, 9, 6, 8, 0, 2, 4)
+        assertEquals(CheckVerdict.Mixed, ColourCheck.verdict(fixed, answers))
+    }
+
+    @Test
+    fun `seeing nothing on both pictures of an axis is still a finding`() {
+        val answers = listOf<Int?>(1, null, null, 8, 0, 2, 4)
+        assertEquals(CheckVerdict.Hard(redGreen = true, blueYellow = false), ColourCheck.verdict(fixed, answers))
+    }
+
+    @Test
+    fun `a number that is not a lookalike counts as a miss, as before`() {
+        // 3 read as 6 and 5 read as 2: nothing a one-stroke slip explains.
+        val answers = listOf<Int?>(1, 6, 2, 8, 0, 2, 4)
+        assertEquals(CheckVerdict.Hard(redGreen = true, blueYellow = false), ColourCheck.verdict(fixed, answers))
+    }
+
+    @Test
+    fun `one lookalike misread and one nothing on an axis is a slip and a miss, so mixed`() {
+        val answers = listOf<Int?>(1, 9, null, 8, 0, 2, 4)
+        assertEquals(CheckVerdict.Mixed, ColourCheck.verdict(fixed, answers))
+    }
+
     @Test
     fun `a short list of answers counts the rest as not seen`() {
         assertEquals(CheckVerdict.Unreliable, ColourCheck.verdict(plates, emptyList()))
@@ -239,6 +292,16 @@ class ColourCheckTest {
         assertTrue(lines[1].contains("may"))
         assertEquals(VisionCopy.RESULT_RED_GREEN, lines[0])
         assertEquals(VisionCopy.RESULT_BLUE_YELLOW, lines[1])
+    }
+
+    @Test
+    fun `a typical result is not a clearance - it says a pass leaves a mild difference open`() {
+        val lines = VisionCopy.resultLines(CheckVerdict.Typical)
+        assertEquals(VisionCopy.RESULT_TYPICAL, lines[0])
+        assertTrue(lines.contains(VisionCopy.RESULT_PASS_NOTE))
+        assertTrue(VisionCopy.RESULT_PASS_NOTE.contains("mild difference"))
+        assertFalse("the headline does not call the vision typical", VisionCopy.RESULT_TYPICAL.lowercase().contains("typical"))
+        assertFalse(VisionCopy.resultLines(CheckVerdict.Mixed).contains(VisionCopy.RESULT_PASS_NOTE))
     }
 
     @Test

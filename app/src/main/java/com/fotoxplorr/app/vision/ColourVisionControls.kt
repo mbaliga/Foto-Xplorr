@@ -104,6 +104,7 @@ internal fun ColumnScope.ColourVisionRoomSection(
         }
         if (choice.kind == VisionKind.HELP) Caption(VisionCopy.DALTONIZE_NOTE)
         if (support == VisionSupport.VIEW_ONLY) Caption(VisionCopy.FILTER_ONLY)
+        if (viewer.failedToRead(PhotoKey(asset))) Caption(VisionCopy.UNREADABLE)
 
         RoomRow(label = VisionCopy.SEVERITY) {
             HyleStepper(
@@ -147,6 +148,8 @@ internal fun ColumnScope.ColourVisionRoomSection(
     ) {
         RoomToggle(choice.naming, { on -> viewer.update { it.withNaming(on) } }, enabled = readable, description = VisionCopy.NAME_COLOURS)
     }
+    // The way to the names that needs no touch on the photo: the main colours as a line of text.
+    if (choice.naming && viewer.mainColours.isNotEmpty()) Caption(VisionCopy.mainColours(viewer.mainColours))
 
     val patternsOn = readable && choice.filtering
     RoomRow(
@@ -172,12 +175,14 @@ internal fun ColumnScope.ColourVisionRoomSection(
     val block = saveBlock(choice, support, sensitive, canSave, hasRunner = viewer.runner != null)
     RoomRow(
         label = if (choice.kind == VisionKind.HELP) VisionCopy.SAVE_HELP else VisionCopy.SAVE_SIMULATED,
-        caption = when (block) {
-            SaveBlock.NEEDS_TYPE -> VisionCopy.SAVE_NEED_TYPE
-            SaveBlock.SENSITIVE -> VisionCopy.SAVE_SENSITIVE
-            SaveBlock.NOT_PHOTO_FILE -> VisionCopy.FILTER_ONLY
-            SaveBlock.NO_RUNNER -> VisionCopy.SAVE_NO_JOBS
-            null -> if (saving != null) VisionCopy.SAVING else VisionCopy.SAVE_CAPTION
+        caption = when {
+            // A copy already being made is said first, even with the filter turned off since.
+            saving != null -> VisionCopy.SAVING
+            block == SaveBlock.NEEDS_TYPE -> VisionCopy.SAVE_NEED_TYPE
+            block == SaveBlock.SENSITIVE -> VisionCopy.SAVE_SENSITIVE
+            block == SaveBlock.NOT_PHOTO_FILE -> VisionCopy.FILTER_ONLY
+            block == SaveBlock.NO_RUNNER -> VisionCopy.SAVE_NO_JOBS
+            else -> VisionCopy.SAVE_CAPTION
         },
         enabled = block == null && saving == null,
         onClick = { startCorrectedCopy(viewer, asset, context, mayCopy) },
