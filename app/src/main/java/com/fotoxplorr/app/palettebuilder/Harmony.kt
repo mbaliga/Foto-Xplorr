@@ -1,5 +1,7 @@
 package com.fotoxplorr.app.palettebuilder
 
+import kotlin.math.abs
+
 /**
  * The colour-wheel relationships a palette can be grown from a base colour by.
  *
@@ -45,6 +47,13 @@ object Harmony {
     /** How far each extra ring of a hue-rotating kind moves HSL lightness, 0..1. */
     private const val RING_LIGHTNESS_STEP = 0.15
 
+    /** The darkest and lightest HSL lightness a ring may take; black and white themselves are not a ring. */
+    private const val RING_MIN_LIGHTNESS = 0.05
+    private const val RING_MAX_LIGHTNESS = 0.95
+
+    /** How many shifts [ringLightness] looks through: far more than the six rings of twelve colours need. */
+    private const val MAX_RING_SEARCH = 24
+
     private const val MONOCHROME_DARKEST = 15.0
     private const val MONOCHROME_LIGHTEST = 92.0
 
@@ -67,6 +76,23 @@ object Harmony {
     private fun ringShift(ring: Int): Double =
         if (ring == 0) 0.0 else if (ring % 2 == 1) RING_LIGHTNESS_STEP * ((ring + 1) / 2) else -RING_LIGHTNESS_STEP * (ring / 2)
 
+    /**
+     * The lightness of [ring] for a base of lightness [base]. Rings take the shifts of [ringShift] in order, but a
+     * shift that would leave 0.05..0.95 is skipped rather than clamped, so a very dark or light base gets the next
+     * step the other way and no two rings share a lightness (a clamp would give identical swatches).
+     */
+    private fun ringLightness(base: Double, ring: Int): Double {
+        val first = base.coerceIn(RING_MIN_LIGHTNESS, RING_MAX_LIGHTNESS)
+        if (ring == 0) return first
+        var seen = 0
+        for (k in 1..MAX_RING_SEARCH) {
+            val l = base + ringShift(k)
+            if (l < RING_MIN_LIGHTNESS || l > RING_MAX_LIGHTNESS || abs(l - first) < 1e-9) continue
+            if (++seen == ring) return l
+        }
+        return (base + ringShift(ring)).coerceIn(RING_MIN_LIGHTNESS, RING_MAX_LIGHTNESS)
+    }
+
     private fun wheel(base: Int, n: Int, slot: (Int) -> Pair<Double, Int>): List<Int> {
         val hsl = ColorMath.hsl(base)
         return List(n) { i ->
@@ -74,7 +100,7 @@ object Harmony {
                 base
             } else {
                 val (offset, ring) = slot(i)
-                ColorMath.fromHsl(hsl.h + offset, hsl.s, (hsl.l + ringShift(ring)).coerceIn(0.05, 0.95))
+                ColorMath.fromHsl(hsl.h + offset, hsl.s, ringLightness(hsl.l, ring))
             }
         }
     }

@@ -77,6 +77,28 @@ class HarmonyTest {
     }
 
     @Test
+    fun `no colour repeats for a very dark or very light base at any count`() {
+        val bases = listOf(0xFF1A1A33, 0xFF050510, 0xFF0D0D1D, 0xFFF2F0FF, 0xFFFAFAFF, 0xFFE8F4D0, 0xFF331A1A, 0xFF3366CC, 0xFF0A0014, 0xFFFFE6F0)
+            .map { it.toInt() }
+        for (base in bases) for (kind in listOf(HarmonyKind.COMPLEMENTARY, HarmonyKind.SPLIT_COMPLEMENTARY, HarmonyKind.TRIAD, HarmonyKind.TETRAD)) for (n in 1..12) {
+            val out = Harmony.generate(base, kind, n)
+            assertEquals("${ColorMath.hex(base)} $kind $n: ${out.map(ColorMath::hex)}", n, out.toSet().size)
+        }
+    }
+
+    @Test
+    fun `a base at the very edge of lightness still gives distinct rings`() {
+        for (l in listOf(0.0, 0.02, 0.05, 0.5, 0.95, 0.98, 1.0)) {
+            val base = ColorMath.fromHsl(210.0, 0.6, l)
+            for (kind in listOf(HarmonyKind.COMPLEMENTARY, HarmonyKind.TRIAD)) {
+                val out = Harmony.generate(base, kind, 12)
+                // Black and white have no saturation left to carry a hue, so only lightness separates them.
+                if (l in 0.02..0.98) assertEquals("$l $kind", 12, out.toSet().size)
+            }
+        }
+    }
+
+    @Test
     fun `shades step down in lightness at the same hue`() {
         val out = Harmony.generate(base, HarmonyKind.SHADES, 5)
         val ls = out.map { ColorMath.lch(it).l }
