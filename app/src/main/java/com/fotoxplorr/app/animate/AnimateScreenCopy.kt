@@ -134,7 +134,7 @@ internal object AnimateScreenCopy {
     const val OPEN = "Open"
     const val NOT_LISTED = "It will show in your library soon."
     const val CANCELLED = "Stopped. Nothing was saved."
-    const val SAVED_IN = "Saved in Pictures, in Fotoz, in Animations."
+    const val SAVED_NOTE = "Your photos are not changed."
 
     fun saved(frames: Int, width: Int, height: Int, playMs: Long, bytes: Long): String =
         "${playInfo(frames, width, height, playMs).trimEnd('.')}, ${megabytes(bytes)}."
