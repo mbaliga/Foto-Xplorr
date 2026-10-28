@@ -58,10 +58,14 @@ class ChromaScreenTest {
         shown: ReadingView? = null,
         actions: ResultActions? = null,
         notice: String? = null,
+        canAskAgain: Boolean = true,
     ) {
         FotoXplorrTheme(GalleryPreferencesState()) {
             Column {
-                ChromaControls(state, outcome, cardKept, useCard, onUseCard, live, steady, onAsk, onSettings, onMeasure, onCancel, onAgain, shown, actions, notice)
+                ChromaControls(
+                    state, outcome, cardKept, useCard, onUseCard, live, steady, onAsk, onSettings, onMeasure, onCancel, onAgain,
+                    shown, actions, notice, canAskAgain,
+                )
             }
         }
     }
@@ -84,6 +88,17 @@ class ChromaScreenTest {
         compose.onNodeWithText(ChromaCopy.ASK_AGAIN).assertHeightIsAtLeast(48.dp).performClick()
         compose.onNodeWithText(ChromaCopy.OPEN_SETTINGS).assertHeightIsAtLeast(48.dp).performClick()
         assertEquals(1, asked)
+        assertEquals(1, settings)
+    }
+
+    @Test
+    fun aRefusalThatCannotBeAskedAgainOffersOnlyTheSettings() {
+        var settings = 0
+        compose.setContent { Controls(CaptureState.PermissionDenied, canAskAgain = false, onSettings = { settings++ }) }
+        compose.onNodeWithText(ChromaCopy.CAMERA_DENIED).assertIsDisplayed()
+        // The system would answer 'no' without a dialog, and a button that does nothing is worse than none.
+        assertEquals(0, compose.onAllNodesWithText(ChromaCopy.ASK_AGAIN).fetchSemanticsNodes().size)
+        compose.onNodeWithText(ChromaCopy.OPEN_SETTINGS).assertHeightIsAtLeast(48.dp).performClick()
         assertEquals(1, settings)
     }
 

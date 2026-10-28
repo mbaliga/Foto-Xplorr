@@ -1,10 +1,13 @@
 package com.fotoxplorr.app.chroma
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.hardware.display.DisplayManager
 import android.provider.Settings
 import android.view.Surface
 import android.view.SurfaceHolder
@@ -37,6 +40,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -61,6 +66,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -88,12 +94,18 @@ import kotlin.math.min
  * a measurement: the view is covered by the sampled colour, and the camera's own frames are gone.
  *
  * ## The permission
- * Asked here, when the experiment opens, with [ChromaCopy.PRIVACY] on screen as the reason; never at app
- * start. A refusal shows [ChromaCopy.CAMERA_DENIED] with Ask again and Settings.
+ * Asked here, never at app start, and only after the person has read why: the screen opens with
+ * [ChromaCopy.PRIVACY] and an Allow button, and the system dialog comes from that button. A refusal shows
+ * [ChromaCopy.CAMERA_DENIED] with Settings, and with Ask again only while the system would still show its
+ * dialog (the rationale flag), because after "don't ask again" the request is answered at once and a button
+ * that does nothing is worse than none.
  *
  * ## What is released, and when
- * Pause (and leaving, and opening the history, compare or palette view) stops the job: the camera, session,
- * image reader and thread are released and the gyroscope is unregistered. Coming back opens them again.
+ * Pause (and leaving, and opening the history, compare or palette view, and a turn of the phone) stops the
+ * job: the camera, session, image reader and thread are released and the gyroscope is unregistered. Coming
+ * back opens them again. The activity handles a rotation itself and is not recreated, so the camera body is
+ * keyed on the display rotation: a turn is a stop and a fresh start, with a surface and a session made for the
+ * new orientation (and the card measurement dropped).
  *
  * ## What is saved
  * The camera pictures: nothing; they live in memory for the few seconds a measurement takes and are
@@ -101,12 +113,15 @@ import kotlin.math.min
  * ([ChromaHistoryStore], `filesDir/chroma/history.txt`, plain text, the last 50, a colour a kind and a time
  * each; delete-all is on the history view). A colour goes to a palette only when asked, through the palette
  * builder's own store ([ChromaPalettes]). A card measurement is kept as numbers only while the light stays
- * held, and is dropped by leaving, pausing, turning the phone or measuring the card again.
+ * held, and is dropped by leaving, pausing, turning the phone or measuring the card again. Delete all
+ * readings also clears the colour on screen and the ones picked for a comparison or a palette.
  *
- * ## Process death and rotation
- * Kept through both: the view, the colour on screen, the colours picked for a comparison or a palette, the
- * card switch and whether the permission was asked. Not kept: the camera (it reopens), a card measurement
- * and the live words. After a kill the colour on screen is also the newest line of the history.
+ * ## Recreation and process death
+ * If the screen is recreated while the process lives, the view, the colour on screen, the colours picked
+ * for a comparison or a palette, the card switch and whether the permission was asked come back. Not kept:
+ * the camera (it reopens), a card measurement and the live words. After a process kill nothing comes back:
+ * the entry is not restorable (it opens the camera and asks a permission), so the tool reopens as the hub;
+ * the colours are still in the history.
  *
  * Nothing here has run on a device. There is no drag, so the shell's edge zones (TRAPS #72) do not matter.
  * The inner views register a Back handler that returns to measuring (TRAPS #78); Back from measuring closes.
@@ -207,6 +222,13 @@ internal fun ChromaIdScreen(choice: CameraChoice?, history: ChromaHistory, palet
         scope.launch {
             val ok = history.clear()
             loaded = history.load()
+            if (ok) {
+                // Deleted means the colours too: the one on screen and the ones picked for a comparison or a palette.
+                shown = null
+                subject = null
+                other = null
+                targets = null
+            }
             notice = if (ok) ChromaCopy.DELETED else ChromaCopy.DELETE_FAILED
         }
     }
@@ -232,22 +254,26 @@ internal fun ChromaIdScreen(choice: CameraChoice?, history: ChromaHistory, palet
                         ChromaButton(ChromaCopy.HISTORY, { go(ChromaView.HISTORY) })
                     }
                 } else {
-                    ChromaCameraBody(
-                        choice = choice,
-                        shown = shown,
-                        notice = notice,
-                        actions = actions,
-                        useCard = useCard,
-                        onUseCard = { useCard = it },
-                        asked = asked,
-                        onAsked = { asked = true },
-                        onReading = ::reading,
-                        onClear = {
-                            shown = null
-                            notice = null
-                        },
-                        onHistory = { go(ChromaView.HISTORY) },
-                    )
+                    // A new body for each display rotation: the activity is not recreated by a turn, and a camera
+                    // session and its surface made for one orientation are not right for the other.
+                    key(rememberDisplayRotation()) {
+                        ChromaCameraBody(
+                            choice = choice,
+                            shown = shown,
+                            notice = notice,
+                            actions = actions,
+                            useCard = useCard,
+                            onUseCard = { useCard = it },
+                            asked = asked,
+                            onAsked = { asked = true },
+                            onReading = ::reading,
+                            onClear = {
+                                shown = null
+                                notice = null
+                            },
+                            onHistory = { go(ChromaView.HISTORY) },
+                        )
+                    }
                 }
             }
             ChromaView.HISTORY -> HistoryPanel(
@@ -298,6 +324,39 @@ internal fun ChromaIdScreen(choice: CameraChoice?, history: ChromaHistory, palet
 private fun hasCameraPermission(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
+private tailrec fun Context.hostActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.hostActivity()
+    else -> null
+}
+
+/**
+ * The rotation of the display the tool is on (a `Surface.ROTATION_*`), kept current by a display listener. A
+ * rotation does not recreate the activity, so nothing else tells the camera body to start afresh.
+ */
+@Composable
+internal fun rememberDisplayRotation(): Int {
+    val context = LocalContext.current
+    val view = LocalView.current
+    var rotation by remember { mutableIntStateOf(view.display?.rotation ?: Surface.ROTATION_0) }
+    DisposableEffect(context, view) {
+        val manager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+        val listener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) = Unit
+
+            override fun onDisplayRemoved(displayId: Int) = Unit
+
+            override fun onDisplayChanged(displayId: Int) {
+                val now = view.display?.rotation ?: return
+                if (now != rotation) rotation = now
+            }
+        }
+        manager?.registerDisplayListener(listener, null)
+        onDispose { manager?.unregisterDisplayListener(listener) }
+    }
+    return rotation
+}
+
 @Composable
 private fun ChromaCameraBody(
     choice: CameraChoice,
@@ -326,8 +385,18 @@ private fun ChromaCameraBody(
 
     var permitted by remember { mutableStateOf(hasCameraPermission(context)) }
 
+    // Whether the system would still show its dialog: true after one refusal, false after "don't ask again"
+    // (and before any request, which is not a denial and is handled by the Allow button).
+    var canAskAgain by remember { mutableStateOf(true) }
+
+    fun refreshCanAskAgain() {
+        val host = context.hostActivity()
+        canAskAgain = host != null && ActivityCompat.shouldShowRequestPermissionRationale(host, Manifest.permission.CAMERA)
+    }
+
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         permitted = granted
+        if (!granted) refreshCanAskAgain()
         job.permissionResult(granted)
     }
 
@@ -345,8 +414,12 @@ private fun ChromaCameraBody(
                     permitted = hasCameraPermission(context)
                     when {
                         permitted -> job.open()
-                        !latestAsked -> ask()
-                        else -> job.permissionResult(false)
+                        // Not asked yet: the reason and the Allow button come first; the dialog is that button's.
+                        !latestAsked -> job.needPermission()
+                        else -> {
+                            refreshCanAskAgain()
+                            job.permissionResult(false)
+                        }
                     }
                 }
                 // Pause comes before stop, and is when the camera is taken away from a window that loses focus.
@@ -434,6 +507,7 @@ private fun ChromaCameraBody(
                 },
                 live = live,
                 steady = steady,
+                canAskAgain = canAskAgain,
                 onAsk = ::ask,
                 onSettings = {
                     context.startActivity(
@@ -531,6 +605,8 @@ internal fun ChromaControls(
     shown: ReadingView? = null,
     actions: ResultActions? = null,
     notice: String? = null,
+    /** False once the system would answer a permission request without a dialog: only the Settings are then offered. */
+    canAskAgain: Boolean = true,
 ) {
     val polite = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
     if (shown != null && (state is CaptureState.Ready || state is CaptureState.Locked || state is CaptureState.Done)) {
@@ -547,8 +623,8 @@ internal fun ChromaControls(
         }
         CaptureState.PermissionDenied -> {
             Text(ChromaCopy.CAMERA_DENIED, modifier = polite)
-            ChromaButton(ChromaCopy.ASK_AGAIN, onAsk, primary = true)
-            ChromaButton(ChromaCopy.OPEN_SETTINGS, onSettings)
+            if (canAskAgain) ChromaButton(ChromaCopy.ASK_AGAIN, onAsk, primary = true)
+            ChromaButton(ChromaCopy.OPEN_SETTINGS, onSettings, primary = !canAskAgain)
         }
         CaptureState.Opening -> Text(ChromaCopy.OPENING, modifier = polite)
         is CaptureState.Ready, is CaptureState.Locked -> {
