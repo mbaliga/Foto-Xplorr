@@ -23,6 +23,35 @@ internal object AnimateCopy {
     const val CORRUPT = "The file is damaged, so only part is shown."
     const val TOO_LARGE = "This is too large to open."
 
+    // The name of the running job in the activity shade and the notification.
+    const val JOB_TITLE = "Making an animation"
+
+    // What the job reports when it works.
+    const val SAVED = "Animation saved."
+    const val MEMORY_STEP = "Made smaller to fit the memory."
+    const val SIZE_STEP = "Made smaller to fit the size limit."
+
+    // What the job reports when it cannot.
+    const val NEED_PICTURES = "Pick at least two pictures."
+    const val CLIP_EMPTY = "That part of the video has no length."
+    const val PROTECTED = "A protected photo cannot be used."
+    const val NO_VIDEO_ENCODER = "This phone cannot make video files."
+    const val VIDEO_UNREADABLE = "The video could not be read."
+    const val VIDEO_STOPS = "The video stops being readable partway."
+    const val FILE_UNREADABLE = "The file could not be read."
+    const val FILE_TOO_BIG = "This file is too large to open."
+    const val STILL_OVER_LIMIT = "It is still too large; try fewer pictures or a smaller size."
+    const val OUT_OF_MEMORY = "There is not enough memory to make this."
+    const val NO_SPACE = "There is not enough space on the phone."
+    const val SAVE_FAILED = "The animation could not be saved."
+    const val VIDEO_FAILED = "The video could not be made."
+    const val FAILED = "The animation could not be made."
+
+    fun cannotRead(picture: Int): String = "Picture $picture could not be read."
+
+    /** A picture that was fine at the start and then could not be used: locked, trashed or deleted. */
+    fun noLongerAvailable(picture: Int): String = "Picture $picture is no longer available."
+
     fun planStep(step: PlanStep): String = when (step) {
         PlanStep.SHRUNK -> SHRUNK
         PlanStep.TRIMMED -> TRIMMED
