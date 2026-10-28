@@ -7,7 +7,7 @@ package com.fotoxplorr.app.chroma
  */
 internal object ChromaCopy {
     const val TITLE = "Chroma ID"
-    const val BLURB = "Read the true colour of a surface with the flash."
+    const val BLURB = "Read the colour of a surface with the flash."
 
     // Why a reading was refused.
     const val CLIPPED = "Part of the picture is washed out to white; step back or dim the flash."
@@ -24,7 +24,7 @@ internal object ChromaCopy {
 
     // What a reading admits.
     const val APPROXIMATE = "No card, so the flash is assumed to be neutral white."
-    const val LIGHTNESS_GUESSED = "Without a card, how light or dark it is is only a guess."
+    const val LIGHTNESS_NOT_MEASURED = "How light or dark it is was not measured."
     const val SAME_DISTANCE_ASSUMED = "Assumes the card and the surface were the same distance away."
     const val DISTANCE_COMPENSATED = "Corrected for the card being a different distance away."
     const val CLAMPED = "A little above the card's white; clipped to white."
@@ -63,7 +63,7 @@ internal object ChromaCopy {
     const val NOTICEABLE = "A small, visible difference."
     const val DIFFERENT = "A clear difference."
     const val VERY_DIFFERENT = "A big difference."
-    const val TOO_CLOSE_TO_CALL = "Too close to call with an approximate reading."
+    const val TOO_CLOSE_TO_CALL = "Too close to call; readings are only so exact."
 
     const val B_LIGHTER = "The second is lighter."
     const val B_DARKER = "The second is darker."
@@ -89,9 +89,9 @@ internal object ChromaCopy {
     const val TIMED_OUT = "The camera took too long; try again."
 
     // Flash.
-    const val NO_FLASH = "This phone has no flash, so the true colour cannot be found."
+    const val NO_FLASH = "This phone has no flash, so the surface's own colour cannot be found."
     const val AMBIENT_ONLY = "Read without flash"
-    const val AMBIENT_NOTE = "No flash: this is the colour under the room's light, not the true colour."
+    const val AMBIENT_NOTE = "No flash: this is the colour under the room's light, not the surface's own colour."
 
     // The steps.
     const val USE_CARD = "Use a white card"
@@ -126,18 +126,22 @@ internal object ChromaCopy {
 
     // The three steps.
     fun step(number: Int): String = "Step $number of 3"
-    const val STEP_CARD = "Place a white card beside the surface. This step is optional."
+    const val STEP_CARD = "Use plain white paper beside the surface; a grey or coloured card gives a wrong colour. Optional."
     const val STEP_RESULT = "Here is the colour."
 
     // The result.
     const val RESULT_HEADING = "Colour"
     const val NEAREST = "Nearest names"
     fun nearest(name: String, deltaE: Double): String = "%s (difference %.1f)".format(name, deltaE)
-    const val ACCURACY_APPROXIMATE = "Approximate: good for comparing swatches, not lab-grade."
-    const val ACCURACY_CALIBRATED = "Calibrated to your card."
+    const val ACCURACY_APPROXIMATE = "Approximate: good for the shade of colour, not for how light it is."
+    const val ACCURACY_CALIBRATED = "Corrected with your card; off by about 3 to 6 at best."
     fun rgbLine(r: Int, g: Int, b: Int): String = "RGB $r $g $b"
     fun labLine(l: Double, a: Double, b: Double): String = "Lab %.1f %.1f %.1f".format(l, a, b)
     fun lchLine(l: Double, c: Double, h: Double): String = "LCh %.1f %.1f %.0f\u00B0".format(l, c, h)
+
+    // The same lines where how light it is was not measured: no lightness number is shown.
+    fun labLineNoLightness(a: Double, b: Double): String = "Lab a %.1f b %.1f".format(a, b)
+    fun hueLine(h: Double): String = "Hue %.0f\u00B0".format(h)
     const val COPY_HEX = "Copy hex"
     fun copied(hex: String): String = "Copied $hex."
     const val COMPARE = "Compare with another reading"
@@ -152,7 +156,7 @@ internal object ChromaCopy {
     const val COMPARE_NOTHING = "Measure another colour first; there is nothing to compare with yet."
     const val COMPARE_PICK_OTHER = "Pick a different reading"
     fun differenceLine(deltaE: Double): String = "Difference %.1f".format(deltaE)
-    const val COMPARE_NOTE = "A reading without a card is approximate, so a small difference may not be real."
+    const val COMPARE_NOTE = "Without a card, how light it is is not compared, and a small difference may not be real."
 
     // The palette list.
     const val SAVE_PICK = "Pick a palette to add this colour to."
@@ -181,7 +185,7 @@ internal object ChromaCopy {
     const val DELETE_FAILED = "The readings could not be deleted."
     const val MEASURE_NEW = "Back to measuring"
     const val KIND_APPROXIMATE = "Approximate"
-    const val KIND_CALIBRATED = "Calibrated"
+    const val KIND_CALIBRATED = "With card"
     const val KIND_ROOM = "Room light"
     const val COMPARE_SHORT = "Compare"
     const val SAVE_SHORT = "Save"

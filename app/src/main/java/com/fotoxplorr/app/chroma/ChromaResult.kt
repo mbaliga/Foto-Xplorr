@@ -31,8 +31,12 @@ internal enum class ChromaStep(val number: Int) {
  * the reading was made, and the extra things the measurement admitted. All of it is derived from the
  * saved colour, so a reading looks the same when it is shown again from the history.
  *
- * @property notes the cautions of the live measurement ("assumes the same distance"); empty for a reading
- *   shown again later, because the history keeps the colour and how it was made, not the cautions.
+ * A reading whose [kind] does not measure lightness ([ReadingKind.measuresLightness]) shows no lightness
+ * word and no lightness number, and says so.
+ *
+ * @property notes the cautions of the live measurement ("assumes the same distance"), preceded by the
+ *   lightness note where that applies; for a reading shown again later it is the lightness note alone (or
+ *   empty), because the history keeps the colour and how it was made, not the cautions.
  */
 internal class ReadingView(val report: ColourReport, val kind: ReadingKind, val notes: List<String>) {
     /** One line on how far to trust it; never colour alone. */
@@ -45,8 +49,18 @@ internal class ReadingView(val report: ColourReport, val kind: ReadingKind, val 
 
     val hex: String get() = report.hex
     val rgbLine: String get() = ChromaCopy.rgbLine(report.red, report.green, report.blue)
-    val labLine: String get() = ChromaCopy.labLine(report.lab.l, report.lab.a, report.lab.b)
-    val lchLine: String get() = ChromaCopy.lchLine(report.lch.l, report.lch.c, report.lch.h)
+    val labLine: String
+        get() = if (kind.measuresLightness) {
+            ChromaCopy.labLine(report.lab.l, report.lab.a, report.lab.b)
+        } else {
+            ChromaCopy.labLineNoLightness(report.lab.a, report.lab.b)
+        }
+    val lchLine: String
+        get() = if (kind.measuresLightness) {
+            ChromaCopy.lchLine(report.lch.l, report.lch.c, report.lch.h)
+        } else {
+            ChromaCopy.hueLine(report.lch.h)
+        }
 
     /** The nearest names, each with its CIEDE2000 distance. */
     val nearestLines: List<String> get() = report.nearest.map { ChromaCopy.nearest(it.name, it.deltaE) }
@@ -60,12 +74,13 @@ internal class ReadingView(val report: ColourReport, val kind: ReadingKind, val 
          * come with it; for any other (or no) outcome there are none.
          */
         fun of(saved: SavedReading, outcome: Outcome? = null): ReadingView {
-            val notes = when {
+            val live = when {
                 outcome is Outcome.Reading && outcome.reading.report.argb == saved.argb ->
                     outcome.reading.measurement.cautions.map { it.message }
                 else -> emptyList()
             }
-            return ReadingView(ColourReport.of(saved.argb), saved.kind, notes)
+            val notes = if (saved.kind.measuresLightness) live else (listOf(ChromaCopy.LIGHTNESS_NOT_MEASURED) + live).distinct()
+            return ReadingView(ColourReport.of(saved.argb, lightnessMeasured = saved.kind.measuresLightness), saved.kind, notes)
         }
 
         /** The colour to keep for a finished measurement, or null when [outcome] is not a colour (a refusal, a card kept). */
@@ -83,7 +98,10 @@ internal class ReadingView(val report: ColourReport, val kind: ReadingKind, val 
 
 /** Two readings side by side and what CIEDE2000 says of them. */
 internal class CompareView(val first: ReadingView, val second: ReadingView, val verdict: SwatchVerdict) {
-    /** True when either is not a card-calibrated colour; the verdict then cannot claim a fine difference. */
+    /**
+     * True when either is not a card-corrected colour; the verdict then leaves lightness out of the
+     * comparison and cannot claim a fine difference.
+     */
     val eitherApproximate: Boolean get() = first.kind != ReadingKind.CALIBRATED || second.kind != ReadingKind.CALIBRATED
 
     val differenceLine: String get() = ChromaCopy.differenceLine(verdict.deltaE)
@@ -92,8 +110,12 @@ internal class CompareView(val first: ReadingView, val second: ReadingView, val 
         fun of(a: SavedReading, b: SavedReading): CompareView {
             val va = ReadingView.of(a)
             val vb = ReadingView.of(b)
-            val approx = a.kind != ReadingKind.CALIBRATED || b.kind != ReadingKind.CALIBRATED
-            return CompareView(va, vb, SwatchCompare.compare(va.report.lab, vb.report.lab, eitherApproximate = approx))
+            val approx = !a.kind.measuresLightness || !b.kind.measuresLightness
+            return CompareView(
+                va,
+                vb,
+                SwatchCompare.compare(va.report.lab, vb.report.lab, eitherApproximate = approx, ignoreLightness = approx),
+            )
         }
 
         /** The readings that can be compared with [subject]: every other one, newest first. */

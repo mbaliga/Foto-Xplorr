@@ -9,8 +9,8 @@ internal enum class Caution(val message: String) {
     /** No card: the flash is taken to be neutral white, so a warm or cool LED tints the answer. */
     LED_ASSUMED_NEUTRAL(ChromaCopy.APPROXIMATE),
 
-    /** No card: how light or dark the surface is rests on a nominal flash level, not a measurement. */
-    LIGHTNESS_GUESSED(ChromaCopy.LIGHTNESS_GUESSED),
+    /** No card: how light or dark the surface is was not measured; it is shown at a fixed middle level. */
+    LIGHTNESS_NOT_MEASURED(ChromaCopy.LIGHTNESS_NOT_MEASURED),
 
     /** A card was used but the two distances were not both known, so they were taken as equal. */
     SAME_DISTANCE_ASSUMED(ChromaCopy.SAME_DISTANCE_ASSUMED),
@@ -52,7 +52,8 @@ internal class CardPatches(
  *
  * @property reflectance per channel, 0..1.
  * @property argb the opaque sRGB colour for showing it.
- * @property approximate true without a card; the colour is a best guess and every caution says why.
+ * @property approximate true without a card; the colour is a best guess, its lightness is a fixed level
+ *   and not a measurement, and every caution says why.
  * @property flashShare the share of the surface's brightness in the flash frame that came from the
  *   flash (the rest is the room); near 1 is a clean signal, below about 0.2 a thin one.
  * @property signalToNoise the flash signal over its noise in the strongest channel.
@@ -88,12 +89,15 @@ internal class Measurement(
  *    different distance, the flash light follows an inverse-square law, so the surface figure is
  *    multiplied by `(d_surface / d_card)^2`; see [DISTANCE_LIMIT] for why this is limited.
  *  - WITHOUT A CARD. Assume the LED is neutral white in the camera's locked white balance
- *    ([assumedLed]) and a nominal strength ([NOMINAL_WHITE_DIFFERENCE]). Real phone LEDs are
- *    warm-to-cool white (about 4000 to 6000 K), and their colour is not known to this code, so the
- *    answer is tinted by the LED's departure from neutral; the tests measure that (see
- *    `ChromaPipelineTest`: a few to a dozen CIEDE2000 units for a plausible LED). The lightness
- *    depends on the flash strength, which is not known at all, so it is a guess. The result is
- *    marked `approximate`, with [Caution.LED_ASSUMED_NEUTRAL] and [Caution.LIGHTNESS_GUESSED].
+ *    ([assumedLed]). Real phone LEDs are warm-to-cool white (about 4000 to 6000 K), and their colour
+ *    is not known to this code, so the answer is tinted by the LED's departure from neutral; the
+ *    tests measure that (see `ChromaPipelineTest`: a few to a dozen CIEDE2000 units for a plausible
+ *    LED). The lightness is NOT recovered at all: with no card the exposure is whatever auto exposure
+ *    settled on for the torch-lit surface, and auto exposure lights a black cloth and a white sheet
+ *    to about the same level, so the flash difference carries almost nothing about how light the
+ *    surface is. Only the proportions of the three channels are used, and the colour is shown at a
+ *    fixed middle luminance ([UNMEASURED_LUMINANCE]). The result is marked `approximate`, with
+ *    [Caution.LED_ASSUMED_NEUTRAL] and [Caution.LIGHTNESS_NOT_MEASURED].
  *
  * A distance difference between the AMBIENT and the FLASH frames does not matter for a matte
  * surface: room light on it does not change as the camera moves (a surface seen from further away
@@ -159,11 +163,11 @@ internal object FlashSolver {
     private const val CLAMP_TOLERANCE = 1.02
 
     /**
-     * Without a card: the linear flash difference a 0.9 reflectance white would give in a typical
-     * well-exposed flash frame. A guess; it sets only the lightness of an approximate reading.
+     * Without a card: the linear luminance every reading is shown at (0.2 is about CIE L 52, a middle
+     * grey). The lightness of the surface is not known, so none is claimed; this only fixes the level
+     * the measured colour proportions are drawn at.
      */
-    const val NOMINAL_WHITE_DIFFERENCE = 0.5
-    private const val NOMINAL_WHITE_REFLECTANCE = 0.9
+    const val UNMEASURED_LUMINANCE = 0.2
 
     /** A flash frame's difference from its ambient frame, with the noise it is judged against. */
     internal class Difference(
@@ -257,14 +261,16 @@ internal object FlashSolver {
             }
         } else {
             cautions += Caution.LED_ASSUMED_NEUTRAL
-            cautions += Caution.LIGHTNESS_GUESSED
+            cautions += Caution.LIGHTNESS_NOT_MEASURED
             val ledLum = assumedLed.luminance
-            val scale = NOMINAL_WHITE_REFLECTANCE / NOMINAL_WHITE_DIFFERENCE
-            val raw = DoubleArray(3) { c -> surface.value[c] / (assumedLed[c] / ledLum).coerceAtLeast(1e-6) * scale }
-            // A guess cannot be allowed to leave the gamut by clipping one channel (that would change
-            // the hue): scale the whole colour down together instead.
-            val top = raw.max()
-            val k = if (top > 1.0) 1.0 / top else 1.0
+            val raw = DoubleArray(3) { c -> surface.value[c] / (assumedLed[c] / ledLum).coerceAtLeast(1e-6) }
+            // Only the proportions are known: put them at the fixed luminance. A colour that cannot reach
+            // it inside the gamut (a deep blue) is scaled down as a whole, never clipped in one channel
+            // (that would change the hue).
+            val lum = LinearRgb(raw[0], raw[1], raw[2]).luminance
+            val atFixed = if (lum > 0.0) UNMEASURED_LUMINANCE / lum else 0.0
+            val top = raw.max() * atFixed
+            val k = atFixed * (if (top > 1.0) 1.0 / top else 1.0)
             rho = DoubleArray(3) { raw[it] * k }
         }
 

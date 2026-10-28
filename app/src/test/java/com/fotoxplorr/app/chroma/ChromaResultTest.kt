@@ -87,7 +87,7 @@ class ChromaResultTest {
 
     @Test
     fun `the card has hex, rgb, lab, lch and three names with their distances`() {
-        val v = ReadingView.of(saved(ChromaTestKit.argb(200, 100, 50)))
+        val v = ReadingView.of(saved(ChromaTestKit.argb(200, 100, 50), ReadingKind.CALIBRATED))
         assertEquals("#C86432", v.hex)
         assertEquals("RGB 200 100 50", v.rgbLine)
         assertTrue(v.labLine.startsWith("Lab "))
@@ -100,17 +100,65 @@ class ChromaResultTest {
 
     @Test
     fun `the lab line is the reports own lab`() {
-        val v = ReadingView.of(saved(ChromaTestKit.argb(30, 140, 70)))
+        val v = ReadingView.of(saved(ChromaTestKit.argb(30, 140, 70), ReadingKind.CALIBRATED))
         val lab = v.report.lab
         assertEquals(ChromaCopy.labLine(lab.l, lab.a, lab.b), v.labLine)
     }
 
     @Test
-    fun `the accuracy line says approximate, calibrated or not the true colour`() {
+    fun `the accuracy line says what each kind is good for`() {
         val argb = ChromaTestKit.argb(120, 120, 120)
-        assertEquals("Approximate: good for comparing swatches, not lab-grade.", ReadingView.of(saved(argb, ReadingKind.APPROXIMATE)).accuracy)
-        assertEquals("Calibrated to your card.", ReadingView.of(saved(argb, ReadingKind.CALIBRATED)).accuracy)
+        assertEquals("Approximate: good for the shade of colour, not for how light it is.", ReadingView.of(saved(argb, ReadingKind.APPROXIMATE)).accuracy)
+        assertEquals("Corrected with your card; off by about 3 to 6 at best.", ReadingView.of(saved(argb, ReadingKind.CALIBRATED)).accuracy)
         assertEquals(ChromaCopy.AMBIENT_NOTE, ReadingView.of(saved(argb, ReadingKind.ROOM)).accuracy)
+    }
+
+    @Test
+    fun `no claim of an exact or true colour is left in the words`() {
+        val words = listOf(
+            ChromaCopy.BLURB, ChromaCopy.NO_FLASH, ChromaCopy.AMBIENT_NOTE, ChromaCopy.ACCURACY_APPROXIMATE,
+            ChromaCopy.ACCURACY_CALIBRATED, ChromaCopy.KIND_CALIBRATED, ChromaCopy.STEP_CARD,
+        )
+        for (w in words) {
+            assertFalse(w, w.contains("true colour", ignoreCase = true) || w.contains("exact", ignoreCase = true) || w.contains("calibrated", ignoreCase = true))
+        }
+        assertTrue(ChromaCopy.STEP_CARD.contains("white paper"))
+    }
+
+    @Test
+    fun `a reading without a lightness says so and shows no lightness word or number`() {
+        val argb = ChromaTestKit.argb(190, 80, 50)
+        val approx = ReadingView.of(saved(argb, ReadingKind.APPROXIMATE))
+        val withCard = ReadingView.of(saved(argb, ReadingKind.CALIBRATED))
+        for (v in listOf(approx, ReadingView.of(saved(argb, ReadingKind.ROOM)))) {
+            assertTrue(ChromaCopy.LIGHTNESS_NOT_MEASURED in v.notes)
+            assertFalse(v.labLine, v.labLine.matches(Regex("""Lab -?\d.*""")))
+            assertTrue(v.labLine, v.labLine.startsWith("Lab a "))
+            assertTrue(v.lchLine, v.lchLine.startsWith("Hue "))
+            for (w in listOf("very dark", "dark", "mid", "light", "very light", "black", "white")) {
+                assertFalse("${v.report.description} says $w", v.report.description.split(' ').contains(w))
+            }
+        }
+        // A card-corrected reading keeps all three numbers and its words.
+        assertTrue(withCard.notes.isEmpty())
+        assertTrue(withCard.lchLine.startsWith("LCh "))
+        assertEquals(ColourWords.describe(withCard.report.lab), withCard.report.description)
+        // The live cautions follow the lightness note once, not twice.
+        val live = reading(argb, withCard = false, cautions = setOf(Caution.LED_ASSUMED_NEUTRAL, Caution.LIGHTNESS_NOT_MEASURED))
+        val s = ReadingView.savedFrom(live, 1)!!
+        assertEquals(listOf(ChromaCopy.LIGHTNESS_NOT_MEASURED, ChromaCopy.APPROXIMATE), ReadingView.of(s, live).notes)
+    }
+
+    @Test
+    fun `the names of a reading without a lightness are matched on shade and strength alone`() {
+        val dim = ChromaTestKit.argb(60, 20, 10)
+        val full = ColourReport.of(dim).nearest.map { it.name }
+        val noLightness = ColourReport.of(dim, lightnessMeasured = false)
+        // Taken at its own lightness a name is judged by its shade and strength; the distances stay honest numbers.
+        assertEquals(3, noLightness.nearest.size)
+        assertTrue(noLightness.nearest.zipWithNext().all { (a, b) -> a.deltaE <= b.deltaE })
+        assertTrue(noLightness.nearest[0].deltaE <= ColourReport.of(dim).nearest[0].deltaE)
+        assertEquals(3, full.size)
     }
 
     @Test
@@ -128,13 +176,43 @@ class ChromaResultTest {
     // ---- comparing --------------------------------------------------------------------------------------
 
     @Test
-    fun `the same colour compared with itself looks the same`() {
+    fun `two card readings of one colour are too close to call, not the same`() {
         val a = saved(ChromaTestKit.argb(90, 120, 200), ReadingKind.CALIBRATED, 1)
         val b = saved(ChromaTestKit.argb(90, 120, 200), ReadingKind.CALIBRATED, 2)
         val c = CompareView.of(a, b)
-        assertEquals(SwatchLevel.SAME, c.verdict.level)
+        assertEquals(SwatchLevel.TOO_CLOSE_TO_CALL, c.verdict.level)
         assertEquals("Difference 0.0", c.differenceLine)
         assertFalse(c.eitherApproximate)
+    }
+
+    @Test
+    fun `card readings closer than the floor are not called different`() {
+        // A difference of about 1 to 2 is a noticeable-by-eye step, but a card reading is only good to 3 to 6.
+        val a = saved(ChromaTestKit.argb(120, 120, 120), ReadingKind.CALIBRATED, 1)
+        val near = saved(ChromaTestKit.argb(124, 120, 120), ReadingKind.CALIBRATED, 2)
+        val v = CompareView.of(a, near).verdict
+        assertTrue(v.deltaE < SwatchCompare.CALIBRATED_FLOOR)
+        assertEquals(SwatchLevel.TOO_CLOSE_TO_CALL, v.level)
+        val far = saved(ChromaTestKit.argb(150, 120, 120), ReadingKind.CALIBRATED, 3)
+        assertTrue(CompareView.of(a, far).verdict.level != SwatchLevel.TOO_CLOSE_TO_CALL)
+    }
+
+    @Test
+    fun `readings without a lightness are compared on shade and strength alone`() {
+        // The same shade, one dark and one light: with no lightness to compare, they are not different.
+        val dark = saved(ChromaTestKit.argb(70, 20, 10), ReadingKind.APPROXIMATE, 1)
+        val light = saved(ChromaTestKit.argb(240, 130, 110), ReadingKind.APPROXIMATE, 2)
+        val c = CompareView.of(dark, light)
+        assertEquals(SwatchLevel.TOO_CLOSE_TO_CALL, c.verdict.level)
+        assertTrue("never lighter or darker", c.verdict.detail == null)
+        // A different shade is still a different shade.
+        val blue = saved(ChromaTestKit.argb(20, 60, 200), ReadingKind.APPROXIMATE, 3)
+        val d = CompareView.of(dark, blue)
+        assertEquals(SwatchLevel.VERY_DIFFERENT, d.verdict.level)
+        assertTrue(d.verdict.detail != ChromaCopy.B_LIGHTER && d.verdict.detail != ChromaCopy.B_DARKER)
+        // Mixed with a card reading it is the same rule: lightness is left out of the pair.
+        val card = saved(ChromaTestKit.argb(240, 130, 110), ReadingKind.CALIBRATED, 4)
+        assertEquals(SwatchLevel.TOO_CLOSE_TO_CALL, CompareView.of(dark, card).verdict.level)
     }
 
     @Test
@@ -147,11 +225,12 @@ class ChromaResultTest {
     @Test
     fun `an approximate reading cannot claim a fine difference`() {
         val a = saved(ChromaTestKit.argb(120, 120, 120), ReadingKind.APPROXIMATE, 1)
-        val b = saved(ChromaTestKit.argb(124, 120, 120), ReadingKind.CALIBRATED, 2)
+        val b = saved(ChromaTestKit.argb(135, 120, 120), ReadingKind.CALIBRATED, 2)
         val c = CompareView.of(a, b)
         assertTrue(c.eitherApproximate)
+        assertTrue(c.verdict.deltaE in SwatchCompare.CALIBRATED_FLOOR..SwatchCompare.APPROXIMATE_FLOOR)
         assertEquals(SwatchLevel.TOO_CLOSE_TO_CALL, c.verdict.level)
-        // the same two colours, both calibrated, get a real verdict
+        // the same two colours, both read with a card, get a real verdict: the floor there is lower
         assertTrue(CompareView.of(b, a.copy(kind = ReadingKind.CALIBRATED)).verdict.level != SwatchLevel.TOO_CLOSE_TO_CALL)
     }
 

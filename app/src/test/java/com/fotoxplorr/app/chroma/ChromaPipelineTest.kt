@@ -106,6 +106,45 @@ class ChromaPipelineTest {
     }
 
     @Test
+    fun withoutACardAutoExposureOnTheSurfaceHidesHowLightItIsAndThePipelineSaysSo() {
+        // The real no-card flow: auto exposure settles on the torch-lit surface and is held. A dark and a light
+        // version of one shade then fill the frame to the same level, and read the same.
+        val conditions = ChromaTestKit.Conditions(noise = 0.02, jitter = 0.0, ledTilt = 0.0, autoExposureOnSurface = true)
+        val shade = ColourSpace.linearOf(ChromaTestKit.argb(190, 80, 50))
+        fun trials(scale: Double): Pair<Double, Double> {
+            val truth = ColourSpace.argbOf(shade.map { it * scale })
+            val rng = Random(21)
+            val lightness = ArrayList<Double>()
+            val shadeErrors = ArrayList<Double>()
+            repeat(TRIALS) {
+                val t = ChromaTestKit.trial(rng, conditions, truth)
+                val a = ChromaMeter.measure(t.surface, null)
+                if (a is Answer.Value) {
+                    val m = a.value.measurement
+                    lightness += m.lab.l
+                    shadeErrors += DeltaE2000.between(ChromaTestKit.lightnessMatched(m.reflectance, t.truth), t.truthLab)
+                }
+            }
+            shadeErrors.sort()
+            println(
+                "CHROMA-DE | no card, auto exposure, surface x%.2f | trials %d | answered %d | mean L %5.1f | shade p95 %5.2f"
+                    .format(scale, TRIALS, lightness.size, lightness.average(), shadeErrors[((shadeErrors.size - 1) * 0.95).toInt()]),
+            )
+            assertTrue("answered ${lightness.size}", lightness.size >= TRIALS * 9 / 10)
+            return lightness.average() to shadeErrors[((shadeErrors.size - 1) * 0.95).toInt()]
+        }
+        val light = trials(1.0)
+        val dark = trials(0.08)
+        val truthGap = ColourSpace.lab(shade).l - ColourSpace.lab(shade.map { it * 0.08 }).l
+        assertTrue("the two surfaces really differ in lightness: $truthGap", truthGap > 30.0)
+        // The reading does not follow the surface's lightness: the gap is nothing like the true one.
+        assertTrue("light ${light.first} vs dark ${dark.first}", Math.abs(light.first - dark.first) < 3.0)
+        // And what it does recover is the shade, for the light and for the dark surface.
+        assertTrue("shade p95 light ${light.second}", light.second < 6.0)
+        assertTrue("shade p95 dark ${dark.second}", dark.second < 6.0)
+    }
+
+    @Test
     fun cardAtADifferentDistanceIsCorrectedWhenTheDistancesAreKnown() {
         val ignored = run(
             "card 1.3x nearer, distances unknown (no fix)",

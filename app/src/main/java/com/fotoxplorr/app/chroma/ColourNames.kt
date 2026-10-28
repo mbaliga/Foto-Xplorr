@@ -36,9 +36,16 @@ internal object ColourNames {
     /** Every name, in table order. */
     val names: List<String> get() = entries.map { it.name }
 
-    /** The [count] names nearest to [lab], nearest first. */
-    fun nearest(lab: Lab, count: Int = 3): List<NamedMatch> =
-        entries.map { NamedMatch(it.name, it.argb, it.lab, DeltaE2000.between(lab, it.lab)) }
+    /**
+     * The [count] names nearest to [lab], nearest first. With [ignoreLightness] each name is taken at the
+     * lightness of [lab] first, so only its shade and strength count (for a colour whose lightness was not
+     * measured); a name that itself says "dark" or "light" can still come up, because the table has such names.
+     */
+    fun nearest(lab: Lab, count: Int = 3, ignoreLightness: Boolean = false): List<NamedMatch> =
+        entries.map {
+            val other = if (ignoreLightness) it.lab.copy(l = lab.l) else it.lab
+            NamedMatch(it.name, it.argb, it.lab, DeltaE2000.between(lab, other))
+        }
             .sortedBy { it.deltaE }
             .take(count)
 
@@ -104,6 +111,16 @@ internal object ColourWords {
         }
         return "${lightness(lab.l)} ${strength(c)} ${hueFamily(lab.hueDegrees)}"
     }
+
+    /** [describe] without the lightness word (and without black or white), for a colour whose lightness was not measured. */
+    fun describeWithoutLightness(lab: Lab): String {
+        val c = lab.chroma
+        return when {
+            c < NEUTRAL_CHROMA -> ChromaCopy.GREY
+            c < TINT_CHROMA -> "${ChromaCopy.GREYISH} ${hueFamily(lab.hueDegrees)}"
+            else -> "${strength(c)} ${hueFamily(lab.hueDegrees)}"
+        }
+    }
 }
 
 /** Everything the tool shows about one colour. */
@@ -120,14 +137,16 @@ internal class ColourReport(
     val blue: Int get() = argb and 0xFF
 
     companion object {
-        fun of(lab: Lab, nameCount: Int = 3): ColourReport = ColourReport(
+        /** [lightnessMeasured] false leaves lightness out of the words and the names (see [ReadingKind.measuresLightness]). */
+        fun of(lab: Lab, nameCount: Int = 3, lightnessMeasured: Boolean = true): ColourReport = ColourReport(
             argb = ColourSpace.argbOf(lab),
             lab = lab,
             lch = ColourSpace.lch(lab),
-            description = ColourWords.describe(lab),
-            nearest = ColourNames.nearest(lab, nameCount),
+            description = if (lightnessMeasured) ColourWords.describe(lab) else ColourWords.describeWithoutLightness(lab),
+            nearest = ColourNames.nearest(lab, nameCount, ignoreLightness = !lightnessMeasured),
         )
 
-        fun of(argb: Int, nameCount: Int = 3): ColourReport = of(ColourSpace.lab(argb), nameCount)
+        fun of(argb: Int, nameCount: Int = 3, lightnessMeasured: Boolean = true): ColourReport =
+            of(ColourSpace.lab(argb), nameCount, lightnessMeasured)
     }
 }

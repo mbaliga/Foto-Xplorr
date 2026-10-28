@@ -55,10 +55,41 @@ class FlashSolverTest {
         val m = measured(FlashSolver.solve(sa, sf))
         assertTrue(m.approximate)
         assertTrue(Caution.LED_ASSUMED_NEUTRAL in m.cautions)
-        assertTrue(Caution.LIGHTNESS_GUESSED in m.cautions)
-        // The channel ratios are the surface's (the scale is a guess).
+        assertTrue(Caution.LIGHTNESS_NOT_MEASURED in m.cautions)
+        // The channel ratios are the surface's (the scale is a fixed level, not a measurement).
         assertEquals(rho.g / rho.r, m.reflectance.g / m.reflectance.r, 1e-9)
         assertEquals(rho.b / rho.r, m.reflectance.b / m.reflectance.r, 1e-9)
+    }
+
+    @Test
+    fun withoutACardEverySurfaceIsShownAtTheSameFixedLightnessWhateverItsFlashSignal() {
+        // A dark and a light surface of the same shade, both exposed to the same flash-frame level by auto
+        // exposure: the flash differences are the same, and so are the readings. Even if they were not, the
+        // proportions are all that is used, so a ten times stronger signal reads as the same colour.
+        val neutral = LinearRgb(0.3, 0.3, 0.3)
+        fun read(scale: Double): Measurement {
+            val r = rho.map { it * scale }
+            val sa = patch(r.r * room.r, r.g * room.g, r.b * room.b)
+            val sf = patch(r.r * (room.r + neutral.r), r.g * (room.g + neutral.g), r.b * (room.b + neutral.b))
+            return measured(FlashSolver.solve(sa, sf))
+        }
+        val dark = read(0.1)
+        val light = read(1.0)
+        assertEquals(FlashSolver.UNMEASURED_LUMINANCE, dark.reflectance.luminance, 1e-9)
+        assertEquals(FlashSolver.UNMEASURED_LUMINANCE, light.reflectance.luminance, 1e-9)
+        assertEquals(dark.lab.l, light.lab.l, 1e-6)
+        assertEquals(dark.reflectance.r, light.reflectance.r, 1e-9)
+    }
+
+    @Test
+    fun withoutACardADeepBlueIsScaledDownAsAWholeAndKeepsItsHue() {
+        // Pure blue cannot reach the fixed luminance inside the gamut; it is scaled to fit, never clipped in one channel.
+        val sa = patch(0.001, 0.001, 0.02)
+        val sf = patch(0.002, 0.002, 0.42)
+        val m = measured(FlashSolver.solve(sa, sf))
+        assertEquals(1.0, m.reflectance.b, 1e-9)
+        assertEquals(0.001 / 0.40, m.reflectance.r, 1e-9)
+        assertTrue(m.reflectance.luminance < FlashSolver.UNMEASURED_LUMINANCE)
     }
 
     @Test

@@ -11,7 +11,8 @@ import java.util.Random
  * times a per-frame gain wobble ("jitter": flicker, an exposure that did not quite lock) and a
  * per-pixel multiplicative noise, then clipped and rounded to an sRGB 8-bit code. A ring round the
  * outside is a different colour, so a test that reads outside the middle gets the wrong answer.
- * What this does NOT model: a phone's tone curve, local contrast, lens shading, glare, hand
+ * Exposure is locked on the card by default; `autoExposureOnSurface` locks it on the surface instead, which is
+ * what a reading made without a card really does. What this does NOT model: a phone's tone curve, local contrast, lens shading, glare, hand
  * movement between frames, fluorescence. It proves the algebra and the gates, not a camera.
  */
 internal object ChromaTestKit {
@@ -60,6 +61,12 @@ internal object ChromaTestKit {
         /** The distance the solver is TOLD, as a multiple of the true ratio (1.0 is a perfect reading). */
         val distanceReadingError: Double = 1.0,
         val knowDistances: Boolean = false,
+        /**
+         * Auto exposure settled on the SURFACE (what the no-card job does: it lets the exposure settle on
+         * whatever fills the view with the torch on, and holds it) instead of the card. The surface's flash
+         * frame then always lands at the same level, whether the surface is black cloth or white paper.
+         */
+        val autoExposureOnSurface: Boolean = false,
     )
 
     class Trial(
@@ -91,9 +98,16 @@ internal object ChromaTestKit {
         val falloff = 1.0 / (c.distanceRatio * c.distanceRatio)
         val flashAtSurface = flashAtCard.map { it * falloff }
 
-        // Exposure locked on the card: its brightest flash-frame channel lands at 0.7.
+        // Exposure locked on the card: its brightest flash-frame channel lands at 0.7 (or, with
+        // autoExposureOnSurface, the surface's does).
         var peak = 0.0
-        for (ch in 0..2) peak = maxOf(peak, cardRho[ch] * (ambientLight[ch] + flashAtCard[ch]))
+        for (ch in 0..2) {
+            peak = if (c.autoExposureOnSurface) {
+                maxOf(peak, rho[ch] * (ambientLight[ch] + flashAtSurface[ch]))
+            } else {
+                maxOf(peak, cardRho[ch] * (ambientLight[ch] + flashAtCard[ch]))
+            }
+        }
         val exposure = 0.7 / peak
 
         val ambientOnly = ambientLight

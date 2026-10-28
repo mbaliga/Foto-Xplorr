@@ -88,14 +88,16 @@ class ChromaResultScreenTest {
         compose.onNodeWithText(view.lchLine).assertIsDisplayed()
         compose.onNodeWithText(ChromaCopy.NEAREST).assertIsDisplayed()
         for (line in view.nearestLines) compose.onNodeWithText(line).assertIsDisplayed()
-        compose.onNodeWithText("Approximate: good for comparing swatches, not lab-grade.").assertIsDisplayed()
+        compose.onNodeWithText(ChromaCopy.ACCURACY_APPROXIMATE).assertIsDisplayed()
+        compose.onNodeWithText(ChromaCopy.LIGHTNESS_NOT_MEASURED).assertIsDisplayed()
     }
 
     @Test
     fun aCardCalibratedReadingSaysSo() {
         val view = ReadingView.of(saved(rust, ReadingKind.CALIBRATED))
         compose.setContent { Themed { Column { ReadingCard(view, null, null) } } }
-        compose.onNodeWithText("Calibrated to your card.").assertIsDisplayed()
+        compose.onNodeWithText(ChromaCopy.ACCURACY_CALIBRATED).assertIsDisplayed()
+        assertEquals(0, compose.onAllNodesWithText(ChromaCopy.LIGHTNESS_NOT_MEASURED).fetchSemanticsNodes().size)
         assertEquals(0, compose.onAllNodesWithText(ChromaCopy.ACCURACY_APPROXIMATE).fetchSemanticsNodes().size)
     }
 

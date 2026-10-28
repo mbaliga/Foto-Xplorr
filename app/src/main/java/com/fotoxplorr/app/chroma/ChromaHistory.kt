@@ -8,15 +8,22 @@ import kotlinx.coroutines.withContext
 
 /** How a reading was made, which is how far to trust it. */
 internal enum class ReadingKind(val code: String) {
-    /** Flash and room, no card: good for comparing swatches. */
+    /** Flash and room, no card: the shade of colour only; how light it is was not measured. */
     APPROXIMATE("approx"),
 
-    /** Flash and room, normalised by a white card. */
+    /** Flash and room, corrected with a white card (about 3 to 6 CIEDE2000 off at best, and only if the card is plain white). */
     CALIBRATED("card"),
 
-    /** No flash: the colour under the room's light, not the true colour. */
+    /** No flash: the colour under the room's light, not the surface's own; how light it is was not measured. */
     ROOM("room"),
     ;
+
+    /**
+     * Whether the colour's lightness comes from the surface. Only a card fixes the level of the flash, so only
+     * a card-corrected reading has it; the others are exposed by the camera's own auto exposure, which lights a
+     * dark surface and a light one alike.
+     */
+    val measuresLightness: Boolean get() = this == CALIBRATED
 
     companion object {
         fun of(code: String): ReadingKind? = entries.firstOrNull { it.code == code }

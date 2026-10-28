@@ -11,7 +11,7 @@ class SwatchCompareTest {
 
     @Test
     fun theSameColourIsTheSame() {
-        val v = SwatchCompare.compare(lab(100, 120, 140), lab(100, 120, 140))
+        val v = SwatchCompare.compare(lab(100, 120, 140), lab(100, 120, 140), floor = 0.0)
         assertEquals(0.0, v.deltaE, 0.0)
         assertEquals(SwatchLevel.SAME, v.level)
         assertNull(v.detail)
@@ -20,7 +20,7 @@ class SwatchCompareTest {
     @Test
     fun theStepsFollowTheDistance() {
         val base = Lab(50.0, 10.0, 10.0)
-        fun level(dl: Double) = SwatchCompare.compare(base, Lab(50.0 + dl, 10.0, 10.0)).level
+        fun level(dl: Double) = SwatchCompare.compare(base, Lab(50.0 + dl, 10.0, 10.0), floor = 0.0).level
         assertEquals(SwatchLevel.SAME, level(0.5))
         assertEquals(SwatchLevel.CLOSE, level(1.5))
         assertEquals(SwatchLevel.NOTICEABLE, level(5.0))
@@ -48,12 +48,37 @@ class SwatchCompareTest {
     fun anApproximateReadingCannotTellCloseColoursApart() {
         val a = Lab(50.0, 10.0, 10.0)
         val b = Lab(54.0, 10.0, 10.0)
-        assertEquals(SwatchLevel.NOTICEABLE, SwatchCompare.compare(a, b).level)
+        assertEquals(SwatchLevel.NOTICEABLE, SwatchCompare.compare(a, b, floor = 0.0).level)
         val v = SwatchCompare.compare(a, b, eitherApproximate = true)
         assertEquals(SwatchLevel.TOO_CLOSE_TO_CALL, v.level)
         assertNull(v.detail)
         // But a big difference is still a big difference.
         assertEquals(SwatchLevel.VERY_DIFFERENT, SwatchCompare.compare(Lab(20.0, 0.0, 0.0), Lab(80.0, 0.0, 0.0), true).level)
+    }
+
+    @Test
+    fun aCardReadingHasAFloorToo() {
+        val a = Lab(50.0, 10.0, 10.0)
+        // About 1.5 and 2.5 apart: the bare table says close and noticeable; the readings cannot tell.
+        assertEquals(SwatchLevel.CLOSE, SwatchCompare.compare(a, Lab(51.5, 10.0, 10.0), floor = 0.0).level)
+        assertEquals(SwatchLevel.TOO_CLOSE_TO_CALL, SwatchCompare.compare(a, Lab(51.5, 10.0, 10.0)).level)
+        assertEquals(SwatchLevel.TOO_CLOSE_TO_CALL, SwatchCompare.compare(a, Lab(52.5, 10.0, 10.0)).level)
+        assertEquals(SwatchLevel.NOTICEABLE, SwatchCompare.compare(a, Lab(56.0, 10.0, 10.0)).level)
+        assertTrue(SwatchCompare.CALIBRATED_FLOOR < SwatchCompare.APPROXIMATE_FLOOR)
+    }
+
+    @Test
+    fun lightnessCanBeLeftOutOfTheComparison() {
+        val dark = Lab(20.0, 30.0, 20.0)
+        val light = Lab(80.0, 30.0, 20.0)
+        assertEquals(SwatchLevel.VERY_DIFFERENT, SwatchCompare.compare(dark, light, eitherApproximate = true).level)
+        val v = SwatchCompare.compare(dark, light, eitherApproximate = true, ignoreLightness = true)
+        assertEquals(0.0, v.deltaE, 1e-9)
+        assertEquals(SwatchLevel.TOO_CLOSE_TO_CALL, v.level)
+        // A different shade at a different lightness is judged on the shade.
+        val other = SwatchCompare.compare(Lab(20.0, 40.0, 0.0), Lab(80.0, 0.0, 40.0), eitherApproximate = true, ignoreLightness = true)
+        assertTrue(other.level == SwatchLevel.VERY_DIFFERENT || other.level == SwatchLevel.DIFFERENT)
+        assertTrue(other.detail != ChromaCopy.B_LIGHTER && other.detail != ChromaCopy.B_DARKER)
     }
 
     @Test

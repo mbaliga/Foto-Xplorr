@@ -10,7 +10,7 @@ internal enum class SwatchLevel(val message: String) {
     DIFFERENT(ChromaCopy.DIFFERENT),
     VERY_DIFFERENT(ChromaCopy.VERY_DIFFERENT),
 
-    /** Both readings are approximate and the difference is inside what an approximate reading can tell. */
+    /** The difference is inside what the readings can tell (see [SwatchCompare.CALIBRATED_FLOOR] and [SwatchCompare.APPROXIMATE_FLOOR]). */
     TOO_CLOSE_TO_CALL(ChromaCopy.TOO_CLOSE_TO_CALL),
 }
 
@@ -24,9 +24,12 @@ internal class SwatchVerdict(val deltaE: Double, val level: SwatchLevel, val det
 /**
  * "Compare two swatches": CIEDE2000 and a plain verdict. The cut-offs follow the usual reading of
  * CIEDE2000 (under 1 not seen, 1 to 2 seen by a careful eye side by side, 2 to 10 seen at a glance,
- * 10 to 25 clearly different, beyond that a different colour); the 25 is ours. A reading made
- * without a card is good to maybe 5 to 10 ([APPROXIMATE_FLOOR]), so when EITHER swatch is approximate
- * a difference below that is "too close to call" rather than a verdict that implies precision.
+ * 10 to 25 clearly different, beyond that a different colour); the 25 is ours. Those readings of
+ * CIEDE2000 are for two swatches seen, not for two surfaces measured by a phone: a card-corrected
+ * reading is good to about 3 to 6 at best ([CALIBRATED_FLOOR]) and one made without a card to maybe 5 to
+ * 10 ([APPROXIMATE_FLOOR]) and without any lightness, so a difference below the floor is "too close to
+ * call" rather than a verdict that implies precision. That leaves [SwatchLevel.SAME] and
+ * [SwatchLevel.CLOSE] out of reach of the app (they are still the table below a floor of 0).
  */
 internal object SwatchCompare {
     const val SAME_BELOW = 1.0
@@ -34,14 +37,30 @@ internal object SwatchCompare {
     const val NOTICEABLE_BELOW = 10.0
     const val DIFFERENT_BELOW = 25.0
 
-    /** The difference below which two approximate readings cannot be told apart. */
+    /** The difference below which two card-corrected readings cannot be told apart (the stated error at best is 3 to 6). */
+    const val CALIBRATED_FLOOR = 3.0
+
+    /** The difference below which a pair with an approximate reading in it cannot be told apart. */
     const val APPROXIMATE_FLOOR = 8.0
 
-    fun compare(a: Lab, b: Lab, eitherApproximate: Boolean = false): SwatchVerdict {
-        val parts = DeltaE2000.parts(a, b)
+    /**
+     * @param eitherApproximate a reading made without a card (or without a flash) is in the pair.
+     * @param ignoreLightness take [b] at the lightness of [a], so the difference is in shade and strength only
+     *   (for readings whose lightness was not measured); the verdict then never says lighter or darker.
+     * @param floor the difference below which the verdict is [SwatchLevel.TOO_CLOSE_TO_CALL]; by default
+     *   [APPROXIMATE_FLOOR] when [eitherApproximate], else [CALIBRATED_FLOOR]. 0 gives the bare table.
+     */
+    fun compare(
+        a: Lab,
+        b: Lab,
+        eitherApproximate: Boolean = false,
+        ignoreLightness: Boolean = false,
+        floor: Double = if (eitherApproximate) APPROXIMATE_FLOOR else CALIBRATED_FLOOR,
+    ): SwatchVerdict {
+        val parts = DeltaE2000.parts(a, if (ignoreLightness) b.copy(l = a.l) else b)
         val de = parts.total
         val level = when {
-            eitherApproximate && de < APPROXIMATE_FLOOR -> SwatchLevel.TOO_CLOSE_TO_CALL
+            de < floor -> SwatchLevel.TOO_CLOSE_TO_CALL
             de < SAME_BELOW -> SwatchLevel.SAME
             de < CLOSE_BELOW -> SwatchLevel.CLOSE
             de < NOTICEABLE_BELOW -> SwatchLevel.NOTICEABLE

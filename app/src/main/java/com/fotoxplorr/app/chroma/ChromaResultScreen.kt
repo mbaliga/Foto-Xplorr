@@ -110,7 +110,7 @@ private fun timeText(millis: Long): String =
 /** One reading in a list: a swatch, its words, its hex, how it was made and when. */
 @Composable
 private fun ReadingLine(reading: SavedReading, modifier: Modifier = Modifier) {
-    val report = remember(reading.argb) { ColourReport.of(reading.argb) }
+    val report = remember(reading.argb, reading.kind) { ColourReport.of(reading.argb, lightnessMeasured = reading.kind.measuresLightness) }
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         Swatch(reading.argb, 48.dp, "${report.description}, ${reading.hex}")
         Column {
