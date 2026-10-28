@@ -6,7 +6,6 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
-import com.fotoxplorr.app.lift.pruneStaleFiles
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -99,8 +98,10 @@ class AnimateWriter(
 ) : AnimateSink {
     private val appContext = context.applicationContext
 
+    /** Also sweeps what a killed run left ([pruneStaging]), so a person who never saves again does not keep its pictures in the cache. */
     override fun stagingDirectory(): File = File(appContext.cacheDir, STAGING_DIRECTORY).apply {
         if (!mkdirs() && !isDirectory) throw IOException("Could not prepare animation storage")
+        pruneStaging()
     }
 
     override suspend fun publish(
@@ -146,9 +147,9 @@ class AnimateWriter(
         return if (low) AnimateNoSpaceException(failure) else failure
     }
 
-    /** Delete working files left by a run the system killed. Cheap; called at the start of every save. */
+    /** Delete working files and frame folders left by a run the system killed. Cheap; called when a job asks for its folder and at the start of every save. */
     fun pruneStaging(maxAgeMillis: Long = STAGING_MAX_AGE_MILLIS): Int =
-        pruneStaleFiles(File(appContext.cacheDir, STAGING_DIRECTORY), System.currentTimeMillis(), maxAgeMillis)
+        pruneStaleStaging(File(appContext.cacheDir, STAGING_DIRECTORY), System.currentTimeMillis(), maxAgeMillis)
 
     /** Create the pending row, copy [staged] into it, make it visible; any failure or cancel deletes the row. */
     private suspend fun insertFrom(staged: File, output: AnimOutput, sourceName: String, dateTakenMillis: Long, onProgress: (Float) -> Unit): Uri {
@@ -258,5 +259,29 @@ internal fun animationFileName(sourceName: String, output: AnimOutput, taken: (S
     return candidate
 }
 
+/**
+ * Delete what in [directory] is older than [maxAgeMillis] before [nowMillis]: a file by its own date, a folder (a
+ * video job's frame pictures) with all it holds by the newest date of the folder or anything in it, so a job still
+ * writing is spared. Returns how many entries went; a missing directory or an entry that refuses to go is skipped.
+ * Not [com.fotoxplorr.app.lift.pruneStaleFiles], which leaves folders alone.
+ */
+internal fun pruneStaleStaging(directory: File, nowMillis: Long, maxAgeMillis: Long): Int {
+    var removed = 0
+    for (entry in directory.listFiles().orEmpty()) {
+        if (nowMillis - newestModified(entry, 0) <= maxAgeMillis) continue
+        if (if (entry.isDirectory) entry.deleteRecursively() else entry.delete()) removed++
+    }
+    return removed
+}
+
+private fun newestModified(entry: File, depth: Int): Long {
+    var newest = entry.lastModified()
+    if (entry.isDirectory && depth < MAX_STAGING_DEPTH) {
+        for (child in entry.listFiles().orEmpty()) newest = maxOf(newest, newestModified(child, depth + 1))
+    }
+    return newest
+}
+
+private const val MAX_STAGING_DEPTH = 4
 private const val MAX_STEM = 100
 private const val MAX_NUMBER = 1000

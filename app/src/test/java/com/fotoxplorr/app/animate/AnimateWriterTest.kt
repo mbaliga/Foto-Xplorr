@@ -325,6 +325,40 @@ class AnimateWriterTest {
         assertTrue("and the file just staged is not old", stagedFiles().isNotEmpty())
     }
 
+    @Test
+    fun `an old frames folder left by a killed video job is swept with its pictures`() {
+        val dir = writer().stagingDirectory()
+        val old = System.currentTimeMillis() - 3 * 3_600_000L
+        val frames = File(dir, "frames-123").apply { mkdirs() }
+        val pictures = (0 until 3).map { File(frames, "f%05d.jpg".format(it)).apply { writeText("x"); setLastModified(old) } }
+        frames.setLastModified(old)
+        assertEquals(1, writer().pruneStaging())
+        assertFalse(frames.exists())
+        assertTrue(pictures.none { it.exists() })
+    }
+
+    @Test
+    fun `a frames folder still being written is kept even when the folder itself is old`() {
+        val dir = writer().stagingDirectory()
+        val old = System.currentTimeMillis() - 3 * 3_600_000L
+        val frames = File(dir, "frames-456").apply { mkdirs() }
+        val fresh = File(frames, "f00000.jpg").apply { writeText("x") }
+        frames.setLastModified(old)
+        assertEquals(0, writer().pruneStaging())
+        assertTrue(frames.exists() && fresh.exists())
+    }
+
+    @Test
+    fun `a job's first look at its working folder sweeps what a killed one left, with no save needed`() {
+        val dir = writer().stagingDirectory()
+        val frames = File(dir, "frames-789").apply { mkdirs() }
+        File(frames, "f00000.jpg").apply { writeText("x"); setLastModified(System.currentTimeMillis() - 3 * 3_600_000L) }
+        frames.setLastModified(System.currentTimeMillis() - 3 * 3_600_000L)
+        File(dir, "anim-old.mp4").apply { writeText("x"); setLastModified(System.currentTimeMillis() - 3 * 3_600_000L) }
+        writer().stagingDirectory()
+        assertEquals(emptyList<String>(), stagedFiles())
+    }
+
     // ---- the file name --------------------------------------------------------------------------------------
 
     @Test
