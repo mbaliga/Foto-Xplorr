@@ -356,12 +356,59 @@ class FrameSourcesTest {
     }
 
     @Test
-    fun `a first frame that cannot be read is an unreadable video, not a repeat of nothing`() {
+    fun `a video that gives no frame at all is unreadable, not a repeat of nothing`() {
+        val r = FakeVideoReader()
+        r.missing += (1000L..1900L step 100L)
+        val s = clipSource(hostWith(r))
+        run { s.open() }
+        assertEquals(AnimateCopy.VIDEO_UNREADABLE, refusal { s.frame(0, 64, 48) }.message)
+    }
+
+    @Test
+    fun `a first tick with no frame takes the next one that has, and does not give up the clip`() {
         val r = FakeVideoReader()
         r.missing += 1000L
         val s = clipSource(hostWith(r))
         run { s.open() }
+        val first = run { s.frame(0, 64, 48) }
+        assertArrayEquals("the frame of the next tick stands in", AnimateKit.picture(110, 64, 48).argb, first)
+        assertEquals(listOf(1000L, 1100L), r.times)
+        // And the clip goes on from there with its ordinary tolerance.
+        run { s.frame(1, 64, 48) }
+    }
+
+    @Test
+    fun `the first frame is looked for only a few ticks ahead`() {
+        val r = FakeVideoReader()
+        r.missing += (1000L..1300L step 100L)
+        val s = clipSource(hostWith(r))
+        run { s.open() }
         assertEquals(AnimateCopy.VIDEO_UNREADABLE, refusal { s.frame(0, 64, 48) }.message)
+        assertEquals(listOf(1000L, 1100L, 1200L, 1300L), r.times)
+    }
+
+    @Test
+    fun `a job cancelled while the video is being opened still gives the reader back`() {
+        val reader = FakeVideoReader()
+        val job = kotlinx.coroutines.Job()
+        val cancelling = object : VideoReader by reader {
+            override fun info(): VideoInfo? {
+                job.cancel() // the cancel lands while the open is on the IO thread
+                return reader.info()
+            }
+        }
+        val h = FakeAnimateHost()
+        val s = VideoFrameSource(object : AnimateHost by h {
+            override fun openVideo(asset: com.fotoxplorr.app.media.MediaAsset): VideoReader = cancelling
+        }, clip())
+        try {
+            runBlocking(job) { s.open() }
+            fail("expected a cancel")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // fine
+        }
+        s.close() // as the job's own finally does
+        assertTrue("the retriever was released", reader.closed)
     }
 
     @Test

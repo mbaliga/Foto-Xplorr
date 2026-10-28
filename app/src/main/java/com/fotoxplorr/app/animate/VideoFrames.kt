@@ -19,9 +19,10 @@ import kotlin.math.min
  * wants, so a long 4K clip is never held at full size.
  *
  * A tick with no frame (the reader returns null: a gap near the end, a decoder hiccup) shows the
- * frame before it, up to [MAX_MISSES] times in a row; after that, or when the very first frame
- * cannot be read, the source gives up with a sentence, because a clip that cannot be read is not
- * one to fill with repeats.
+ * frame before it, up to [MAX_MISSES] times in a row; after that the source gives up with a
+ * sentence, because a clip that cannot be read is not one to fill with repeats. When the very first
+ * tick has no frame there is nothing to repeat, so the next [MAX_LOOKAHEAD] ticks are tried and the
+ * first that has one stands in; if none does, the video is unreadable.
  *
  * Every read asks the host's [AnimateHost.mayUseVideo] first.
  */
@@ -38,20 +39,21 @@ internal class VideoFrameSource(
     override suspend fun open(): SourceInfo {
         val asset = input.asset
         if (!host.mayUseVideo(asset)) throw AnimSourceProtectedException()
-        val (opened, info) = withContext(Dispatchers.IO) {
+        val info = withContext(Dispatchers.IO) {
             val r = host.openVideo(asset) ?: throw AnimSourceException(AnimateCopy.VIDEO_UNREADABLE)
+            // Kept at once, inside the block: a cancel that lands as the block returns throws its result away, and close() must still find the reader.
+            reader = r
             val i = try {
                 r.info()
             } catch (e: RuntimeException) {
                 null
             }
             if (i == null) {
-                r.close()
+                close()
                 throw AnimSourceException(AnimateCopy.VIDEO_UNREADABLE)
             }
-            r to i
+            i
         }
-        reader = opened
         // A file that says it is shorter than asked ends where it ends; one that does not say its length is trusted.
         val end = if (info.durationMs > 0) min(input.endMs, info.durationMs) else input.endMs
         if (end <= input.startMs) {
@@ -77,15 +79,23 @@ internal class VideoFrameSource(
         val timeline = checkNotNull(timeline) { "open() first" }
         require(index in timeline.delaysMs.indices) { "no frame $index" }
         if (!host.mayUseVideo(input.asset)) throw AnimSourceProtectedException()
-        val time = timeline.timeMs(index)
-        val raw = withContext(Dispatchers.IO) {
+        suspend fun read(tick: Int): RawFrame? = withContext(Dispatchers.IO) {
             try {
-                reader.frameAt(time, width, height)
+                reader.frameAt(timeline.timeMs(tick), width, height)
             } catch (e: RuntimeException) {
                 null
             }
         }
+        var raw = read(index)
         coroutineContext.ensureActive()
+        if (raw == null && held == null) {
+            // Some files give nothing at the very start (an edit list, a first sync frame after 0): the next ticks stand in.
+            var ahead = 1
+            while (raw == null && ahead <= MAX_LOOKAHEAD && index + ahead in timeline.delaysMs.indices) {
+                raw = read(index + ahead++)
+                coroutineContext.ensureActive()
+            }
+        }
         if (raw == null) {
             val last = held
             if (last == null) throw AnimSourceException(AnimateCopy.VIDEO_UNREADABLE)
@@ -107,6 +117,9 @@ internal class VideoFrameSource(
     companion object {
         /** Ticks in a row that may repeat the one before. */
         const val MAX_MISSES = 5
+
+        /** How many ticks past the first the source looks for a frame when the first has none. */
+        const val MAX_LOOKAHEAD = 3
         private const val OPAQUE_BLACK = 0xFF000000.toInt()
     }
 }
@@ -127,7 +140,9 @@ internal class VideoFrameSource(
  * later) is used only once frames are known to come back upright, because the size it is asked for
  * is the upright one.
  *
- * Nothing here has run on a device; Robolectric's shadow stands in for the retriever in the tests.
+ * A full-size read that runs out of memory ends the job with the memory sentence at once ([unscaled]); that
+ * path is untested, since the shadow cannot run out of memory. Nothing here has run on a device;
+ * Robolectric's shadow stands in for the retriever in the tests.
  */
 internal class RetrieverVideoReader private constructor(
     private val retriever: MediaMetadataRetriever,
@@ -158,19 +173,19 @@ internal class RetrieverVideoReader private constructor(
         val timeUs = max(0L, timeMs) * 1000L
         if (turnHere == null) {
             // The first read decides, from an unscaled frame, whether frames come back turned.
-            val full = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST) ?: return null
-            val frame = rawOf(full) ?: return null
+            val frame = unscaled(timeUs) ?: return null
             turnHere = needsTurn(frame, upright)
             return limit(if (turnHere == true) FrameOps.rotateClockwise(frame, rotation) else frame, maxWidth, maxHeight)
         }
         val here = turnHere == true
-        val bitmap = if (sdk >= Build.VERSION_CODES.O_MR1 && !here) {
+        val frame = if (sdk >= Build.VERSION_CODES.O_MR1 && !here) {
             val (w, h) = fitInside(upright.width, upright.height, maxWidth, maxHeight)
-            retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST, w, h)
+            val bitmap = retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST, w, h)
+                ?: retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, w, h)
+            bitmap?.let(::rawOf)
         } else {
-            retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+            unscaled(timeUs)
         } ?: return null
-        val frame = rawOf(bitmap) ?: return null
         return limit(if (here) FrameOps.rotateClockwise(frame, rotation) else frame, maxWidth, maxHeight)
     }
 
@@ -179,6 +194,19 @@ internal class RetrieverVideoReader private constructor(
     }
 
     private fun number(key: Int): Long = retriever.extractMetadata(key)?.toLongOrNull() ?: 0L
+
+    /**
+     * The frame at [timeUs] at the video's own size: the nearest one, else the key frame nearest (some files give nothing
+     * for a time near 0 with the first). Running out of memory here is the video's size, which a smaller plan does not
+     * change, so it is the person's sentence at once and not a reason for the job to step down six times.
+     */
+    private fun unscaled(timeUs: Long): RawFrame? = try {
+        val bitmap = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+            ?: retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+        bitmap?.let(::rawOf)
+    } catch (e: OutOfMemoryError) {
+        throw AnimSourceException(AnimateCopy.OUT_OF_MEMORY, e)
+    }
 
     /** The pixels of [bitmap], which is given back. */
     private fun rawOf(bitmap: Bitmap): RawFrame? {
