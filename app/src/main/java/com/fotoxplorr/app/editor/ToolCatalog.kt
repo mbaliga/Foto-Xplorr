@@ -10,11 +10,12 @@ package com.fotoxplorr.app.editor
  * and ring. The centre holds the person's few most-used tools, a ring of five groups surrounds it,
  * and the rarely used tools sit one tap deeper. No scrolling.
  *
- * HONEST STATUS: this catalogue describes the tools [EditorScreen] has TODAY; it does not drive
- * that screen. The screen's own tab list (a private enum there) is still what the person sees. The
- * catalogue stays honest by test: `ToolCatalogTest` scans the screen's source for its tab names and
- * its slider labels, and reflects over [Adjustments] and [EditRecipe], so a tool added there and
- * not here fails a test instead of silently being unreachable from the hub.
+ * WIRED: [EditorScreen] shows this catalogue through [HubRingPanel] (the hub replaced the old strip
+ * of tabs). `EditTool`, the screen's private enum, is now only the host panel a tool's controls are
+ * drawn in, named by [ToolSpec.hostTab]. The two stay in step by test: `ToolCatalogTest` scans the
+ * screen's source for its host panels and for the `shows(ToolIds.X)` block that draws each tool's
+ * slider, and reflects over [Adjustments] and [EditRecipe], so a tool added there and not here (or
+ * the other way round) fails a test instead of silently being unreachable from the hub.
  *
  * Pure Kotlin, no Android imports.
  */

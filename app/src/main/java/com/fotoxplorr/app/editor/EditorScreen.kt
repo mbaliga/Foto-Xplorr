@@ -75,21 +75,20 @@ import com.fotoxplorr.app.ui.HelpCopy
  *
  * These used to be the tabs of one scrollable strip; the hub ([HubRingPanel]) replaced the strip,
  * and a tool now names its host here by [ToolSpec.hostTab] (the catalogue's test holds the two in
- * step). The order is the old strip's: light before colour before detail, because fixing exposure
- * changes what the colour looks like and sharpening before either amplifies whatever you were
- * about to correct. [label] is the old tab's name: nothing draws it any more, but the catalogue's
- * test reads this enum and the titles from this file to keep the hub honest about what exists.
+ * step, and checks that each tool's own control is really drawn). The order is the old strip's:
+ * light before colour before detail, because fixing exposure changes what the colour looks like
+ * and sharpening before either amplifies whatever you were about to correct.
  */
-private enum class EditTool(val label: String) {
-    LIGHT("Light"),
-    COLOUR("Colour"),
-    CURVES("Curves"),
-    PRESETS("Presets"),
-    DETAIL("Detail"),
-    HSL("HSL"),
-    CROP("Crop"),
-    ROTATE("Rotate"),
-    HEAL("Heal"),
+private enum class EditTool {
+    LIGHT,
+    COLOUR,
+    CURVES,
+    PRESETS,
+    DETAIL,
+    HSL,
+    CROP,
+    ROTATE,
+    HEAL,
 }
 
 /**
@@ -860,8 +859,7 @@ fun EditorScreen(
                                     onClick = {
                                         recipe = EditRecipe()
                                         history = EditHistory.of(recipe)
-                                        hub.applied()
-                                        hub.closeTool()
+                                        hub.closeTool() // an action is not a use: nothing to count
                                     },
                                     modifier = Modifier.heightIn(min = 48.dp),
                                 ) {
@@ -882,7 +880,6 @@ fun EditorScreen(
                                     onClick = {
                                         recipe = recipeStore.revert(asset)
                                         history = EditHistory.of(recipe)
-                                        hub.applied()
                                         hub.closeTool()
                                     },
                                     modifier = Modifier.heightIn(min = 48.dp),
@@ -917,7 +914,9 @@ fun EditorScreen(
                                 "Spot size",
                                 healRadius,
                                 range = HealSpot.MIN_RADIUS..HealSpot.MAX_RADIUS,
-                            ) { healRadius = it }
+                                // Zero is outside HealSpot's radius range; a reset to it would crash the next tap.
+                                neutral = HealSpot.DEFAULT_RADIUS,
+                            ) { healRadius = it.coerceIn(HealSpot.MIN_RADIUS, HealSpot.MAX_RADIUS) }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 TextButton(
                                     enabled = recipe.heals.isNotEmpty(),
@@ -1246,32 +1245,42 @@ private class CreateImageDocumentContract : ActivityResultContract<SaveToRequest
         intent.takeIf { resultCode == android.app.Activity.RESULT_OK }?.data
 }
 
+/**
+ * A labelled slider with a way back to [neutral].
+ *
+ * @param neutral what "reset" sets: zero for the signed adjustments, and for a slider whose range
+ *   excludes zero (the Heal spot size) its own default. The default is zero pulled into [range], so
+ *   a reset can never hand the caller a value its range does not allow.
+ */
 @Composable
 internal fun LabelledSlider(
     label: String,
     value: Float,
     range: ClosedFloatingPointRange<Float> = -1f..1f,
     unit: String = "",
+    neutral: Float = 0f.coerceIn(range.start, range.endInclusive),
     onChange: (Float) -> Unit,
 ) {
     Column {
         Row(
-            Modifier.fillMaxWidth(),
+            // Tall enough for the reset link at all times, so the row (and the photo above the
+            // panel) does not change height under a finger the moment a drag leaves neutral.
+            Modifier.fillMaxWidth().heightIn(min = 48.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(label, color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                // Double-tap-free way back to neutral. A slider you can only approach zero on is
+                // Double-tap-free way back to neutral. A slider you can only approach neutral on is
                 // a slider you cannot undo, and "close to zero" is visible in a photograph. 48 dp
                 // tall, and named for a screen reader, which would otherwise hear only "reset".
-                if (value != 0f) {
+                if (value != neutral) {
                     Text(
                         "reset",
                         color = Color.White.copy(alpha = 0.4f),
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier
-                            .clickable(role = Role.Button) { onChange(0f) }
+                            .clickable(role = Role.Button) { onChange(neutral) }
                             .semantics { contentDescription = "Reset $label" }
                             .heightIn(min = 48.dp)
                             .wrapContentHeight(Alignment.CenterVertically)
@@ -1282,7 +1291,7 @@ internal fun LabelledSlider(
             Text(
                 // Signed, so "no change" is unmistakably zero rather than a value near it.
                 if (unit.isEmpty()) "${(value * 100).toInt()}" else "${(value * 10).toInt() / 10f}$unit",
-                color = if (value == 0f) Color.White.copy(alpha = 0.4f) else Color.White,
+                color = if (value == neutral) Color.White.copy(alpha = 0.4f) else Color.White,
                 style = MaterialTheme.typography.bodyMedium,
             )
         }

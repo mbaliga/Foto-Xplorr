@@ -21,12 +21,30 @@ class ToolCatalogTest {
         }.readText()
     }
 
-    /** The names declared in `private enum class EditTool(...) { LIGHT("Light"), ... }`. */
+    /** The names declared in `private enum class EditTool { LIGHT, COLOUR, ... }`. */
     private fun editorTabs(): List<String> {
-        val start = screenSource.indexOf("enum class EditTool(")
+        val start = screenSource.indexOf("enum class EditTool")
         assertTrue("EditTool enum not found", start >= 0)
         val body = screenSource.substring(screenSource.indexOf('{', start), screenSource.indexOf("\n}", start))
-        return Regex("""(?m)^\s+([A-Z_]+)\("""").findAll(body).map { it.groupValues[1] }.toList()
+        return Regex("""(?m)^\s+([A-Z_]+),?\s*$""").findAll(body).map { it.groupValues[1] }.toList()
+    }
+
+    /** `ToolIds.X` constant name to its value, by reflection, so the source can be read by name. */
+    private fun toolIdConstants(): Map<String, String> =
+        ToolIds::class.java.declaredFields
+            .filter { Modifier.isStatic(it.modifiers) && it.type == String::class.java }
+            .associate { it.name to (it.also { f -> f.isAccessible = true }.get(null) as String) }
+
+    /**
+     * Each `if (shows(ToolIds.X)) { LabelledSlider("Label", ...` of the editor: the tool id the
+     * block is for, and the label of the first slider it draws.
+     */
+    private fun drawnSliders(): Map<String, String> {
+        val constants = toolIdConstants()
+        val found = Regex("""shows\(ToolIds\.([A-Z_]+)\)\)\s*\{\s*LabelledSlider\(\s*"([^"]+)"""")
+            .findAll(screenSource).map { it.groupValues[1] to it.groupValues[2] }.toList()
+        found.forEach { (name, _) -> assertTrue("ToolIds.$name does not exist", name in constants) }
+        return found.associate { (name, label) -> constants.getValue(name) to label }
     }
 
     private fun propertyNames(type: Class<*>): Set<String> =
@@ -37,6 +55,7 @@ class ToolCatalogTest {
         // Guards the guards: an empty list would make every tab test below pass for nothing.
         val tabs = editorTabs()
         assertTrue("tabs: $tabs", tabs.size >= 9)
+        assertTrue("drawn sliders: ${drawnSliders()}", drawnSliders().size >= 15)
         assertTrue("LIGHT" in tabs && "HEAL" in tabs && "CURVES" in tabs)
     }
 
@@ -94,9 +113,35 @@ class ToolCatalogTest {
     }
 
     @Test
-    fun `every title is a label the editor really shows`() {
+    fun `every slider tool has a block that draws a slider of its own name, and only that tool's`() {
+        val drawn = drawnSliders()
+        for (spec in ToolCatalog.all.filter { it.panel == PanelKind.SLIDER }) {
+            assertEquals("${spec.id}: the slider drawn for it", spec.title, drawn[spec.id])
+        }
+        // And no block draws a slider for a tool that is not a slider tool.
+        val sliderIds = ToolCatalog.all.filter { it.panel == PanelKind.SLIDER }.map { it.id }.toSet()
+        assertEquals(emptySet<String>(), drawn.keys - sliderIds)
+    }
+
+    @Test
+    fun `every other tool has its own control in the editor`() {
+        val constants = toolIdConstants().entries.associate { it.value to it.key }
+        for (spec in ToolCatalog.all.filter { it.panel == PanelKind.BUTTON || it.panel == PanelKind.ACTION }) {
+            // Buttons and actions share a host panel, each behind its own `shows`.
+            assertTrue(
+                "${spec.id} has no shows(ToolIds.${constants[spec.id]})",
+                screenSource.contains("shows(ToolIds.${constants[spec.id]})"),
+            )
+        }
         for (spec in ToolCatalog.all) {
-            assertTrue("${spec.title} is not a string in EditorScreen.kt", screenSource.contains("\"${spec.title}\""))
+            // The host tab it names has a block that draws the controls: the Curves graph sits
+            // outside the scrolling column on purpose, every other tab is a branch of its `when`.
+            val drawn = if (spec.hostTab == "CURVES") {
+                Regex("""tool == EditTool\.CURVES\)\s*\{\s*CurvesEditor\(""").containsMatchIn(screenSource)
+            } else {
+                Regex("""(?m)^\s+EditTool\.${spec.hostTab} -> \{\s*$""").containsMatchIn(screenSource)
+            }
+            assertTrue("${spec.id}: no block draws EditTool.${spec.hostTab}", drawn)
         }
     }
 

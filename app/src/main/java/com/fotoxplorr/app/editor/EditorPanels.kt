@@ -104,7 +104,7 @@ fun PresetsPanel(
                 )
             }
         }
-        TextButton(onClick = { saveDialogOpen = true }) {
+        TextButton(onClick = { saveDialogOpen = true }, modifier = Modifier.heightIn(min = 48.dp)) {
             Text("Save current as preset…", color = MaterialTheme.colorScheme.primary)
         }
     }
