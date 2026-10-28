@@ -4,6 +4,7 @@ import com.fotoxplorr.app.editor.jsonArrayOf
 import com.fotoxplorr.app.editor.jsonObjectOf
 import com.fotoxplorr.app.editor.stringify
 import com.fotoxplorr.app.editor.toJson
+import java.util.Locale
 
 /** What a palette can be written out as. */
 enum class ExportFormat(val label: String, val extension: String, val mimeType: String) {
@@ -32,7 +33,8 @@ object PaletteExport {
         append("Columns: ").append(minOf(palette.size, GPL_COLUMNS)).append('\n')
         append("#\n")
         for (c in palette.colors) {
-            append("%3d %3d %3d\t%s\n".format(ColorMath.red(c.argb), ColorMath.green(c.argb), ColorMath.blue(c.argb), c.hex))
+            // Locale.ROOT: a phone set to Arabic, Persian or Bengali would write these numbers in its own digits.
+            append(String.format(Locale.ROOT, "%3d %3d %3d\t%s\n", ColorMath.red(c.argb), ColorMath.green(c.argb), ColorMath.blue(c.argb), c.hex))
         }
     }
 

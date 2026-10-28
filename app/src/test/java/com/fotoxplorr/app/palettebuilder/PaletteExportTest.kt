@@ -8,7 +8,9 @@ import com.fotoxplorr.app.editor.parseJson
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Locale
 
 class PaletteExportTest {
 
@@ -24,6 +26,22 @@ class PaletteExportTest {
             "  0 170 255\t#00AAFF\n" +
             " 26  26  26\t#1A1A1A\n"
         assertEquals(expected, PaletteExport.gpl(sunset))
+    }
+
+    @Test
+    fun `the exports are the same text whatever digits the phone's language uses`() {
+        val before = Locale.getDefault()
+        try {
+            for (tag in listOf("ar-EG", "fa-IR", "bn-BD", "my-MM", "hi-IN")) {
+                Locale.setDefault(Locale.forLanguageTag(tag))
+                assertEquals(tag, "255 136   0\t#FF8800", PaletteExport.gpl(sunset).lines()[4])
+                assertEquals(tag, "  0 170 255\t#00AAFF", PaletteExport.gpl(sunset).lines()[5])
+                assertEquals(tag, "#FF8800", sunset.colors[0].hex)
+                assertTrue(tag, PaletteExport.css(sunset).contains("--sunset-3: #1A1A1A;"))
+            }
+        } finally {
+            Locale.setDefault(before)
+        }
     }
 
     @Test

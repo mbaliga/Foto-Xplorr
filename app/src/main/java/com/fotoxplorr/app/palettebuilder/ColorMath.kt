@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.palettebuilder
 
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cbrt
@@ -66,7 +67,7 @@ object ColorMath {
     // ---- hex ----
 
     /** `#RRGGBB`, upper-case. */
-    fun hex(argb: Int): String = "#%02X%02X%02X".format(red(argb), green(argb), blue(argb))
+    fun hex(argb: Int): String = String.format(Locale.ROOT, "#%02X%02X%02X", red(argb), green(argb), blue(argb))
 
     /**
      * An opaque colour from `#RRGGBB`, `RRGGBB`, `#RGB` or `RGB` (any case), or null for anything else.
