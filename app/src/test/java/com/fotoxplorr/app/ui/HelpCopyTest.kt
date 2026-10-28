@@ -196,7 +196,7 @@ class HelpCopyTest {
         assertTrue(camera, camera.contains("only by Chroma ID"))
         assertTrue(camera, camera.contains("never saved or sent"))
         val sound = HelpCopy.Note.EXPERIMENTAL_SOUND
-        assertTrue(sound, sound.contains("plays no sound"))
+        assertTrue(sound, sound.contains("no music library"))
         assertTrue(sound, sound.contains("one sound file you pick"))
         for (line in listOf(camera, sound)) {
             assertTrue(line, line.length <= NOTE_MAX)

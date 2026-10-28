@@ -212,10 +212,11 @@ internal object HelpCopy {
         const val EXPERIMENTAL_CAMERA = "The camera is used only by Chroma ID, and its pictures are never saved or sent."
 
         /**
-         * The sound boundary (ADR-017). Fotoz has no audio library and plays nothing; the reel maker lays one
-         * file the person picks under the video it makes, through the system file picker, with no permission.
+         * The sound boundary (ADR-017). Fotoz has no music or audio library (the video player plays a video's own
+         * sound, as before); the reel maker lays one file the person picks under the video it makes, through the
+         * system file picker, with no permission, and nothing is played back by it.
          */
-        const val EXPERIMENTAL_SOUND = "Fotoz plays no sound; a reel can carry one sound file you pick."
+        const val EXPERIMENTAL_SOUND = "Fotoz has no music library; a reel can carry one sound file you pick."
 
         /**
          * What a protected folder is. It is an in-app gate; the files stay where they were, readable
