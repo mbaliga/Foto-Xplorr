@@ -191,6 +191,19 @@ class HelpCopyTest {
     fun `the experimental paragraphs keep every boundary they state`() {
         assertTrue(HelpCopy.Note.EXPERIMENTAL_LOCATION.contains("only by Compass view"))
 
+        // ADR-017: the camera belongs to one tool and its pictures go nowhere; the sound is one picked file.
+        val camera = HelpCopy.Note.EXPERIMENTAL_CAMERA
+        assertTrue(camera, camera.contains("only by Chroma ID"))
+        assertTrue(camera, camera.contains("never saved or sent"))
+        val sound = HelpCopy.Note.EXPERIMENTAL_SOUND
+        assertTrue(sound, sound.contains("plays no sound"))
+        assertTrue(sound, sound.contains("one sound file you pick"))
+        for (line in listOf(camera, sound)) {
+            assertTrue(line, line.length <= NOTE_MAX)
+            assertEquals("one sentence: $line", 1, line.count { it == '.' })
+            assertTrue(line, line.endsWith("."))
+        }
+
         val ai = HelpCopy.Note.AI_SERVICE
         assertTrue(ai, ai.contains("Nothing is sent until you turn it on and ask"))
         assertTrue(ai, ai.contains("encrypted"))

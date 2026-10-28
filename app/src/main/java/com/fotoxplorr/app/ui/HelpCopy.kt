@@ -205,6 +205,19 @@ internal object HelpCopy {
         const val EXPERIMENTAL_LOCATION = "Location is used only by Compass view."
 
         /**
+         * The camera boundary (ADR-017). The manifest declares CAMERA, optional; only Chroma ID opens the
+         * camera, only while it is on screen, and it keeps a colour and a time, never a picture. "Never
+         * saved or sent" is about the pictures: the colours it keeps are in its own history.
+         */
+        const val EXPERIMENTAL_CAMERA = "The camera is used only by Chroma ID, and its pictures are never saved or sent."
+
+        /**
+         * The sound boundary (ADR-017). Fotoz has no audio library and plays nothing; the reel maker lays one
+         * file the person picks under the video it makes, through the system file picker, with no permission.
+         */
+        const val EXPERIMENTAL_SOUND = "Fotoz plays no sound; a reel can carry one sound file you pick."
+
+        /**
          * What a protected folder is. It is an in-app gate; the files stay where they were, readable
          * by any other app with photo access (README, "private folders ... not encryption"). Without
          * this line the word "protected" reads as a vault.

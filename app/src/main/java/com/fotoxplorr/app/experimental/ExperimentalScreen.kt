@@ -233,6 +233,16 @@ private fun ExperimentalHub(
                         style = MaterialTheme.typography.bodySmall,
                         color = RoomStyle.InkFaint,
                     )
+                    Text(
+                        HelpCopy.Note.EXPERIMENTAL_CAMERA,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = RoomStyle.InkFaint,
+                    )
+                    Text(
+                        HelpCopy.Note.EXPERIMENTAL_SOUND,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = RoomStyle.InkFaint,
+                    )
                     Spacer(Modifier.size(72.dp))
                 }
             }
