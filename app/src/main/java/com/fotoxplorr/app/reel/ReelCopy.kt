@@ -20,6 +20,38 @@ internal object ReelCopy {
 
     fun picked(picked: Int, considered: Int): String = "Picked $picked of $considered."
 
+    // Making the video file. The job returns these, never an exception's text.
+    const val JOB_TITLE = "Making a reel"
+    const val SAVED = "Reel saved."
+    const val SAVED_SMALLER = "Saved smaller, to fit this phone."
+    const val SAVED_CUTS = "Saved with plain cuts, to fit this phone."
+    const val SAVED_SILENT = "Reel saved without sound."
+    const val PROTECTED = "A protected photo or clip cannot be used."
+    const val NO_ENCODER = "This phone cannot make a video."
+    const val SOURCE_UNREADABLE = "A photo, clip or sound file could not be read."
+    const val OUT_OF_MEMORY = "There is not enough memory to make this reel."
+    const val NO_SPACE = "There is not enough space on the phone."
+    const val SAVE_FAILED = "The reel could not be saved."
+    const val FAILED = "The reel could not be made."
+    const val PLACE_LEFT_IN = "The reel still carried a place, so it was not saved."
+    const val CANCELLED = "Cancelled."
+
+    fun noLongerAvailable(item: Int): String = "Item $item is no longer available."
+
+    fun cannotRead(item: Int): String = "Item $item could not be read."
+
+    // The soundtrack. The file is only ever laid into the video; nothing is played in the app.
+    const val SOUND_UNREADABLE = "This phone cannot read that sound file."
+    const val SOUND_STARTS_LATE = "The sound file ends before it should start."
+    const val SOUND_FAILED = "The sound could not be added."
+    const val SOUND_ASK = "Make the reel without sound?"
+    const val SOUND_PICK = "Choose a sound file"
+    const val SOUND_REMOVE = "Remove the sound file"
+    const val SOUND_NONE = "No sound file chosen."
+    const val CLIP_SOUND = "Keep the sound of clips"
+
+    fun soundFile(name: String): String = "Sound: $name"
+
     // Kinds of item, for a screen reader and a label.
     const val ITEM_STILL = "Photo"
     const val ITEM_CLIP = "Clip"
