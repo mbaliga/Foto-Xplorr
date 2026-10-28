@@ -135,6 +135,15 @@ internal object BoardCopy {
 
     fun turnNow(degrees: Float): String = "Turn ${degrees.roundToInt()}°"
 
+    /** The face of a turn button: a signed whole number of degrees, "-15°" or "+1°". */
+    fun turnStep(degrees: Float): String = "${if (degrees > 0f) "+" else ""}${degrees.roundToInt()}°"
+
+    /** A canvas that is not one of the named shapes. */
+    fun customCanvas(width: Int, height: Int): String = "$width by $height"
+
+    /** The value a text size stepper shows. */
+    fun textSizeValue(units: Float): String = "${units.roundToInt()}"
+
     fun opacityNow(opacity: Float): String = "Opacity ${(opacity * 100f).roundToInt()}%"
 
     // ---- text ----

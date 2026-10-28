@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.board
 
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
@@ -77,6 +78,13 @@ object BoardGestures {
         return Settled(t, guides)
     }
 
+    /**
+     * Whether a gesture's net twist ([netDegrees], signed, summed over the gesture) is a turn the person made.
+     * The sum is signed so the small back-and-forth of two fingers pinching cancels out and a pure zoom never
+     * counts, and the layer's angle is pulled to a step only once it does.
+     */
+    fun turnNoticed(netDegrees: Float): Boolean = abs(netDegrees) > TURN_NOTICED_DEG
+
     class Settled(val transform: Transform, val guides: List<SnapGuide>)
 
     /** A touch counts as a gesture, not a tap, after it has moved this far (dp). */
@@ -87,6 +95,9 @@ object BoardGestures {
 
     /** How close a layer must come to a guide to be pulled to it (dp). */
     const val SNAP_DP = 8f
+
+    /** A twist of this many degrees or more, net, is a turn (not the jitter of a pinch). */
+    const val TURN_NOTICED_DEG = 4f
 
     const val MIN_PREVIEW_EDGE = 256
     const val MAX_PREVIEW_EDGE = 1280

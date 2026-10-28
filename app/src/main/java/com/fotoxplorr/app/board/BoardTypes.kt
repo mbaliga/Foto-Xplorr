@@ -253,7 +253,11 @@ data class Layer(
     val drawnHeight: Float get() = height * transform.scale
 }
 
-/** A whole board. [nextLayerId] only grows, so an id is never given to two layers, even after a delete and an undo. */
+/**
+ * A whole board. [nextLayerId] is the id the next added layer gets and is part of the board, so it grows with each
+ * add but an undo takes it back with the layers: an id can be given again after an undone add. Within one
+ * board no two layers share an id.
+ */
 data class Board(
     val canvas: CanvasSize = CanvasPreset.SQUARE.size,
     val background: BoardBackground = BoardBackground.Colour(0xFFFFFFFF.toInt()),

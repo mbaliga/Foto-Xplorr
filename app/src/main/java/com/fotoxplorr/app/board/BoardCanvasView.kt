@@ -183,7 +183,7 @@ private suspend fun PointerInputScope.boardGestures(
         var accZoom = 1f
         var accRotation = 0f
         var maxPointers = 1
-        var turnedDegrees = 0f
+        var netTurn = 0f
         var target: Long? = null
         var raw: Transform? = null
         val key = "gesture:${gestureCounter.incrementAndGet()}"
@@ -230,10 +230,10 @@ private suspend fun PointerInputScope.boardGestures(
                     val about = if (centroid.isSpecified) Pt(centroid.x / pxPerUnit, centroid.y / pxPerUnit) else Pt(start.cx, start.cy)
                     val next = BoardGestures.transformAbout(start, about, pan.x / pxPerUnit, pan.y / pxPerUnit, zoom, rotation)
                     raw = next
-                    turnedDegrees += abs(rotation)
+                    netTurn += rotation
                     val settled = BoardGestures.settle(
                         board(), id, next,
-                        turned = turnedDegrees > TURN_NOTICED_DEG,
+                        turned = BoardGestures.turnNoticed(netTurn),
                         moveOnly = maxPointers == 1,
                         snap = if (snap()) SnapOptions(threshold = snapUnits) else null,
                     )
@@ -251,8 +251,6 @@ private suspend fun PointerInputScope.boardGestures(
         }
     }
 }
-
-private const val TURN_NOTICED_DEG = 1f
 
 // ---- the overlay ----------------------------------------------------------------------------------
 

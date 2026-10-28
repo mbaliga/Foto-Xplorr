@@ -146,16 +146,16 @@ internal fun LayerPanel(editor: BoardEditor, palette: List<PaletteSwatch>, edit:
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val coarse = BoardEditing.Steps.TURN_COARSE
             val fine = BoardEditing.Steps.TURN_FINE
-            BoardStepButton("-15°", BoardCopy.TURN_LEFT_COARSE, { edit { BoardEditing.turnBy(it, -coarse) } }, enabled = free)
-            BoardStepButton("-1°", BoardCopy.TURN_LEFT_FINE, { edit { BoardEditing.turnBy(it, -fine) } }, enabled = free)
+            BoardStepButton(BoardCopy.turnStep(-coarse), BoardCopy.TURN_LEFT_COARSE, { edit { BoardEditing.turnBy(it, -coarse) } }, enabled = free)
+            BoardStepButton(BoardCopy.turnStep(-fine), BoardCopy.TURN_LEFT_FINE, { edit { BoardEditing.turnBy(it, -fine) } }, enabled = free)
             Text(
                 BoardCopy.turnNow(layer.transform.rotationDeg),
                 modifier = Modifier.weight(1f).polite(),
                 style = MaterialTheme.typography.bodySmall,
                 color = if (free) RoomStyle.Ink else RoomStyle.InkFaint,
             )
-            BoardStepButton("+1°", BoardCopy.TURN_RIGHT_FINE, { edit { BoardEditing.turnBy(it, fine) } }, enabled = free)
-            BoardStepButton("+15°", BoardCopy.TURN_RIGHT_COARSE, { edit { BoardEditing.turnBy(it, coarse) } }, enabled = free)
+            BoardStepButton(BoardCopy.turnStep(fine), BoardCopy.TURN_RIGHT_FINE, { edit { BoardEditing.turnBy(it, fine) } }, enabled = free)
+            BoardStepButton(BoardCopy.turnStep(coarse), BoardCopy.TURN_RIGHT_COARSE, { edit { BoardEditing.turnBy(it, coarse) } }, enabled = free)
         }
 
         BoardWrap {
@@ -207,7 +207,7 @@ private fun TextControls(text: LayerContent.Text, free: Boolean, edit: Edit) {
             }
         }
         BoardStepper(
-            valueText = "${text.sizeUnits.toInt()}",
+            valueText = BoardCopy.textSizeValue(text.sizeUnits),
             lessLabel = BoardCopy.TEXT_SMALLER,
             moreLabel = BoardCopy.TEXT_BIGGER,
             onLess = { edit { BoardEditing.textSizeBy(it, 1f / BoardEditing.Steps.TEXT_SIZE_FACTOR) } },

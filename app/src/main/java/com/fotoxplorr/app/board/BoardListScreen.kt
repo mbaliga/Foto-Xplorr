@@ -112,7 +112,7 @@ private fun BoardRow(board: SavedBoard, enabled: Boolean, onOpen: () -> Unit, on
 
 /** The name of a canvas shape: a preset's own, otherwise the size. */
 internal fun canvasName(size: CanvasSize): String =
-    CanvasPreset.entries.firstOrNull { it.size == size }?.let(BoardCopy::canvas) ?: "${size.width} by ${size.height}"
+    CanvasPreset.entries.firstOrNull { it.size == size }?.let(BoardCopy::canvas) ?: BoardCopy.customCanvas(size.width, size.height)
 
 /** The question before a board is deleted for good. */
 @Composable

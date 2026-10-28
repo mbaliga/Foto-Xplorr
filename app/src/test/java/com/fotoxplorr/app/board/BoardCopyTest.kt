@@ -84,6 +84,10 @@ class BoardCopyTest {
     fun `figures go into whole sentences`() {
         assertEquals("Size 121%", BoardCopy.sizeNow(1.21f))
         assertEquals("Turn -15°", BoardCopy.turnNow(-15f))
+        assertEquals("-15°", BoardCopy.turnStep(-15f))
+        assertEquals("+1°", BoardCopy.turnStep(1f))
+        assertEquals("1200 by 800", BoardCopy.customCanvas(1200, 800))
+        assertEquals("64", BoardCopy.textSizeValue(64f))
         assertEquals("Opacity 65%", BoardCopy.opacityNow(0.65f))
         assertEquals("Soft edge 10%", BoardCopy.featherNow(0.1f))
         assertEquals("1 point", BoardCopy.pointsNow(1))

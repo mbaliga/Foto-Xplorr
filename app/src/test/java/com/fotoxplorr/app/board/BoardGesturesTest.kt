@@ -143,4 +143,18 @@ class BoardGesturesTest {
         assertEquals("not turned by this gesture, so not pulled", 44f, still.transform.rotationDeg, 0.001f)
         assertFalse(still.guides.isNotEmpty())
     }
+
+    @Test
+    fun `the jitter of a pinch is not a turn, and a real twist is`() {
+        // Fingers wobble a degree or so each way while zooming: summed with their sign they stay small.
+        val wobble = listOf(0.8f, -0.9f, 1.1f, -0.7f, 0.9f, -1.0f, 1.2f, -0.8f)
+        assertFalse(BoardGestures.turnNoticed(wobble.sum()))
+        // The old sum of sizes would have called that a turn.
+        assertTrue(wobble.sumOf { kotlin.math.abs(it).toDouble() } > 1.0)
+        assertTrue(BoardGestures.turnNoticed(5f))
+        assertTrue(BoardGestures.turnNoticed(-5f))
+        // A layer at 13 degrees zoomed without a twist is left at 13.
+        val kept = BoardGestures.settle(twoLayers, 2L, Transform(1f, 1f, 1f, 13.4f), turned = BoardGestures.turnNoticed(wobble.sum()), moveOnly = false, snap = null)
+        assertEquals(13.4f, kept.transform.rotationDeg, 0.001f)
+    }
 }
