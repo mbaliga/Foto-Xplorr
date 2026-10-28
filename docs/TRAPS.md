@@ -1383,3 +1383,338 @@ make it flaky. `PANO-*` lines in the test output (`PANO-LIMIT`, `PANO-BLEND`, `P
 screenshot test proves how anything looks. The writer tests use a recording MediaStore stand-in that cannot
 refuse to open a file (the copy failure is simulated with a read-only descriptor) and Robolectric's JPEG
 encoder, which differs from a device's in size, not dimensions.
+
+*Entries 99 onward were earned in batch 8 (28 Oct 2026): colour vision, the editor hub, the palette builder,
+animated pictures, reels, the mood board and Chroma ID. They were written by the units that hit them and gathered
+here by the integrator, so a few say "I" in the sense of the unit. Nothing in this batch has run on a device.*
+
+## 99. The Machado matrices are published numbers we did not read from the authors, and they are not idempotent
+
+`vision/MachadoMatrices.kt` holds the 33 severity matrices extracted programmatically from the colorspacious and
+DaltonLens copies of the authors' supplementary table (identical to the last digit; every row sums to 1 within 2e-6).
+The authors' own page was unreachable from the sandbox, so the table was never compared with it directly; the KDoc
+says so. Severity 0 is not in the table and is implemented as the identity. Protan and deutan matrices are rank 2;
+**tritan is not** (smallest singular value 0.156) and is not monotone by L1 distance between steps 3 and 4. So
+`Simulation.simulate` is not idempotent (mean dE on a colour grid: protan 3.8, deutan 1.8, tritan 10.3), and the
+tritan "confusion axis" used by the plates is only the least-flattened direction (residue below 0.2, not zero). Do
+not write a test that assumes "simulate twice changes nothing"; the tests pin the real figures.
+
+## 100. The GPU colour matrix is a preview, and anything saved or shared takes the exact per-pixel path
+
+An `android.graphics.ColorMatrix` has no transfer curve, so `GpuFilter` applies the 3x3 to encoded values. Measured
+against the exact linear-light result: simulate is off by up to 83 to 89 steps over all colours and 27 to 33 over
+muted ones; daltonize by up to 111 to 117 and 91 to 103. A least-squares refit in the encoded domain was tried and
+was no better in the worst case. Rule: `GpuFilter.simulate` is the live preview only, `GpuFilter.daltonize` is a rough
+hint, and the viewer's exact picture, the names, the patterns and the corrected copy all use `Simulation.simulateAll` and
+`Daltonizer.daltonizeAll`. The viewer shows the preview first and swaps in the exact picture a moment later; a visible
+shift at the swap on dark or saturated photos is expected and is a device check. Daltonize makes confusable colours
+distinguishable; it does not show a colour-blind person normal vision (the KDoc says so).
+
+## 101. Colour vision in the viewer: everything computed is tagged with the photo it was computed for
+
+After a swipe the viewer clears its holder one frame late (a `LaunchedEffect`), so the first frame of the new photo
+would draw the previous photo's filtered bitmap and a tap would read the previous photo's pixels. Everything computed
+(filtered bitmap, colour index, hatch layer, the pixel read for a name) carries a `PhotoKey` (id plus modified time);
+`ColourVisionPhoto`, `nameAt` and the hatch layer ignore it until the key matches. The viewer's tap detector is keyed
+on the asset and captures its first closure (#50), so the new `onTap` reads one remembered holder, the
+delegated-state geometry at call time and the key through `rememberUpdatedState`. A tap with names on is consumed
+only when it hit the picture and the pixels are read; otherwise it is the ordinary chrome toggle, so the black margin
+always brings the bars back (#62, #76, #78). No drag was added to the viewer, and the name label, chip and notice stay
+`ShellEdges.INSET_DP` from every edge (#72). Compose 1.8's `GraphicsLayerScope` here has no `colorFilter`, so the live
+preview is an offscreen `saveLayer` with a `Paint` colour filter in `colourMatrixLayer`, not an edit of `MediaImage`.
+Video is not supported (`VideoView` is surface-backed, a Compose filter would not apply); the room says so in one sentence.
+
+## 102. `JobRunner.launch` adds the job to its list after the job may already have finished
+
+Already latent in #97; batch 8 hit it in five places. `launch` calls `scope.launch` and only then puts the
+`RunningJob` on its list, so a body that completes on another thread before `launch` returns leaves a stale entry
+that shows as running for ever. It cannot happen in the app (the runner lives on the main-thread view-model scope and
+every job suspends first). It happens in tests that give the runner a multi-threaded or even `Main.immediate` scope
+under Robolectric (a scratch test of 2000 do-nothing jobs left 1882 stale entries), as a one-in-three flake in
+"photo locked before Save" on the animate screen, a ghost job in the corrected-copy job tests, and a "Making" state that
+never cleared in the reel tests. Workarounds used in tests: run the runner in the `runBlocking` scope, give a fast job's
+fake sink a 40 ms wait, or give the runner `SupervisorJob() + Dispatchers.Main.immediate` to match the app. **The real
+fix is three lines in `JobRunner.launch`** (`scope.launch(start = CoroutineStart.LAZY)`, add to the list, then
+`job.start()`); `jobs/` was not in any unit's paths, so it was not made. A test that cancels a job and starts it in one
+step has the same shape: assign the `Job` before it can run (start LAZY, assign, start).
+
+## 103. `EditedCopyWriter.save` swallows cancellation and keeps the place
+
+It wraps its work in `runCatching` around `withContext`, so a cancel that arrives during the write comes back as an
+ordinary failed `Result` after the file exists. The corrected-copy job (vision) and the recolour job (palette
+builder) therefore run the writer inside `NonCancellable` and discard the new row themselves when the cancel
+arrived meanwhile, so "Cancelled." never has a copy behind it. A test fake that cancels inside `save` will never see a
+discard: the fake must be uncancellable too and the test must wait for the caller job's `isCancelled` before it
+releases the write, or the job simply completes first. The writer also has one fixed marker (`-edited.jpg`) and copies
+the source's EXIF/XMP **including the place**, as an editor copy in the library does. So the colour-vision corrected
+copy and the palette recolour copy both carry GPS; they are not the stripped `Save to...` export. This is on the
+owner list (a `keepLocation` switch on `save()` is a small change in `editor/`).
+
+## 104. The editor hub: the catalogue is tied to `EditorScreen.kt` by tests, and a new control must call `hub.applied()`
+
+`EditTool` (the old tab enum) is private and was not changed; `ToolCatalog` carries each tool's `hostTab` as the enum
+entry's name, and `ToolCatalogTest` scans `EditorScreen.kt` as text (same technique as `HelpCopyTest`) for the tab
+names, every `LabelledSlider` label and every catalogue title as a literal, and checks that every `Adjustments` and
+`EditRecipe` property is claimed by exactly one tool. Rename a tab or a label and the test fails until the catalogue
+follows; the scan guards itself (it asserts it found at least 9 tabs and 15 labels). A tool shows only its own control
+now (`shows(ToolIds.X)` around each existing control); Vignette is hosted by the Detail panel but filed under Effects;
+Reset all and Revert to original are catalogue *actions*, never centre-eligible, and now take two taps. **A new tool
+control added later must call `hub.applied()` where it changes the recipe, or it will never be learned**; Undo, Redo
+and the auto-fix chips deliberately do not count. `HubModel.view` never recomputes the centre; only `settle`, `closeTool`,
+`showGroup` and back-from-tool do, and `settle` runs when a *new* `HubSession` is made (editor entry), not when one is
+restored, so a restored session cannot move the centre under an open tool.
+
+## 105. The editor hub is outside the shell's edge zones, and its Back order depends on composition order
+
+The editor is a full-screen branch of `FotoXplorrActivity` (`editingAsset != null`) that replaces the gallery, so the
+shell and its 56 dp zones are not composed under it (#72), and the hub is tap-only anyway; the ring is not wrapped in
+`clearOfShellEdges` (it would cost 120 dp of a 360 dp ring). If the editor is ever hosted inside the shell, revisit.
+The hub's `BackHandler` is composed inside `EditorScreen` after the activity's `BackHandler { closeEditor() }`, so it is
+asked first, and it is enabled only while `HubModel.back(state) != null`; with the Save sheet or the Continue-editing
+dialog open the back press must still be theirs. A hub session restored after rotation or process death re-reads the
+memory from `SharedPreferences` and the page from the saved Bundle; the recipe and the crop aspect/heal radius are not in
+the hub's saved state (the existing Continue-editing dialog offers the recipe back).
+
+## 106. `ContrastMatrix` takes places in the palette, not colours
+
+`ContrastMatrix.ratio`, `level` and `passes` take **indices**. Passing ARGB ints compiles and then throws
+`ArrayIndexOutOfBoundsException` only when the grid draws; a Compose test caught it. `Palette.name` is validated as
+already clean in the constructor (use `Palette.of`, `renamed`, `cleanName`), so a name can never carry a newline into the
+`.gpl` header, the codec or the JSON. The recolour's "a pure swatch maps exactly" holds only while no other palette colour
+is within softness (default 10 Lab dE) and only with `keepLightness = 0`; with it above 0 a pure swatch returns within
++-1 per channel through the Lab round trip. `PaletteRecolour` allocates its scratch per `mapInto` call, so one
+instance is safe from several coroutines.
+
+## 107. A comment that contains `*/` or `/*` breaks the file, and Kotlin comments nest
+
+#38 again, in two new shapes. A KDoc that wrote "L\*a\*b\*/LCh" (palette builder) contains a close-comment sequence and
+the whole file failed with a cascade of "Expecting a top level declaration". A KDoc that wrote the audio mime glob
+(reel sound file) opened a nested comment, because Kotlin block comments nest, and broke the build the same way. Write
+"any audio type" and "Lab and LCh" in comments; the string constants themselves are fine.
+
+## 108. A palette remembers where it came from, so the export gate cannot be bypassed by editing
+
+A palette made from photos carries their ids (`PaletteDraft.sources`). `reconciled()` drops ticked photos that left the
+library but **not** sources: dropping them would let a lock re-open the gate. `ExportGate` asks the live `mayExport` for
+each source at share, card, preview and recolour time; a card is asked again after it is drawn and deleted if refused; a
+photo missing from `env.assets` counts as "no". An **empty** asset list is "still loading", never "everything is gone",
+and never wipes ticks or the draft. Honest limit: a palette typed in, or saved and reopened, has no photos behind it,
+so saving then reopening bypasses the gate (saving to the private store is not publishing). The draft is one
+`rememberSaveable` string (`PaletteDraft.encode`, under 8000 characters worst case, undo palettes after a `===` line);
+a palette that cannot be read loses the draft rather than reopening a page that needs it, and the reconciled draft is
+written back by a `LaunchedEffect` that recomputes from the *current* saved draft, never from the composition's
+snapshot, so it cannot undo an edit made in between. The saved-palette store is `filesDir/palettes/palettes.txt`
+(one process-wide lock, tmp + fsync + rename; a name, case-insensitive, is the identity; a damaged entry is copied to
+`.bad` before the next write drops it; an unreadable file is never overwritten). One instance per file (#26).
+
+## 109. Animated pictures: `ImageDecoder` cannot step an animation, and the decoders never throw
+
+`ImageDecoder` returns an `AnimatedImageDrawable` on its own clock with no seek, so it is not used for animated files.
+GIF and APNG are read by the package's own readers on every API level; animated WebP by a pure-Kotlin RIFF/ANMF
+parser (`WebpReader`) that wraps each frame's chunks in a stand-alone VP8X file and decodes it with `BitmapFactory`
+(one frame in memory, no orientation, a library photo never goes through it; #34 documents why). That works from API
+26, so no "unsupported on 8 and 9" warning exists; only Robolectric's native decoder has run it. Decoders return the
+frames read plus a `DecodeProblem` and never throw on bad bytes; a fuzz test found an APNG header with a width over
+65535 reaching `AnimSequence`'s `require`, so any new decode path that builds an `AnimSequence` must check `MAX_SIDE`
+first. GIF has one bit of alpha: pixels under alpha 128 are clear, and if any frame has clear pixels the encoder cannot
+delta-code (every frame is cropped to its opaque box with disposal 2: a 30-frame sticker is 371 KB as GIF, 62 KB as
+APNG). GIF delays are hundredths, carry the rounding error and are never under 2 (browsers show 0 and 1 as 10); the
+decoder returns delays of 10 ms or less as 100 ms unless `browserDelays = false`; a loop count N is N+1 plays.
+A truncated GIF frame is returned part-painted and flagged; a truncated APNG frame is dropped. APNG is held to 30
+percent of the heap before it is tried; GIF is streamed. APNG is saved as `.png`/`image/png` on purpose, so the name
+does not say it moves. Whether the platform accepts `Pictures/Fotoz/Animations` for a *video* row is unverified.
+
+## 110. `ExperimentEnv.mayExport` is false for every video; clips are asked through an image-typed copy
+
+`mayExport` is `!asset.isVideo && ...`. Both the animated-picture maker (`ExperimentAnimateHost.mayUseVideo`) and the
+reel export (`ReelEnvHost.mayUseVideo`) ask it of `asset.copy(mimeType = "image/jpeg")`, which reads the host's current
+browsable ids and needs no change to `experimental/`. A test pins that the answer is live (clearing the set flips it). If
+the host's photo rule ever looks at more than the id, change both. For a clip the export library reads the file itself,
+so protection can only be checked before and after the render, never during. Videos are listed from `env.assets` (the
+browsable list) and never offered when trashed.
+
+## 111. Media3 Transformer has one thread, and a refused composition is a step down
+
+Create, start, poll and `cancel()` on the application looper: `Media3VideoMaker` and `TransformerReelEncoder` run in
+`withContext(Dispatchers.Main.immediate)` and post cancel to that looper when another thread cancels, instead of
+`VideoExporter`'s `invokeOnCancellation` (which runs on the cancelling thread). `kotlinx` `CancellationException`
+is an `IllegalStateException`: catch it first, then `ExportException`, then `RuntimeException`, so a composition the
+library refuses at `start()` becomes a step down and a cancel still propagates. Transformer picks the *primary*
+sequence deterministically (lowest index holding video), so there is no registration race.
+
+## 112. The reel's layered render: facts from the Media3 1.9.0 sources, and what has never been seen
+
+A reel with fades or slides is two video tracks plus `ReelCompositorSettings`. From the library's source (not tried
+on a device): the first video-bearing sequence is primary (drives frame times, ends the output, drawn on top); an
+empty stretch in a video sequence is 1x1 black at 30 fps, so every layer's alpha is explicit per time (0 in its empty
+stretches) and the output size comes from `getOutputSize`; the last item is on layer 0 so the primary runs to the end;
+`StaticOverlaySettings` accepts anchors only in -1..1, so a whole-frame push is split as background anchor +s/2 and
+picture anchor -s/2 (a unit test caught the first version throwing); `Presentation`'s empty area is black with alpha 0,
+so in original-shape mode stills are pre-composed onto black in staging while a clip is letterboxed by the library
+and its bars are see-through during a fade (the previous picture can show). The Ken Burns matrix is the library's own
+`Crop` (a test asserts equality) and the effect remembers the first frame time it sees. HDR clips are tone-mapped
+before the compositor (it rejects HDR). The plan is pure and tested to cover every moment of 120 random reels; **a
+wrong-looking success has no fallback**, which is why `transitions = false` (plain cuts) exists as an up-front choice.
+
+## 113. Nothing a reel makes may carry a place, and the check walks `moov` only
+
+The export library copies the first video track's metadata (a clip's recorded place and creation time) onto the
+output, so `PlaceFreeMuxerFactory` drops *every* metadata entry, staged photos are JPEGs with no EXIF at all, and the
+finished file is walked box by box (`ReelMp4Check`) for the QuickTime `xyz` atom, `loci` and a location key; a hit
+refuses the save (`PLACE_LEFT_IN`). The scan looks in `moov` only because four-byte patterns occur by chance in picture
+data about once per 100 MB. The muxer drop has only been tested with a fake muxer. A sound file that cannot be used
+means nothing is saved and the screen asks "Make the reel without sound?"; the job never retries without sound by
+itself. A reel's staging JPEGs are swept by the writer when older than an hour; a process kill mid-export leaves no
+row on Android 10 and later (pending), and on API 26 to 28 can leave a truncated file nothing removes.
+
+## 114. A main class named like a test class shadows it, and a saved reel is a file, not a bundle
+
+`ReelWriterTest.kt` defines a test-source `ReelStore` (a stand-in MediaStore provider) in package
+`com.fotoxplorr.app.reel`; a main class of that name would be shadowed at runtime and fail to compile in tests. The
+library class is therefore `ReelProjectStore` (file `ReelStore.kt`). **Grep the test source set for a name before
+adding a main class to a package whose tests define stand-ins.** The reel autosaver starts from the project as its file
+had it (`OpenReel.loaded`), so opening a reel and leaving it does not rewrite a file from a newer build; a reel
+restored after a kill has `loaded = null` and is written on the next change. A reel whose JSON is over
+`SAVED_STATE_SAFE_CHARS` (60,000) is not put in the saved-state bundle and comes back as the list. The reel's name is
+typed untrimmed and trimmed only on save; a card's words keep line breaks and lose other control characters.
+
+## 115. The reel editor, the animate screen and the board inset their sideways content instead of using `clearOfShellEdges`
+
+`clearOfShellEdges()` also adds vertical system-bar padding and 60 dp top and bottom padding (#72), which is wrong for
+a strip in the middle of a scrolling page and costs about 120 dp of board height. The animate photo strip, the reel
+item strip and the mood board are inset horizontally by `ShellEdges.inset` (or `INSET_DP`) instead, and pages end with
+a spacer; everything else scrolls vertically. Every drag has a button alternative (Move earlier/later, Remove, steppers,
+Same for all), so nothing needs a drag. The cost is that a vertical scroll that starts near the top or bottom edge can
+open the details/actions room (accepted, #72). `MediaImage` describes itself with the file name, so a cell that already
+says the name reads it twice; the animate cells wrap the picture in `Modifier.clearAndSetSemantics {}` (an outer
+clearing modifier on the same node wipes the picture's inner description). The palette builder's photo grid has the
+same doubled description and was not changed.
+
+## 116. Mood board rendering: `PorterDuff.MULTIPLY` is not multiply, and masks are multiplied in by hand
+
+`PorterDuff.Mode.MULTIPLY` is the componentwise product *including alpha*, so a half-opacity multiply layer halves the
+backdrop's alpha (probed: `0x80804000` over opaque grey). The renderer uses `BlendMode.MULTIPLY` on API 29 and later and
+on 26 to 28 lays the layer on white first (`backWithWhite`); screen and overlay are fine through `PorterDuff`. Drawing an
+`ALPHA_8` bitmap with `DST_IN` left the destination unchanged under Robolectric native graphics (an `ARGB_8888` mask
+worked), so mask planes are multiplied into the layer bitmap row by row. The renderer draws bitmaps on a software canvas
+only: a decoder must not return `Config.HARDWARE` (`decodeUpright` does not). A photo shared by several layers is decoded
+once at the largest size any needs and kept to its last use; the set of shared ids is fixed *before* drawing (an
+earlier version recomputed it from the falling count and decoded again). `PreviewPhotoCache` is for the preview only:
+availability is asked every time and a photo that stops being available is dropped from memory; the export never uses it.
+
+## 117. A subject mask is the lift tool's marks, re-solved on every render
+
+The lift package keeps no mask, only the editable list of marks. `MaskShape.Subject` stores the marks (normalised) and the
+renderer replays `SelectionOps.replay` over the layer's pixels at a 512 px working size on **every preview and export**
+(a fresh solve, not byte-identical to what the lift screen showed). A feather does not apply to a subject mask (`setMask`
+and the codec zero it), hit-testing treats it as the whole box, and each subject layer multiplies the cost. The
+alternative (freeze the cut as a transparent PNG layer) is a different model and is an owner decision. Stored boards
+write `argb` as a signed int and read it back through `Long.toInt`; `JsonValue` numbers are doubles. A board over
+`BoardJson.SAVED_STATE_SAFE_CHARS` (200k) comes back from its autosaved file, so the last second of edits can be lost.
+Each finger gesture gets a process-wide counter in its merge key (`gesture:N`): a per-`pointerInput` counter restarts at
+0 whenever the board's scale changes and could merge two gestures into one undo step.
+
+## 118. Compose tests of the new screens: five ways to read one step behind or never go idle
+
+(1) A `Dialog` containing a `TextField` never reaches idle under Robolectric (`AppNotIdleException` after 60 s; plain
+`AlertDialog` is fine, plus a text field hangs), so the board's name is a field in the Board panel, not a dialog.
+(2) State set by a `SideEffect` (a `BackHandler`'s enabled flag) is read one step behind right after `performClick`; call
+`waitForIdle()` before asserting it. (3) A click on a node a scrolling panel has scrolled out of sight lands on nothing,
+and a `LazyColumn` row needs `performScrollTo` first. (4) A test class helper named `click()` shadows
+`TouchInjectionScope.click(Offset)` inside `performTouchInput` (the outer member wins). (5) A plain `withFrameNanos` loop
+makes a test never idle: the animate `FramePlayer` asks for frames through `InfiniteAnimationPolicy` when the context has
+one, so with the default `autoAdvance` the loop stops and tests go idle; a test that wants it moving sets
+`mainClock.autoAdvance = false` *before* the preview is made, then steps with `advanceTimeByFrame`/`advanceTimeBy`. (The
+aquarium's own loop uses plain `withFrameNanos` and would block idleness.) Also: a `LaunchedEffect` that clears a notice
+after a delay vanishes before it can be asserted because the test clock auto-advances, so the new screens clear notices on
+the next action or view change (also better for TalkBack); a composable that emits siblings with no container (Chroma's
+controls) piles them up when a test calls `setContent` directly: wrap it in a `Column` in the test. Roborazzi runs in
+record mode, so none of these screens has a screenshot that proves a look.
+
+## 119. `build/test-results` is shared by every agent on the tree
+
+The XML is wiped by anyone else's test run. To read a failure, copy the results out *inside* the `flock` that ran the
+tests. Builds were also blocked for minutes by another agent's half-written files (a `return` in an expression-body
+function, an unresolved reference, a missing test kit); the rule of waiting 90 s and retrying up to six times held. An
+import-pruning script that treats `.name` as "not a use" removed extension-function imports; do not prune imports by
+script.
+
+## 120. Chroma ID's solver: the ambient frame is a dark frame, and a room that is too bright is told from a flash that is too far
+
+`PatchSampler` must sample the **ambient** frame with `keepDark = true`: an unlit room gives a black ambient frame, which
+is a valid answer (the first version refused it as `TOO_DARK` and every near-dark-room trial failed). A matte surface's
+room-lit brightness does not change with distance, so only the *flash* frame's distance matters: the correction is
+`(d_surface / d_card)^2`, applied only when both distances are known and differ by more than 5 percent, refused beyond
+1.5x (a 10 percent distance error leaves a mean dE of about 3.9). `TOO_BRIGHT_ROOM` versus `TOO_FAR` is decided by the
+ambient patch's absolute level (>= 0.15 linear) *and* its share of the flash frame (>= 0.5); a share-only version called a
+dim room "too bright". The noise the signal is judged against includes a 1 percent frame-to-frame jitter term (flicker,
+imperfect lock), which keeps a thin signal honest; if the real jitter is 3 percent the dE grows (mean 1.8 at 3, 3.6 at 6
+on synthetic frames) and the solver does not know. **Phones apply a tone curve (sometimes local tone mapping) to JPEGs,
+so the linearity the method rests on holds only approximately; this is the biggest unverified assumption**, and every
+accuracy figure is from synthetic frames that obey the model exactly. The blue/purple boundary of the plain-word hue
+families is set at 315 degrees by eye (pure sRGB blue is at 306 in CIELAB). Colour name lists are original words with
+hex values written by hand (not copied from xkcd, Pantone or RAL; a test splits names into words so "floral white" does
+not trip the "ral" check); `vision/VisionCopy.COLOUR_TABLE` holds a second list of about 162.
+
+## 121. Chroma ID's capture: the CAMERA permission implies required hardware, and the order of the shots is not the order of the maths
+
+The `CAMERA` permission implies `uses-feature` camera and autofocus as **required**, which hides the app on the store from
+phones without them. `camera.any` alone does not remove the implied ones: declare `camera.any`, `camera` and
+`camera.autofocus` all `required="false"` (`ChromaPrivacyTest` checks). The light is locked with the torch **on** (so the
+exposure auto-exposure picks will not clip the flash frame), then the ambient frame is shot with the torch off under that
+locked exposure, then the flash frame with the torch on: the ambient frame is the dark one. The flash is a held torch, not
+a burst (a burst's timing against a locked exposure is not ours; a pre-flash would break the subtraction); the price is a
+dimmer LED and a short hold distance (10 to 15 cm). Focus is settled once per pair, not locked for the whole lock,
+because the surface's own distance is wanted; the distance is reported only when the AF state was FOCUSED_LOCKED or
+PASSIVE_FOCUSED for the flash frame. Frames are matched to the capture result by `SENSOR_TIMESTAMP` (the wanted image is
+the first with timestamp >= latest result + 1); if image and result timestamps are on different bases the wait times out
+after 3 s and the person sees "The camera took too long": a safe failure that would make the tool unusable on that phone.
+A pair whose reported exposure, ISO or white balance differs by more than 2 percent is refused (`LOCK_SLIPPED`). A card
+shot is valid only for its own exposure, so the job keeps it as patches (numbers) only while the lock is held and drops it
+on relock, unlock, stop, cancel or failure. The job and the gyroscope listener assume one thread (main); only the solver
+runs off it. In `kotlinx-coroutines-test`, `advanceUntilIdle` does not run coroutines launched in `backgroundScope` when
+only background work remains, so a job given `backgroundScope` never starts: give it a `StandardTestDispatcher` scope and
+stop it at the end. Every threshold (hold distance, bright-room limit, gyroscope 0.15 and 0.35 rad/s, settle waits of 8
+frames and 350 ms, the 2 percent lock tolerance) is a guess, named in `ChromaGuidance`, `LockCheck` and `Camera2Source`.
+
+## 122. Chroma ID's screen: the shown colour lives above the camera, and the camera body must stay composed
+
+A job that `stop()`s clears its own outcome, so the colour the person is looking at lives in `ChromaIdScreen`
+(hoisted, saved with a `Saver` of its history line); the camera body only reports a finished colour up through
+`onReading`. Opening History, rotating or pausing would otherwise wipe the result card. While the result is shown the
+camera body stays composed (the `SurfaceView` leaving composition fires `surfaceDestroyed`, which calls `job.stop()`), and
+the result covers the live view with an opaque box the size of the preview; whether a `SurfaceView` really stays hidden
+behind an opaque sibling on every device is a device check. Leaving the measuring view (History, Compare, Save) disposes
+the camera body, which stops the camera on purpose (no camera indicator while browsing); coming back reopens it because
+an observer added to an already RESUMED lifecycle is replayed ON_CREATE/ON_START/ON_RESUME. The card measurement is lost
+by that trip, the shown colour is not. The palette builder's store replaces a palette of the same name (case-insensitive)
+and moves it first, so a new palette from Chroma gets "Chroma ID", "Chroma ID 2", ... chosen again from a fresh load at
+save time; a palette needs 2 to 12 colours, so a single reading cannot make one alone (read-then-save is two store
+calls, not a transaction). The history is plain text (colour, kind, time) in `filesDir/chroma`, so `ChromaPrivacyTest`
+had to stop forbidding file writers in the whole package: it exempts `ChromaHistory.kt` only, and a second test pins that
+it is the only writer and takes no picture type.
+
+## 123. The Experimental registry after batch 8
+
+Six new permanent ids: `reel`, `animate`, `board`, `palette` (Make), `chroma`, `colourcheck` (Explore), inserted before
+the Setup entry, which stays last; `ExperimentalHostTest` pins the id list and each group's order. Only `chroma` is not
+restorable (it opens the camera and asks the permission in context) and only `chroma` has an `available` check
+(`deviceHasCamera`: `FEATURE_CAMERA_ANY`; the manifest declares the same feature optional). Titles must stay unique and
+blurbs at most 80 characters and one full stop; each is taken from the package's Copy object. `reel`, `animate`, `board`
+and `palette` need the activity's view-model store for the app's job list (as the panorama and the mood board do): a host
+that composes them without one gets a disabled Make/Save, not a crash. `ChromaId` replaced the C2 name
+`ChromaIdExperience`. The viewer's colour vision and the editor hub need no card. The Experimental page now has two more
+privacy lines (`HelpCopy.Note.EXPERIMENTAL_CAMERA`, `EXPERIMENTAL_SOUND`; ADR-017) pinned by `HelpCopyTest`; the Play
+full description is capped at 4000 characters and is now 3985, so the next line added needs one removed.
+
+## 124. Colour vision check: it is a game, and its wording is held by tests
+
+`vision/ColourCheck` runs seven dot plates (one easy control, two each for red-green in two kinds and blue-yellow, in a
+seeded order). It cannot tell a red-weak person from a green-weak one (two plates per axis cannot) and says so by never
+naming a condition: a banned-word scan covers the result, which always carries the "this is a game, not a test" line and
+"An eye doctor can test you properly." A missed control plate is "check your screen" (night mode, blue-light filters and
+screen colour all degrade the blue-yellow plates, and the screen warns). The plates are our own seven-segment digits on a
+seeded dart-throwing packing; the figure/ground hue is pushed along the null direction of the full-severity matrix
+(inverse iteration), lightness is randomised per dot. The grey square behind the dots is untested on a screen. The step
+and answers survive recreation via `rememberSaveable` and the host's restorable id; the host's Back is free only at the
+introduction.

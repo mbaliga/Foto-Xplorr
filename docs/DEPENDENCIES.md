@@ -42,3 +42,11 @@ about 141 MB to the universal APK (184 MB measured, about 325 MB with it), and i
 Java classes stop at `calib3d`, `features2d` and `imgproc`; the C++ stitching module is compiled in but nothing
 calls it from Kotlin), so it would still need our own blender and exposure code, or a JNI layer the repo has no
 NDK build for.
+
+Batch 8 (colour vision, the editor hub, the palette builder, animated pictures, the reel maker, the mood board and
+Chroma ID) adds **no row and no Gradle dependency**. Everything is pure Kotlin or platform API: `java.util.zip`
+(`Deflater`, `Inflater`, `CRC32`) for the PNG/APNG/GIF work, `android.hardware.camera2` and `SensorManager` for Chroma
+ID, `BitmapFactory` for one still-WebP frame, and Media3 Transformer and its muxer, which the app already depends on
+(`media3-muxer` arrives as an API dependency of `media3-transformer`). CameraX was considered and not added; the reasons
+are in `docs/adr/ADR-017-camera-and-soundtrack.md`. The `CAMERA` permission and three optional camera `uses-feature`
+lines are manifest changes, not dependencies.

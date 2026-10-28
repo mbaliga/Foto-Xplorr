@@ -1176,3 +1176,131 @@ checklist; the docs corrections are in TRAPS #89 to #97.
   and the README and store lines. The store line says close objects can ghost; check it matches what you see.
 - **Silent failures to keep in mind:** a tilted hand, a near object or a focal-length tag that is wrong by about
   10 percent produces visible flaws and the app does not warn. A person walking through is the one case where it refuses.
+
+## Batch 8: photo tools (28 Oct 2026)
+
+Branch `claude/friendly-lovelace-06dito` (PR #18). **Nothing in this batch has run on a device, and no real photograph,
+real camera, real video or real receiving app has touched any of it.** Every accuracy figure is from synthetic data
+(procedural scenes, synthetic frames that obey the model exactly, hand-built files), Robolectric proved wiring and file
+effects, the Compose tests inject clicks, and Roborazzi runs in record mode so no screenshot proves a look. The
+checklist is `docs/device-test/batch-8-checklist.md`; traps are TRAPS #99 to #124; the camera and sound decisions are
+`docs/adr/ADR-017-camera-and-soundtrack.md`. The full suite was not run by the units or by the integrator (the
+verifier does); each package's tests were.
+
+### Owner decisions applied (not re-asked)
+
+- **Visuals only for sound, with one exception:** the reel maker may lay a sound file the person picks under a video,
+  chosen with the document picker, no audio permission, nothing played back (ADR-017).
+- **The camera, for Chroma ID only,** `CAMERA` declared with the camera features optional, asked when the tool opens,
+  pictures kept in memory and erased, only colours kept (ADR-017). Camera2, not CameraX; no new dependency.
+- Zero new Gradle dependencies in the whole batch (`docs/DEPENDENCIES.md` gets no new row). No network code
+  (`verifyOfflineSourceReferences` and `verifyOfflineManifest` pass). No manifest change except `CAMERA` and three
+  optional features, and one cache path in `res/xml/file_paths.xml` for the palette swatch card.
+
+### What was built, per tool (main / test lines, tests counted by `@Test`)
+
+- **Colour vision** (`vision/`, 3.2k / 2.9k, 222 tests). Machado 2009 simulation and a single-matrix daltonize in
+  linear light; a 4x5 `ColorMatrix` export with its error measured; plain colour names (about 162, hand-written);
+  seeded k-means colour index and a hatch planner (six patterns); a dot-plate generator and scorer. In the viewer, a
+  *Colour vision* group in the view options (types, show/help, strength by stepper and slider, name colours, patterns,
+  save a corrected copy) with a chip and a name label; two small edits in `viewer/` (`ViewerSettingsRoom` slot,
+  `ViewerScreen` +62 lines). *Colour vision check* is an Experimental screen of seven plates that says it is a game.
+- **Editor hub** (`editor/`, `ToolCatalog` 24 tools in 5 groups, `ToolUsage`, `HubModel`, `HubRing*`; about 84 new tests).
+  The tab strip is replaced by *Used most* and a curved ring of five groups, a list at large font, landscape and tablet.
+  A use is counted once per opening; the centre moves only on closing a tool, by a margin, into the weakest slot.
+- **Palette builder** (`palettebuilder/`, 4.0k / 3.5k, 276 tests). Harmonies, merge from up to six photos, contrast
+  matrix, colour-blind check, recolour a photo toward a palette (a job, new JPEG), save/open/delete palettes, share as
+  `.gpl` / CSS / JSON text or a swatch-card PNG.
+- **Animated pictures** (`animate/`, 7.6k / 8.4k, 482 tests in the package). GIF and APNG encoders, tolerant
+  decoders, an animated-WebP container reader, a size planner with an honest range, stills/clip/existing-file sources,
+  a MediaStore writer, a Media3 frames-to-MP4 maker, a job with a step-down ladder, and the three-step screen with a
+  small looping preview.
+- **Reels** (`reel/`, 6.1k / 6.4k, 455 tests). The project model and JSON codec, a deterministic auto-draft, a Media3
+  two-layer export with a place-free muxer and an MP4 check, a sound-file picker, the MediaStore writer, the job, and the
+  editor with saved reels, a looping preview, strip and tool panels.
+- **Mood board** (`board/`, 6.0k / 5.6k, 388 tests). A layer/mask model, Canvas compositor and export under the
+  editor's limits, and an editor with autosave and a saved-boards list.
+- **Chroma ID** (`chroma/`, 4.5k / 3.1k, 224 tests). Colour maths and CIEDE2000, a flash-minus-ambient solver with
+  white-card normalisation, a Camera2 capture job over a fake-able interface, gyroscope steadiness, and the three-step
+  screen with result card, compare, save-to-palette, copy hex and a 50-reading history.
+- **Integration (this unit).** The six cards registered (ids `reel`, `animate`, `board`, `palette`, `chroma`,
+  `colourcheck`; `chroma` not restorable and shown only when `FEATURE_CAMERA_ANY`), the pinned id test updated, two
+  privacy lines on the Experimental page (`EXPERIMENTAL_CAMERA`, `EXPERIMENTAL_SOUND`) with `HelpCopyTest` pins, README,
+  the Play description (now 3985 of 4000 characters), the privacy policy and Play Console sheet, PRODUCT-AND-ARCHITECTURE
+  (module map, "The batch 8 tools", privacy boundaries), ADR-017, TRAPS #99 to #124, the batch 8 checklist, this entry.
+  No Discover or help line was needed: `HelpCopyTest` does not enumerate experiments.
+
+### What deviated and why
+
+- **Honest findings against the briefs:** Machado matrices are not idempotent (tritan strongly), and a plain 4x5
+  `ColorMatrix` is a poor GPU approximation of the gamma-correct result, so the exact per-pixel path is the only one
+  that saves or shares (TRAPS #99, #100).
+- **ImageDecoder cannot step an animation;** animated WebP is read by our own container parser (works from API 26, where
+  the brief expected "unsupported" on 8 and 9) (#109).
+- **Insets, not `clearOfShellEdges`,** on the animate strip, the reel strip and the board (the modifier also pads
+  top and bottom) (#115). The editor hub is outside the shell's zones altogether (#105).
+- **Chroma ID uses a held torch, not a flash burst,** and a SurfaceView kept composed behind an opaque swatch (#121, #122).
+- **The reel uses the library's two-track compositor** rather than drawing fade frames, so clips and title cards take part
+  in a fade; the cheapest fallback if a device pass shows it misbehaving is to ship plain cuts as the default (#112).
+- **The mood board stores a subject mask as the lift marks** and re-solves on every render, because the lift package keeps
+  no mask (#117).
+- One earlier test (`BoardRendererTest`, a cancelled-render case) was fixed by the next unit for a start-order race; no
+  existing test was weakened or disabled.
+
+### Not built, and why
+
+- **Video in the colour-vision viewer** (the player is surface-backed); animated images get the preview only.
+- **Persisting the colour-vision choice** across closing the viewer (it returns Off so a person who is not colour-blind is
+  never left in a filtered gallery by surprise).
+- **Wiring `colourVisionMayCopy`** from `FotoXplorrActivity` to the gallery's live browsable list (default is
+  `{ true }`, i.e. only the viewer's own sensitive-photo check): outside every unit's paths.
+- **Per-tool icons, a true circular ring and landscape side-by-side** in the hub; **per-tool focus** is done by showing only
+  that tool's control.
+- **Reel:** undo/redo, a scrub bar, per-photo focus point, a looping or ducked soundtrack, per-clip volume, speed, per-boundary
+  transitions, and a draft that uses the app's blur / similarity / key-moment / place signals (`ReelSignals.NONE`).
+- **Animate:** no fit/background/size-limit/frame-rate choices (planner defaults), a pace control for clips and existing
+  files, a GIF delta for frames with clear pixels, an estimate for an existing file.
+- **Board:** corner handles, custom canvas sizes in the screen, photo crop UI (`setCrop` exists), thumbnails in the list,
+  duplicate a board, the encrypted backup, text fonts.
+- **Palette:** a colour picker wheel, typing a hex into a picked swatch (the draft supports it), file sharing, CIEDE2000,
+  APCA, provenance for saved palettes.
+- **Chroma:** raw/DNG, tap-to-pick region, uncertainty in dE, metamerism and fluorescence warnings, deleting one reading,
+  keeping a card measurement across a trip to History or a rotation.
+
+### Found, not fixed
+
+- **`JobRunner.launch` race** (list entry added after the job may have finished): safe in the app, flaky in Robolectric
+  tests of five screens; a three-line fix is in TRAPS #102.
+- **`EditedCopyWriter.save` swallows cancellation and keeps the place** (#103): worked around in the corrected-copy and
+  recolour jobs; the place is an owner decision.
+- `ReelDraftOptions.BLUR_FLOOR` repeats `ArchiveAdvisor`'s private blur threshold (40); change both together. That
+  threshold was never tuned on real photos.
+- `decodeUpright` returns null on API 26 and 27 (known since batch 6): every photo tool is unverified there.
+- The palette builder's photo grid describes a photo twice (`MediaImage` plus the cell's own text) (#115).
+- `LocalClipboardManager` is deprecated (one warning in Chroma, one already in the palette block); the app uses the old one.
+- A Kotlin comment must never contain `*/` or `/*` (#107); `build/test-results` is shared (#119).
+
+### Residual, for the owner (open decisions)
+
+- **Location in copies.** The colour-vision corrected copy and the palette recolour copy go through the editor's writer and
+  so carry the original's EXIF including **where it was taken**; the panorama, wall, board and reel output are place-free.
+  Say if these two should be place-free too (a `keepLocation` switch on `EditedCopyWriter.save`, a small change in `editor/`).
+- **Reset all and Revert to original are now two taps** (open the tool, then press); say if you want one.
+- **Mood board subject masks:** keep re-solving the lift marks (slow on several layers, the edge can differ from the Lift
+  screen), or freeze the cut as a transparent PNG layer (a different model).
+- **Leaving a screen stops a running save** (palette recolour, animate, board, reel); the alternative needs the live
+  "still allowed" check moved out of the screen's composition first.
+- **A JobRunner fix** (three lines in `jobs/`) and the `colourVisionMayCopy` wiring need an owner's go-ahead on their paths.
+- **Reel fades:** if the first device pass shows the layered render misbehaving, ship `Plain cuts` as the default.
+- **Wording to read:** every sentence in `VisionCopy`, `HubCopy`/`HubRingCopy`, `PaletteBuilderCopy`, `AnimateScreenCopy`,
+  `ReelCopy`, `BoardCopy`, `ChromaCopy`; the six card titles and blurbs (*Make a reel*, *Make a GIF or video*, *Mood board*,
+  *Palette builder*, *Chroma ID*, *Colour vision check*); the labels *Hard to see red / green / blue* (kept gentle over
+  "red-blind"); the colour-name list and the 0.7 / 0.7 daltonize gains; the two new Experimental privacy lines.
+- **Chroma ID's history changes an earlier promise slightly:** pictures are never kept, but colours and times now are (last
+  50, plain text, Delete all); the screen's privacy line talks only about pictures.
+- **Store:** republish the hosted privacy policy with the release that ships these tools (ADR-017); the Play description has
+  15 characters of room left; re-check the merged manifest and Data safety answers against ADR-017 before submitting; bump
+  `versionCode` as the release needs.
+- **The first device pass, in this order:** the reel with fades (the likeliest to need work), Chroma ID against a real colour
+  card with and without the white card (the tone-curve assumption decides whether it ships), the GIF/APNG/MP4 in other apps,
+  the colour-vision filter against a reference render, then the hub on a phone and tablet.

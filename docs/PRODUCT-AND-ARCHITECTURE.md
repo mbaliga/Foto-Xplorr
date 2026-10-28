@@ -32,7 +32,9 @@ The primary information axis. Each is a lens over the same catalogue, not a sepa
 editor; it was removed by owner decision in October 2026, and with it the audio permission and
 the media-playback service. Fotoz is a photo and video app. A saved default view of Audio opens
 on Photos, and the old audio database and scan preferences are deleted on first launch
-(`LegacyAudioCleanup`); a user's audio files are never touched.
+(`LegacyAudioCleanup`); a user's audio files are never touched. There is still no audio library, no audio
+permission and nothing played back by a tool; the one decided exception is a sound file the person picks for
+the reel maker to lay under its video (ADR-017).
 
 | Destination | What it shows |
 |---|---|
@@ -119,6 +121,12 @@ sharing a photo does not silently share where it was taken.
     version with an "About W by H" size, then Save as a job (the first Back that would leave a running save is held).
     A horizontal sweep from a standing-still turn only; it is pure Kotlin on the phone, see "The panorama
     package" in section 4. Real-photo quality is unproven.
+- **Batch 8 tools** — registered in the hub as `reel`, `animate`, `board`, `palette` (Make), and `chroma`,
+  `colourcheck` (Explore); the colour-vision viewer and the editor hub need no card. See "The batch 8 tools" in
+  section 4. **Make a reel** (`reel/`, writes `Movies/Fotoz/Reels`), **Make a GIF or video** (`animate/`,
+  `Pictures/Fotoz/Animations`), **Mood board** (`board/`, `Pictures/Fotoz/Boards`), **Palette builder**
+  (`palettebuilder/`, a recoloured copy through the editor's writer, share as text or a swatch card), **Chroma ID**
+  (`chroma/`, the camera, ADR-017) and **Colour vision check** (`vision/`). None has run on a device.
 - **Photo scenes** — OpenGL-rendered 3D arrangements of the library (`experience/`, `spatial/`),
   including an orientation-driven photo wall.
 
@@ -442,6 +450,12 @@ Two rules hold this together:
 | `experimental/` | The Experimental page: `ExperimentEntry` list, host (open id, Back), `ExperimentEnv`, shell-edge insets |
 | `aquarium/` | Draw an aquarium: sketch model, outline fill, swim mesh, tank simulation, creature store, draw and tank screens |
 | `wall/` | See it on your wall: print and wall-scale maths, frames and set layouts, the draft, the canvas, print export, system print, Lanczos enlarge |
+| `vision/` | Colour vision: Machado 2009 simulation and a daltonize matrix in linear light (`Simulation`, `Daltonizer`, the 4x5 `GpuFilter` preview and its measured error), plain colour names, k-means colour index and hatch planner, the dot-plate generator and scorer (pure); the viewer's view-options group, the tap-to-name layer, the pattern overlay and the corrected-copy job (`ColourVisionViewer`, `ColourVisionRenderer`, `CorrectedCopyJob`); and the `ColourVisionCheck` Experimental screen |
+| `palettebuilder/` | Palette builder: Lab/WCAG/Machado maths, the 2 to 12 swatch model with locks, harmonies, multi-photo merge, recolour toward a palette (banded), .gpl/CSS/JSON export, swatch card layout, the plain-text codec; the saved-palette store, the photo seam, the recolour job and the `PaletteBuilder` screen |
+| `animate/` | Animated pictures: GIF89a and APNG encoders and tolerant decoders, an animated-WebP container reader, frame timing/scaling/cross-fade, the size planner; frame sources (stills, a video clip, an existing animation), the MediaStore writer, the Media3 frames-to-video maker, `AnimateJob`, and the `AnimatedImages` screen |
+| `reel/` | Reels: the project model, motion maths, plan check, JSON codec and the deterministic auto-draft; the export (render plan, Media3 two-layer composition, place-free muxer, MediaStore writer, `ReelJob`, the sound-file picker) and the `ReelMaker` editor with its saved-reels store |
+| `board/` | Mood board: the layer/mask/canvas model, hit-testing, snapping, history, JSON codec and photo re-finding; the Canvas compositor, render plan, export job and writer; the `MoodBoard` editor with its autosaved store |
+| `chroma/` | Chroma ID: colour spaces, CIEDE2000, colour names, the flash-minus-ambient solver (pure); the Camera2 source, capture job and state machine, gyroscope, the history store and the `ChromaId` screen |
 | `spatial/offline/` | Offline map areas: tile and budget maths, region records, suggestions from browsable photos, the download guard and engine seam (`src/main`); the map-library engine, job and pane (`src/connect`); the Offline build's stub pane (`src/offline`) |
 | `experience/` | The 3D photo wall and its renderer/orientation controller |
 | `ai/` | Optional BYOK remote providers, encrypted secret storage, local similarity |
@@ -449,7 +463,7 @@ Two rules hold this together:
 | `privacy/` | Sensitive-asset and password-protected-folder stores |
 | `favorites/`, `organize/` | Favourites; collections, tags and archive state |
 | `hyle/` | Design-system bridge, `ActivityShade` (background job/status surface), the floating pill |
-| `editor/` | The photo editor, one scrollable tool strip with no tiers (Light, Colour, Curves, Presets, Detail, HSL, Crop, Rotate, Heal): adjustments, a drawn tone-curve editor with a histogram backdrop and a luma curve, HSL, crop, spot heal, presets, undo history, persisted recipes, `EditedCopyWriter` (Save/Save As/Overwrite) and `OverwriteGuard` (what Replace refuses, the safety copy, `OverwriteRecovery`) |
+| `editor/` | The photo editor, opened from a hub (`ToolCatalog` 24 tools in 5 groups, `HubModel`, `ToolUsage`, `HubRingUi`; a list at large font, landscape and tablet sizes) over the same tool panels (Light, Colour, Curves, Presets, Detail, HSL, Crop, Rotate, Heal): adjustments, a drawn tone-curve editor with a histogram backdrop and a luma curve, HSL, crop, spot heal, presets, undo history, persisted recipes, `EditedCopyWriter` (Save/Save As/Overwrite) and `OverwriteGuard` (what Replace refuses, the safety copy, `OverwriteRecovery`) |
 | `metadata/` | EXIF/XMP read and write: `MetadataWriter`, `XmpPacket`, `MetadataEdit` |
 | `video/` | Video export via Media3 Transformer: `VideoExporter`, `VideoConversionWriter`, export options and codec capability. (The audio conversion writer and `AudioTranscoder` were retired with the audio feature.) |
 | `videoeditor/` | The video editor screen and its `VideoEditPlan` (trim/speed/rotate/mirror/crop/mute/filters) |
@@ -615,6 +629,11 @@ identity), so `AdjustmentRenderer` and the export path apply it without a change
 
 - **No Internet permission is needed for the core app.** Recognition is bundled models; the map is
   a native vector renderer; the catalogue is local SQLite.
+- **The camera and a picked sound file are two narrow exceptions (ADR-017).** `CAMERA` is declared (with the
+  camera features optional) and asked only inside Chroma ID, which holds two small pictures in memory, erases them
+  and keeps only colours; `ChromaPrivacyTest` pins that nothing in `chroma/` but its history writes a file and that
+  `Manifest.permission.CAMERA` is named in `ChromaScreen.kt` alone. The reel maker reads one sound file from the
+  system document picker with no audio permission, and plays nothing. The Experimental page says both in one line each.
 - **`FLAG_SECURE`** is set on the window whenever a protected folder is unlocked, and cleared on
   dispose.
 - **Protected folders lock on `ON_STOP`**, and if the viewer was showing a protected asset its
@@ -700,6 +719,57 @@ no manifest change. A pure core has no Android types; one Android seam sits arou
 - **Measured on procedural scenes only.** Offsets are exact (0 px) on clean, noisy, exposure-shifted and
   jittered pairs at 25, 45 and 65 percent overlap; roll costs about 2 to 4 px per half degree and parallax costs
   the layer shift, neither detected. See the batch 7 entry in `docs/handoff/MASTER-PROGRESS.md` for the table.
+
+### The batch 8 tools
+
+Each is a pure core plus Android seams, with every sentence in its own Copy object, in the panorama's pattern.
+The sizes are `main` / `test` lines. **None of it has run on a device.** The per-tool device checks are in
+`docs/device-test/batch-8-checklist.md`; the traps are TRAPS #99 to #124.
+
+- **Colour vision** (`vision/`, 3.2k / 2.9k). Simulation is the Machado 2009 severity-1 matrices (33 published, taken
+  from two published copies that agree to the last digit; the authors' own page was not reachable, so not compared
+  directly) applied in linear light; daltonize is one 3x3 (`I + A(I - S)`) so it is exact per pixel and exportable.
+  In the viewer (`ViewerSettingsRoom` gained an optional slot; `ViewerScreen` a defaulted `colourVisionMayCopy`)
+  the photo is first drawn through the 4x5 `ColorMatrix` preview, then replaced by the exact per-pixel picture
+  from a 2048 px / 3 MP `decodeUpright` read. Names, patterns and the corrected copy read pixels the same way and
+  are tagged with a `PhotoKey` so a swipe never shows the previous photo's colours. The corrected copy is a job
+  through `EditedCopyWriter` (`-edited.jpg`, so it keeps the location like an editor copy); it is refused for
+  sensitive photos, photos opened from another app, and anything but a plain still photo. The check is seven dot
+  plates and a result that is a maybe. Not for video (`VideoView` is surface-backed).
+- **Editor hub** (`editor/`, `ToolCatalog`, `HubModel`, `ToolUsage`, `HubRing*`). The tab strip is gone. Home is
+  *Used most* (five tools) above a smile arc of five groups; a use is counted once per opening in which something
+  changed; the centre moves only when a tool is closed and only when a newcomer beats the weakest centre tool by 25
+  percent plus half a use, in that tool's slot. Memory is one `SharedPreferences` string. The editor is a full-screen
+  branch of the activity that replaces the shell, so the shell's edge zones do not apply under it (TRAPS #72 note).
+  `EditTool` and the slider labels stay literals in `EditorScreen.kt` because `ToolCatalogTest` scans them.
+- **Palette builder** (`palettebuilder/`, 4.0k / 3.5k). One saved string carries the draft through process death;
+  saved palettes are `filesDir/palettes/palettes.txt` (atomic, a name is the identity, a damaged entry copied to
+  `.bad`). Photos are read only through `ExperimentEnv`; share is plain text per format or a swatch-card PNG through a
+  `palette-cards` cache path in `file_paths.xml`. A recoloured copy goes through the editor's writer and so carries
+  the original's metadata including its place (an owner decision, see MASTER-PROGRESS batch 8).
+- **Animated pictures** (`animate/`, 7.6k / 8.4k). GIF is streamed, APNG needs the whole sequence (held to 30 percent
+  of the heap before it is tried), the planner caps long edge, frames, bytes and seconds and steps down; an
+  over-size or out-of-memory result is remade smaller by a ladder and says so. `ImageDecoder` cannot step an
+  animation, so GIF and APNG use the package's own readers and animated WebP uses a pure-Kotlin container reader plus
+  the platform still-WebP decoder (works from API 26; real encoders' files untested). Output goes to
+  `Pictures/Fotoz/Animations`; APNG is saved as a `.png`.
+- **Reels** (`reel/`, 6.1k / 6.4k). The project is a JSON file in `filesDir/reels`, autosaved a second after each
+  change. The draft uses dates, favourites and order only (the app's blur/similarity signals are not wired:
+  `ReelSignals.NONE`). Export is Media3 Transformer: a reel with fades or slides is two video tracks plus the
+  library's compositor with the opacity and push computed per frame by pure code (`ReelRenderPlan`, tested to
+  cover every moment); if the phone refuses it steps down (720, then plain cuts, then 480). The muxer is wrapped to
+  drop every source metadata entry and the finished MP4 is walked for a recorded place and refused if one is found.
+  The picked sound file is an audio-only sequence with trim and fade. Output: `Movies/Fotoz/Reels`.
+- **Mood board** (`board/`, 6.0k / 5.6k). Layers (photo, shape, text, colour), masks (rounded rectangle, oval,
+  polygon, feather, subject), blend modes, up to 100 layers, canvas 64 to 4096 units. A subject mask stores the lift
+  tool's marks and re-solves on every preview and export (the lift package keeps no mask). Boards autosave to
+  `filesDir/boards`; a missing photo blocks Save by name; export is PNG when anything is see-through, else JPEG, with no
+  metadata, in `Pictures/Fotoz/Boards`. Multiply on API 26 to 28 uses a white-backing fallback.
+- **Chroma ID** (`chroma/`, 4.5k / 3.1k). Method: a torch-off and a torch-on frame under one locked exposure,
+  white balance and focus; the difference is the surface lit by the torch alone, and a white card shot under the same
+  lock fixes the torch's own colour and brightness (without one the reading is labelled approximate and the lightness
+  is a guess). On synthetic frames that obey the model exactly the card reading has a mean CIEDE2000 of 0.4 to 0.8 with
+  noise; a phone's tone curve is the biggest unverified assumption. Camera2 not CameraX (ADR-017).
 
 ---
 
@@ -793,9 +863,16 @@ no manifest change. A pure core has no Android types; one Android seam sits arou
   The Offline build has the same pane signature and shows "Offline maps need the Connect build."
 - **Wall pictures need `decodeUpright`, which returns null on API 26 and 27** (found above and not fixed), so
   the wall and print file are unverified on Android 8.0 and 8.1.
-- **Not built, on purpose:** a live-camera wall (needs a CAMERA permission decision), an on-device neural
+- **Not built, on purpose:** a live-camera wall (the CAMERA decision was made in batch 8 and is no, apart from Chroma ID, ADR-017), an on-device neural
   upscaler, ARCore, OpenCV. (Panorama stitching was listed here at batch 6; the owner then overruled the critic
   and a horizontal pure-Kotlin version was built in batch 7, see "The panorama package".)
+- **Batch 8 has not run on a device.** The colour-vision filter, the editor hub, the palette builder, the GIF/APNG/MP4
+  maker, the reel maker, the mood board and Chroma ID are built and tested against fakes, Robolectric and synthetic data
+  only. The riskiest unknowns: the reel's layered fade render, whether a phone's tone curve leaves Chroma ID's
+  flash-minus-ambient subtraction linear enough, and APNG/GIF output in other apps. Two copies (the colour-vision
+  corrected copy and the palette recolour) keep the photo's location because they use the editor's writer. Tools that read
+  library photos are unverified on Android 8.0 and 8.1 (`decodeUpright`). The checklist is
+  `docs/device-test/batch-8-checklist.md`; the camera and sound decisions are ADR-017.
 - **Panorama (batch 7) has not run on a device and no real photograph has gone through it.** Procedural scenes
   say the aligner is exact on clean and handheld-noise pairs and that roll, parallax and a wrong focal-length
   tag are not detected; a person walking through the overlap can make it refuse a join. Out of the slice: 360
