@@ -36,18 +36,41 @@ internal object ColourNames {
     /** Every name, in table order. */
     val names: List<String> get() = entries.map { it.name }
 
+    /** Names that say how light the colour is, not which colour; they cannot be offered for a colour whose lightness was not measured. */
+    private val lightnessWords = setOf("dark", "light", "pale", "deep", "soft", "jet", "off")
+
     /**
-     * The [count] names nearest to [lab], nearest first. With [ignoreLightness] each name is taken at the
-     * lightness of [lab] first, so only its shade and strength count (for a colour whose lightness was not
-     * measured); a name that itself says "dark" or "light" can still come up, because the table has such names.
+     * Names fit for a colour whose lightness was not measured, each with its Lab at the reference luminance:
+     * the names that carry a lightness word are left out, and so are the near-neutrals other than "grey"
+     * (black, white, silver and the like are one and the same grey once their lightness is taken away).
      */
-    fun nearest(lab: Lab, count: Int = 3, ignoreLightness: Boolean = false): List<NamedMatch> =
-        entries.map {
-            val other = if (ignoreLightness) it.lab.copy(l = lab.l) else it.lab
-            NamedMatch(it.name, it.argb, it.lab, DeltaE2000.between(lab, other))
+    private val shadeOnly: List<Pair<Entry, Lab>> by lazy {
+        entries
+            .filter { it.name.substringBefore(' ') !in lightnessWords }
+            .map { it to ColourSpace.atLuminance(it.lab, FlashSolver.UNMEASURED_LUMINANCE) }
+            .filter { (e, lab) -> lab.chroma >= ColourWords.NEUTRAL_CHROMA || e.name == NEUTRAL_NAME }
+    }
+
+    /**
+     * The [count] names nearest to [lab], nearest first. With [ignoreLightness] the colour and each name are
+     * taken at one luminance first, so only shade and strength count (for a colour whose lightness was not
+     * measured), and names that are only about lightness are not offered. Names tied at a shade (maroon and
+     * red are one shade) come in the order of their own distance from [lab].
+     */
+    fun nearest(lab: Lab, count: Int = 3, ignoreLightness: Boolean = false): List<NamedMatch> {
+        if (!ignoreLightness) {
+            return entries.map { NamedMatch(it.name, it.argb, it.lab, DeltaE2000.between(lab, it.lab)) }
+                .sortedBy { it.deltaE }
+                .take(count)
         }
-            .sortedBy { it.deltaE }
+        val shade = ColourSpace.atLuminance(lab, FlashSolver.UNMEASURED_LUMINANCE)
+        return shadeOnly
+            .map { (e, atReference) -> NamedMatch(e.name, e.argb, e.lab, DeltaE2000.between(shade, atReference)) }
+            .sortedWith(compareBy({ Math.round(it.deltaE * 10.0) }, { DeltaE2000.between(lab, it.lab) }))
             .take(count)
+    }
+
+    private const val NEUTRAL_NAME = "grey"
 
     fun nearest(argb: Int, count: Int = 3): List<NamedMatch> = nearest(ColourSpace.lab(argb), count)
 }
@@ -114,11 +137,13 @@ internal object ColourWords {
 
     /** [describe] without the lightness word (and without black or white), for a colour whose lightness was not measured. */
     fun describeWithoutLightness(lab: Lab): String {
-        val c = lab.chroma
+        // Strength is judged at the one luminance a no-card reading sits at, so a dark room reading is not worded stronger than its no-card twin.
+        val at = ColourSpace.atLuminance(lab, FlashSolver.UNMEASURED_LUMINANCE)
+        val c = at.chroma
         return when {
             c < NEUTRAL_CHROMA -> ChromaCopy.GREY
-            c < TINT_CHROMA -> "${ChromaCopy.GREYISH} ${hueFamily(lab.hueDegrees)}"
-            else -> "${strength(c)} ${hueFamily(lab.hueDegrees)}"
+            c < TINT_CHROMA -> "${ChromaCopy.GREYISH} ${hueFamily(at.hueDegrees)}"
+            else -> "${strength(c)} ${hueFamily(at.hueDegrees)}"
         }
     }
 }

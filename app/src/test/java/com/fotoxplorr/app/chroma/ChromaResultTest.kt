@@ -162,6 +162,22 @@ class ChromaResultTest {
     }
 
     @Test
+    fun `a neutral reading without a lightness is never named black or white or silver`() {
+        val lightnessNames = setOf("black", "white", "silver", "jet black", "soft black", "off white", "white smoke", "gainsboro", "snow", "ivory", "charcoal")
+        for (grey in listOf(0, 12, 128, 200, 255)) {
+            val report = ColourReport.of(ChromaTestKit.argb(grey, grey, grey), nameCount = 8, lightnessMeasured = false)
+            for (m in report.nearest) {
+                assertFalse("${m.name} for grey $grey", m.name in lightnessNames)
+                assertFalse("${m.name} for grey $grey", m.name.split(' ').first() in setOf("dark", "light", "pale", "deep", "soft", "jet", "off"))
+            }
+            assertEquals("grey", report.nearest.first().name)
+            assertEquals(ChromaCopy.GREY, report.description)
+        }
+        val view = ReadingView.of(saved(ChromaTestKit.argb(255, 255, 255), ReadingKind.ROOM))
+        assertFalse(view.nearestLines.toString(), view.nearestLines.any { it.startsWith("white") || it.startsWith("black") })
+    }
+
+    @Test
     fun `the live cautions come with the live outcome and not with a colour shown again`() {
         val argb = ChromaTestKit.argb(170, 60, 40)
         val live = reading(argb, withCard = true, cautions = setOf(Caution.SAME_DISTANCE_ASSUMED))
@@ -199,11 +215,12 @@ class ChromaResultTest {
 
     @Test
     fun `readings without a lightness are compared on shade and strength alone`() {
-        // The same shade, one dark and one light: with no lightness to compare, they are not different.
-        val dark = saved(ChromaTestKit.argb(70, 20, 10), ReadingKind.APPROXIMATE, 1)
-        val light = saved(ChromaTestKit.argb(240, 130, 110), ReadingKind.APPROXIMATE, 2)
+        // The same shade, one dark and one light (one colour at two brightnesses): with no lightness to compare, they are not different.
+        val base = LinearRgb(0.30, 0.06, 0.03)
+        val dark = saved(ColourSpace.argbOf(base.map { it * 0.2 }), ReadingKind.APPROXIMATE, 1)
+        val light = saved(ColourSpace.argbOf(base), ReadingKind.APPROXIMATE, 2)
         val c = CompareView.of(dark, light)
-        assertEquals(SwatchLevel.TOO_CLOSE_TO_CALL, c.verdict.level)
+        assertEquals("deltaE ${c.verdict.deltaE}", SwatchLevel.TOO_CLOSE_TO_CALL, c.verdict.level)
         assertTrue("never lighter or darker", c.verdict.detail == null)
         // A different shade is still a different shade.
         val blue = saved(ChromaTestKit.argb(20, 60, 200), ReadingKind.APPROXIMATE, 3)
@@ -211,8 +228,34 @@ class ChromaResultTest {
         assertEquals(SwatchLevel.VERY_DIFFERENT, d.verdict.level)
         assertTrue(d.verdict.detail != ChromaCopy.B_LIGHTER && d.verdict.detail != ChromaCopy.B_DARKER)
         // Mixed with a card reading it is the same rule: lightness is left out of the pair.
-        val card = saved(ChromaTestKit.argb(240, 130, 110), ReadingKind.CALIBRATED, 4)
+        val card = light.copy(kind = ReadingKind.CALIBRATED, atMillis = 4)
         assertEquals(SwatchLevel.TOO_CLOSE_TO_CALL, CompareView.of(dark, card).verdict.level)
+    }
+
+    @Test
+    fun `a card reading and a no-card reading of one dark surface are too close to call`() {
+        // The no-card solver puts every surface at one middle luminance, and chroma grows with luminance,
+        // so a dark red read both ways must be compared by shade (chromaticity), not by raw a and b.
+        val truth = LinearRgb(0.05, 0.01, 0.008)
+        val withCard = saved(ColourSpace.argbOf(truth), ReadingKind.CALIBRATED, 1)
+        val atFixed = truth.map { it * FlashSolver.UNMEASURED_LUMINANCE / truth.luminance }
+        val noCard = saved(ColourSpace.argbOf(atFixed), ReadingKind.APPROXIMATE, 2)
+        for (c in listOf(CompareView.of(withCard, noCard), CompareView.of(noCard, withCard))) {
+            assertEquals("deltaE ${c.verdict.deltaE}", SwatchLevel.TOO_CLOSE_TO_CALL, c.verdict.level)
+            assertNull(c.verdict.detail)
+        }
+        // The same holds for a no-flash room reading of the surface's own dark colour.
+        val room = saved(ColourSpace.argbOf(truth), ReadingKind.ROOM, 3)
+        assertEquals(SwatchLevel.TOO_CLOSE_TO_CALL, CompareView.of(room, noCard).verdict.level)
+    }
+
+    @Test
+    fun `the strength word of a reading without a lightness does not depend on how dark it was`() {
+        val truth = LinearRgb(0.05, 0.01, 0.008)
+        val atFixed = truth.map { it * FlashSolver.UNMEASURED_LUMINANCE / truth.luminance }
+        val dark = ReadingView.of(saved(ColourSpace.argbOf(truth), ReadingKind.ROOM)).report.description
+        val fixed = ReadingView.of(saved(ColourSpace.argbOf(atFixed), ReadingKind.APPROXIMATE)).report.description
+        assertEquals(fixed, dark)
     }
 
     @Test

@@ -113,6 +113,20 @@ internal object ColourSpace {
 
     fun argbOf(lab: Lab): Int = argbOf(linear(lab))
 
+    /**
+     * [lab] with its light scaled to the relative luminance [y], keeping its chromaticity (its shade). A
+     * colour's a* and b* grow with its luminance, so two readings of one surface at different luminances
+     * differ in a* and b* too; this is how to compare them by shade alone. Black has no shade, so it
+     * comes back as the neutral at [y]. Quantised to 8 bits a very dark colour has a coarse shade, so the
+     * result for one is only as good as that.
+     */
+    fun atLuminance(lab: Lab, y: Double): Lab {
+        val c = linear(lab)
+        val now = c.luminance
+        if (now < 1e-6) return lab(LinearRgb(y, y, y))
+        return lab(c.map { it * y / now })
+    }
+
     fun lch(lab: Lab): Lch = Lch(lab.l, lab.chroma, lab.hueDegrees)
 
     /** "#RRGGBB" in capitals. */

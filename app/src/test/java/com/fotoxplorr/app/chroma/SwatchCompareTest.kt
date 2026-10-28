@@ -69,11 +69,13 @@ class SwatchCompareTest {
 
     @Test
     fun lightnessCanBeLeftOutOfTheComparison() {
-        val dark = Lab(20.0, 30.0, 20.0)
-        val light = Lab(80.0, 30.0, 20.0)
-        assertEquals(SwatchLevel.VERY_DIFFERENT, SwatchCompare.compare(dark, light, eitherApproximate = true).level)
+        // One colour at two brightnesses: its a* and b* grow with the light, but its shade does not change.
+        val base = LinearRgb(0.30, 0.06, 0.03)
+        val dark = ColourSpace.lab(base.map { it * 0.1 })
+        val light = ColourSpace.lab(base)
+        assertTrue(SwatchCompare.compare(dark, light, eitherApproximate = true).deltaE > 15.0)
         val v = SwatchCompare.compare(dark, light, eitherApproximate = true, ignoreLightness = true)
-        assertEquals(0.0, v.deltaE, 1e-9)
+        assertEquals(0.0, v.deltaE, 1e-6)
         assertEquals(SwatchLevel.TOO_CLOSE_TO_CALL, v.level)
         // A different shade at a different lightness is judged on the shade.
         val other = SwatchCompare.compare(Lab(20.0, 40.0, 0.0), Lab(80.0, 0.0, 40.0), eitherApproximate = true, ignoreLightness = true)

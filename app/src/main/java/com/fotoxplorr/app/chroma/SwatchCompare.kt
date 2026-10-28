@@ -45,8 +45,10 @@ internal object SwatchCompare {
 
     /**
      * @param eitherApproximate a reading made without a card (or without a flash) is in the pair.
-     * @param ignoreLightness take [b] at the lightness of [a], so the difference is in shade and strength only
-     *   (for readings whose lightness was not measured); the verdict then never says lighter or darker.
+     * @param ignoreLightness take both at one luminance ([FlashSolver.UNMEASURED_LUMINANCE], where a reading
+     *   made without a card sits), so the difference is in shade and strength only (for readings whose
+     *   lightness was not measured); the verdict then never says lighter or darker. Equalising L* alone would
+     *   not do: a* and b* scale with luminance, so one surface read with and without a card would differ.
      * @param floor the difference below which the verdict is [SwatchLevel.TOO_CLOSE_TO_CALL]; by default
      *   [APPROXIMATE_FLOOR] when [eitherApproximate], else [CALIBRATED_FLOOR]. 0 gives the bare table.
      */
@@ -57,7 +59,11 @@ internal object SwatchCompare {
         ignoreLightness: Boolean = false,
         floor: Double = if (eitherApproximate) APPROXIMATE_FLOOR else CALIBRATED_FLOOR,
     ): SwatchVerdict {
-        val parts = DeltaE2000.parts(a, if (ignoreLightness) b.copy(l = a.l) else b)
+        val parts = if (ignoreLightness) {
+            DeltaE2000.parts(atReference(a), atReference(b))
+        } else {
+            DeltaE2000.parts(a, b)
+        }
         val de = parts.total
         val level = when {
             de < floor -> SwatchLevel.TOO_CLOSE_TO_CALL
@@ -70,6 +76,8 @@ internal object SwatchCompare {
         val detail = if (level == SwatchLevel.SAME || level == SwatchLevel.TOO_CLOSE_TO_CALL) null else largestTerm(parts)
         return SwatchVerdict(de, level, detail)
     }
+
+    private fun atReference(lab: Lab) = ColourSpace.atLuminance(lab, FlashSolver.UNMEASURED_LUMINANCE)
 
     private fun largestTerm(p: DeltaE2000.Parts): String {
         val l = abs(p.lightness)
