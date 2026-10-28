@@ -1,5 +1,7 @@
 package com.fotoxplorr.app.reel
 
+import androidx.media3.common.ParserException
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.transformer.ExportException
 import java.io.IOException
@@ -17,6 +19,12 @@ enum class ReelFailureKind {
 
     /** A photo, clip or the sound file could not be opened or read: a smaller rung will not help. */
     SOURCE,
+
+    /**
+     * A clip or the sound file is not a container the export can read (truncated, damaged): a smaller rung will not
+     * help. The export does not say which file, so the job asks about the sound when one is laid, else calls it [SOURCE].
+     */
+    PARSE,
 
     /** The file could not be written: not a thing to retry. */
     STORAGE,
@@ -54,16 +62,27 @@ object ReelFailures {
         }
     }
 
-    /** [classify] for a real export failure: an out-of-memory error anywhere in its causes is [ReelFailureKind.MEMORY]. */
+    /**
+     * [classify] for a real export failure: an out-of-memory error anywhere in its causes is [ReelFailureKind.MEMORY],
+     * an extractor's parse error is [ReelFailureKind.PARSE]. The export library has no code for a parse error: it
+     * reports "unspecified" and keeps the player's error (a [ParserException], or a [PlaybackException] with a parsing
+     * code) among the causes, so that is where it is looked for.
+     */
     fun classify(failure: ExportException, soundInPlan: Boolean): ReelFailureKind {
         var t: Throwable? = failure
         var depth = 0
+        var parse = false
         while (t != null && depth++ < 8) {
             if (t is OutOfMemoryError) return ReelFailureKind.MEMORY
+            if (t is ParserException || (t is PlaybackException && t.errorCode in PARSING_CODES)) parse = true
             t = t.cause
         }
-        return classify(failure.errorCode, failure.codecInfo?.isVideo, soundInPlan)
+        // A code that already names the trouble (a file that cannot be opened) wins over a parse error found beneath it.
+        val byCode = classify(failure.errorCode, failure.codecInfo?.isVideo, soundInPlan)
+        return if (parse && byCode == ReelFailureKind.STEP_DOWN) ReelFailureKind.PARSE else byCode
     }
+
+    private val PARSING_CODES = PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED..PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED
 
     /** True when [failure] or something it was caused by is the phone running out of space. */
     fun isOutOfSpace(failure: Throwable?): Boolean {

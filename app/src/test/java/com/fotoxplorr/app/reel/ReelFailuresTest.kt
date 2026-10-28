@@ -1,13 +1,23 @@
 package com.fotoxplorr.app.reel
 
+import androidx.media3.common.ParserException
+import androidx.media3.common.PlaybackException
 import androidx.media3.transformer.ExportException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.IOException
 
-/** What the job does about each way an export can fail. The codes are the export library's own constants. */
+/**
+ * What the job does about each way an export can fail. The codes are the export library's own constants. Robolectric
+ * only because an [ExportException] reads the system clock when it is made.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class ReelFailuresTest {
     private fun kind(code: Int, video: Boolean? = null, sound: Boolean = true) = ReelFailures.classify(code, video, sound)
 
@@ -72,6 +82,43 @@ class ReelFailuresTest {
     @Test
     fun `an unknown code takes the next rung`() {
         assertEquals(ReelFailureKind.STEP_DOWN, kind(123456))
+    }
+
+    // The export library does not name a parse error: it arrives as "unspecified", with the extractor's error in the causes.
+    private fun loaderFailed(cause: Throwable) = ExportException.createForAssetLoader(cause, ExportException.ERROR_CODE_UNSPECIFIED)
+
+    @Test
+    fun `a container the extractor cannot parse is its own kind, found in the causes`() {
+        val malformed = ParserException.createForMalformedContainer("moov box cut short", null)
+        assertEquals(ReelFailureKind.PARSE, ReelFailures.classify(loaderFailed(malformed), soundInPlan = true))
+        assertEquals(ReelFailureKind.PARSE, ReelFailures.classify(loaderFailed(RuntimeException("player", malformed)), soundInPlan = false))
+        val unsupported = ParserException.createForUnsupportedContainerFeature("no such box")
+        assertEquals(ReelFailureKind.PARSE, ReelFailures.classify(loaderFailed(unsupported), soundInPlan = true))
+        for (code in listOf(
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+        )) {
+            val playback = PlaybackException("player", IOException("io"), code)
+            assertEquals("code $code", ReelFailureKind.PARSE, ReelFailures.classify(loaderFailed(playback), soundInPlan = true))
+        }
+    }
+
+    @Test
+    fun `an asset loader failure that is not a parse error still takes the next rung`() {
+        assertEquals(ReelFailureKind.STEP_DOWN, ReelFailures.classify(loaderFailed(IllegalStateException("no track")), soundInPlan = true))
+        val other = PlaybackException("player", IOException("io"), PlaybackException.ERROR_CODE_UNSPECIFIED)
+        assertEquals(ReelFailureKind.STEP_DOWN, ReelFailures.classify(loaderFailed(other), soundInPlan = true))
+        // A source that cannot be opened stays a source problem whatever is in the causes.
+        val gone = ExportException.createForAssetLoader(IOException("gone"), ExportException.ERROR_CODE_IO_FILE_NOT_FOUND)
+        assertEquals(ReelFailureKind.SOURCE, ReelFailures.classify(gone, soundInPlan = true))
+    }
+
+    @Test
+    fun `a parse error in a cycle of causes does not hang`() {
+        val a = RuntimeException("a")
+        val b = RuntimeException("b", a)
+        a.initCause(b)
+        assertEquals(ReelFailureKind.STEP_DOWN, ReelFailures.classify(loaderFailed(a), soundInPlan = false))
     }
 
     @Test

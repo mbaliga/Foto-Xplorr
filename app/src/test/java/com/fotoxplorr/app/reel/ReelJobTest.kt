@@ -449,6 +449,25 @@ class ReelJobTest {
         assertEquals(2, c.encoder.plans.size)
     }
 
+    @Test
+    fun `a file the export cannot parse asks about the sound when a sound file is laid, without a second render`() {
+        val c = case(1, 2, videos = setOf(2))
+        c.encoder.behaviour = { _, _ -> throw ReelEncodeException(ReelFailureKind.PARSE, "container") }
+        assertEquals(ReelCopy.SOUND_FAILED, asks(run(c, ReelProject(listOf(still(1), clip(2)), soundtrack = track))))
+        assertEquals("a smaller picture does not mend a file", 1, c.encoder.plans.size)
+        assertTrue(c.sink.saved.isEmpty())
+    }
+
+    @Test
+    fun `a file the export cannot parse, with no sound file in the render, is an unreadable source`() {
+        val c = case(1, 2, videos = setOf(2))
+        c.encoder.behaviour = { _, _ -> throw ReelEncodeException(ReelFailureKind.PARSE, "container") }
+        assertEquals(ReelCopy.SOURCE_UNREADABLE, failed(run(c, ReelProject(listOf(still(1), clip(2))))))
+        assertEquals(1, c.encoder.plans.size)
+        // The question is answered "without sound": the clip is then the only thing left to blame.
+        assertEquals(ReelCopy.SOURCE_UNREADABLE, failed(run(c, ReelProject(listOf(still(1), clip(2)), soundtrack = track), silent = true)))
+    }
+
     // ---- stepping down ------------------------------------------------------------------------------------------
 
     @Test

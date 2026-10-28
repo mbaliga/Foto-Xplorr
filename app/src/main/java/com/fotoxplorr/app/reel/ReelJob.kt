@@ -288,6 +288,8 @@ object ReelJob {
                         } catch (e: ReelEncodeException) {
                             failure = e.kind
                             if (failure == ReelFailureKind.AUDIO && !plan.hasAudio) failure = ReelFailureKind.STEP_DOWN
+                            // The export does not say which file it could not parse: with a sound file laid, ask about it; else a clip is all that is left.
+                            if (failure == ReelFailureKind.PARSE) failure = if (plan.audio != null) ReelFailureKind.AUDIO else ReelFailureKind.SOURCE
                         } finally {
                             // The file is complete and published (or dropped) by the time this runs; it is never kept.
                             output.delete()
