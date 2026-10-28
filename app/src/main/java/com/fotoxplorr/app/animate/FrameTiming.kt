@@ -76,6 +76,24 @@ object FrameTiming {
     }
 
     /**
+     * [n] source indices out of [count] = `important.size`, keeping every important one if there is room:
+     * the rest of the room is filled with the unimportant frames spread evenly, and when there are more
+     * important frames than [n] only those are kept, spread evenly. Frame 0 counts as important, so a
+     * timeline still starts where the source does. Rising indices; no important frames is [evenPicks].
+     */
+    fun evenPicksKeeping(important: BooleanArray, n: Int): IntArray {
+        val count = important.size
+        require(count >= 1 && n >= 1)
+        if (n >= count) return IntArray(count) { it }
+        if ((1 until count).none { important[it] }) return evenPicks(count, n)
+        val must = (0 until count).filter { it == 0 || important[it] }
+        if (must.size >= n) return evenPicks(must.size, n).let { spread -> IntArray(n) { must[spread[it]] } }
+        val rest = (0 until count).filter { it != 0 && !important[it] }
+        val extra = evenPicks(rest.size, n - must.size)
+        return (must + extra.map { rest[it] }).sorted().toIntArray()
+    }
+
+    /**
      * Delays for a GIF, in hundredths of a second, one per entry of [delaysMs]: rounded with the
      * leftover carried to the next frame so the total stays right, and never below 2 because a viewer
      * shows less as 10. The same rule [GifStreamEncoder] applies; exposed so a plan can show the

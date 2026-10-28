@@ -111,8 +111,10 @@ class AnimateFailure(message: String) : Exception(message)
  * MediaStore row (the sink makes one only after the file is complete and a final look has passed, and
  * deletes it on a cancel that arrives later) and returns by throwing [CancellationException] so
  * [JobRunner] reports it as cancelled. If the process is killed nothing has been saved: the working
- * files are in the cache and the next run's sweep ([AnimateWriter.pruneStaging]) deletes them. What
- * the person had chosen is the screen's to remember, not this job's.
+ * files, the frame pictures of a video among them, are in the cache, and the sweep
+ * ([AnimateWriter.pruneStaging]) that the next job's start and the next save both make deletes them
+ * once they are an hour old (until then, or if no animation is made again, the system's own cache
+ * clearing is all that removes them). What the person had chosen is the screen's to remember, not this job's.
  */
 object AnimateJob {
 
@@ -256,7 +258,7 @@ object AnimateJob {
 
         private suspend fun plan(source: FrameSource, info: SourceInfo, staging: Staging): AnimateOutcome {
             val notes = ArrayList<String>()
-            AnimateCopy.decodeProblem(info.problem)?.let { notes.add(it) }
+            AnimateCopy.decodeNote(info.problem)?.let { notes.add(it) }
             val keepAlpha = request.keepTransparency && !output.isVideo && info.transparency != Transparency.NONE
             val gifClear = keepAlpha && output == AnimOutput.GIF && info.transparency == Transparency.CLEAR
             var limits = request.limits
@@ -277,6 +279,7 @@ object AnimateJob {
                         targetFps = request.targetFps,
                         // A video's size follows its bitrate; the planner's GIF/PNG rates must not thin its frames.
                         limits = if (output.isVideo) withBytes(limits, Long.MAX_VALUE / 4) else limits,
+                        keepFrames = info.keepFrames,
                     ),
                 )
                 if (firstPlanSteps == null) {

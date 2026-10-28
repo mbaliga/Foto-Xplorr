@@ -37,6 +37,7 @@ enum class Transparency {
  * @property name the first file's display name, which the saved file is named after.
  * @property plays how many times the source itself plays (0 for ever), or null when it has no opinion.
  * @property problem why a damaged file was read only in part; [DecodeProblem.NONE] otherwise.
+ * @property keepFrames one flag per frame, true for one the planner should drop last ([PlanRequest.keepFrames]); null for none.
  */
 class SourceInfo(
     val width: Int,
@@ -49,6 +50,7 @@ class SourceInfo(
     val plays: Int? = null,
     val transparency: Transparency = Transparency.NONE,
     val problem: DecodeProblem = DecodeProblem.NONE,
+    val keepFrames: BooleanArray? = null,
 ) {
     init {
         require(width > 0 && height > 0) { "the source has no size" }

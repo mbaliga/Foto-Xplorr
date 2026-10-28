@@ -76,6 +76,7 @@ object AnimatePreview {
                         maxDurationMs = request.limits.maxDurationMs,
                         minLongEdge = 1,
                     ),
+                    keepFrames = info.keepFrames,
                 ),
             )
             val frames = ArrayList<PreviewFrame>(plan.picks.size)

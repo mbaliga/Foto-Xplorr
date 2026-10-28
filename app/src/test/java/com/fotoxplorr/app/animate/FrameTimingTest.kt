@@ -113,6 +113,26 @@ class FrameTimingTest {
     }
 
     @Test
+    fun `picks that keep the important frames drop the others first and stay spread out`() {
+        val important = BooleanArray(60) { it % 5 == 0 } // 12 holds, 48 in-betweens
+        val p = FrameTiming.evenPicksKeeping(important, 24)
+        assertEquals(24, p.size)
+        for (i in 1 until p.size) assertTrue(p[i] > p[i - 1])
+        assertTrue("every important frame is kept", (0 until 60 step 5).all { it in p.toList() })
+        // More important frames than room: only important ones, spread evenly, both ends in.
+        val few = FrameTiming.evenPicksKeeping(important, 5)
+        assertEquals(5, few.size)
+        assertTrue(few.all { important[it] })
+        assertEquals(0, few.first())
+        assertEquals(55, few.last())
+        // Room for everything is everything; nothing important is the plain spread.
+        assertArrayEquals(IntArray(60) { it }, FrameTiming.evenPicksKeeping(important, 99))
+        assertArrayEquals(FrameTiming.evenPicks(60, 7), FrameTiming.evenPicksKeeping(BooleanArray(60), 7))
+        // The first frame is always kept: a timeline starts at 0.
+        assertEquals(0, FrameTiming.evenPicksKeeping(BooleanArray(10) { it == 4 }, 3).first())
+    }
+
+    @Test
     fun `gif delays round with the leftover carried and never go under 2`() {
         // 15 fps: 67, 67, 66 ms -> 7, 7, 7 (6.7 rounds up, carry -3, then 6.4...) but the total stays 200 ms +- 5.
         val d = IntArray(30) { if (it % 3 == 2) 66 else 67 }

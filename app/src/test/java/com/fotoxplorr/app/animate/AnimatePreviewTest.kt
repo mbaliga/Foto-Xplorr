@@ -52,6 +52,14 @@ class AnimatePreviewTest {
     }
 
     @Test
+    fun `a faded slideshow too long for the preview still shows every photo for its whole hold`() {
+        val d = ticked(12).withFade(true).withLoop(false)
+        val set = ready(make(d))
+        assertTrue("frames ${set.frames.size}", set.frames.size <= AnimatePreview.MAX_FRAMES)
+        assertEquals("one long frame per photo", 12, set.frames.count { it.delayMs >= 1000 })
+    }
+
+    @Test
     fun `a slideshow longer than the file's ceiling is cut to it, as the file will be`() {
         val set = ready(make(ticked(60)))
         assertEquals(AnimateDefaults.limits(AnimOutput.GIF).maxDurationMs.toDouble(), set.delaysMs.sum().toDouble(), 1.0)

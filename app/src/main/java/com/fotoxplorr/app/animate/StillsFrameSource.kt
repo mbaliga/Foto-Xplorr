@@ -51,6 +51,8 @@ internal class StillsFrameSource(
             kind = ContentKind.PHOTO,
             // Unrelated pictures: nearly every pixel differs from the one before.
             changeFraction = 1.0,
+            // The photos themselves, as against the fades between them: thinning must not swap a photo for a ghost.
+            keepFrames = BooleanArray(timeline.steps.size) { timeline.steps[it].to < 0 },
         )
     }
 

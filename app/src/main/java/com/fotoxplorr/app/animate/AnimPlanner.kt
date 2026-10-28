@@ -43,6 +43,9 @@ class PlanLimits(
  *   unrelated stills. Only the size estimate uses it. A GIF with see-through pixels is written whole
  *   frame by frame, so pass 1 for it.
  * @param targetFps the rate to play at, or null to keep the source's own timing.
+ * @param keepFrames one flag per source frame, true for a frame that is the point of the animation (a
+ *   slideshow's hold, as against its fade frames): thinning drops the other frames first and a flagged
+ *   one only when no other is left. Null thins every frame alike.
  */
 class PlanRequest(
     val sourceWidth: Int,
@@ -53,6 +56,7 @@ class PlanRequest(
     val changeFraction: Double = 0.5,
     val targetFps: Double? = null,
     val limits: PlanLimits = PlanLimits(),
+    val keepFrames: BooleanArray? = null,
 )
 
 /** What the planner did to fit, in the order it did it. */
@@ -153,17 +157,22 @@ object AnimPlanner {
         return (firstFrameBytes + laterAvg * (totalFrames - 1)).toLong()
     }
 
-    private class Timeline(val picks: IntArray, val startsMs: LongArray, val totalMs: Long) {
+    private class Timeline(val picks: IntArray, val startsMs: LongArray, val totalMs: Long, val important: BooleanArray? = null) {
         val size: Int get() = picks.size
         fun delays(): IntArray = IntArray(size) { i ->
             val end = if (i + 1 < size) startsMs[i + 1] else totalMs
             (end - startsMs[i]).coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         }
 
-        /** Keep [n] frames spread evenly; each stays up until the next kept one starts. */
+        /** Keep [n] frames, the important ones first and the rest spread evenly; each stays up until the next kept one starts. */
         fun thin(n: Int): Timeline {
-            val keep = FrameTiming.evenPicks(size, n)
-            return Timeline(IntArray(keep.size) { picks[keep[it]] }, LongArray(keep.size) { startsMs[keep[it]] }, totalMs)
+            val keep = if (important == null) FrameTiming.evenPicks(size, n) else FrameTiming.evenPicksKeeping(important, n)
+            return Timeline(
+                IntArray(keep.size) { picks[keep[it]] },
+                LongArray(keep.size) { startsMs[keep[it]] },
+                totalMs,
+                important?.let { flags -> BooleanArray(keep.size) { flags[keep[it]] } },
+            )
         }
     }
 
@@ -197,7 +206,7 @@ object AnimPlanner {
             if (target != null) {
                 val rs = FrameTiming.resample(delays, target, collapse = true)
                 if (rs.size < delays.size) steps.add(PlanStep.RATE_LOWERED)
-                timelineOf(rs)
+                timelineOf(rs, req.keepFrames)
             } else {
                 val starts = LongArray(delays.size)
                 var t = 0L
@@ -205,7 +214,7 @@ object AnimPlanner {
                     starts[i] = t
                     t += delays[i]
                 }
-                Timeline(IntArray(delays.size) { it }, starts, total)
+                Timeline(IntArray(delays.size) { it }, starts, total, req.keepFrames?.let { keep -> BooleanArray(delays.size) { keep.getOrElse(it) { false } } })
             }
         }
         if (timeline.size > lim.maxFrames) {
@@ -248,13 +257,13 @@ object AnimPlanner {
         return AnimPlan(w, h, timeline.picks, outDelays, finalEst, steps, playMs, fits)
     }
 
-    private fun timelineOf(rs: Resampled): Timeline {
+    private fun timelineOf(rs: Resampled, keepFrames: BooleanArray?): Timeline {
         val starts = LongArray(rs.size)
         var t = 0L
         for (i in 0 until rs.size) {
             starts[i] = t
             t += rs.delaysMs[i]
         }
-        return Timeline(rs.picks, starts, t)
+        return Timeline(rs.picks, starts, t, keepFrames?.let { keep -> BooleanArray(rs.size) { keep.getOrElse(rs.picks[it]) { false } } })
     }
 }

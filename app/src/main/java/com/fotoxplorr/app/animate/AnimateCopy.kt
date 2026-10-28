@@ -23,6 +23,9 @@ internal object AnimateCopy {
     const val CORRUPT = "The file is damaged, so only part is shown."
     const val TOO_LARGE = "This is too large to open."
 
+    /** The note on a file that WAS saved from the start of a file longer than the reader goes; [TOO_LARGE] is for one that could not be opened. */
+    const val ONLY_THE_START = "Only the start of the file was used."
+
     // The name of the running job in the activity shade and the notification.
     const val JOB_TITLE = "Making an animation"
 
@@ -69,4 +72,7 @@ internal object AnimateCopy {
         DecodeProblem.CORRUPT -> CORRUPT
         DecodeProblem.TOO_LARGE -> TOO_LARGE
     }
+
+    /** [decodeProblem] as a note under a file that was saved from what could be read; null when nothing went wrong. */
+    fun decodeNote(problem: DecodeProblem): String? = if (problem == DecodeProblem.TOO_LARGE) ONLY_THE_START else decodeProblem(problem)
 }

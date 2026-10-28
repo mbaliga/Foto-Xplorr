@@ -88,6 +88,56 @@ class AnimPlannerTest {
         assertTrue("gaps ${gaps.distinct()}", gaps.max() - gaps.min() <= 1)
     }
 
+    /** A slideshow of [photos] with a 4-frame fade, as the plan request a job makes for it. */
+    private fun slideshow(photos: Int, holdMs: Int, limits: PlanLimits, loop: Boolean = false): Pair<AnimPlan, List<Int>> {
+        val t = StillsTimeline.build(IntArray(photos) { holdMs }, StillTransition(4, 60, loop = loop))
+        val holds = t.steps.indices.filter { t.steps[it].to < 0 }
+        val keep = BooleanArray(t.steps.size) { t.steps[it].to < 0 }
+        val plan = AnimPlanner.plan(PlanRequest(320, 240, t.delaysMs, limits = limits, keepFrames = keep))
+        return plan to holds
+    }
+
+    @Test
+    fun `thinning a fading slideshow keeps every photo's hold and drops in-betweens first`() {
+        for (photos in listOf(8, 10, 12, 40)) {
+            val cap = if (photos == 40) 120 else 24
+            val (p, holds) = slideshow(photos, 1000, PlanLimits(maxFrames = cap, maxBytes = Long.MAX_VALUE, maxDurationMs = 600_000))
+            check(p, 5 * photos)
+            assertEquals("photos=$photos", cap, p.picks.size)
+            assertTrue("photos=$photos holds ${holds} picks ${p.picks.toList()}", holds.all { it in p.picks.toList() })
+            assertTrue(PlanStep.FRAMES_THINNED in p.steps)
+            assertEquals("the length is kept", 1000 * photos + 4 * 60 * (photos - 1), p.delaysMs.sum())
+        }
+    }
+
+    @Test
+    fun `with fewer frames than photos only holds are left, spread over the show, both ends in`() {
+        val (p, holds) = slideshow(30, 500, PlanLimits(maxFrames = 24, maxBytes = Long.MAX_VALUE, maxDurationMs = 600_000))
+        check(p, 150)
+        assertEquals(24, p.picks.size)
+        assertTrue("only holds: ${p.picks.toList()}", p.picks.all { it in holds })
+        assertEquals(holds.first(), p.picks.first())
+        assertEquals(holds.last(), p.picks.last())
+    }
+
+    @Test
+    fun `a size cap that thins further still drops in-betweens before a hold`() {
+        val (p, holds) = slideshow(10, 1000, PlanLimits(maxLongEdge = 320, maxFrames = 500, maxBytes = 900_000, maxDurationMs = 600_000))
+        check(p, 50)
+        assertTrue("fits=${p.fitsBytes}, frames ${p.picks.size}", p.picks.size < 50)
+        val kept = p.picks.toList()
+        // A hold goes only when no in-between is left to go.
+        assertTrue("holds ${holds} kept $kept", kept.size < holds.size || holds.all { it in kept })
+    }
+
+    @Test
+    fun `no marked frames means the plain even spread`() {
+        val d = steady(100, 100)
+        val plain = AnimPlanner.plan(req(100, 100, d, limits = PlanLimits(maxFrames = 20, maxBytes = Long.MAX_VALUE)))
+        val marked = AnimPlanner.plan(PlanRequest(100, 100, d, limits = PlanLimits(maxFrames = 20, maxBytes = Long.MAX_VALUE), keepFrames = BooleanArray(100)))
+        assertEquals(plain.picks.toList(), marked.picks.toList())
+    }
+
     @Test
     fun `a size cap is met by dropping frames first, then pixels`() {
         val d = steady(120, 100) // 12 s at 10 fps
@@ -194,5 +244,8 @@ class AnimPlannerTest {
         for (s in PlanStep.values()) assertTrue(AnimateCopy.planStep(s).endsWith("."))
         assertEquals(null, AnimateCopy.decodeProblem(DecodeProblem.NONE))
         for (p in DecodeProblem.values().filter { it != DecodeProblem.NONE }) assertTrue(AnimateCopy.decodeProblem(p)!!.endsWith("."))
+        // As a note on a file that was saved, a cut-off long file is not "too large to open".
+        assertEquals(AnimateCopy.ONLY_THE_START, AnimateCopy.decodeNote(DecodeProblem.TOO_LARGE))
+        for (p in DecodeProblem.values().filter { it != DecodeProblem.TOO_LARGE }) assertEquals(AnimateCopy.decodeProblem(p), AnimateCopy.decodeNote(p))
     }
 }

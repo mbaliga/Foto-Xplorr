@@ -263,6 +263,16 @@ class AnimateJobTest {
         assertTrue(AnimateCopy.TRUNCATED in result.notes)
     }
 
+    @Test
+    fun `a file longer than the reader's frame limit is saved with a note that says it was cut, not that it was too large`() {
+        val n = AnimatedFileSource.MAX_FRAMES + 5
+        val frames = List(n) { i -> AnimFrame(IntArray(4) { 0xFF000000.toInt() or ((i * 37) and 255) or (((i * 11) and 255) shl 8) or (((i / 7) and 255) shl 16) }, 20) }
+        val host = FakeAnimateHost().apply { files[8L] = GifEncoder.encode(AnimSequence(2, 2, frames, 0), GifOptions(maxColors = 255)) }
+        val result = done(run(request(AnimateInput.Existing(AnimateKit.asset(8, "long.gif", "image/gif"))), host, FakeAnimateSink()))
+        assertTrue(result.notes.toString(), AnimateCopy.ONLY_THE_START in result.notes)
+        assertFalse(AnimateCopy.TOO_LARGE in result.notes)
+    }
+
     // ---- progress ------------------------------------------------------------------------------------------
 
     @Test
