@@ -86,8 +86,10 @@ object BoardGeometry {
     /**
      * True when a tap at ([x], [y]) lands on what the layer shows: inside the (widened) box and,
      * when [respectMask], on a part the mask shows. In the margin that [slop] adds, the mask is
-     * asked at the nearest point of the box. A [MaskShape.Subject] counts as the whole box (its
-     * shape is only known after rendering).
+     * asked at the nearest point of the box and the tap counts if that point is no more than [slop]
+     * outside the shape, so a thin layer or one with a soft edge can still be hit by a finger just
+     * beside it (a soft edge shows nothing AT the edge, which would otherwise refuse the margin).
+     * A [MaskShape.Subject] counts as the whole box (its shape is only known after rendering).
      */
     fun hits(layer: Layer, x: Float, y: Float, slop: Float = 0f, respectMask: Boolean = true): Boolean {
         if (!contains(layer, x, y, slop)) return false
@@ -95,7 +97,10 @@ object BoardGeometry {
         val s = localShare(layer, x, y) ?: return false
         val u = s.x.coerceIn(0f, 1f)
         val v = s.y.coerceIn(0f, 1f)
-        return MaskGeometry.shows(layer.mask, layer.width, layer.height, u * layer.width, v * layer.height)
+        val inMargin = u != s.x || v != s.y
+        if (!inMargin) return MaskGeometry.shows(layer.mask, layer.width, layer.height, u * layer.width, v * layer.height)
+        val d = MaskGeometry.signedDistance(layer.mask.shape, layer.width, layer.height, u * layer.width, v * layer.height)
+        return d >= -slop / layer.transform.scale
     }
 
     /**
@@ -123,10 +128,21 @@ object BoardGeometry {
         respectMask: Boolean = true,
     ): Long? = hitStack(board, x, y, slop, includeLocked, respectMask).firstOrNull()
 
-    /** Whether any of the layer is on the canvas; one that is entirely off it need not be decoded or drawn. */
+    /**
+     * Whether any of the layer is on the canvas; one that is entirely off it need not be decoded or drawn.
+     * The turned box itself is tested, not the upright rectangle around it, so a turned layer whose corner
+     * of that rectangle reaches the canvas but which does not is off it.
+     */
     fun isOnCanvas(layer: Layer, canvas: CanvasSize): Boolean {
-        val b = bounds(layer)
-        return b.intersects(Bounds(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat()))
+        val w = canvas.width.toFloat()
+        val h = canvas.height.toFloat()
+        if (!bounds(layer).intersects(Bounds(0f, 0f, w, h))) return false
+        // Separating axes of the box's own: if the canvas corners are all beyond one side of the box, they do not meet.
+        val shares = listOf(localShare(layer, 0f, 0f), localShare(layer, w, 0f), localShare(layer, w, h), localShare(layer, 0f, h))
+        if (shares.any { it == null }) return true
+        if (shares.all { it!!.x >= 1f } || shares.all { it!!.x <= 0f }) return false
+        if (shares.all { it!!.y >= 1f } || shares.all { it!!.y <= 0f }) return false
+        return true
     }
 
     /** The position that puts the layer's centre where [x], [y] is, keeping its grab point: the move by a drag. */

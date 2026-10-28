@@ -244,6 +244,18 @@ class BoardRendererTest {
     }
 
     @Test
+    fun `text in a box too short for its lines still shows every line`() {
+        val text = LayerContent.Text("W\nW\nW", argb = 0xFF000000.toInt(), sizeUnits = 12f, bold = true, align = TextAlign.CENTRE)
+        // One line is about 14 tall; the box is 14 and three lines are needed (the estimate was wrong, or the font is wider).
+        val out = draw(board(layer(1, 32f, 32f, 40f, 14f, content = text))).bitmap
+        var low = 0
+        var high = 0
+        for (y in 0 until 64) for (x in 0 until 64) if (out.r(x, y) < 100) { if (y >= 44) low++ else if (y <= 20) high++ }
+        assertTrue("the last line is drawn: $low dark pixels near the bottom", low > 5)
+        assertTrue("and the first: $high near the top", high > 5)
+    }
+
+    @Test
     fun `a crop shows only the part of the photo asked for`() {
         val split = FakePhotoSource(painter = { _, u, _ -> if (u < 0.5f) RED else BLUE })
         val whole = draw(board(full(content = photo(1, 64, 64))), split).bitmap
@@ -254,6 +266,45 @@ class BoardRendererTest {
         assertEquals(RED, left.getPixel(54, 32))
         val right = draw(board(full(content = photo(1, 64, 64)).copy(crop = CropRect(0.5f, 0f, 1f, 1f))), FakePhotoSource(painter = { _, u, _ -> if (u < 0.5f) RED else BLUE })).bitmap
         assertEquals(BLUE, right.getPixel(10, 32))
+    }
+
+    @Test
+    fun `a portrait photo that the library lists as landscape is not squeezed into the landscape box`() {
+        // The ref says 400 x 200 (the raw MediaStore columns of an EXIF-rotated phone photo); the pixels
+        // that come back are upright, 200 x 400. Red only in the top and bottom tenth of the photo.
+        val upright = FakePhotoSource(
+            painter = { _, _, v -> if (v < 0.1f || v > 0.9f) RED else BLUE },
+            actualSize = mapOf(1L to (200 to 400)),
+        )
+        val wide = layer(1, 32f, 32f, 64f, 32f, content = photo(1, 400, 200))
+        val out = draw(board(wide), upright).bitmap
+        // Filled across, the box would show the red edges at its top and bottom rows; cropped to fit it shows the middle.
+        assertEquals(BLUE, out.getPixel(32, 17))
+        assertEquals(BLUE, out.getPixel(32, 46))
+        assertEquals(BLUE, out.getPixel(3, 32))
+        assertEquals("the box is still where it was", WHITE, out.getPixel(32, 5))
+    }
+
+    @Test
+    fun `a photo whose ref is right is still filled edge to edge`() {
+        val right = FakePhotoSource(painter = { _, _, v -> if (v < 0.1f || v > 0.9f) RED else BLUE })
+        val out = draw(board(layer(1, 32f, 32f, 64f, 32f, content = photo(1, 400, 200))), right).bitmap
+        assertEquals(RED, out.getPixel(32, 17))
+        assertEquals(RED, out.getPixel(32, 46))
+    }
+
+    @Test
+    fun `a layer that is never drawn does not make a photo missing`() {
+        val gone = FakePhotoSource(available = { false })
+        val renderer = BoardRenderer(gone)
+        val shown = layer(1, 32f, 32f, 20f, 20f, content = photo(1, 64, 64))
+        assertEquals("a photo that would be drawn is named", listOf(1L), renderer.missingNow(board(shown)))
+        val invisible = layer(2, 32f, 32f, 20f, 20f, content = photo(2, 64, 64), opacity = 0f)
+        val speck = layer(3, 32f, 32f, 0.2f, 0.2f, content = photo(3, 64, 64))
+        // Its surrounding rectangle touches the canvas corner; the diamond itself is off it.
+        val corner = layer(4, -90f, -90f, 200f, 200f, rot = 45f, content = photo(4, 64, 64))
+        val offCanvas = layer(5, 500f, 500f, 20f, 20f, content = photo(5, 64, 64))
+        assertEquals(emptyList<Long>(), renderer.missingNow(board(invisible, speck, corner, offCanvas)))
     }
 
     @Test
@@ -421,7 +472,8 @@ class BoardRendererTest {
         // The square is in the left half; crop to that half and the cut must still be the square.
         val scene = { FakePhotoSource(painter = { _, u, v -> if (u in 0.1f..0.4f && v in 0.3f..0.7f) RED else BLUE }) }
         val ops = listOf(BoardTestKit.hint(true, 0.25f, 0.5f, 0.04f), BoardTestKit.hint(false, 0.05f, 0.05f, 0.04f), BoardTestKit.hint(false, 0.9f, 0.9f, 0.04f))
-        val layer = full(content = photo(1, 64, 64), mask = LayerMask(MaskShape.Subject(ops))).copy(crop = CropRect(0f, 0f, 0.5f, 1f))
+        // The box has the crop's shape (half as wide as tall), as BoardOps.setCrop makes it.
+        val layer = layer(1, 32f, 32f, 32f, 64f, content = photo(1, 64, 64), mask = LayerMask(MaskShape.Subject(ops))).copy(crop = CropRect(0f, 0f, 0.5f, 1f))
         val cut = draw(board(layer), scene()).bitmap
         // In the cropped view the square spans x = 0.2..0.8 of the box, y = 0.3..0.7.
         assertEquals(RED, cut.getPixel(32, 32))

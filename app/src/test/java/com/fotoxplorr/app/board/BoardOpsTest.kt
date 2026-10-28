@@ -191,6 +191,27 @@ class BoardOpsTest {
     }
 
     @Test
+    fun `text that is wider than average gets the lines it will really take`() {
+        val room = 100f
+        // 18 full-width characters at 10 units are 180 wide: two lines in 100, where an average letter would fit on one.
+        assertEquals(24f, TextBox.height(LayerContent.Text("一二三四五六七八九十一二三四五六七八", sizeUnits = 10f), room), tol)
+        assertEquals(24f, TextBox.height(LayerContent.Text("😀".repeat(12), sizeUnits = 10f), room), tol)
+        // Ten capitals are 70 wide in 60, ten small letters 55.
+        assertEquals(24f, TextBox.height(LayerContent.Text("ABCDEFGHIJ", sizeUnits = 10f), 60f), tol)
+        assertEquals(12f, TextBox.height(LayerContent.Text("abcdefghij", sizeUnits = 10f), 60f), tol)
+        // Eleven small letters are 60.5 plain and 66 bold, in 62.
+        assertEquals(12f, TextBox.height(LayerContent.Text("abcdefghijk", sizeUnits = 10f), 62f), tol)
+        assertEquals(24f, TextBox.height(LayerContent.Text("abcdefghijk", sizeUnits = 10f, bold = true), 62f), tol)
+    }
+
+    @Test
+    fun `words are not split across lines when they fit on the next`() {
+        // "aaaaaaaaaa" is 55 wide; a second word of one letter would make 63.5 in 60, so it goes down.
+        assertEquals(24f, TextBox.height(LayerContent.Text("aaaaaaaaaa b", sizeUnits = 10f), 60f), tol)
+        assertEquals(12f, TextBox.height(LayerContent.Text("", sizeUnits = 10f), 60f), tol)
+    }
+
+    @Test
     fun `a mask is stored with its numbers inside what the geometry understands`() {
         val b = board(layer(1, 100f, 100f, content = photo(1)))
         val m = BoardOps.setMask(

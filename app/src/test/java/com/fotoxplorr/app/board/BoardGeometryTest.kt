@@ -124,6 +124,20 @@ class BoardGeometryTest {
     }
 
     @Test
+    fun `a finger just beside a layer with a soft edge still hits it`() {
+        // Top edge at y = 50. A soft mask shows nothing AT its edge, so the margin must not ask for coverage there.
+        val soft = layer(1, 100f, 100f, w = 100f, h = 100f, mask = LayerMask(MaskShape.Full, feather = 0.3f))
+        assertTrue(BoardGeometry.hits(soft, 100f, 45f, slop = 6f))
+        assertFalse("beyond the finger's width", BoardGeometry.hits(soft, 100f, 40f, slop = 6f))
+        // Inside the soft ramp's first sliver it is still not the layer.
+        assertFalse(BoardGeometry.hits(soft, 100f, 52f, slop = 6f))
+        // The corner of an oval's box is not the oval, margin or not.
+        val oval = layer(2, 100f, 100f, w = 100f, h = 100f, mask = LayerMask(MaskShape.Ellipse))
+        assertFalse(BoardGeometry.hits(oval, 47f, 47f, slop = 6f))
+        assertTrue(BoardGeometry.hits(oval, 100f, 45f, slop = 6f))
+    }
+
+    @Test
     fun `a layer entirely off the canvas is not on it, and one that overlaps an edge is`() {
         val canvas = CanvasSize(1080, 1080)
         assertFalse(BoardGeometry.isOnCanvas(layer(1, -200f, 500f), canvas))
@@ -131,6 +145,19 @@ class BoardGeometryTest {
         assertFalse(BoardGeometry.isOnCanvas(layer(1, 500f, 1200f), canvas))
         // A tall box turned flat may reach back onto the canvas.
         assertTrue(BoardGeometry.isOnCanvas(layer(1, -120f, 500f, w = 20f, h = 400f, rot = 90f), canvas))
+    }
+
+    @Test
+    fun `a turned layer is tested by its own corners, not by the rectangle around them`() {
+        val canvas = CanvasSize(1000, 1000)
+        // A diamond (200 square turned 45 degrees) reaches 141 from its centre along the diagonals.
+        // Its surrounding rectangle covers the canvas corner; the diamond itself does not.
+        assertFalse(BoardGeometry.isOnCanvas(layer(1, -90f, -90f, w = 200f, h = 200f, rot = 45f), canvas))
+        assertTrue(BoardGeometry.isOnCanvas(layer(1, -60f, -60f, w = 200f, h = 200f, rot = 45f), canvas))
+        assertFalse(BoardGeometry.isOnCanvas(layer(1, 1090f, 1090f, w = 200f, h = 200f, rot = 45f), canvas))
+        assertTrue(BoardGeometry.isOnCanvas(layer(1, 1060f, 1060f, w = 200f, h = 200f, rot = 45f), canvas))
+        // A canvas that sits inside a big layer is covered by it.
+        assertTrue(BoardGeometry.isOnCanvas(layer(1, 500f, 500f, w = 4000f, h = 4000f, rot = 30f), canvas))
     }
 
     @Test

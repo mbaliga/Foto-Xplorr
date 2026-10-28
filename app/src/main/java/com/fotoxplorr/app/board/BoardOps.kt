@@ -206,17 +206,59 @@ object BoardOps {
 }
 
 /**
- * How tall a text layer's box should be. This is an estimate from the length of the words, not a
- * measurement: the real height depends on the font the phone has, and only the renderer can lay the
- * text out. A box too short clips the last line; the editor can offer a taller one by hand.
+ * How tall a text layer's box should be to start with. This is an estimate from the words, not a
+ * measurement: the real height depends on the font the phone has, and only the renderer can lay the text
+ * out. It errs tall (capitals, bold and wide characters such as CJK and emoji are counted wider than
+ * average) so a box is seldom too short; if one still is, the renderer measures the real lines when it
+ * draws and grows the box to fit ([BoardRenderer]), so no line is cut off in the picture or the file.
  */
 object TextBox {
-    private const val AVERAGE_CHAR_WIDTH = 0.55f
     private const val LINE_HEIGHT = 1.2f
+    private const val SPACE_WIDTH = 0.3f
 
     fun height(content: LayerContent.Text, width: Float): Float {
-        val perLine = max(1, (width / (content.sizeUnits * AVERAGE_CHAR_WIDTH)).toInt())
-        val lines = content.text.split('\n').sumOf { line -> max(1, ceil(line.length.toFloat() / perLine).toInt()) }
+        val room = width / content.sizeUnits
+        val lines = content.text.split('\n').sumOf { lineCount(it, content.bold, room) }
         return (lines * content.sizeUnits * LINE_HEIGHT).coerceIn(BoardLimits.MIN_BOX, BoardLimits.MAX_BOX)
+    }
+
+    /** The lines [line] takes in a column [room] ems wide, filling each line with whole words and breaking a word that is wider than the column. */
+    private fun lineCount(line: String, bold: Boolean, room: Float): Int {
+        if (room <= 0f || room.isNaN()) return max(1, line.length)
+        var lines = 1
+        var x = 0f
+        for (word in line.split(' ')) {
+            val w = ems(word, bold)
+            if (x > 0f && x + SPACE_WIDTH + w <= room) {
+                x += SPACE_WIDTH + w
+                continue
+            }
+            if (x > 0f) lines++
+            if (w <= room) {
+                x = w
+            } else {
+                val extra = ceil(w / room).toInt() - 1
+                lines += extra
+                x = w - extra * room
+            }
+        }
+        return lines
+    }
+
+    private fun ems(word: String, bold: Boolean): Float {
+        var sum = 0f
+        var i = 0
+        while (i < word.length) {
+            val cp = word.codePointAt(i)
+            sum += emsOf(cp, bold)
+            i += Character.charCount(cp)
+        }
+        return sum
+    }
+
+    private fun emsOf(cp: Int, bold: Boolean): Float = when {
+        cp >= 0x2E80 || cp in 0x2600..0x27BF -> 1f // CJK, full-width forms, emoji and symbols
+        Character.isUpperCase(cp) -> if (bold) 0.75f else 0.7f
+        else -> if (bold) 0.6f else 0.55f
     }
 }

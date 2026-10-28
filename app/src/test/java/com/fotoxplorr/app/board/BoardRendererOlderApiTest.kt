@@ -57,4 +57,22 @@ class BoardRendererOlderApiTest {
         near(64.0, Color.green(out.getPixel(32, 32)))
         assertEquals(0xFF808080.toInt(), out.getPixel(1, 1))
     }
+
+    @Test
+    fun `multiply over a see-through canvas still shows the layer where nothing is behind it`() {
+        val board = Board(small, BoardBackground.Transparent, listOf(multiply(mask = LayerMask(MaskShape.Ellipse))), 99)
+        val out = (runBlocking { BoardRenderer(FakePhotoSource()).render(board, one, MissingPhotos.PLACEHOLDER) } as BoardRender.Done).bitmap
+        assertEquals("the layer, as if it were laid normally", 0xFFFF8000.toInt(), out.getPixel(32, 32))
+        assertEquals("and nothing outside it", 0, Color.alpha(out.getPixel(1, 1)))
+    }
+
+    @Test
+    fun `multiply over a see-through canvas with a layer behind it is still the product`() {
+        val behind = layer(1, 32f, 32f, 64f, 64f, content = LayerContent.Colour(0xFF808080.toInt()))
+        val top = multiply().copy(id = 2)
+        val board = Board(small, BoardBackground.Transparent, listOf(behind, top), 99)
+        val out = (runBlocking { BoardRenderer(FakePhotoSource()).render(board, one, MissingPhotos.PLACEHOLDER) } as BoardRender.Done).bitmap
+        near(64.0, Color.green(out.getPixel(32, 32)))
+        assertEquals(255, Color.alpha(out.getPixel(32, 32)))
+    }
 }

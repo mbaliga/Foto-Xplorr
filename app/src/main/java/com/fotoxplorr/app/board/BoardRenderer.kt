@@ -26,6 +26,7 @@ import com.fotoxplorr.app.media.DecodeLimits
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -98,13 +99,21 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
             BoardRender.OutOfMemory
         }
 
-    /** Layers on the canvas whose photo [photos] says it cannot read now. */
+    /**
+     * Layers that would be drawn whose photo [photos] says it cannot read now. "Drawn" is the renderer's own
+     * test ([isDrawn]) at one pixel to the unit, so a layer that is never drawn (see-through, off the canvas,
+     * smaller than half a pixel) does not hold an export back. A layer that is only just big enough at a
+     * larger size is caught by the export itself, which refuses when it cannot read a photo it draws.
+     */
     fun missingNow(board: Board): List<Long> = board.layers.filter { layer ->
         val ref = (layer.content as? LayerContent.Photo)?.ref
-        ref != null && isDrawn(layer, board.canvas) && !photos.isAvailable(ref)
+        ref != null && isDrawn(layer, board.canvas, 1f) && !photos.isAvailable(ref)
     }.map { it.id }
 
-    private fun isDrawn(layer: Layer, canvas: CanvasSize): Boolean = layer.opacity > 0f && BoardGeometry.isOnCanvas(layer, canvas)
+    /** Whether [layer] puts anything on the canvas at [s] pixels to the unit; one that does not is neither decoded nor drawn. */
+    private fun isDrawn(layer: Layer, canvas: CanvasSize, s: Float): Boolean =
+        layer.opacity > 0f && layer.drawnWidth * s >= MIN_DRAWN_PX && layer.drawnHeight * s >= MIN_DRAWN_PX &&
+            BoardGeometry.isOnCanvas(layer, canvas)
 
     private suspend fun renderOnce(
         board: Board,
@@ -113,7 +122,7 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
         onLayer: (done: Int, total: Int) -> Unit = { _, _ -> },
     ): BoardRender {
         val s = size.pxPerUnit
-        val drawn = board.layers.filter { isDrawn(it, board.canvas) && it.drawnWidth * s >= MIN_DRAWN_PX && it.drawnHeight * s >= MIN_DRAWN_PX }
+        val drawn = board.layers.filter { isDrawn(it, board.canvas, s) }
 
         // One decode per photo, at the most any layer using it needs.
         val uses = HashMap<Long, Int>()
@@ -161,7 +170,7 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
                     }
                 }
                 try {
-                    drawLayer(canvas, layer, bitmap, s, shouldStop)
+                    drawLayer(canvas, layer, bitmap, s, board.needsAlpha, shouldStop)
                 } finally {
                     if (own) bitmap?.recycle()
                     if (ref != null) {
@@ -180,7 +189,8 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
         }
     }
 
-    private fun drawLayer(canvas: Canvas, layer: Layer, photo: Bitmap?, s: Float, shouldStop: () -> Boolean) {
+    private fun drawLayer(canvas: Canvas, placed: Layer, photo: Bitmap?, s: Float, seeThrough: Boolean, shouldStop: () -> Boolean) {
+        val layer = roomyText(placed, s)
         val t = layer.transform
         val pw = layer.drawnWidth * s
         val ph = layer.drawnHeight * s
@@ -204,7 +214,7 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
                 when (content) {
                     is LayerContent.Photo -> {
                         paint.alpha = alpha
-                        drawRegion(canvas, photo!!, cropRect(layer.crop, photo), dst, paint)
+                        drawRegion(canvas, photo!!, cropRect(shownCrop(layer.crop, photo, pw, ph), photo), dst, paint)
                     }
                     is LayerContent.Colour -> {
                         paint.color = content.argb
@@ -222,17 +232,31 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
                 val perUnit = size.width / layer.width
                 drawContent(g, layer, photo, size, perUnit)
                 if (subject != null && photo != null) {
-                    subjectPlane(photo, subject, shouldStop)?.let { applyPlane(group, it, subjectRect(layer.crop, size)) }
+                    subjectPlane(photo, subject, shouldStop)?.let { applyPlane(group, it, subjectRect(shownCrop(layer.crop, photo, size.width.toFloat(), size.height.toFloat()), size)) }
                 } else if (geometric) {
                     applyPlane(group, MaskGeometry.plane(layer.mask, layer.width, layer.height, size.width, size.height), RectF(0f, 0f, size.width.toFloat(), size.height.toFloat()))
                 }
+                // Where the canvas is see-through, a product with nothing is nothing: the layer is also kept as it is
+                // (a copy, only on these platforms and only for such a board) to lie behind what the multiply left.
+                val plain = if (modulates && seeThrough) group.copy(Bitmap.Config.ARGB_8888, false) else null
                 if (modulates) {
                     backWithWhite(group, layer.opacity)
                     paint.alpha = 255
                 } else {
                     paint.alpha = alpha
                 }
-                drawRegion(canvas, group, RectF(0f, 0f, size.width.toFloat(), size.height.toFloat()), dst, paint)
+                val whole = RectF(0f, 0f, size.width.toFloat(), size.height.toFloat())
+                drawRegion(canvas, group, whole, dst, paint)
+                if (plain != null) {
+                    try {
+                        val behind = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                        behind.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OVER)
+                        behind.alpha = alpha
+                        drawRegion(canvas, plain, whole, dst, behind)
+                    } finally {
+                        plain.recycle()
+                    }
+                }
             } finally {
                 group.recycle()
             }
@@ -247,7 +271,7 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         when (val c = layer.content) {
             is LayerContent.Photo -> {
-                if (photo != null) drawRegion(g, photo, cropRect(layer.crop, photo), RectF(0f, 0f, w, h), paint) else drawPlaceholder(g, w, h)
+                if (photo != null) drawRegion(g, photo, cropRect(shownCrop(layer.crop, photo, w, h), photo), RectF(0f, 0f, w, h), paint) else drawPlaceholder(g, w, h)
             }
             is LayerContent.Colour -> {
                 paint.color = c.argb
@@ -288,8 +312,7 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
         }
     }
 
-    private fun drawText(g: Canvas, c: LayerContent.Text, w: Float, h: Float, perUnit: Float) {
-        if (c.text.isEmpty()) return
+    private fun textLayout(c: LayerContent.Text, widthPx: Int, perUnit: Float): StaticLayout {
         val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = c.argb
             textSize = max(1f, c.sizeUnits * perUnit)
@@ -300,7 +323,25 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
             TextAlign.CENTRE -> Layout.Alignment.ALIGN_CENTER
             TextAlign.END -> Layout.Alignment.ALIGN_OPPOSITE
         }
-        val layout = StaticLayout.Builder.obtain(c.text, 0, c.text.length, tp, max(1, w.toInt())).setAlignment(align).build()
+        return StaticLayout.Builder.obtain(c.text, 0, c.text.length, tp, max(1, widthPx)).setAlignment(align).build()
+    }
+
+    /**
+     * A text layer's box height is only an estimate ([TextBox]); the real lines depend on the phone's font.
+     * Here the words are laid out for real, and a box too short for them is made as tall as they need (about
+     * its centre), so no line is cut off in the picture or the saved file. A box that is tall enough is left alone.
+     */
+    private fun roomyText(layer: Layer, s: Float): Layer {
+        val c = layer.content as? LayerContent.Text ?: return layer
+        val perUnit = layer.transform.scale * s
+        if (c.text.isEmpty() || perUnit < MIN_TEXT_SCALE) return layer
+        val needed = textLayout(c, (layer.width * perUnit).toInt(), perUnit).height / perUnit
+        return if (needed > layer.height) layer.copy(height = needed.coerceAtMost(BoardLimits.MAX_BOX)) else layer
+    }
+
+    private fun drawText(g: Canvas, c: LayerContent.Text, w: Float, h: Float, perUnit: Float) {
+        if (c.text.isEmpty()) return
+        val layout = textLayout(c, w.toInt(), perUnit)
         g.save()
         g.clipRect(0f, 0f, w, h)
         g.translate(0f, max(0f, (h - layout.height) / 2f))
@@ -396,6 +437,22 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
         paint.shader = null
     }
 
+    /**
+     * The part of [photo] to put in a [boxW] x [boxH] box: the layer's [crop], unless that part is not the
+     * box's shape (a photo that came back the other way round from the size the board was told, as
+     * boards made before the sizes were read upright have), in which case it is shrunk, centred, to the
+     * box's shape. The picture is cut a little then, never squeezed. A difference of rounding is left to the fill.
+     */
+    private fun shownCrop(crop: CropRect, photo: Bitmap, boxW: Float, boxH: Float): CropRect {
+        val partW = crop.width * photo.width
+        val partH = crop.height * photo.height
+        if (partW <= 0f || partH <= 0f || boxW <= 0f || boxH <= 0f) return crop
+        val boxAspect = boxW / boxH
+        val slack = ASPECT_SLACK + 1f / min(partW, partH).coerceAtLeast(1f)
+        if (abs(partW / partH / boxAspect - 1f) <= slack) return crop
+        return runCatching { crop.fitTo(boxAspect, photo.width.toFloat() / photo.height) }.getOrDefault(crop)
+    }
+
     private fun cropRect(crop: CropRect, bitmap: Bitmap): RectF =
         RectF(crop.left * bitmap.width, crop.top * bitmap.height, crop.right * bitmap.width, crop.bottom * bitmap.height)
 
@@ -404,7 +461,8 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
      * [PorterDuff.Mode.MULTIPLY] is the product of the two pictures including their alpha (it makes
      * a half-see-through layer cut a half-see-through hole in what is behind it), and the real
      * multiply is [BlendMode.MULTIPLY], which needs API 29. Below that the layer is made opaque
-     * first ([backWithWhite]) and the product is then the real thing.
+     * first ([backWithWhite]) and the product is then the real thing. Over a see-through canvas that still
+     * leaves nothing where nothing is behind the layer (alpha times alpha), so the layer is also laid behind.
      */
     private fun applyBlend(paint: Paint, blend: LayerBlend) {
         when (blend) {
@@ -422,6 +480,8 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
     private companion object {
         val HAS_TRUE_MULTIPLY = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
         const val MIN_DRAWN_PX = 0.5f
+        const val ASPECT_SLACK = 0.02f
+        const val MIN_TEXT_SCALE = 0.05f
         const val SUBJECT_WORKING_EDGE = 512
         const val PLACEHOLDER_FILL = 0xFFD0D0D0.toInt()
         const val PLACEHOLDER_LINE = 0xFF909090.toInt()
