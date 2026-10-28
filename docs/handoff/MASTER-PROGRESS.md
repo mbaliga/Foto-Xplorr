@@ -1199,35 +1199,37 @@ verifier does); each package's tests were.
 
 ### What was built, per tool (main / test lines, tests counted by `@Test`)
 
-- **Colour vision** (`vision/`, 3.2k / 2.9k, 222 tests). Machado 2009 simulation and a single-matrix daltonize in
-  linear light; a 4x5 `ColorMatrix` export with its error measured; plain colour names (about 162, hand-written);
+- **Colour vision** (`vision/`, 3.2k / 2.9k, 222 tests when built; 270 in the package after the audit fixes). Machado
+  2009 simulation and a daltonize that is one 3x3 scaled per colour to stay in the gamut, in linear light; a 4x5 `ColorMatrix` export with its error measured; plain colour names (about 162, hand-written);
   seeded k-means colour index and a hatch planner (six patterns); a dot-plate generator and scorer. In the viewer, a
   *Colour vision* group in the view options (types, show/help, strength by stepper and slider, name colours, patterns,
-  save a corrected copy) with a chip and a name label; two small edits in `viewer/` (`ViewerSettingsRoom` slot,
-  `ViewerScreen` +62 lines). *Colour vision check* is an Experimental screen of seven plates that says it is a game.
+  save a corrected copy) with a chip and a name label; small edits in `viewer/` and elsewhere (`ViewerSettingsRoom`
+  slot, `ViewerScreen` +62 lines when built, then `photo = colourPhotoKey` and a KDoc and argument for
+  `colourVisionMayCopy`; `FotoXplorrActivity` passes the `colourVisionMayCopy` lambda; `EditedCopyWriter.save` gained
+  a `keepLocation` parameter, default true). *Colour vision check* is an Experimental screen of seven plates that says it is a game.
 - **Editor hub** (`editor/`, `ToolCatalog` 24 tools in 5 groups, `ToolUsage`, `HubModel`, `HubRing*`; about 84 new tests).
   The tab strip is replaced by *Used most* and a curved ring of five groups, a list at large font, landscape and tablet.
   A use is counted once per opening; the centre moves only on closing a tool, by a margin, into the weakest slot.
-- **Palette builder** (`palettebuilder/`, 4.0k / 3.5k, 276 tests). Harmonies, merge from up to six photos, contrast
+- **Palette builder** (`palettebuilder/`, 4.0k / 3.5k, 276 tests when built; over 295 after the audit fixes). Harmonies, merge from up to six photos, contrast
   matrix, colour-blind check, recolour a photo toward a palette (a job, new JPEG), save/open/delete palettes, share as
   `.gpl` / CSS / JSON text or a swatch-card PNG.
-- **Animated pictures** (`animate/`, 7.6k / 8.4k, 482 tests in the package). GIF and APNG encoders, tolerant
-  decoders, an animated-WebP container reader, a size planner with an honest range, stills/clip/existing-file sources,
+- **Animated pictures** (`animate/`, 7.6k / 8.4k, 482 tests in the package when built; 502 before the audit fixes, about 16 more since). GIF and APNG encoders, tolerant
+  decoders, an animated-WebP container reader, a size planner with an honest range (a capped fading slideshow keeps every photo's hold and drops fade frames first), stills/clip/existing-file sources,
   a MediaStore writer, a Media3 frames-to-MP4 maker, a job with a step-down ladder, and the three-step screen with a
   small looping preview.
 - **Reels** (`reel/`, 6.1k / 6.4k, 455 tests). The project model and JSON codec, a deterministic auto-draft, a Media3
   two-layer export with a place-free muxer and an MP4 check, a sound-file picker, the MediaStore writer, the job, and the
   editor with saved reels, a looping preview, strip and tool panels.
-- **Mood board** (`board/`, 6.0k / 5.6k, 388 tests). A layer/mask model, Canvas compositor and export under the
+- **Mood board** (`board/`, 6.0k / 5.6k, 388 tests when built; 410 after the audit fixes). A layer/mask model, Canvas compositor and export under the
   editor's limits, and an editor with autosave and a saved-boards list.
-- **Chroma ID** (`chroma/`, 4.5k / 3.1k, 224 tests). Colour maths and CIEDE2000, a flash-minus-ambient solver with
-  white-card normalisation, a Camera2 capture job over a fake-able interface, gyroscope steadiness, and the three-step
+- **Chroma ID** (`chroma/`, 4.5k / 3.1k, 224 tests when built; 254 after the audit fixes). Colour maths and CIEDE2000, a flash-minus-ambient solver with
+  white-card normalisation (without a card the lightness is not measured and the reading says so), a Camera2 capture job over a fake-able interface, gyroscope steadiness, and the three-step
   screen with result card, compare, save-to-palette, copy hex and a 50-reading history.
 - **Integration (this unit).** The six cards registered (ids `reel`, `animate`, `board`, `palette`, `chroma`,
   `colourcheck`; `chroma` not restorable and shown only when `FEATURE_CAMERA_ANY`), the pinned id test updated, two
   privacy lines on the Experimental page (`EXPERIMENTAL_CAMERA`, `EXPERIMENTAL_SOUND`) with `HelpCopyTest` pins, README,
   the Play description (now 3985 of 4000 characters), the privacy policy and Play Console sheet, PRODUCT-AND-ARCHITECTURE
-  (module map, "The batch 8 tools", privacy boundaries), ADR-017, TRAPS #99 to #124, the batch 8 checklist, this entry.
+  (module map, "The batch 8 tools", privacy boundaries), ADR-017, TRAPS #99 to #124 (#125 added with the audit fixes), the batch 8 checklist, this entry.
   No Discover or help line was needed: `HelpCopyTest` does not enumerate experiments.
 
 ### What deviated and why
@@ -1252,8 +1254,9 @@ verifier does); each package's tests were.
 - **Video in the colour-vision viewer** (the player is surface-backed); animated images get the preview only.
 - **Persisting the colour-vision choice** across closing the viewer (it returns Off so a person who is not colour-blind is
   never left in a filtered gallery by surprise).
-- **Wiring `colourVisionMayCopy`** from `FotoXplorrActivity` to the gallery's live browsable list (default is
-  `{ true }`, i.e. only the viewer's own sensitive-photo check): outside every unit's paths.
+- **Wiring `colourVisionMayCopy`** from `FotoXplorrActivity`: done in the audit fixes. The activity passes it, reading
+  the sensitive store and the locked folders live, and refusing a locked folder's copy that would land outside it
+  (archived and trashed photos may be copied, as before).
 - **Per-tool icons, a true circular ring and landscape side-by-side** in the hub; **per-tool focus** is done by showing only
   that tool's control.
 - **Reel:** undo/redo, a scrub bar, per-photo focus point, a looping or ducked soundtrack, per-clip volume, speed, per-boundary
@@ -1271,8 +1274,9 @@ verifier does); each package's tests were.
 
 - **`JobRunner.launch` race** (list entry added after the job may have finished): safe in the app, flaky in Robolectric
   tests of five screens; a three-line fix is in TRAPS #102.
-- **`EditedCopyWriter.save` swallows cancellation and keeps the place** (#103): worked around in the corrected-copy and
-  recolour jobs; the place is an owner decision.
+- **`EditedCopyWriter.save` swallows cancellation** (#103): worked around in the corrected-copy and recolour jobs. It
+  now has a `keepLocation` switch (default true); the corrected copy passes false, the palette recolour copy still
+  keeps the place, which is an owner decision.
 - `ReelDraftOptions.BLUR_FLOOR` repeats `ArchiveAdvisor`'s private blur threshold (40); change both together. That
   threshold was never tuned on real photos.
 - `decodeUpright` returns null on API 26 and 27 (known since batch 6): every photo tool is unverified there.
@@ -1282,15 +1286,17 @@ verifier does); each package's tests were.
 
 ### Residual, for the owner (open decisions)
 
-- **Location in copies.** The colour-vision corrected copy and the palette recolour copy go through the editor's writer and
-  so carry the original's EXIF including **where it was taken**; the panorama, wall, board and reel output are place-free.
-  Say if these two should be place-free too (a `keepLocation` switch on `EditedCopyWriter.save`, a small change in `editor/`).
-- **Reset all and Revert to original are now two taps** (open the tool, then press); say if you want one.
+- **Location in copies.** The palette recolour copy goes through the editor's writer with the default and so carries the
+  original's EXIF including **where it was taken**; the panorama, wall, board, reel and (since the audit fixes) the
+  colour-vision corrected copy are place-free. Say if the recolour copy should be place-free too (pass
+  `keepLocation = false`, which now exists on `EditedCopyWriter.save`). The README says the recolour copy keeps the place.
+- **Reset all and Revert to original are now two taps** (open the tool, then press) and are not counted as uses, so they
+  never move to the front page; say if you want one tap.
 - **Mood board subject masks:** keep re-solving the lift marks (slow on several layers, the edge can differ from the Lift
   screen), or freeze the cut as a transparent PNG layer (a different model).
 - **Leaving a screen stops a running save** (palette recolour, animate, board, reel); the alternative needs the live
   "still allowed" check moved out of the screen's composition first.
-- **A JobRunner fix** (three lines in `jobs/`) and the `colourVisionMayCopy` wiring need an owner's go-ahead on their paths.
+- **A JobRunner fix** (three lines in `jobs/`) needs an owner's go-ahead on its path (the `colourVisionMayCopy` wiring is done).
 - **Reel fades:** if the first device pass shows the layered render misbehaving, ship `Plain cuts` as the default.
 - **Wording to read:** every sentence in `VisionCopy`, `HubCopy`/`HubRingCopy`, `PaletteBuilderCopy`, `AnimateScreenCopy`,
   `ReelCopy`, `BoardCopy`, `ChromaCopy`; the six card titles and blurbs (*Make a reel*, *Make a GIF or video*, *Mood board*,
@@ -1304,3 +1310,126 @@ verifier does); each package's tests were.
 - **The first device pass, in this order:** the reel with fades (the likeliest to need work), Chroma ID against a real colour
   card with and without the white card (the tone-curve assumption decides whether it ships), the GIF/APNG/MP4 in other apps,
   the colour-vision filter against a reference render, then the hub on a phone and tablet.
+
+### Batch 8 after the audit fixes: what the audits left open
+
+Each tool was audited, fixed, reviewed and (for colour vision and Chroma ID) fixed again. Nothing here has run on a
+device. The device checks are the section "After the audit fixes" of `docs/device-test/batch-8-checklist.md`. Open items
+by tool; the first group of each is what the fixers listed, the second what the reviewers found and nobody has fixed.
+
+**Colour vision**
+- A locked-folder photo outside DCIM/Pictures is refused only when the job runs; the save row now says why, but if a
+  folder is locked again while the room stays open, the row updates on the next recomposition (the job's two re-checks
+  refuse it either way).
+- The `colourVisionMayCopy` lambda in `FotoXplorrActivity` has no test of its own; it forwards to the tested
+  `colourVisionCopyAllowed`.
+- A trashed photo is copyable again; how MediaStore treats a trashed item's URI is unchecked.
+- GIF, SVG and RAW still get only the rough colour-matrix preview, now labelled "rough view", up to 80 to 120 steps off on
+  saturated or dark colours. The preview of the correction is further from the exact in-gamut result at the extremes
+  (up to 242 steps).
+- "Helps" is still the Machado model measured against itself; no person has looked at corrected pictures. Gamut fitting
+  reduces the correction for saturated colours on purpose.
+- The exact picture is the 2048 px / 3 MP decode, so a 6x zoom with a filter on is softer than the unfiltered photo.
+- Naming one chosen point is still a touch; "Main colours" is the non-gesture route for the whole photo. The pattern layer
+  is a 1024 px raster with an 8 px period drawn nearest-neighbour; its look at zoom is unchecked.
+- While the exact picture computes, a FULL photo shows the preview with the chip "as seen". The failed-read line also
+  covers an out-of-memory decode.
+- Reviewers: a FULL photo whose exact filter fails (out of memory, swallowed) stays on the rough preview for good with
+  the chip "as seen" or "adjusted"; the lookalike-digit rule in the colour check is an unvalidated guess (an alternative is
+  to count a lookalike as half a miss, so two on one axis still give Hard); the Daltonizer KDoc says the fit factor is
+  unchanged when a colour is scaled in brightness, which holds only when the lower-edge limit binds (the upper-edge limit
+  is not scale-invariant).
+- The palette recolour copy still carries GPS (`EditedCopyWriter.save(keepLocation = false)` exists for it).
+
+**Editor hub**
+- Curves still sits uncapped between the page header and the compact ring; on a 640 dp phone the photo is smaller than
+  under the old strip. Not shrunk, because that would make the main curve tool harder to drag. Needs a device measurement.
+- `MIN_RING_HEIGHT_DP = 560` and the use of `controlsMaxHeight` for the ring's centre and group page are judgement and
+  unmeasured. `screenHeightDp` is the available height (without the navigation bar, from memory), so a 640 dp phone with
+  three-button navigation may sit near the line.
+- `ToolCatalogTest` reads `EditorScreen.kt` as text: a `shows(ToolIds.X)` block is matched only when its first statement is
+  the `LabelledSlider`, and it does not check that a block sits inside its own host tab's branch (a block moved into
+  the wrong tab's branch would pass and open an empty panel).
+- The ring-layout Compose tests run only at the sizes Robolectric is given; the capped, scrolling centre and group page
+  are not asserted.
+- Reviewers: `HubSession.home()` KDoc still says it is only for the list layout, but the labelled Back calls it on the
+  ring too (comment only).
+
+**Palette builder**
+- README line about "writes no location" is now qualified, but whether the recolour copy should drop GPS is the owner's
+  decision. The Play description and privacy policy were not checked for the same blanket claim.
+- After a restore the photo list can be empty for a moment, so a share or recolour then is refused ("protected or
+  missing"); a palette whose source photos are gone cannot be shared until it is saved and reopened.
+- A grey-base ANALOGOUS (any hue kind) still gives identical swatches because a grey has no hue (documented).
+- Name uniqueness is applied when a palette is made against the saved list as loaded then: a palette made before the list
+  loads, or a draft restored after a kill, keeps its plain "My palette" and a later Save replaces a saved one with the
+  notice shown afterwards.
+- Hue is disabled when the rounded saturation reads 0, so a colour under 0.5 percent saturation also gets "A grey has no
+  hue."; focus on a Hue button that has just become disabled may land on nothing.
+- The comment in `BuiltInExperiments.kt` still says "after a kill the person is put back where they were" for the palette
+  builder and the GIF/video maker, whose drafts survive system process death only, not a swipe-away.
+- Saved rows are keyed by index; after a delete, focus on a row's Delete button may land on the neighbouring palette.
+- Recolour speed on a 12 MP photo is unmeasured (every pixel takes the blended path on one thread).
+
+**Animated pictures**
+- The out-of-memory sentence in `RetrieverVideoReader.unscaled()` and the `OPTION_CLOSEST_SYNC` fallback have no unit
+  test (Robolectric's retriever shadow cannot run out of memory and ignores the option).
+- When a cap leaves fewer frames than photos only holds remain, so fades are cuts; the screen says only "Some frames
+  were left out." and the preview KDoc still says it shows fades. A kept in-between frame still stays up until the next
+  kept frame starts.
+- A GIF with a short frame is fully read but still reports "damaged, only part is shown" as a note on a successful save.
+- A killed video job's frame pictures go at the next job start or save once an hour old; a person who never animates
+  again keeps them until the system clears the cache.
+- An APNG made by another app, or renamed, is still not offered for remaking (name or album match only).
+- `AnimateEstimate` does not pass `keepFrames` to the planner (counts are the same either way).
+- Reviewers: `unscaled()` turns every out-of-memory into an immediate failure, though later reads also hold plan-dependent
+  buffers and the ladder might have saved the job; the `CLOSEST_SYNC` fallback applies to every missed tick, not only
+  the first, so mid-clip it can jump back in time to a key frame instead of repeating the held frame.
+
+**Reel maker**
+- The editor preview frame of an Original-shape reel still uses the library's aspect ratio while the export uses the upright
+  decoded shape.
+- The Sound panel does not show the file's length; a file that reports no duration still ends abruptly with its fade not
+  reached, and nothing says so.
+- A live export idle for over an hour could have its staging folder swept by a later save (the documented limit).
+- A grant release is not remembered across a restart.
+- With both a sound file and a clip, the parse-error question may blame the sound when the clip is the bad file.
+- Reviewers: a replaced or removed sound file is released at once, while the open reel's saved copy still names it until
+  the autosave lands, so a kill in that second leaves a saved reel naming a file the app can no longer read; the release
+  works from a snapshot taken before the scan, so putting the old file back during the scan is undone; `canUse` ignores the
+  API level, so HEIC on Android 8 and 9 and AVIF below 12 are still offered and one such photo fails the whole video.
+
+**Mood board**
+- No `.bak` copy of a lossy board before its first rewrite: the first edit of a board with skipped layers, dropped masks or
+  a newer version still overwrites the parts that could not be read.
+- Old boards made before the upright-size fix keep their wrong stored width and height; the renderer crops instead of
+  squeezing, so a portrait shows centre-cropped in a landscape box until replaced.
+- `nativeEdge` still counts invisible and tiny photo layers when picking the "Original" size.
+- A text box grown at render time is not reflected in the selection frame or hit-testing.
+- Photo-picker Add now waits for up to 24 small decodes; slow storage could make it feel laggy.
+- Reviewers: `missingNow` tests layers at 1 px per unit, so a photo layer drawn smaller than half a unit but at least half a
+  pixel at the export scale is drawn but not counted missing, narrowing the two late privacy re-checks (drop the size
+  clause from the safety gates); Back during the size read and then reopening the picker lets the old add land in the new
+  picker; a board restored after a process kill is not baselined, so an untouched partly readable board is rewritten from its
+  readable part; subject-mask tap points use the stored crop while the renderer shows the corrected one, on old boards.
+
+**Chroma ID**
+- While a card is kept (state Locked) the held light still freezes the live distance and washed-out hints.
+- ROOM (no flash) readings are still shown at the camera's auto-exposed level; their strength word comes from it.
+- The colour table has names that say dark or light; those are excluded for readings without a lightness but not
+  elsewhere.
+- `SwatchLevel.SAME` and `CLOSE` are unreachable from the app (the floors are 3 and 8).
+- A card is still assumed to be 0.85 reflectance and neutral; there is no way to enter a grey card's reflectance (a 0.18
+  grey card gives a lightness about 5x wrong, labelled "With card").
+- The sRGB tone curve is requested, not verified; local tone mapping and HDR are untouched. `TONEMAP_MODE` could be read
+  back from the capture results.
+- The Camera2 changes (close on the camera thread, cancellation closes, tone/noise/edge request, calibration key, rotation
+  keying) and Delete-all clearing the on-screen colour are not unit-testable; they are device checks.
+- Shade-only comparison of a very dark surface rests on coarse 8-bit codes near black; table names that tie on shade are
+  ordered by a heuristic.
+- The kind "approximate" now means lightness not measured. A card reading with a doubtful distance stays "With card";
+  a less-sure card kind would need a new history code (a format decision).
+- Reviewers: the pipeline test `withoutACardAutoExposureOnTheSurface...` and the `PatchSampler` floor test pass on the old
+  code too (assert the fixed level L about 52; use a patch where the old and new rules disagree); a no-card colour saved to
+  a palette carries no mark that its lightness was never measured; `knownTone` is true whenever the camera merely lists the
+  preset curve, so no `TONE_CURVE_UNKNOWN` caution shows on those phones.
