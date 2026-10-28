@@ -2,12 +2,14 @@ package com.fotoxplorr.app.editor
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,11 +23,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * The PRESETS tab: built-in looks, then user presets, then "Save current as preset".
@@ -53,7 +59,7 @@ fun PresetsPanel(
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            "A look, applied on top of crop and rotation — never a replacement for them.",
+            HelpCopy.Hint.LOOK_ON_TOP,
             color = Color.White.copy(alpha = 0.5f),
             style = MaterialTheme.typography.bodySmall,
         )
@@ -64,13 +70,16 @@ fun PresetsPanel(
                     preset.name,
                     color = if (preset.adjustments == currentAdjustments) Color.Black else Color.White,
                     style = MaterialTheme.typography.labelLarge,
+                    // Bold as well as filled: the look in use is not shown by colour alone.
+                    fontWeight = if (preset.adjustments == currentAdjustments) FontWeight.Bold else null,
                     modifier = Modifier
                         .background(
                             if (preset.adjustments == currentAdjustments) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
                             RoundedCornerShape(50),
                         )
                         .combinedClickable(onClick = { onApply(preset) })
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                        .chipHeight()
+                        .padding(horizontal = 14.dp),
                 )
             }
             items(userPresets, key = { it.id }) { preset ->
@@ -78,6 +87,8 @@ fun PresetsPanel(
                     preset.name,
                     color = if (preset.adjustments == currentAdjustments) Color.Black else Color.White,
                     style = MaterialTheme.typography.labelLarge,
+                    // Bold as well as filled: the look in use is not shown by colour alone.
+                    fontWeight = if (preset.adjustments == currentAdjustments) FontWeight.Bold else null,
                     modifier = Modifier
                         .background(
                             if (preset.adjustments == currentAdjustments) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
@@ -88,11 +99,12 @@ fun PresetsPanel(
                         // it is tapped to apply, and a permanent "x" glyph on every chip would
                         // make the common action (apply) fight the rare one for thumb space.
                         .combinedClickable(onClick = { onApply(preset) }, onLongClick = { renameTarget = preset })
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                        .chipHeight()
+                        .padding(horizontal = 14.dp),
                 )
             }
         }
-        TextButton(onClick = { saveDialogOpen = true }) {
+        TextButton(onClick = { saveDialogOpen = true }, modifier = Modifier.heightIn(min = 48.dp)) {
             Text("Save current as preset…", color = MaterialTheme.colorScheme.primary)
         }
     }
@@ -185,13 +197,16 @@ fun HslPanel(
                     band.label,
                     color = if (isSelected) Color.Black else Color.White,
                     style = MaterialTheme.typography.labelLarge,
+                    // Bold as well as filled: the chosen band is not shown by colour alone.
+                    fontWeight = if (isSelected) FontWeight.Bold else null,
                     modifier = Modifier
                         .background(
                             if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = if (touched) 0.28f else 0.12f),
                             RoundedCornerShape(50),
                         )
-                        .clickableSelect { selected = band }
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                        .selectBand(isSelected) { selected = band }
+                        .chipHeight()
+                        .padding(horizontal = 14.dp),
                 )
             }
         }
@@ -202,5 +217,9 @@ fun HslPanel(
     }
 }
 
-/** Tiny local alias so [HslPanel]'s chip row reads like every other chip row in this package. */
-private fun Modifier.clickableSelect(onClick: () -> Unit): Modifier = this.clickable(onClick = onClick)
+/** [HslPanel]'s chip row selects one band, like the radio buttons it behaves as. */
+private fun Modifier.selectBand(selected: Boolean, onClick: () -> Unit): Modifier =
+    this.selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+
+/** A chip's tappable area is at least 48 dp tall, its text centred in it. Put it before the padding. */
+internal fun Modifier.chipHeight(): Modifier = this.heightIn(min = 48.dp).wrapContentHeight(Alignment.CenterVertically)

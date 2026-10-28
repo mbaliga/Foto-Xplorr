@@ -4,6 +4,8 @@ import android.os.Build
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import coil3.compose.AsyncImage
@@ -18,6 +20,9 @@ import coil3.request.ImageRequest
  *   Off by default and gated on a user preference at the call sites, because a mosaic where every
  *   animated image plays at once is both visually noisy and genuinely expensive -- each one holds
  *   a decoder and drives its own invalidation loop for as long as it stays on screen.
+ * @param onImageSize told the size the image decoded to, once it has (the viewer's backdrop for a
+ *   transparent photo needs the picture's real shape, which a vector image has no other source
+ *   for). Only the shape is meaningful: the decode may be smaller than the file.
  */
 @Composable
 fun MediaImage(
@@ -25,6 +30,7 @@ fun MediaImage(
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Fit,
     animate: Boolean = false,
+    onImageSize: ((Size) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // The decoder is attached PER REQUEST rather than registered on the shared ImageLoader, which
@@ -58,6 +64,12 @@ fun MediaImage(
         contentDescription = asset.displayName,
         modifier = modifier,
         contentScale = contentScale,
+        onSuccess = onImageSize?.let { report ->
+            { state ->
+                val size = state.painter.intrinsicSize
+                if (size.isSpecified) report(size)
+            }
+        },
     )
 }
 

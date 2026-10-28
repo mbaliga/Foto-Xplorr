@@ -15,26 +15,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -49,18 +43,16 @@ import com.fotoxplorr.app.viewer.CARD_HEADER_BACKGROUND
 import com.fotoxplorr.app.viewer.MUTED_TEXT
 import com.fotoxplorr.app.viewer.PRIMARY_TEXT
 import com.fotoxplorr.app.viewer.SECONDARY_TEXT
-import kotlinx.coroutines.launch
-import java.util.Locale
 
 /**
  * "Search inside this photo" -- whole-image actions over text this app's own on-device OCR
  * already found when the photo was indexed.
  *
- * This is the details panel's counterpart to
- * [com.fotoxplorr.app.viewer.LiveTextOverlay], not a replacement for it: the overlay lets a
- * finger land on one word, drawn directly over the photo, for selecting and copying a run of
- * text; this card acts on the WHOLE recognised string at once, from the panel where the photo's
- * other facts already live. Modelled on the equivalent panel in Google Photos, with one
+ * This is the details panel's counterpart to the viewer's Select text mode, not a replacement for
+ * it: that mode lets a finger land on words drawn directly over the photo and acts on the ones
+ * chosen (through the same [LensTextActions] this card uses); this card acts on the WHOLE
+ * recognised string at once, from the panel where the photo's other facts already live, and
+ * opens the mode from its "Select text from the image" line. Modelled on the equivalent panel in Google Photos, with one
  * deliberate difference: that panel credits "Google Lens" as the text recogniser's provider.
  * This app is not Lens, licenses no Lens API, and sends nothing anywhere to produce this text --
  * [com.fotoxplorr.app.recognition.RecognitionIndexer] runs ML Kit's on-device TEXT_RECOGNITION
@@ -97,6 +89,10 @@ import java.util.Locale
  *   `onSetLocation == null` -- rather than the tile silently doing nothing when tapped; the
  *   secondary web-search link below the grid works with or without this callback, since it
  *   needs no in-app search surface to reach.
+ * @param onSelectText opens the viewer's Select text mode on the photo, from the "Select text from
+ *   the image" line. Null leaves that line as plain text (a card shown somewhere with no photo to
+ *   select from). The tiles below still act on the WHOLE recognised string: "Copy text" stays
+ *   copy-everything, the cheap way to take all of it, while choosing words is the mode's job.
  */
 @Composable
 fun LensCard(
@@ -104,37 +100,17 @@ fun LensCard(
     recognizedText: String,
     modifier: Modifier = Modifier,
     onSearchLibrary: ((String) -> Unit)? = null,
+    onSelectText: (() -> Unit)? = null,
 ) {
     // Matches the check LensActions.plan makes of hasRecognizedText: a blank string is "no text"
     // by the same definition on both sides of that boundary. See StatusBlock in PhotoDetailRoom
     // for the identical "nothing to say, so nothing to draw" precedent this follows.
     if (recognizedText.isBlank()) return
 
-    val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
-    val scope = rememberCoroutineScope()
-    // Keyed on the photo, not just the Context: see rememberLensSpeaker's own KDoc for why a
-    // swipe to another photo must always get a fresh engine rather than possibly inheriting one
-    // still mid-sentence on the last photo's text.
-    val speaker = rememberLensSpeaker(key = asset.id)
-    val translator = remember { AppTextTranslator() }
-    // Best-effort, not detected -- see TextTranslator.DEFAULT_SOURCE_LANGUAGE_TAG and
-    // LensSpeaker.speak's own KDoc for the identical limitation on the Listen side.
-    val deviceLanguageTag = remember { Locale.getDefault().toLanguageTag() }
-    val searchQuery = remember(recognizedText) { LensSearchQuery.buildQuery(recognizedText) }
-
-    val plan = LensActions.plan(
-        hasRecognizedText = true,
-        ttsReadiness = speaker.readiness,
-        translatorAvailable = translator.available,
-    )
-
-    // Reset per photo (keyed on asset.id) for the same reason the speaker is: without the key, a
-    // composable slot reused across a swipe could show "Copied" or a translated RESULT that
-    // actually belongs to the photo the person just navigated away from, silently misattributed
-    // to the new one -- exactly the kind of claim this feature must never make.
-    var statusMessage by remember(asset.id) { mutableStateOf<String?>(null) }
-    var translateState by remember(asset.id) { mutableStateOf<TranslateUiState>(TranslateUiState.Idle) }
+    // Keyed on the photo inside: a swipe to another photo gets a fresh speech engine and a clean
+    // slate, never the last photo's "Copied" or translated result.
+    val actions = rememberLensTextActions(key = asset.id, onSearchLibrary = onSearchLibrary)
+    val plan = actions.plan
 
     Column(
         modifier = modifier
@@ -159,6 +135,16 @@ fun LensCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                // The whole line is the button, thumbnail and words alike; the 68 dp of height it
+                // already has is well past the 48 dp touch-target floor. Clickable before the
+                // padding so the padded area counts.
+                .then(
+                    if (onSelectText != null) {
+                        Modifier.clickable(role = Role.Button, onClick = onSelectText)
+                    } else {
+                        Modifier
+                    },
+                )
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -170,10 +156,11 @@ fun LensCard(
                     .size(44.dp)
                     .clip(RoundedCornerShape(6.dp)),
             )
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Select text from the image",
-                    color = SECONDARY_TEXT,
+                    // A control reads as one: brighter than the plain caption it was.
+                    color = if (onSelectText != null) PRIMARY_TEXT else SECONDARY_TEXT,
                     style = TextStyle(fontFamily = HyleGrotesk, fontSize = 14.sp),
                 )
                 Text(
@@ -182,6 +169,10 @@ fun LensCard(
                     style = TextStyle(fontFamily = HyleGrotesk, fontSize = 12.sp),
                     modifier = Modifier.padding(top = 2.dp),
                 )
+            }
+            if (onSelectText != null) {
+                // Decorative: the line beside it is what is read, as a button.
+                Icon(Icons.Outlined.SelectAll, contentDescription = null, tint = SECONDARY_TEXT)
             }
         }
 
@@ -195,81 +186,31 @@ fun LensCard(
             verticalArrangement = Arrangement.spacedBy(TILE_GAP),
         ) {
             LensActionTile(icon = Icons.Outlined.ContentCopy, label = "Copy text", enabled = true) {
-                clipboard.setText(AnnotatedString(recognizedText))
-                translateState = TranslateUiState.Idle
-                statusMessage = "Copied"
+                actions.copy(recognizedText)
             }
 
-            LensActionTile(icon = Icons.Outlined.Search, label = "Search", enabled = onSearchLibrary != null) {
-                statusMessage = null
-                onSearchLibrary?.invoke(searchQuery)
+            LensActionTile(icon = Icons.Outlined.Search, label = "Search", enabled = actions.searchAvailable) {
+                actions.search(recognizedText)
             }
 
-            val speaking = speaker.outcome == SpeechOutcome.Speaking
+            val speaking = actions.speaking
             LensActionTile(
                 icon = if (speaking) Icons.Outlined.Stop else Icons.Outlined.VolumeUp,
                 label = if (speaking) "Stop" else "Listen",
                 enabled = plan.listenEnabled,
             ) {
-                statusMessage = null
-                if (speaking) speaker.stop() else speaker.speak(recognizedText, deviceLanguageTag)
+                actions.listen(recognizedText)
             }
 
             LensActionTile(icon = Icons.Outlined.Translate, label = "Translate", enabled = true) {
-                statusMessage = null
-                if (plan.translateMode == TranslateMode.ON_DEVICE) {
-                    translateState = TranslateUiState.Loading
-                    scope.launch {
-                        val result = translator.translate(recognizedText, deviceLanguageTag)
-                        translateState = result.fold(
-                            onSuccess = { TranslateUiState.Result(it.text) },
-                            onFailure = {
-                                // The on-device attempt genuinely failed (timed out, no network
-                                // to fetch a model, unsupported pair) -- fall back to the same
-                                // hand-off the offline flavor always uses, rather than just
-                                // reporting failure and stranding the person with nothing to do.
-                                val launched = LensHandoff.launch(
-                                    context,
-                                    LensHandoff.translateIntent(context, recognizedText),
-                                    "Translate with…",
-                                )
-                                if (launched) {
-                                    TranslateUiState.Idle
-                                } else {
-                                    TranslateUiState.Message(
-                                        it.message ?: "Couldn't translate this photo's text.",
-                                    )
-                                }
-                            },
-                        )
-                    }
-                } else {
-                    val launched = LensHandoff.launch(
-                        context,
-                        LensHandoff.translateIntent(context, recognizedText),
-                        "Translate with…",
-                    )
-                    if (!launched) {
-                        translateState = TranslateUiState.Message("No translator app is installed.")
-                    }
-                }
+                actions.translate(recognizedText)
             }
         }
 
-        // Speech's own failure message is kept separate from statusMessage/translateState below
-        // rather than sharing one slot: it can be true at the same time as either of them (Listen
-        // fails, then Translate is tried next) and one tile's explanation must not evict another's.
-        val speechOutcome = speaker.outcome
-        if (speechOutcome is SpeechOutcome.Unavailable) {
-            LensFootnote(speechOutcome.message)
-        }
-        when (val state = translateState) {
-            is TranslateUiState.Loading -> LensFootnote("Translating…")
-            is TranslateUiState.Result -> LensFootnote(state.text, emphasise = true)
-            is TranslateUiState.Message -> LensFootnote(state.text)
-            TranslateUiState.Idle -> Unit
-        }
-        statusMessage?.let { LensFootnote(it) }
+        // Speech's own failure message, a translation and the status line are separate notes
+        // (see LensTextActions.notes) rather than one slot: one tile's explanation must not evict
+        // another's.
+        actions.notes.forEach { LensFootnote(it.text, emphasise = it.emphasise) }
 
         // The optional web hand-off this feature's spec allows ("MAY offer"), kept visually
         // secondary and separate from the four tiles the reference always draws, and labelled
@@ -281,21 +222,10 @@ fun LensCard(
             style = TextStyle(fontFamily = HyleGrotesk, fontSize = 12.sp),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable {
-                    statusMessage = null
-                    val launched = LensHandoff.launch(context, LensHandoff.webSearchIntent(searchQuery), null)
-                    if (!launched) statusMessage = "No app on this device can search the web."
-                }
+                .clickable { actions.searchWeb(recognizedText) }
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         )
     }
-}
-
-private sealed interface TranslateUiState {
-    data object Idle : TranslateUiState
-    data object Loading : TranslateUiState
-    data class Result(val text: String) : TranslateUiState
-    data class Message(val text: String) : TranslateUiState
 }
 
 /**
@@ -341,11 +271,9 @@ private fun LensActionTile(icon: ImageVector, label: String, enabled: Boolean, o
     ) {
         Icon(
             icon,
-            // contentDescription = label, not null: matches ActionButton in LiveTextOverlay.kt,
-            // this card's sibling feature -- see this file's own top KDoc on the relationship
-            // between the two. Consistent with that established precedent rather than deviating
-            // from it on this file's own judgement call about TalkBack merging behaviour, which
-            // is not something either of us can verify without a device in this environment.
+            // contentDescription = label, not null: matches the Select text toolbar's buttons, this
+            // card's sibling feature, rather than deviating on this file's own judgement call about
+            // TalkBack merging behaviour, which is not something we can verify without a device.
             contentDescription = label,
             tint = if (enabled) PRIMARY_TEXT else MUTED_TEXT,
             // 16dp was sized to stand beside a label at the pill's own height. Carrying it into

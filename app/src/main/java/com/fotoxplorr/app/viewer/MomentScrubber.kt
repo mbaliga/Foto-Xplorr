@@ -186,10 +186,11 @@ fun MomentScrubber(
                 // A duration of 0 means the player has not reported a real length yet (see
                 // momentFraction's own KDoc on why that happens). Seeking against an unknown
                 // length would send onSeek a position computed from a division that is about to
-                // be wrong the moment the real duration arrives, so scrubbing is simply not wired
-                // up until there is a real length to scrub against -- the alternative is a seek
-                // that is silently mis-scaled for the first fraction of a second of every playback.
-                if (durationMs <= 0L) return@pointerInput
+                // be wrong the moment the real duration arrives, so no seek is sent until there is
+                // a real length to scrub against -- the alternative is a seek that is silently
+                // mis-scaled for the first fraction of a second of every playback. The touch is
+                // still CONSUMED meanwhile (below): an early return here left the bar looking
+                // tappable while the tap bubbled up and hid the chrome it was drawn on.
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     // Consumed unconditionally, tap or drag: this touch belongs to the scrubber,
@@ -200,6 +201,10 @@ fun MomentScrubber(
                     // only to jump the playhead would ALSO flip chromeVisible off, hiding the
                     // control the user just touched.
                     down.consume()
+                    if (durationMs <= 0L) {
+                        drag(down.id) { change -> change.consume() }
+                        return@awaitEachGesture
+                    }
                     // Read once per gesture rather than once per pointerInput instance: reading it
                     // here means a resize between two gestures (a rotation) is picked up, at the
                     // small cost of not tracking a resize that happens mid-drag, which is not a

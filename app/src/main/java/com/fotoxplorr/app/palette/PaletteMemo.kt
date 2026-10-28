@@ -8,9 +8,10 @@ import com.fotoxplorr.core.model.MediaId
  *
  * The recognition index persists every palette the indexer has sampled
  * (`RecognitionIndex.palettesByMedia`); this memo covers the rest -- a photo the indexer has not
- * reached yet, which the details room decodes once itself (a 100 px decode, see
- * `readImagePalette`) -- and the room drops the stored palette in here too as it shows it. So this
- * is where a palette outlives the row that showed it, and the expanded map can colour a photo's
+ * reached yet (and every video, which it never indexes), which the details room reads once itself
+ * (a 100 px decode or one video frame, see `PaletteSampling.readState`) -- and the room drops the
+ * stored palette in here too as it shows it. So this is where a palette outlives the strip that
+ * showed it, and the expanded map can colour a photo's
  * dot with its own dominant colour *when that colour is already known* and fall back to the
  * accent otherwise (owner's rule), rather than decoding every located photo in the library to
  * draw a map of dots.

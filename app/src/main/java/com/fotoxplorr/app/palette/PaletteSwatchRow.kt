@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.palette
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,8 +21,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
@@ -48,14 +51,23 @@ import com.fotoxplorr.app.ui.HyleGrotesk
  * finger can hit and TalkBack can land on; the drawn strip stretches that sliver by the same rule,
  * which is a small lie about proportion told in exchange for a tappable segment.
  *
+ * With [onSwatchLongPress] wired a long press on a segment hands over its colour (the room copies
+ * the hex), and each segment's description says so -- "long press to copy" -- because a gesture
+ * nothing announces is a gesture TalkBack users never learn. [caption] replaces the hex line while
+ * it is non-null (the room's "Copied #rrggbb"), as a polite live region.
+ *
  * Renders nothing at all for an empty palette: the room's own "-" dash for a missing fact is the
  * caller's to draw, as it is for every other row there.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PaletteSwatchRow(
     swatches: List<PaletteSwatch>,
     onSwatchTap: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    onSwatchLongPress: ((Int) -> Unit)? = null,
+    /** Shown in place of the hex line when non-null; announced when it appears. */
+    caption: String? = null,
     /** Colour of the hex line. Defaults to the details room's secondary text. */
     labelColor: Color = DEFAULT_LABEL_COLOR,
 ) {
@@ -70,21 +82,30 @@ fun PaletteSwatchRow(
                     .drawBehind { drawStrip(swatches) },
             )
             Text(
-                text = hexLine(swatches),
+                text = caption ?: hexLine(swatches),
                 color = labelColor,
                 style = TextStyle(fontFamily = HyleGrotesk, fontSize = 11.sp, letterSpacing = 0.2.sp),
+                // The hex line is a visual aid (every segment already says its hex); the caption is news.
+                modifier = if (caption != null) Modifier.semantics { liveRegion = LiveRegionMode.Polite } else Modifier,
             )
         }
         Row(Modifier.matchParentSize()) {
             for (index in swatches.indices) {
                 val swatch = swatches[index]
                 val description = "Search photos coloured ${swatch.hex}"
+                val spoken = if (onSwatchLongPress != null) "$description, long press to copy" else description
                 Box(
                     Modifier
                         .weight(segmentWeight(swatch))
                         .fillMaxHeight()
-                        .semantics { contentDescription = description }
-                        .clickable(onClickLabel = description, role = Role.Button) { onSwatchTap(swatch.argb) },
+                        .semantics { contentDescription = spoken }
+                        .combinedClickable(
+                            onClickLabel = description,
+                            role = Role.Button,
+                            onLongClickLabel = if (onSwatchLongPress != null) "Copy ${swatch.hex}" else null,
+                            onLongClick = onSwatchLongPress?.let { copy -> { copy(swatch.argb) } },
+                            onClick = { onSwatchTap(swatch.argb) },
+                        ),
                 )
             }
         }

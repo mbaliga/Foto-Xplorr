@@ -41,6 +41,7 @@ import com.fotoxplorr.app.ui.parseThemeJson
 import com.fotoxplorr.core.organize.RenamePattern
 import com.fotoxplorr.core.organize.RenameSubject
 import kotlinx.coroutines.launch
+import com.fotoxplorr.app.ui.HelpCopy
 
 @Composable
 fun TextEntryDialog(
@@ -254,8 +255,7 @@ fun BulkRenameDialog(
                     singleLine = true,
                 )
                 Text(
-                    "{counter} {counter:3} {orig} {yyyy} {yy} {MM} {dd} {HH} {mm} {ss} — " +
-                        "the original extension is always kept.",
+                    HelpCopy.Note.RENAME_TOKENS,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 if (preview.isNotEmpty()) {
@@ -333,8 +333,7 @@ fun CustomThemeJsonDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        "Paste a theme file's JSON below. You'll see exactly this text again, " +
-                            "as a plain preview, before it is applied.",
+                        HelpCopy.Hint.THEME_PASTE,
                         style = MaterialTheme.typography.bodySmall,
                     )
                     OutlinedTextField(
@@ -377,7 +376,7 @@ fun CustomThemeJsonDialog(
             text = {
                 Column(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
                     Text(
-                        "This is exactly the text that will be saved -- review it before applying.",
+                        HelpCopy.Hint.THEME_REVIEW,
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(bottom = 8.dp),
                     )

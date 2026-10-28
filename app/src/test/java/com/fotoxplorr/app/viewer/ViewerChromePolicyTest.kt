@@ -1,0 +1,244 @@
+package com.fotoxplorr.app.viewer
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * [ViewerChromePolicy], the viewer's "what is drawn, and when" rules, pinned without Compose.
+ */
+class ViewerChromePolicyTest {
+
+    // ── the favourite heart in the chrome row (#18) ────────────────────────────────────────────
+
+    @Test
+    fun `the heart is shown only with the chrome and only for a catalogued asset`() {
+        fun shown(chrome: Boolean = true, catalogue: Boolean = true, external: Boolean = false) =
+            ViewerChromePolicy.favouriteShown(chrome, catalogue, external)
+
+        assertTrue(shown())
+        assertFalse("immersive, picture-in-picture and the lift editor hide it with the chrome", shown(chrome = false))
+        assertFalse("an asset the catalogue does not own", shown(catalogue = false))
+        assertFalse("an asset opened from another app", shown(external = true))
+    }
+
+    @Test
+    fun `the heart states its state in words`() {
+        assertEquals("Favourited", ViewerChromePolicy.favouriteStateDescription(true))
+        assertEquals("Not a favourite", ViewerChromePolicy.favouriteStateDescription(false))
+    }
+
+    // ── the filmstrip is roll-level, never asset-level (#28) ───────────────────────────────────
+
+    @Test
+    fun `the filmstrip is shown whenever chrome is up, the preference is on and there is a roll`() {
+        assertTrue(
+            ViewerChromePolicy.filmstripShown(
+                chromeVisible = true, inPictureInPicture = false, showFilmstripPreference = true, rollSize = 9,
+            ),
+        )
+    }
+
+    @Test
+    fun `flipping any single input hides the filmstrip`() {
+        fun shown(
+            chrome: Boolean = true,
+            pip: Boolean = false,
+            preference: Boolean = true,
+            roll: Int = 9,
+            modeActive: Boolean = false,
+        ) = ViewerChromePolicy.filmstripShown(chrome, pip, preference, roll, modeActive)
+
+        assertTrue(shown())
+        assertFalse("immersive means no strip", shown(chrome = false))
+        assertFalse("never inside a PiP window", shown(pip = true))
+        assertFalse("the settings switch", shown(preference = false))
+        assertFalse("one photo has nothing to scrub", shown(roll = 1))
+        assertFalse("an empty roll", shown(roll = 0))
+        assertFalse("a viewer mode (lift or text selection) owns the screen", shown(modeActive = true))
+    }
+
+    /**
+     * The regression pin for the owner's report. [ViewerChromePolicy.filmstripShown] takes no
+     * asset and no `isVideo`, so its answer for a video is by construction its answer for a
+     * photo; this test states that in terms of the scenario ("scrub onto a video") so a future
+     * change that adds the gate back has to change a test whose name says why it is wrong.
+     */
+    @Test
+    fun `scrubbing onto a video does not remove the strip from under the finger`() {
+        // Before the scrub the current photo is a still; after it, a video. The policy sees only
+        // the chrome state and the roll, none of which changed.
+        val beforeScrub = ViewerChromePolicy.filmstripShown(true, false, true, rollSize = 9)
+        val afterScrubOntoVideo = ViewerChromePolicy.filmstripShown(true, false, true, rollSize = 9)
+        assertTrue(beforeScrub)
+        assertEquals(beforeScrub, afterScrubOntoVideo)
+    }
+
+    @Test
+    fun `the position chip follows the same chrome rule and also gives way to the lift editor`() {
+        assertTrue(ViewerChromePolicy.chromeShown(chromeVisible = true, inPictureInPicture = false))
+        assertFalse(ViewerChromePolicy.chromeShown(chromeVisible = false, inPictureInPicture = false))
+        assertFalse(ViewerChromePolicy.chromeShown(chromeVisible = true, inPictureInPicture = true))
+        assertFalse(ViewerChromePolicy.chromeShown(chromeVisible = true, inPictureInPicture = false, modeActive = true))
+    }
+
+    // ── the video transport clears the strip ───────────────────────────────────────────────────
+
+    @Test
+    fun `the video transport sits exactly one resting band above the bottom edge when the strip is up`() {
+        assertEquals(FilmstripGeometry.REST_BAND_DP, ViewerChromePolicy.videoBottomInsetDp(filmstripShown = true))
+        assertEquals(0, ViewerChromePolicy.videoBottomInsetDp(filmstripShown = false))
+    }
+
+    @Test
+    fun `the inset is the resting band, not the bulged one`() {
+        // The transport dims and pauses while the strip bulges; reserving the bulged height would
+        // leave a 42 dp gap above a resting strip for the sake of a moment it is not at rest.
+        assertTrue(ViewerChromePolicy.videoBottomInsetDp(true) < FilmstripGeometry.BULGE_BAND_DP)
+    }
+
+    // ── chrome the first time a video opens (#1) ───────────────────────────────────────────────
+
+    @Test
+    fun `a video opens with the chrome up and a photo opens immersive`() {
+        assertTrue(ViewerChromePolicy.initialChromeVisible(isVideo = true))
+        assertFalse(ViewerChromePolicy.initialChromeVisible(isVideo = false))
+    }
+
+    @Test
+    fun `only the first video of a session brings the chrome up`() {
+        // Opened on a photo, then paged onto the first video: reveal.
+        assertTrue(ViewerChromePolicy.revealChromeForVideo(isVideo = true, alreadyRevealed = false))
+        // Hid the chrome and paged to the next clip: respect that.
+        assertFalse(ViewerChromePolicy.revealChromeForVideo(isVideo = true, alreadyRevealed = true))
+        // A photo never reveals it.
+        assertFalse(ViewerChromePolicy.revealChromeForVideo(isVideo = false, alreadyRevealed = false))
+        assertFalse(ViewerChromePolicy.revealChromeForVideo(isVideo = false, alreadyRevealed = true))
+    }
+
+    // ── the slideshow waits for a video ────────────────────────────────────────────────────────
+
+    private fun advances(
+        active: Boolean = true,
+        total: Int = 9,
+        room: Boolean = false,
+        video: Boolean = false,
+        modeActive: Boolean = false,
+    ) = ViewerChromePolicy.slideshowMayAdvance(active, total, room, video, modeActive)
+
+    @Test
+    fun `the slideshow advances only when nothing is holding it`() {
+        assertTrue(advances())
+        assertFalse("not started", advances(active = false))
+        assertFalse("one photo", advances(total = 1))
+        assertFalse("a room is open", advances(room = true))
+        assertFalse("a video is playing", advances(video = true))
+        assertFalse("a selection is being made (a lift or text)", advances(modeActive = true))
+    }
+
+    @Test
+    fun `a finished or paused video lets the countdown start again`() {
+        // VideoPlayer reports playback inactive on pause and on end; the screen's effect is keyed
+        // on that value, so the false -> countdown restart is the whole mechanism.
+        assertFalse(advances(video = true))
+        assertTrue(advances(video = false))
+    }
+
+    // ── lifting a subject (#12) ────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `a gif counts as animated even before the sniff has said so`() {
+        assertTrue(ViewerChromePolicy.isAnimatedImage(animated = false, mimeType = "image/gif"))
+        assertTrue(ViewerChromePolicy.isAnimatedImage(animated = false, mimeType = "IMAGE/GIF"))
+        assertTrue(ViewerChromePolicy.isAnimatedImage(animated = true, mimeType = "image/webp"))
+        assertFalse(ViewerChromePolicy.isAnimatedImage(animated = false, mimeType = "image/jpeg"))
+        assertFalse(ViewerChromePolicy.isAnimatedImage(animated = false, mimeType = ""))
+    }
+
+    @Test
+    fun `a long press lifts whatever can be lifted, text on the photo or not`() {
+        // The text layer renders nothing until Select text is opened, so there is no dead zone:
+        // a photo with recognised text lifts on a long press exactly like one without (TRAPS 50).
+        // There is no chrome or text-count input to this rule any more.
+        assertTrue(ViewerChromePolicy.longPressStartsLift(canLift = true))
+        // Never for a video, SVG, RAW or animated image.
+        assertFalse(ViewerChromePolicy.longPressStartsLift(canLift = false))
+    }
+
+    @Test
+    fun `a long press does nothing while a mode already owns the screen`() {
+        // Leave text selection (Done, Back) before lifting; a held press inside it is not a Lift.
+        assertFalse(ViewerChromePolicy.longPressStartsLift(canLift = true, modeActive = true))
+        assertFalse(ViewerChromePolicy.longPressStartsLift(canLift = false, modeActive = true))
+    }
+
+    @Test
+    fun `the viewer keeps the lone finger only when no mode owns the screen`() {
+        // Page swipe, pan, tap-to-hide-chrome and double-tap zoom are the viewer's one-finger
+        // gestures; Select text reads that finger as a stroke, so they are off while it is on.
+        assertTrue(ViewerChromePolicy.oneFingerGesturesAreViewers(modeActive = false))
+        assertFalse(ViewerChromePolicy.oneFingerGesturesAreViewers(modeActive = true))
+    }
+
+    @Test
+    fun `the rooms are withdrawn only once a mode is up and the shell is home`() {
+        assertTrue(ViewerChromePolicy.roomsWithdrawn(modeActive = true, atHome = true))
+        // A room just closed to start the mode is still sliding away: leave it be until it lands.
+        assertFalse(ViewerChromePolicy.roomsWithdrawn(modeActive = true, atHome = false))
+        assertFalse(ViewerChromePolicy.roomsWithdrawn(modeActive = false, atHome = true))
+        assertFalse(ViewerChromePolicy.roomsWithdrawn(modeActive = false, atHome = false))
+    }
+
+    // ── the shrink-to-map flight (#19) ─────────────────────────────────────────────────────────
+
+    @Test
+    fun `the flier is up only while the top room is pulled, the photo is at rest and the shell is measured`() {
+        fun active(
+            pulling: Boolean = true,
+            atRest: Boolean = true,
+            width: Int = 880,
+            height: Int = 1912,
+        ) = ViewerChromePolicy.flightActive(pulling, atRest, width, height)
+
+        assertTrue(active())
+        assertFalse("no pull, no flier", active(pulling = false))
+        assertFalse("a zoomed or turned photo keeps the in-plate shrink", active(atRest = false))
+        assertFalse("before first layout", active(width = 0))
+        assertFalse("before first layout", active(height = 0))
+    }
+
+    @Test
+    fun `a photo is at rest only when neither zoomed nor turned`() {
+        assertTrue(ViewerChromePolicy.photoAtRest(scale = 1f, rotationDegrees = 0f))
+        assertTrue("float noise from a settling pinch", ViewerChromePolicy.photoAtRest(scale = 1.0005f, rotationDegrees = 0f))
+        assertFalse(ViewerChromePolicy.photoAtRest(scale = 2.5f, rotationDegrees = 0f))
+        assertFalse(ViewerChromePolicy.photoAtRest(scale = 1f, rotationDegrees = 90f))
+    }
+
+    @Test
+    fun `a place is known by an embedded fix first, a hand-placed one second`() {
+        assertTrue(ViewerChromePolicy.placeKnown(17.4, 78.4, null, null))
+        assertTrue(ViewerChromePolicy.placeKnown(null, null, 17.4, 78.4))
+        assertTrue(ViewerChromePolicy.placeKnown(17.4, 78.4, 1.0, 2.0))
+        assertFalse(ViewerChromePolicy.placeKnown(null, null, null, null))
+        // Garbage in either source is no place: the plate would not draw it either.
+        assertFalse(ViewerChromePolicy.placeKnown(Double.NaN, 78.4, null, null))
+        assertFalse(ViewerChromePolicy.placeKnown(null, null, 200.0, 400.0))
+        // A bad embedded fix does not hide a good hand-placed one, matching the room.
+        assertTrue(ViewerChromePolicy.placeKnown(Double.NaN, 78.4, 17.4, 78.4))
+    }
+
+    // ── the Select text chip ───────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `the Select text chip needs the chrome, a readable photo and text the index found`() {
+        fun shown(chrome: Boolean = true, canSelect: Boolean = true, blocks: Int = 3) =
+            ViewerChromePolicy.selectTextChipShown(chrome, canSelect, blocks)
+
+        assertTrue(shown())
+        assertFalse("immersive, picture-in-picture and a mode on screen hide it with the chrome", shown(chrome = false))
+        assertFalse("a video, SVG, RAW or animated image cannot be read for words", shown(canSelect = false))
+        assertFalse("nothing found: the actions room's row is the way in, not a chip promising text", shown(blocks = 0))
+    }
+}

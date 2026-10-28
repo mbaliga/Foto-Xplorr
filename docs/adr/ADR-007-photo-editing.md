@@ -5,6 +5,12 @@
 **Updated:** 2026-09-16 — full-resolution export, drag crop, per-channel curves, HSL, presets,
 undo/redo, persisted recipes, spot heal and export controls landed; see "Where this stands now"
 below. The decision and the licence/dependency analysis are unchanged from the original text.
+**Updated:** 2026-10-21 — the Simple/Pro tier split described below was removed (one scrollable
+tool strip, Curves reachable) and the curves editor became a drawn graph with a histogram backdrop
+and a luma curve; see "Where this stands now" and `docs/TRAPS.md` #44, #52 to #54.
+**Updated:** 2026-10-21 (batch 2) — Replace the original is now guarded and recoverable, Save As
+strips location, exports no longer derive their size from memory class, and HEIC copies are
+documented as pixels only; see "Where this stands now" and `docs/TRAPS.md` #17, #31, #59, #66.
 **Owner request:** *"I think some basic photo editing is required. I know Snapseed is free, is it
 open-source as well? If yes, get me their features. If not, build in editing features from some
 open-source repo."*
@@ -77,9 +83,13 @@ arises.
   `EditorScreen`. `overwrite` is the one place this class *does* open the original for writing,
   gated on the same per-file consent dance `FotoXplorrActivity` already runs for rename and
   metadata, and only for a source already in one of the three `Bitmap`-encodable formats — see
-  `overwriteFormatFor`. All three preserve the source's own EXIF/XMP camera facts and GPS (a
-  documented tag whitelist, `EXIF_PRESERVED_TAGS` in `ExifOrientation.kt`) and reset orientation to
-  upright, since the pixels themselves are already re-oriented on decode.
+  `overwriteFormatFor`. `save` and `overwrite` carry the source's own EXIF/XMP camera facts and GPS
+  through `metadata/ExifCopier` (`COPIED_TAGS` / `EXCLUDED_TAGS`, `copy(keepLocation)`,
+  `copiedXmpValue`) and reset orientation to upright, since the pixels themselves are already
+  re-oriented on decode. (This text used to name `EXIF_PRESERVED_TAGS` in `editor/ExifOrientation.kt`;
+  both were dead and are deleted.) `saveTo` passes `keepLocation = false`, strips every location
+  field and re-reads the staged file to prove it. A HEIC output is pixels only. See "Replace the
+  original, as built" below for what `overwrite` refuses and how it recovers.
 - `RecipeStore` — autosaves the in-progress recipe per photo (JSON, keyed by `MediaId` +
   `dateModifiedSeconds`, under `filesDir/edits/`), offered back as "Continue editing / Start over"
   the next time the same photo (same bytes) is opened here, with an explicit "Revert to original".
@@ -88,24 +98,31 @@ arises.
   `filesDir/presets/`, one file per preset).
 - `EditHistory` — an in-session undo/redo stack over `EditRecipe` snapshots, committed on a
   settle-debounce so a slider drag produces one entry, not one per frame.
-- `EditorScreen` — the UI, split into a Simple tier (fewer, coarser sliders, plus Crop/Rotate/
-  Presets) and an on-demand Pro tier (the rest, plus Curves, HSL, Detail's full slider set, and
-  Heal) — see `EditorTier`. A press-and-hold on the preview shows the untouched original for
-  comparison.
+- `EditorScreen` — the UI: one scrollable strip of tools (Light, Colour, Curves, Presets, Detail,
+  HSL, Crop, Rotate, Heal), all always offered. *(It was originally split into a Simple tier and an
+  on-demand Pro tier, `EditorTier`; the tier switch was removed on 2026-10-21 because its layout
+  starved the Pro toggle to zero width, which hid Curves entirely — `docs/TRAPS.md` #44.)* A
+  press-and-hold on the preview shows the untouched original for comparison.
 
 ### Where this stands now
 
-- **Save exports at full resolution**, capped by a memory-derived ceiling
-  (`maxExportEdge`, driven by `ActivityManager.memoryClass`) rather than the fixed 8192px ceiling
-  alone — a phone with a small heap gets a smaller safe export instead of being killed mid-save.
-  The export controls also let a user choose a smaller long edge explicitly (Original/4096/2048/
-  1024) and a JPEG/WebP/HEIC quality (50–100).
+- **Save exports at full resolution**, up to 8192 px on the long edge and 64 MP
+  (`MAX_EXPORT_EDGE`, `MAX_EXPORT_PIXELS`). The earlier memory-derived ceiling (`maxExportEdge`,
+  from `ActivityManager.memoryClass`) was removed: on a 256 MB heap it silently turned "Original"
+  into roughly 2.8k px. A device that truly cannot hold the buffers finds out from an actual
+  `OutOfMemoryError`, and the export steps down 8192, 4096, 2048, 1536 (`exportEdgeLadder`),
+  saying "at reduced size"; a replace tries one rung only, so an out-of-memory error writes
+  nothing. The export controls also let a user choose a smaller long edge explicitly (Original/
+  4096/2048/1024) and a JPEG/WebP/HEIC quality (50–100).
 - **The crop tool is a real drag box**: 8 handles, drag-to-move, aspect lock (the same presets as
   before, now also constraining the drag), a rule-of-thirds grid while dragging. Straighten still
   applies before the crop, unchanged.
-- **Curves are draggable**, per RGB/R/G/B channel, on top of the original named-shape presets —
-  `CurvesEditor` reads and writes `ToneCurve.withPoint`/`withoutPointAt`, the same monotone-Hermite
-  curve `ToneCurveTest` already covered before any UI could set the per-channel fields at all.
+- **Curves are a drawn, draggable graph**, per RGB/Luma/R/G/B channel, over a histogram of the
+  photo, with the original named-shape presets kept as chips and Reset / Reset all. `CurvesEditor`
+  edits the same monotone-Hermite `ToneCurve` `ToneCurveTest` already covered, through the
+  index-based `moveTo`/`insertAt`/`removeAt` (not `withPoint`, which merges by x — `docs/TRAPS.md`
+  #53). The luma curve is applied per pixel after the three channel tables, scaling RGB to keep hue
+  (`ChannelLuts.luma`), so the export path picks it up with no renderer change.
 - **HSL, presets, undo/redo, persisted recipes and spot healing** are implemented as described
   above under Shape.
 - **Denoise** (`Adjustments.denoise`) is implemented as a simple blend between the original and a
@@ -118,6 +135,35 @@ arises.
 - `Intent.ACTION_EDIT` survives as "Open with", so a user who prefers a real editor still has one.
   Note that on the offline flavour this hands the file to an arbitrary installed app — which is
   the user's explicit choice, made per use, rather than something the app does on their behalf.
+  Fotoz also *receives* EDIT for `image/*` (and SEND for images and videos) on
+  `FotoXplorrActivity`, `content://` only; it has no VIEW filter, which is
+  `ExternalViewerActivity`'s alone (`docs/TRAPS.md` #57).
+
+### Replace the original, as built (2026-10-21)
+
+Replace is best effort, not atomic (MediaStore cannot replace a file in place), so it is guarded
+rather than promised:
+
+- **Refused, original untouched** (`OverwriteException.Refused`) for: a format with no in-place path
+  (HEIC, GIF, RAW); an animation (animated WebP or APNG), an Ultra HDR gain map, a Motion Photo's
+  video, a depth map or extra embedded images; transparency a WebP re-encode would flatten (API 30+)
+  or lossless WebP quality; metadata `ExifInterface` cannot carry (IPTC-IIM, extended XMP, PNG text
+  with real content, other WebP chunks) or a location Android redacted (API 29+, photo-location
+  access off); a file that cannot be read for these scans, or cannot be backed up. MakerNote and the
+  embedded thumbnail are deliberately not gated. The scans fail open for variants nobody taught
+  them.
+- **Written with a way back.** A private safety copy in `filesDir/overwrite-recovery` (flushed, with a
+  sidecar naming the photo), then the truncating write, a flush and a read-back; a failure restores the
+  copy (`FailedAfterWrite(restored, recoveryFile)`). The copy is deleted when the write verifies. If the
+  process dies or the put-back fails, the copy is kept and the next start's dialog names the photo
+  and offers to share it. There is no in-app Restore.
+- **Locked while it runs:** Save, Cancel and Back are off and a second edit is refused, and the
+  outcome is recorded by code that outlives activity recreation.
+- **Save as to a chosen destination is a different promise:** it never touches the original and it
+  removes location.
+
+The consequences for the product text (the listing, the README, the save sheet) are in `docs/TRAPS.md`
+#59 and #66: say what is refused and what is kept; never "safe", never "always restored".
 - HEIC export uses `androidx.heifwriter` (API 28+, and only when a real HEVC encoder is present —
   see `isHeicExportSupported`), the one new dependency this ADR's original decision did not
   anticipate. It needed `tools:overrideLibrary` in the manifest (the library's own minSdk is 28;

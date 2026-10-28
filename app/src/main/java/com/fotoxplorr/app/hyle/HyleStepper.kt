@@ -37,7 +37,7 @@ import com.fotoxplorr.app.ui.HyleGrotesk
  * The Hyle stepper: one light track carrying a black cell at each end and the value waiting
  * between them in ink.
  *
- * It exists because the settings room's steppers were the last Material chrome left on a screen
+ * It exists because the Settings pane's steppers were the last Material chrome left on a screen
  * whose every other control is Hyle — two `IconButton`s holding bare `+` / `-` glyphs floating in
  * space (owner, 2026-09-01: *"As for the internals like the binary toggles, please use Hyle and do
  * not invent buttons."*). The answer to that is not a new button, so this control invents nothing:

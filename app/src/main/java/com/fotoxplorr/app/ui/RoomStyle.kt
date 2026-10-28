@@ -1,20 +1,27 @@
 package com.fotoxplorr.app.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -71,19 +78,78 @@ object RoomStyle {
     )
 
     // Fixed on purpose (reference design): the black-ground, white-ink room language, the on state
-    // is a filled block and not a hue.
+    // is a position and not a hue.
     /** Full-strength ink. */
     val Ink = Color.White
 
     /** A row that is present but secondary — the rail's "Settings" step-down. */
-    val InkMuted = Color.White.copy(alpha = 0.55f)
+    val InkMuted = Color.White.copy(alpha = 0.70f)
 
+    // Raised from 0.40, which is about 3.7:1 on black -- under AA for 13sp captions, and a
+    // caption is the one thing in a room the reader has to be able to read. Muted moved up with
+    // it so the three steps stay in order instead of the bottom two meeting.
     /** Explanatory text and disabled states. */
-    val InkFaint = Color.White.copy(alpha = 0.40f)
+    val InkFaint = Color.White.copy(alpha = 0.55f)
+
+    /** A card or sheet raised off the black ground -- the value the pill and the pickers use. */
+    val Surface = Color(0xFF141414)
 
     /** The rail's gutters, so every room lines its text up on the same two edges. */
     val GutterStart = 20.dp
     val GutterEnd = 20.dp
+}
+
+/**
+ * The pane that takes over the place the photos are -- Settings, and every destination screen that
+ * is not a grid (Albums, Calendar, Discover, Library, Tidy up).
+ *
+ * One scaffold so they cannot drift apart again (owner, 2026-10: *"the other views are still
+ * messed up as well"*): the room's black ground, a back chevron and a title in the room's own
+ * type, and a content colour that is white whatever the theme. The last matters more than it
+ * looks. The ground is a literal black in light theme too, and text that sets no colour of its
+ * own inherits the theme's `onSurface` -- dark on black, which is how these screens were
+ * unreadable. Providing [LocalContentColor] here makes the unset case right instead of asking
+ * every screen inside to remember.
+ *
+ * The status bar is cleared here and no further: the pane sits inside the browser's Scaffold,
+ * which already consumes its own insets, so these are a no-op there and only do work where this
+ * is hosted without one.
+ */
+@Composable
+fun PaneScaffold(
+    title: String,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    CompositionLocalProvider(LocalContentColor provides RoomStyle.Ink) {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 4.dp, end = RoomStyle.GutterEnd, top = 4.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back", tint = RoomStyle.Ink)
+                }
+                Text(
+                    text = title,
+                    color = RoomStyle.Ink,
+                    style = RoomStyle.Title,
+                    maxLines = 1,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
+            content()
+        }
+    }
 }
 
 /** A section heading. */
@@ -139,36 +205,31 @@ fun RoomRow(
 }
 
 /**
- * A toggle, drawn rather than imported.
+ * A room's switch. It is [HyleToggle][com.fotoxplorr.app.hyle.HyleToggle] -- the same control as
+ * the Settings pane, the share sheet and the AI settings, so one preference does not look like two
+ * different switches depending on which room you flip it in.
  *
- * Material's `Switch` carries its own elevation, ripple, thumb shadow and rounded track — a piece
- * of a different design system sitting in the middle of a black brutalist room. This is the same
- * information as a rectangle and a block that moves to one end of it.
+ * It used to be a drawn outlined box with a block in it (owner, 2026-08: *restyle to match the
+ * rail*), written before the owner's later *use Hyle, do not invent buttons*. The box also had no
+ * switch semantics at all and a ~26dp touch area; the Hyle toggle carries `Role.Switch`, an
+ * on/off state description and a 48dp target. The name and signature stay so the rooms that call
+ * it do not change.
+ *
+ * @param description read out by a screen reader when the toggle is not inside a labelled row.
  */
 @Composable
-fun RoomToggle(checked: Boolean, onCheckedChange: (Boolean) -> Unit, enabled: Boolean = true) {
-    val ink = when {
-        !enabled -> RoomStyle.InkFaint
-        checked -> RoomStyle.Ink
-        else -> RoomStyle.InkMuted
-    }
-    Box(
-        modifier = Modifier
-            .width(TOGGLE_WIDTH)
-            .border(1.dp, ink)
-            .then(if (enabled) Modifier.clickable { onCheckedChange(!checked) } else Modifier)
-            .padding(2.dp),
-        // The block sits at the end it means: right for on, left for off. No animation, no
-        // thumb — the state is legible from across the room and reads as a switch, not a chip.
-        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
-    ) {
-        Box(
-            Modifier
-                .size(width = TOGGLE_BLOCK, height = TOGGLE_HEIGHT)
-                .background(if (checked) ink else Color.Transparent)
-                .then(if (checked) Modifier else Modifier.border(1.dp, ink)),
-        )
-    }
+fun RoomToggle(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
+    description: String? = null,
+) {
+    com.fotoxplorr.app.hyle.HyleToggle(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        enabled = enabled,
+        description = description,
+    )
 }
 
 /**
@@ -230,6 +291,3 @@ fun RoomRule(modifier: Modifier = Modifier) {
     )
 }
 
-private val TOGGLE_WIDTH = 52.dp
-private val TOGGLE_HEIGHT = 22.dp
-private val TOGGLE_BLOCK = 22.dp

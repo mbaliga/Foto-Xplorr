@@ -2,6 +2,7 @@ package com.fotoxplorr.app.editor
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -200,6 +201,113 @@ class AdjustmentsTest {
         val pixels = original.copyOf()
         applyColour(pixels, Adjustments.NONE.toChannelLuts(), saturation = 0f, vibrance = 0f)
         assertTrue(original.contentEquals(pixels))
+    }
+
+    // ---- the luma curve ----
+
+    @Test
+    fun `an identity luma curve changes nothing and compiles to no table`() {
+        assertTrue(Adjustments(lumaCurve = ToneCurve.IDENTITY).tonalIsIdentity)
+        assertNull(Adjustments.NONE.toChannelLuts().luma)
+        val original = intArrayOf(argb(255, 12, 200, 77), argb(255, 0, 0, 0))
+        val pixels = original.copyOf()
+        applyColour(pixels, Adjustments(lumaCurve = ToneCurve.IDENTITY).toChannelLuts(), saturation = 0f, vibrance = 0f)
+        assertTrue(original.contentEquals(pixels))
+    }
+
+    @Test
+    fun `a luma curve makes a pixel not tonally an identity`() {
+        val adjustments = Adjustments(lumaCurve = ToneCurve(listOf(CurvePoint(0f, 0f), CurvePoint(0.5f, 0.7f), CurvePoint(1f, 1f))))
+        assertTrue(!adjustments.tonalIsIdentity)
+        assertTrue(!adjustments.isIdentity)
+    }
+
+    @Test
+    fun `a luma curve brightens a mid grey to about where the curve says`() {
+        val adjustments = Adjustments(lumaCurve = ToneCurve(listOf(CurvePoint(0f, 0f), CurvePoint(0.5f, 0.7f), CurvePoint(1f, 1f))))
+        val pixels = intArrayOf(argb(255, 128, 128, 128))
+        applyColour(pixels, adjustments.toChannelLuts(), saturation = 0f, vibrance = 0f)
+        val r = pixels[0] ushr 16 and 0xFF
+        assertEquals("mid grey should land near 0.7 * 255", 178f, r.toFloat(), 4f)
+        // Grey stays grey.
+        assertEquals(r, pixels[0] ushr 8 and 0xFF)
+        assertEquals(r, pixels[0] and 0xFF)
+    }
+
+    @Test
+    fun `a luma curve keeps hue where an RGB curve does not`() {
+        val curve = ToneCurve(listOf(CurvePoint(0f, 0f), CurvePoint(0.4f, 0.55f), CurvePoint(1f, 1f)))
+        val start = argb(255, 120, 60, 30)
+        val viaLuma = intArrayOf(start)
+        val viaRgb = intArrayOf(start)
+        applyColour(viaLuma, Adjustments(lumaCurve = curve).toChannelLuts(), 0f, 0f)
+        applyColour(viaRgb, Adjustments(rgbCurve = curve).toChannelLuts(), 0f, 0f)
+
+        fun ratio(pixel: Int) = (pixel ushr 16 and 0xFF).toFloat() / (pixel and 0xFF)
+        val before = ratio(start)
+        assertEquals("luma curve should keep R:B", before, ratio(viaLuma[0]), 0.1f)
+        assertTrue("the RGB curve bends the channels separately", kotlin.math.abs(before - ratio(viaRgb[0])) > 0.1f)
+        assertTrue("and it did brighten", (viaLuma[0] and 0xFF) > 30)
+    }
+
+    @Test
+    fun `a luma curve keeps black black and raises no division by zero`() {
+        val adjustments = Adjustments(lumaCurve = ToneCurve(listOf(CurvePoint(0f, 0f), CurvePoint(0.5f, 0.7f), CurvePoint(1f, 1f))))
+        val pixels = intArrayOf(argb(255, 0, 0, 0))
+        applyColour(pixels, adjustments.toChannelLuts(), 0f, 0f)
+        assertEquals(argb(255, 0, 0, 0), pixels[0])
+    }
+
+    @Test
+    fun `lifted black on a luma curve lifts to grey without a hue`() {
+        val adjustments = Adjustments(lumaCurve = ToneCurve(listOf(CurvePoint(0f, 0.2f), CurvePoint(1f, 1f))))
+        val pixels = intArrayOf(argb(255, 0, 0, 0))
+        applyColour(pixels, adjustments.toChannelLuts(), 0f, 0f)
+        val r = pixels[0] ushr 16 and 0xFF
+        assertEquals(51f, r.toFloat(), 2f)
+        assertEquals(r, pixels[0] and 0xFF)
+    }
+
+    @Test
+    fun `a luma curve preserves alpha`() {
+        val adjustments = Adjustments(lumaCurve = ToneCurve(listOf(CurvePoint(0f, 0f), CurvePoint(0.5f, 0.7f), CurvePoint(1f, 1f))))
+        val pixels = intArrayOf(argb(77, 200, 60, 30))
+        applyColour(pixels, adjustments.toChannelLuts(), 0f, 0f)
+        assertEquals(77, pixels[0] ushr 24 and 0xFF)
+    }
+
+    @Test
+    fun `an RGB curve, a red curve and a blue curve still differ`() {
+        val lift = ToneCurve(listOf(CurvePoint(0f, 0f), CurvePoint(0.5f, 0.7f), CurvePoint(1f, 1f)))
+        val rgb = Adjustments(rgbCurve = lift).toChannelLuts()
+        assertTrue(rgb.red[128] > 150 && rgb.green[128] > 150 && rgb.blue[128] > 150)
+        val red = Adjustments(redCurve = lift).toChannelLuts()
+        assertTrue(red.red[128] > 150)
+        assertEquals(128, red.green[128])
+        assertEquals(128, red.blue[128])
+        val blue = Adjustments(blueCurve = lift).toChannelLuts()
+        assertEquals(128, blue.red[128])
+        assertEquals(128, blue.green[128])
+        assertTrue(blue.blue[128] > 150)
+    }
+
+    @Test
+    fun `curveFor and withCurve address every channel`() {
+        val lift = ToneCurve(listOf(CurvePoint(0f, 0f), CurvePoint(0.5f, 0.7f), CurvePoint(1f, 1f)))
+        CurveChannel.entries.forEach { channel ->
+            val adjusted = Adjustments.NONE.withCurve(channel, lift)
+            assertEquals(lift, adjusted.curveFor(channel))
+            assertEquals(CurveChannel.entries.size - 1, CurveChannel.entries.count { adjusted.curveFor(it).isIdentity })
+        }
+    }
+
+    @Test
+    fun `luts with and without a luma table are not equal`() {
+        val plain = Adjustments.NONE.toChannelLuts()
+        val withLuma = Adjustments(lumaCurve = CurvePreset.SOFT_CONTRAST.curve).toChannelLuts()
+        assertNotEquals(plain, withLuma)
+        assertEquals(withLuma, Adjustments(lumaCurve = CurvePreset.SOFT_CONTRAST.curve).toChannelLuts())
+        assertEquals(withLuma.hashCode(), Adjustments(lumaCurve = CurvePreset.SOFT_CONTRAST.curve).toChannelLuts().hashCode())
     }
 
     // ---- vignette ----

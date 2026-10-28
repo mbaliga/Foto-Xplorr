@@ -209,7 +209,7 @@ class SurfaceRenderTest {
 
     @Test
     fun `gallery actions room`() {
-        render("room-1-actions") {
+        render("room-1-gallery-actions-bottom") {
             com.fotoxplorr.app.gallery.GalleryActionsRoom(
                 state = emptyState(),
                 actions = noOpActions(),
@@ -236,7 +236,7 @@ class SurfaceRenderTest {
 
     @Test
     fun `gallery info room`() {
-        render("room-2-info") {
+        render("room-2-gallery-details-top") {
             com.fotoxplorr.app.gallery.GalleryInfoRoom(
                 title = "Photos",
                 assets = emptyList(),
@@ -246,8 +246,8 @@ class SurfaceRenderTest {
     }
 
     @Test
-    fun `viewer settings room`() {
-        render("room-3-viewer-settings") {
+    fun `viewer view options room`() {
+        render("room-3-viewer-view-options-right") {
             com.fotoxplorr.app.viewer.ViewerSettingsRoom(
                 slideshowIntervalSeconds = 5,
                 blurSensitive = true,
@@ -263,6 +263,38 @@ class SurfaceRenderTest {
                 onSetSlideshowShuffle = {},
                 onSetLoopAnimations = {},
                 onSetAutoplayVideos = {},
+            )
+        }
+    }
+
+    @Test
+    fun `gallery view options room`() {
+        render("room-4-gallery-view-options-right") {
+            com.fotoxplorr.app.gallery.GalleryViewOptionsRoom(
+                state = emptyState(),
+                actions = noOpActions(),
+            )
+        }
+    }
+
+    @Test
+    fun `viewer actions room`() {
+        render("room-5-viewer-actions-bottom") {
+            com.fotoxplorr.app.viewer.ViewerActionsRoom(
+                isFavorite = true,
+                isSensitive = false,
+                canMoveToTrash = true,
+                slideshowActive = false,
+                onToggleSlideshow = {},
+                onToggleFavorite = {},
+                onToggleSensitive = {},
+                onShare = {},
+                onEdit = {},
+                onOpenWith = {},
+                onMoveToTrash = {},
+                onShareClean = {},
+                onRename = {},
+                onLiftSubject = {},
             )
         }
     }
@@ -296,6 +328,46 @@ class SurfaceRenderTest {
             }
         }
         compose.onRoot().captureRoboImage("build/renders/hyle-toggle.png")
+    }
+
+    /**
+     * The same switch where it actually lives: on the black room, live on and off beside disabled
+     * on and off, once as the Hyle toggle and once through [com.fotoxplorr.app.ui.RoomToggle] in a
+     * room row. The disabled pair must read dimmer than the live pair here; on the light card
+     * above they used to read lighter, which is the wrong way round on black.
+     */
+    @Test
+    fun `hyle toggle on black`() {
+        render("hyle-toggle-on-black") {
+            androidx.compose.foundation.layout.Column(
+                modifier = Modifier
+                    .align(androidx.compose.ui.Alignment.Center)
+                    .padding(24.dp),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(20.dp),
+            ) {
+                androidx.compose.foundation.layout.Row(
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(20.dp),
+                ) {
+                    com.fotoxplorr.app.hyle.HyleToggle(checked = true, onCheckedChange = {})
+                    com.fotoxplorr.app.hyle.HyleToggle(checked = false, onCheckedChange = {})
+                }
+                androidx.compose.foundation.layout.Row(
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(20.dp),
+                ) {
+                    com.fotoxplorr.app.hyle.HyleToggle(checked = true, onCheckedChange = {}, enabled = false)
+                    com.fotoxplorr.app.hyle.HyleToggle(checked = false, onCheckedChange = {}, enabled = false)
+                }
+                com.fotoxplorr.app.ui.RoomRow(
+                    label = "Filmstrip",
+                    caption = "The strip of neighbouring photos along the bottom.",
+                ) { com.fotoxplorr.app.ui.RoomToggle(checked = true, onCheckedChange = {}) }
+                com.fotoxplorr.app.ui.RoomRow(
+                    label = "Only on Wi-Fi",
+                    caption = "Not applicable in this build.",
+                    enabled = false,
+                ) { com.fotoxplorr.app.ui.RoomToggle(checked = false, onCheckedChange = {}, enabled = false) }
+            }
+        }
     }
 
     /** The Hyle field states, the way the owner's control-sheet lays them out. */
@@ -373,7 +445,7 @@ internal fun noOpActions() = com.fotoxplorr.app.gallery.GalleryActions(
         onRequestPermission = { Unit },
         onRefresh = { Unit },
         onSetSort = { _ -> Unit },
-        onSetGridColumns = { _ -> Unit },
+        onSetGridZoomRung = { _ -> Unit },
         onSetBlurSensitive = { _ -> Unit },
         onSetHideSensitive = { _ -> Unit },
         onSetShowVideos = { _ -> Unit },
@@ -388,7 +460,7 @@ internal fun noOpActions() = com.fotoxplorr.app.gallery.GalleryActions(
         onSetAutoplayVideos = { _ -> Unit },
         onSetFitToTile = { _ -> Unit },
         onSetLoopAnimations = { _ -> Unit },
-        onSetLongPressPreview = { _ -> Unit },
+        onSetGridLongPress = { _ -> Unit },
         onIndexRecognition = { Unit },
         onProtectFolder = { _, _ -> Result.success(Unit) },
         onUnlockFolder = { _, _ -> false },

@@ -16,6 +16,7 @@ class BackgroundWorkStatusTest {
     @Test
     fun `unrestricted says plainly that nothing is being held back`() {
         val text = BackgroundWorkStatus.Unrestricted.describe()
+        assertEquals("Rules are off: indexing runs whenever the system schedules it.", text)
         assertTrue(text.contains("off"))
         assertTrue(text.contains("whenever the system schedules"))
     }

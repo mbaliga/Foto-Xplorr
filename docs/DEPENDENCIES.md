@@ -26,3 +26,27 @@ Flavours column to `offline` / `connect` / both the first time a module actually
 | Coordinate | Version | Why |
 |---|---|---|
 | `com.google.devtools.ksp` (Gradle plugin) | 2.1.0-1.0.29 | Must equal `hyle-design-system`'s own KSP pin exactly (ADR-009 decision 2) — KSP versions are tied to a specific Kotlin compiler version, and Hyle is already proven on this one. |
+
+## Compile-only declarations (no new artifact in any resolved classpath)
+
+| Module | Coordinate | Version | Why |
+|---|---|---|---|
+| `:feature:ai-remote` | `org.maplibre.gl:android-sdk` (`compileOnly`) | 13.0.2 | `MapRequestCap` passes an OkHttp client to the map library's `HttpRequestUtil` so offline region downloads keep to the tile provider's limit of 4 requests in flight. The app cannot name an OkHttp type, so the wrapper lives in the module that owns OkHttp. The same artifact is already `connectImplementation` in `:app`; this line adds nothing to either flavour's runtime classpath. See ADR-015. |
+
+## Considered and not added
+
+The panorama utility (`pano/`, owner item #24) adds no row: it is pure Kotlin with no new dependency, no native
+code and no manifest change. OpenCV was measured and rejected for it: its Maven artifact is about 117.7 MB as an
+AAR, which adds about 24.8 MB to each installed arm64 APK (the native libraries are stored uncompressed) and
+about 141 MB to the universal APK (184 MB measured, about 325 MB with it), and it has no `Stitcher` binding (the
+Java classes stop at `calib3d`, `features2d` and `imgproc`; the C++ stitching module is compiled in but nothing
+calls it from Kotlin), so it would still need our own blender and exposure code, or a JNI layer the repo has no
+NDK build for.
+
+Batch 8 (colour vision, the editor hub, the palette builder, animated pictures, the reel maker, the mood board and
+Chroma ID) adds **no row and no Gradle dependency**. Everything is pure Kotlin or platform API: `java.util.zip`
+(`Deflater`, `Inflater`, `CRC32`) for the PNG/APNG/GIF work, `android.hardware.camera2` and `SensorManager` for Chroma
+ID, `BitmapFactory` for one still-WebP frame, and Media3 Transformer and its muxer, which the app already depends on
+(`media3-muxer` arrives as an API dependency of `media3-transformer`). CameraX was considered and not added; the reasons
+are in `docs/adr/ADR-017-camera-and-soundtrack.md`. The `CAMERA` permission and three optional camera `uses-feature`
+lines are manifest changes, not dependencies.

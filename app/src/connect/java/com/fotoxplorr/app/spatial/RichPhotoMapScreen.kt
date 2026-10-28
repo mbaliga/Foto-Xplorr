@@ -10,26 +10,25 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Layers
-import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text as ComposeText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -53,6 +52,10 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.spatial.offline.GeoBox
+import com.fotoxplorr.app.spatial.offline.GeoPoint
+import com.fotoxplorr.app.spatial.offline.OfflineMapsPill
+import com.fotoxplorr.app.spatial.offline.ViewArea
 import com.fotoxplorr.app.viewer.PlaceMorph
 import com.fotoxplorr.app.viewer.PlacePin
 import com.fotoxplorr.core.model.MediaId
@@ -93,59 +96,45 @@ import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-private enum class MapTimeFilter(val label: String, val windowMillis: Long?) {
-    ALL("All time", null),
-    THIRTY_DAYS("30 days", 30L * 24L * 60L * 60L * 1_000L),
-    ONE_YEAR("1 year", 365L * 24L * 60L * 60L * 1_000L),
-}
-
 @Composable
 fun RichPhotoMapScreen(
     assets: List<MediaAsset>,
     geoState: GeoIndexState,
-    tagsByMediaId: Map<MediaId, Set<String>> = emptyMap(),
     onIndexLocations: () -> Unit,
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
     onClose: () -> Unit,
     /**
      * Opened from one photo's details room: the camera starts on that photo at street zoom, it is
      * drawn as its white-bordered tile riding the map, and every other located photo is a filled
-     * dot in its own colour with no clustering -- see [MapFocus]. Null is the Places map exactly as
-     * it always was.
+     * dot in its own colour with no clustering -- see [MapFocus]. Null is the map of the whole view,
+     * which is only ever drawn [embedded] now (Map mode).
      */
     focus: MapFocus? = null,
+    modifier: Modifier = Modifier,
+    /**
+     * Drawn as a pane of the browser rather than as a screen: no header, no close button, no
+     * search, filter chips or footer (the browser has its own search and time range, and they
+     * would be two of each), and no [BackHandler] -- the browser owns the Back order, and a
+     * handler here would outrank it. The map's own attribution and compass are kept, and moved
+     * clear of the browser's controls.
+     */
+    embedded: Boolean = false,
+    /**
+     * Where the person's own browsable photos were taken, read only when the Offline maps sheet is
+     * opened from the embedded map's pill (TRAPS #33: from `browsableAssets`, never the whole
+     * library). Empty offers no suggested places there, only the current view.
+     */
+    offlinePlacePoints: () -> List<GeoPoint> = { emptyList() },
 ) {
-    BackHandler(onBack = onClose)
+    if (!embedded) BackHandler(onBack = onClose)
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    var query by remember { mutableStateOf("") }
-    var timeFilter by remember { mutableStateOf(MapTimeFilter.ALL) }
-    var selectedAlbum by remember { mutableStateOf<String?>(null) }
     var selectedId by remember { mutableStateOf<MediaId?>(null) }
 
     val assetsById = remember(assets) { assets.associateBy { it.id } }
     val selectedAsset = selectedId?.let(assetsById::get)
-    val albums = remember(assets) {
-        assets.mapNotNull { it.bucketName?.trim()?.takeIf(String::isNotEmpty) }
-            .distinct()
-            .sortedBy(String::lowercase)
-            .take(MAX_ALBUM_FILTERS)
-    }
-    val now = System.currentTimeMillis()
-    val filtered = remember(assets, geoState.metadataById, tagsByMediaId, query, timeFilter, selectedAlbum) {
-        val normalized = query.trim().lowercase()
-        assets.filter { asset ->
-            val afterCutoff = timeFilter.windowMillis?.let { asset.dateTakenMillis >= now - it } ?: true
-            val matchesQuery = normalized.isEmpty() ||
-                asset.displayName.lowercase().contains(normalized) ||
-                asset.bucketName?.lowercase()?.contains(normalized) == true ||
-                tagsByMediaId[asset.id].orEmpty().any { it.lowercase().contains(normalized) }
-            asset.id in geoState.metadataById &&
-                !asset.isTrashed &&
-                afterCutoff &&
-                (selectedAlbum == null || asset.bucketName == selectedAlbum) &&
-                matchesQuery
-        }
+    val filtered = remember(assets, geoState.metadataById) {
+        assets.filter { asset -> asset.id in geoState.metadataById && !asset.isTrashed }
     }
     // The focused photo may be located by its own EXIF and absent from the geo index (the index
     // is built on demand); it is still what this map is about, so its coordinate comes from the
@@ -155,12 +144,56 @@ fun RichPhotoMapScreen(
     // The cluster bubbles are the accent role, so they take the chosen accent. Read once, as the
     // controller is made: the accent cannot change while this full-screen map is open.
     val accentArgb = MaterialTheme.colorScheme.primary.toArgb()
-    val controller = remember(focus) {
-        RichPhotoMapController(focus = focus, accentArgb = accentArgb) { mediaId -> selectedId = mediaId }
+    // Embedded, the browser's pill and corner discs float along the bottom edge: the attribution
+    // and logo (bottom left) are lifted clear of them, and the compass (top right) keeps a gap
+    // below the status bar. Read once, as the controller is made, like the accent.
+    val chromeDensity = LocalDensity.current
+    val lowerChromePx = if (embedded) {
+        with(chromeDensity) { EMBEDDED_LOWER_CHROME_DP.dp.roundToPx() } +
+            WindowInsets.navigationBars.getBottom(chromeDensity)
+    } else {
+        0
+    }
+    val upperChromePx = if (embedded) {
+        with(chromeDensity) { EMBEDDED_UPPER_CHROME_DP.dp.roundToPx() } +
+            WindowInsets.statusBars.getTop(chromeDensity)
+    } else {
+        0
+    }
+    // The ground the embedded map shows, for the Offline maps pill. Updated when the camera comes to
+    // rest, never while it moves, and only from the camera's centre, zoom and bearing (see ViewArea).
+    var viewBox by remember { mutableStateOf<GeoBox?>(null) }
+    val mapViewHolder = remember { arrayOfNulls<MapView>(1) }
+    val controller = remember(focus, embedded) {
+        RichPhotoMapController(
+            focus = focus,
+            accentArgb = accentArgb,
+            lowerChromePx = lowerChromePx,
+            upperChromePx = upperChromePx,
+            onCameraIdle = if (embedded) {
+                { latitude, longitude, zoom, bearing ->
+                    val view = mapViewHolder[0]
+                    val density = view?.resources?.displayMetrics?.density ?: 0f
+                    viewBox = if (view == null || density <= 0f) {
+                        null
+                    } else {
+                        ViewArea.boxOf(
+                            latitude, longitude, zoom,
+                            widthDp = view.width / density.toDouble(),
+                            heightDp = view.height / density.toDouble(),
+                            bearingDegrees = bearing,
+                        )
+                    }
+                }
+            } else {
+                null
+            },
+        ) { mediaId -> selectedId = mediaId }
     }
     val mapView = remember(context) {
         MapLibre.getInstance(context.applicationContext)
         MapView(context).also { view ->
+            mapViewHolder[0] = view
             view.onCreate(Bundle())
             view.getMapAsync(controller::attach)
         }
@@ -185,8 +218,8 @@ fun RichPhotoMapScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Row(
+    Column(modifier.fillMaxSize()) {
+        if (!embedded) Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -209,51 +242,24 @@ fun RichPhotoMapScreen(
 
         if (geoState.isIndexing) LinearProgressIndicator(Modifier.fillMaxWidth())
 
-        // The search and the filters are the Places map's own tools; a map opened for ONE photo
-        // is about that photo's place, and the chrome would only push the map down.
-        if (focus == null) OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-            singleLine = true,
-            leadingIcon = { Icon(Icons.Outlined.Map, contentDescription = null) },
-            placeholder = { ComposeText("Search filename, album or tag") },
-        )
-
-        if (focus == null) LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(MapTimeFilter.entries, key = { it.name }) { filter ->
-                FilterChip(
-                    selected = filter == timeFilter,
-                    onClick = { timeFilter = filter },
-                    label = { ComposeText(filter.label) },
-                )
-            }
-            item {
-                FilterChip(
-                    selected = selectedAlbum == null,
-                    onClick = { selectedAlbum = null },
-                    label = { ComposeText("All albums") },
-                )
-            }
-            items(albums, key = { it }) { album ->
-                FilterChip(
-                    selected = selectedAlbum == album,
-                    onClick = { selectedAlbum = if (selectedAlbum == album) null else album },
-                    label = { ComposeText(album) },
-                )
-            }
-        }
-
         Box(Modifier.weight(1f)) {
             AndroidView(
                 factory = { mapView },
                 update = { controller.update(filtered, geoState.metadataById) },
                 modifier = Modifier.fillMaxSize(),
             )
+            // Embedded only: the browser's other chrome floats along the bottom and the compass sits
+            // top right, so the pill takes the top left, clear of the status bar.
+            if (embedded) {
+                OfflineMapsPill(
+                    view = viewBox,
+                    placePoints = offlinePlacePoints,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(start = 12.dp, top = 8.dp),
+                )
+            }
             // The focused photo's tile rides the map: its screen position is re-projected on
             // every camera move by the controller and read here as a placement offset, so the
             // tile answers touches where it is drawn and the map pans underneath it.
@@ -297,6 +303,8 @@ fun RichPhotoMapScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    // Embedded, the card rises above the browser's pill and corner discs.
+                    .padding(bottom = if (embedded) EMBEDDED_LOWER_CHROME_DP.dp else 0.dp)
                     .height(116.dp)
                     .padding(8.dp)
                     .combinedClickable(
@@ -324,7 +332,7 @@ fun RichPhotoMapScreen(
             }
         }
 
-        ComposeText(
+        if (!embedded) ComposeText(
             "Pitched vector map with clustered media, hillshade and 3D building extrusion. MapLibre Android currently provides hillshade rather than a raised terrain mesh.",
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
             style = MaterialTheme.typography.labelSmall,
@@ -336,6 +344,12 @@ fun RichPhotoMapScreen(
 private class RichPhotoMapController(
     private val focus: MapFocus? = null,
     private val accentArgb: Int,
+    /** Px to lift the attribution and logo off the bottom edge; 0 leaves them where MapLibre puts them. */
+    private val lowerChromePx: Int = 0,
+    /** Px to push the compass down from the top edge; 0 leaves it where MapLibre puts it. */
+    private val upperChromePx: Int = 0,
+    /** Embedded only: the camera came to rest at (latitude, longitude, zoom) turned by bearing degrees. */
+    private val onCameraIdle: ((Double, Double, Double, Double) -> Unit)? = null,
     private val onSelected: (MediaId) -> Unit,
 ) {
     private var map: MapLibreMap? = null
@@ -357,6 +371,22 @@ private class RichPhotoMapController(
             isRotateGesturesEnabled = true
             isAttributionEnabled = true
             isLogoEnabled = true
+            // Moved, never hidden: the attribution is owed to the data's owners.
+            if (lowerChromePx > 0) {
+                setLogoMargins(logoMarginLeft, logoMarginTop, logoMarginRight, lowerChromePx)
+                setAttributionMargins(
+                    attributionMarginLeft, attributionMarginTop, attributionMarginRight, lowerChromePx,
+                )
+            }
+            if (upperChromePx > 0) {
+                setCompassMargins(compassMarginLeft, upperChromePx, compassMarginRight, compassMarginBottom)
+            }
+        }
+        onCameraIdle?.let { report ->
+            map.addOnCameraIdleListener {
+                val camera = map.cameraPosition
+                camera.target?.let { centre -> report(centre.latitude, centre.longitude, camera.zoom, camera.bearing) }
+            }
         }
         val style = if (focus != null) FOCUS_STYLE else OPEN_FREE_MAP_STYLE
         map.setStyle(Style.Builder().fromUri(style)) { loaded ->
@@ -396,6 +426,9 @@ private class RichPhotoMapController(
     }
 
     fun update(assets: List<MediaAsset>, metadata: Map<MediaId, GeoMetadata>) {
+        // AndroidView.update runs on every recomposition of the screen, and a refresh rebuilds a
+        // GeoJSON feature for every located photo. The same two lists mean nothing has changed.
+        if (assets === this.assets && metadata === this.metadata) return
         this.assets = assets
         this.metadata = metadata
         refreshSource()
@@ -634,4 +667,11 @@ private class RichPhotoMapController(
     }
 }
 
-private const val MAX_ALBUM_FILTERS = 16
+/** Clears a 48dp disc raised 20dp from the bottom edge, plus a gap. */
+private const val EMBEDDED_LOWER_CHROME_DP = 80
+
+/**
+ * The gap kept under the status bar at the top right. It cleared the browser's view switcher,
+ * which no longer exists; the value stays until the compass's place is checked on a device.
+ */
+private const val EMBEDDED_UPPER_CHROME_DP = 56

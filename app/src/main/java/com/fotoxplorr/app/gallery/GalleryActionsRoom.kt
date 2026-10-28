@@ -6,14 +6,9 @@ import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,41 +16,61 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircleOutline
+import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Text
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.fileops.BulkRenameOutcome
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.ui.ActionsRoomFrame
+import com.fotoxplorr.app.ui.QuickActionItem
 import com.fotoxplorr.app.ui.RoomEyebrow
+import com.fotoxplorr.app.ui.RoomGeography
 import com.fotoxplorr.app.ui.RoomRow
 import com.fotoxplorr.app.ui.RoomRule
-import com.fotoxplorr.app.ui.RoomStepper
 import com.fotoxplorr.app.ui.RoomStyle
-import com.fotoxplorr.app.ui.RoomToggle
 import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.launch
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
- * The gallery's RIGHT room: what you can do with the view you are looking at.
+ * The gallery's BOTTOM room: what you can do with the view you are looking at.
  *
  * The counterpart of the viewer's actions room, and the point of it is that they are the same
  * room in the same place (owner, 2026-08-18: *"the info and actions views are applicable to the
  * gallery views just as much as the single photo view -- the info would be different as well as
  * actions, but the model needs to remain the same"*).
  *
- * So the whole app now reads one way round, whatever is on screen:
+ * So the whole app reads one way round, whatever is on screen ([RoomGeography] holds the table):
  *
- * | edge   | holds                                          |
- * |--------|------------------------------------------------|
- * | LEFT   | where you can go — the destination rail        |
- * | RIGHT  | what you can do here — this room               |
- * | TOP    | settings                                       |
- * | BOTTOM | what this is — counts here, EXIF in the viewer |
+ * | edge   | holds                                                            |
+ * |--------|------------------------------------------------------------------|
+ * | LEFT   | where you can go — the destination rail                          |
+ * | TOP    | details — counts here (GalleryInfoRoom), the photo's facts there |
+ * | BOTTOM | actions — this room                                              |
+ * | RIGHT  | view options — columns and sort here, the filmstrip there        |
  *
  * The contents differ because a grid of 22,000 photos and one open photo can be *done* different
  * things to. The geography does not, which is the part a user actually memorises.
+ *
+ * The view options that used to share this room (ARRANGE and SHOW) moved to
+ * [GalleryViewOptionsRoom] at the right: you want to see the effect of those, whereas an action
+ * does not need the grid in view, so tilting the grid up out of the way suits this room.
+ *
+ * It is the two-stage room: a short pull stops on a strip of the few actions people reach for most
+ * ([galleryQuickActions]; with a selection, the selection's) and a longer one carries on to everything below it. The strip is the
+ * room's head, which is the part of a bottom room that arrives first.
  *
  * This room also carries the way into selection mode. Long press used to start a selection and now
  * holds a preview instead (owner: *"the quick preview must disappear when the long press is
@@ -80,9 +95,11 @@ fun GalleryActionsRoom(
     onStartSelection: () -> Unit,
     onNewCollection: () -> Unit,
     onCloseRoom: () -> Unit,
+    /** [dev.aarso.cellshell.SpatialController.hasBottomPeek]: false on a window too short for the
+     *  peek, where the room is single-stage and the strip would only repeat the rows below it. */
+    hasBottomPeek: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
-    val preferences = state.preferences
     val selectionActive = selection.isActive
 
     // Bulk rename lives entirely in this room rather than going through `onRenameAsset` (which
@@ -158,18 +175,70 @@ fun GalleryActionsRoom(
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(
-                start = RoomStyle.GutterStart,
-                end = RoomStyle.GutterEnd,
-                top = 28.dp,
-                bottom = 28.dp,
-            ),
+    // Rescanning closes the room, like every other action that finishes the job: its result lands
+    // behind the panel that triggered it. The strip's Refresh and the full list's "Rescan the
+    // library" are one handler, so they cannot disagree about that.
+    val refreshLibrary = { onCloseRoom(); actions.onRefresh() }
+
+    // The strip is the room's first inch (it is what a short pull stops on, see RoomGeography), so
+    // it is built from the same handlers the rows below use: browsing, the room's own entry
+    // points; with a selection, the selection's actions through the same finish{} the rows use.
+    val selectedCount = selection.count
+    val markFavourite = bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK
+    val favouritesOn = galleryFavouriteStripOn(selectedCount, markFavourite)
+    val quickActions = galleryQuickActions(selectionActive, inTrash).map { action ->
+        val stripFavouriteOn = action == GalleryQuickAction.FAVOURITE && favouritesOn
+        QuickActionItem(
+            label = galleryQuickActionLabel(action, stripFavouriteOn),
+            icon = action.icon,
+            onClick = when (action) {
+                GalleryQuickAction.SELECT -> onStartSelection
+                GalleryQuickAction.NEW_COLLECTION -> onNewCollection
+                GalleryQuickAction.REFRESH -> refreshLibrary
+                GalleryQuickAction.SHARE -> ({
+                    finishSelectionAction(selection, onSelectionChange, onCloseRoom) { actions.onShare(selectedAssets) }
+                })
+                GalleryQuickAction.ADD_TO_COLLECTION -> ({
+                    onCloseRoom()
+                    onAddToCollection(selection.selectedIds)
+                })
+                GalleryQuickAction.FAVOURITE -> ({
+                    finishSelectionAction(selection, onSelectionChange, onCloseRoom) {
+                        actions.onSetFavorite(selection.selectedIds, markFavourite)
+                    }
+                })
+                GalleryQuickAction.MOVE_TO_TRASH -> ({
+                    finishSelectionAction(selection, onSelectionChange, onCloseRoom) {
+                        actions.onMoveToTrash(selectedAssets)
+                    }
+                })
+                GalleryQuickAction.RESTORE -> ({
+                    finishSelectionAction(selection, onSelectionChange, onCloseRoom) { actions.onRestore(selectedAssets) }
+                })
+                GalleryQuickAction.DELETE_PERMANENTLY -> ({
+                    finishSelectionAction(selection, onSelectionChange, onCloseRoom) {
+                        actions.onDeletePermanently(selectedAssets)
+                    }
+                })
+            },
+            enabled = galleryQuickActionEnabled(action, selectedCount, Build.VERSION.SDK_INT),
+            // Favourite reads as "on" when every chosen photo already is one: tapping removes,
+            // so the word says "Unfavourite" and a screen reader is told the state it is in.
+            highlighted = stripFavouriteOn,
+            stateDescription = if (stripFavouriteOn) "Favourited" else null,
+        )
+    }
+
+    ActionsRoomFrame(
+        quickActions = quickActions,
+        showStrip = hasBottomPeek,
+        modifier = modifier,
+        contentPadding = PaddingValues(
+            start = RoomStyle.GutterStart,
+            end = RoomStyle.GutterEnd,
+            top = 16.dp,
+            bottom = 28.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         // Everything a SELECTION can do, when there is one. This is where the top bar's overflow
@@ -198,14 +267,15 @@ fun GalleryActionsRoom(
             RoomRule(Modifier.padding(vertical = 14.dp))
         }
 
-        RoomEyebrow("THIS VIEW")
+        // Not "THIS VIEW": that is the details room's own eyebrow, from the top edge.
+        RoomEyebrow("ORGANISE")
 
         RoomRow(
             label = if (selectionActive) "Selecting" else "Select photos",
             caption = if (selectionActive) {
-                "Tap photos to add them. The count is at the bottom of the screen."
+                HelpCopy.Caption.SELECT_WHILE_SELECTING
             } else {
-                "Then tap the ones you want."
+                HelpCopy.Caption.SELECT_TO_START
             },
             enabled = !selectionActive,
             onClick = onStartSelection,
@@ -213,60 +283,15 @@ fun GalleryActionsRoom(
 
         RoomRow(
             label = "New collection",
-            caption = "An album you make, rather than one a folder made for you.",
+            caption = HelpCopy.Caption.NEW_COLLECTION,
             onClick = onNewCollection,
         )
 
         RoomRow(
             label = "Rescan the library",
-            caption = "Look for photos added or removed outside Fotoz.",
-            onClick = actions.onRefresh,
+            caption = HelpCopy.Caption.RESCAN,
+            onClick = refreshLibrary,
         )
-
-        RoomRule(Modifier.padding(vertical = 14.dp))
-        RoomEyebrow("ARRANGE")
-
-        RoomRow(label = "Columns") {
-            RoomStepper(
-                value = "${preferences.gridColumns}",
-                onDecrease = { actions.onSetGridColumns(preferences.gridColumns - 1) },
-                onIncrease = { actions.onSetGridColumns(preferences.gridColumns + 1) },
-                canDecrease = preferences.gridColumns > MIN_GRID_COLUMNS,
-                canIncrease = preferences.gridColumns < MAX_GRID_COLUMNS,
-            )
-        }
-
-        // Stated rather than ticked: a checkmark column would be the only iconography in a room
-        // that has none, and the selected row stays full-strength while the alternatives mute --
-        // the same way the destination rail marks the destination you are in.
-        GallerySort.entries.forEach { sort ->
-            val current = preferences.sort == sort
-            RoomRow(
-                label = sortLabel(sort),
-                onClick = { actions.onSetSort(sort) },
-            ) { if (current) RoomValue("now") }
-        }
-
-        RoomRule(Modifier.padding(vertical = 14.dp))
-        RoomEyebrow("SHOW")
-
-        RoomRow(
-            label = "Videos",
-            caption = "Include videos alongside photos.",
-            onClick = { actions.onSetShowVideos(!preferences.showVideos) },
-        ) { RoomToggle(preferences.showVideos, actions.onSetShowVideos) }
-
-        RoomRow(
-            label = "Blur sensitive",
-            caption = "Photos you have marked sensitive are blurred in the grid.",
-            onClick = { actions.onSetBlurSensitive(!preferences.blurSensitive) },
-        ) { RoomToggle(preferences.blurSensitive, actions.onSetBlurSensitive) }
-
-        RoomRow(
-            label = "Hide sensitive entirely",
-            caption = "They are left out of the grid rather than blurred in it.",
-            onClick = { actions.onSetHideSensitive(!preferences.hideSensitive) },
-        ) { RoomToggle(preferences.hideSensitive, actions.onSetHideSensitive) }
     }
 
     // Rendered outside the scrolling Column deliberately -- an AlertDialog is its own window
@@ -312,32 +337,18 @@ private data class BulkRenameRequest(
     val startAt: Int,
 )
 
-/** A stated value at the end of a row, in the room's own muted ink. */
-@Composable
-private fun RoomValue(text: String) {
-    Text(text = text, color = RoomStyle.InkFaint, style = RoomStyle.Caption)
-}
-
-/** Sort orders in the words a reader uses, not the enum's. */
-private fun sortLabel(sort: GallerySort): String = when (sort) {
-    GallerySort.NEWEST -> "Newest first"
-    GallerySort.OLDEST -> "Oldest first"
-    GallerySort.NAME -> "By name"
-    GallerySort.SIZE -> "Largest first"
-}
-
 /**
  * What can be done to the photos currently chosen.
  *
  * Every one of these was a `DropdownMenuItem` hanging off the selection bar's overflow glyph. The
  * owner's mockup gives that bar exactly three glyphs and no fourth, so the menu had nowhere to
  * hang — and rows in a room are a better home for them regardless: they carry a line of
- * explanation, they are reachable one-handed from the right edge, and they do not vanish the
+ * explanation, they are reachable one-handed from the bottom edge, and they do not vanish the
  * moment a finger slips.
  *
  * Ordered by how much they change: marks first, then filing, then the destructive end. `Move to
- * trash` stays here as well as on the bottom-right block because the two are reached from opposite
- * corners and someone deep in this room should not have to leave it to finish.
+ * trash` stays here as well as on the bottom-right block because the two are reached from different
+ * places and someone deep in this room should not have to leave it to finish.
  */
 @Composable
 private fun SelectionActions(
@@ -360,11 +371,7 @@ private fun SelectionActions(
     // Every action that finishes the job clears the selection and closes the room, because the
     // result of an action landing behind the panel that triggered it is the classic way to make a
     // control feel like it did nothing.
-    fun finish(block: () -> Unit) {
-        block()
-        onSelectionChange(selection.clear())
-        onCloseRoom()
-    }
+    fun finish(block: () -> Unit) = finishSelectionAction(selection, onSelectionChange, onCloseRoom, block)
 
     RoomRow(
         label = "Select all",
@@ -390,12 +397,12 @@ private fun SelectionActions(
 
     RoomRow(
         label = "Share",
-        caption = "With frames, a seal, and metadata stripped unless you say otherwise.",
+        caption = HelpCopy.Caption.SHARE_DEFAULT,
         onClick = { finish { actions.onShare(selectedAssets) } },
     )
     RoomRow(
         label = "Share with options…",
-        caption = "Choose the frame, watermark and metadata handling for this share.",
+        caption = HelpCopy.Caption.SHARE_OPTIONS,
         onClick = { finish { actions.onShareClean(selectedAssets) } },
     )
     RoomRow(
@@ -415,7 +422,7 @@ private fun SelectionActions(
         } else {
             "Unmark sensitive"
         },
-        caption = "Sensitive photos are blurred in the grid, or hidden entirely.",
+        caption = HelpCopy.Caption.BLUR_OR_HIDE,
         onClick = {
             val mark = bulkMarkAction(selection.selectedIds, state.sensitiveIds) == BulkMarkAction.MARK
             finish { actions.onSetSensitive(selection.selectedIds, mark) }
@@ -465,8 +472,98 @@ private fun SelectionActions(
 
     RoomRow(
         label = "Move to trash",
-        caption = "Also the block in the bottom-right corner of the grid.",
+        caption = HelpCopy.Caption.TRASH_ALSO,
         enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
         onClick = { finish { actions.onMoveToTrash(selectedAssets) } },
     )
+}
+
+/**
+ * Finish a selection action: run it, clear the selection, close the room. The rows of the full
+ * list and the cells of the quick-action strip both go through this, so a strip cell and its row
+ * cannot leave the room in different states.
+ */
+private fun finishSelectionAction(
+    selection: GallerySelection,
+    onSelectionChange: (GallerySelection) -> Unit,
+    onCloseRoom: () -> Unit,
+    block: () -> Unit,
+) {
+    block()
+    onSelectionChange(selection.clear())
+    onCloseRoom()
+}
+
+/**
+ * The gallery's quick actions, in the order they sit in the strip. [label] is the short word under
+ * the glyph; the full row for the same action, further down the room, keeps its explanatory caption.
+ * Four cells share a 360dp phone, about 75dp of text each at 12sp, so the selection's labels are
+ * single short words ("Collection", "Trash"); the rows below keep "Add to collection" and "Move to
+ * trash" in full.
+ *
+ * The strip is context-aware, as the rows are: with nothing chosen it is the room's own entry points
+ * (SELECT, NEW_COLLECTION, REFRESH); once a selection is under way it is the selection's most used
+ * actions (SHARE, ADD_TO_COLLECTION, FAVOURITE, MOVE_TO_TRASH), or RESTORE and DELETE_PERMANENTLY in
+ * the trash, where the list offers no more than those.
+ */
+enum class GalleryQuickAction(val label: String, val icon: ImageVector) {
+    SELECT("Select", Icons.Outlined.CheckCircleOutline),
+    NEW_COLLECTION("New collection", Icons.Outlined.CreateNewFolder),
+    REFRESH("Refresh", Icons.Outlined.Refresh),
+    SHARE("Share", Icons.Outlined.Share),
+    ADD_TO_COLLECTION("Collection", Icons.Outlined.Folder),
+    FAVOURITE("Favourite", Icons.Outlined.FavoriteBorder),
+    MOVE_TO_TRASH("Trash", Icons.Outlined.DeleteOutline),
+    RESTORE("Restore", Icons.Outlined.Restore),
+    DELETE_PERMANENTLY("Delete forever", Icons.Outlined.DeleteForever),
+}
+
+/**
+ * The quick actions allowed right now. Once a selection is under way, starting one is not an
+ * action any more, and New collection and Refresh do not act on the chosen photos (reaching the
+ * real selection actions would need the longer pull), so the strip becomes the selection's own.
+ * An empty answer would mean no strip and no peek stop; no state currently gives one.
+ */
+fun galleryQuickActions(selectionActive: Boolean, inTrash: Boolean = false): List<GalleryQuickAction> = when {
+    !selectionActive -> listOf(
+        GalleryQuickAction.SELECT,
+        GalleryQuickAction.NEW_COLLECTION,
+        GalleryQuickAction.REFRESH,
+    )
+    inTrash -> listOf(GalleryQuickAction.RESTORE, GalleryQuickAction.DELETE_PERMANENTLY)
+    else -> listOf(
+        GalleryQuickAction.SHARE,
+        GalleryQuickAction.ADD_TO_COLLECTION,
+        GalleryQuickAction.FAVOURITE,
+        GalleryQuickAction.MOVE_TO_TRASH,
+    )
+}
+
+/**
+ * Whether the strip's Favourite cell reads as switched on: a selection exists and every photo in it
+ * is already a favourite, so a tap removes them ([markFavourite] false is the bulk rule's answer
+ * for exactly that).
+ */
+fun galleryFavouriteStripOn(selectedCount: Int, markFavourite: Boolean): Boolean =
+    selectedCount > 0 && !markFavourite
+
+/**
+ * The word under [action]'s glyph. Favourite becomes "Unfavourite" when it is [favouriteOn],
+ * because the cell then removes favourites and the tint alone must not be the only thing saying so
+ * (TalkBack would otherwise read "Favourite, button" for a cell that un-favourites).
+ */
+fun galleryQuickActionLabel(action: GalleryQuickAction, favouriteOn: Boolean = false): String =
+    if (action == GalleryQuickAction.FAVOURITE && favouriteOn) "Unfavourite" else action.label
+
+/**
+ * Whether [action]'s cell answers. A selection action needs a photo chosen (a selection that has
+ * just begun is empty), and trash, restore and permanent delete need Android 11's batched system
+ * request, exactly as the rows' own `enabled` says. Browsing actions always answer.
+ */
+fun galleryQuickActionEnabled(action: GalleryQuickAction, selectionCount: Int, sdkInt: Int): Boolean = when (action) {
+    GalleryQuickAction.SELECT, GalleryQuickAction.NEW_COLLECTION, GalleryQuickAction.REFRESH -> true
+    GalleryQuickAction.SHARE, GalleryQuickAction.ADD_TO_COLLECTION, GalleryQuickAction.FAVOURITE ->
+        selectionCount > 0
+    GalleryQuickAction.MOVE_TO_TRASH, GalleryQuickAction.RESTORE, GalleryQuickAction.DELETE_PERMANENTLY ->
+        selectionCount > 0 && sdkInt >= Build.VERSION_CODES.R
 }
