@@ -151,6 +151,8 @@ internal class RetrieverVideoReader private constructor(
         return VideoInfo(if (quarter) h else w, if (quarter) w else h, max(0L, duration)).also { info = it }
     }
 
+    // The scaled read is behind [sdk], which is the platform's level handed in so a test can lower it; lint cannot follow that.
+    @Suppress("NewApi")
     override fun frameAt(timeMs: Long, maxWidth: Int, maxHeight: Int): RawFrame? {
         val upright = info() ?: return null
         val timeUs = max(0L, timeMs) * 1000L

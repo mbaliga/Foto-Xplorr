@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.reel
 
+import androidx.media3.common.util.UnstableApi
 import com.fotoxplorr.app.hyle.ActivityKind
 import com.fotoxplorr.app.jobs.JobHandle
 import com.fotoxplorr.app.jobs.JobRunner
@@ -150,6 +151,8 @@ object ReelJob {
     private const val PROGRESS_STEP = 0.004f
 
     /** Run the whole job. Returns a [ReelOutcome]; throws only a cancellation. [onProgress] gets 0..1, rising. */
+    // ReelFailures sits in the Media3-facing file; the out-of-space check used here touches none of it.
+    @androidx.annotation.OptIn(UnstableApi::class)
     suspend fun run(
         request: ReelRequest,
         host: ReelHost,

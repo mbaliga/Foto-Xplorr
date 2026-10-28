@@ -1,7 +1,6 @@
 package com.fotoxplorr.app.reel
 
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -274,8 +273,8 @@ internal object ReelCopy {
      * which is as far as this goes without the platform's skeleton formatter.
      */
     fun titleText(startMillis: Long, endMillis: Long, place: String?, zone: ZoneId, locale: Locale): String {
-        val first = LocalDate.ofInstant(Instant.ofEpochMilli(startMillis), zone)
-        val last = LocalDate.ofInstant(Instant.ofEpochMilli(maxOf(startMillis, endMillis)), zone)
+        val first = Instant.ofEpochMilli(startMillis).atZone(zone).toLocalDate()
+        val last = Instant.ofEpochMilli(maxOf(startMillis, endMillis)).atZone(zone).toLocalDate()
         val long = DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG).withLocale(locale)
         val dates = when {
             first == last -> long.format(first)
