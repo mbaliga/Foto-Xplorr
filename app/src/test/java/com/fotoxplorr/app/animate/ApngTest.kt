@@ -526,6 +526,40 @@ class ApngTest {
         val frames = (0 until 3).map { HandPng.Frame(0, 0, 2, 2, 1, 10, 0, 0, solid(2, 2, RED)) }
         val r = ApngReader.decodeAll(HandPng.apng(2, 2, 0, frames, seqOverride = { if (it >= 3) it + 5 else it }))
         assertEquals(DecodeProblem.CORRUPT, r.problem)
+        assertEquals("the frames wholly before the break are kept", 2, r.sequence!!.frames.size)
+    }
+
+    @Test
+    fun `a wrong sequence number inside a late frame keeps the frames before it`() {
+        val frames = (0 until 4).map { HandPng.Frame(0, 0, 2, 2, 1, 10, 0, 0, solid(2, 2, AnimTestKit.argb(255, it * 50, 0, 0))) }
+        // fcTL 0, IDAT, fcTL 1, fdAT 2, fcTL 3, fdAT 4 (wrong), ...: the third frame is cut, two are whole.
+        val r = ApngReader.decodeAll(HandPng.apng(2, 2, 0, frames, seqOverride = { if (it >= 4) it + 5 else it }))
+        assertEquals(DecodeProblem.CORRUPT, r.problem)
+        assertEquals(2, r.sequence!!.frames.size)
+    }
+
+    @Test
+    fun `a file of far more frames than the limit is not listed in full`() {
+        val frames = (0 until 40).map { HandPng.Frame(0, 0, 2, 2, 1, 10, 0, 0, solid(2, 2, AnimTestKit.argb(255, it * 5, 0, 0))) }
+        val reader = ApngReader(HandPng.apng(2, 2, 0, frames), DecodeLimits(maxFrames = 3))
+        var count = 0
+        while (reader.next() != null) count++
+        assertEquals("one past the limit is enough for a caller to see the file is longer", 4, count)
+        assertEquals(DecodeProblem.TOO_LARGE, reader.problem)
+    }
+
+    @Test
+    fun `an endless run of tiny chunks is given up on, keeping the frames before it`() {
+        val frames = (0 until 2).map { HandPng.Frame(0, 0, 2, 2, 1, 10, 0, 0, solid(2, 2, AnimTestKit.argb(255, it * 80, 0, 0))) }
+        val whole = HandPng.apng(2, 2, 0, frames)
+        val out = ByteArrayOutputStream()
+        out.write(whole, 0, whole.size - 12) // everything but IEND
+        val junk = HandPng.chunk("tEXt", ByteArray(0))
+        repeat(210_000) { out.write(junk) }
+        out.write(whole, whole.size - 12, 12)
+        val r = ApngReader.decodeAll(out.toByteArray())
+        assertEquals(DecodeProblem.TOO_LARGE, r.problem)
+        assertEquals(2, r.sequence!!.frames.size)
     }
 
     @Test

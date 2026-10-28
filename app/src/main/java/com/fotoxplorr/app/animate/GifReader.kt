@@ -15,7 +15,9 @@ package com.fotoxplorr.app.animate
  * Nothing here throws on bad bytes. [next] returns the frames it could read; at the first thing it
  * cannot make sense of it sets [problem] and returns null from then on. A frame whose pixel data
  * ends early or breaks is still returned, with what was decoded painted and the rest left as the
- * canvas had it, because that is what viewers show.
+ * canvas had it, because that is what viewers show. A frame whose data merely ends before all its
+ * pixels (an end-of-information code that came early) sets [problem] but reading goes on with the
+ * frames after it; a cut file or a bad code still stops it.
  *
  * ## Delays
  * A GIF stores hundredths of a second. With [browserDelays] (the default) a delay of 10 ms or less
@@ -65,10 +67,14 @@ class GifReader(
         readHeader()
     }
 
+    /** True while [problem] is only the note on a short frame, which a later, harder failure may replace. */
+    private var soft = false
+
     private fun fail(p: DecodeProblem, why: String) {
-        if (problem == DecodeProblem.NONE) {
+        if (problem == DecodeProblem.NONE || soft) {
             problem = p
             detail = why
+            soft = false
         }
         done = true
     }
@@ -290,7 +296,17 @@ class GifReader(
         val res = GifLzw.decode(stream, streamLen, minCode, indices, total)
         if (cut) fail(DecodeProblem.TRUNCATED, "image data cut short")
         else if (res.end == GifLzw.End.BAD_CODE) fail(DecodeProblem.CORRUPT, "bad LZW code")
-        else if (res.end != GifLzw.End.FULL) fail(DecodeProblem.CORRUPT, "image data ended early")
+        else if (res.end != GifLzw.End.FULL) {
+            if (res.count == 0) {
+                fail(DecodeProblem.CORRUPT, "image data ended early")
+            } else if (problem == DecodeProblem.NONE) {
+                // Writers that end a frame's data early exist and viewers paint the short frame and go on: so does this,
+                // saying the file is damaged but not stopping.
+                problem = DecodeProblem.CORRUPT
+                detail = "image data ended early"
+                soft = true
+            }
+        }
         if (res.count == 0 && problem != DecodeProblem.NONE) return null
 
         // Frame bookkeeping first: dispose of the last frame, remember what a disposal-3 frame must restore.

@@ -17,8 +17,13 @@ import java.util.zip.CRC32
  * ## Damaged files
  * Like [GifReader], nothing throws. Every chunk's CRC is checked while the file is scanned; the scan
  * stops at the first chunk that is cut off or fails its CRC, and the frames that were wholly before
- * it are returned with [problem] set. A frame whose pixel data does not inflate to the size its
- * header says is not returned.
+ * it are returned with [problem] set. A frame sequence number out of order is treated the same way
+ * (the scan stops there, the frames before it are kept). A frame whose pixel data does not inflate
+ * to the size its header says is not returned.
+ *
+ * The scan is bounded: it lists at most [DecodeLimits.maxFrames] + 1 frames and [MAX_CHUNKS] chunks and
+ * then stops with [DecodeProblem.TOO_LARGE], so a 32 MB file of empty chunks cannot make millions of
+ * objects before the first frame is read.
  *
  * Delays are returned as written (a delay of 0 stays 0); there is no browser-style rounding up.
  */
@@ -112,6 +117,11 @@ class ApngReader(private val data: ByteArray, private val limits: DecodeLimits =
                 scanDetail = "bad CRC in $type"
                 break
             }
+            if (chunks.size >= MAX_CHUNKS) {
+                scanProblem = DecodeProblem.TOO_LARGE
+                scanDetail = "more than $MAX_CHUNKS chunks"
+                break
+            }
             chunks.add(Chunk(type, pos + 8, len))
             pos += 12 + len
             if (type == "IEND") {
@@ -145,7 +155,8 @@ class ApngReader(private val data: ByteArray, private val limits: DecodeLimits =
         var current: Rec? = null
         var seenIdat = false
         var idatTarget: MutableList<Chunk>? = null
-        for (c in chunks.drop(1)) {
+        for (ci in 1 until chunks.size) {
+            val c = chunks[ci]
             when (c.type) {
                 "PLTE" -> palette = IntArray(c.len / 3) { i ->
                     (0xFF shl 24) or ((data[c.off + i * 3].toInt() and 255) shl 16) or ((data[c.off + i * 3 + 1].toInt() and 255) shl 8) or (data[c.off + i * 3 + 2].toInt() and 255)
@@ -163,7 +174,14 @@ class ApngReader(private val data: ByteArray, private val limits: DecodeLimits =
                 }
                 "fcTL" -> if (animated && c.len >= 26) {
                     if (PngIo.readBe32(data, c.off) != expectSeq) {
-                        fail(DecodeProblem.CORRUPT, "frame sequence numbers out of order")
+                        // Like a bad CRC: the frames wholly before this point are still good.
+                        scanProblem = DecodeProblem.CORRUPT
+                        scanDetail = "frame sequence numbers out of order"
+                        break
+                    }
+                    if (recs.size > limits.maxFrames) {
+                        scanProblem = DecodeProblem.TOO_LARGE
+                        scanDetail = "more frames than the limit"
                         break
                     }
                     expectSeq++
@@ -187,7 +205,8 @@ class ApngReader(private val data: ByteArray, private val limits: DecodeLimits =
                 }
                 "fdAT" -> if (animated && c.len >= 4) {
                     if (PngIo.readBe32(data, c.off) != expectSeq) {
-                        fail(DecodeProblem.CORRUPT, "frame sequence numbers out of order")
+                        scanProblem = DecodeProblem.CORRUPT
+                        scanDetail = "frame sequence numbers out of order"
                         break
                     }
                     expectSeq++
@@ -445,6 +464,9 @@ class ApngReader(private val data: ByteArray, private val limits: DecodeLimits =
     }
 
     companion object {
+        /** Chunks listed from one file before the scan gives up; a real file of 32 MB has far fewer (libpng cuts its data chunks at 8 KB). */
+        const val MAX_CHUNKS = 200_000
+
         private val ADAM7 = arrayOf(
             intArrayOf(0, 0, 8, 8), intArrayOf(4, 0, 8, 8), intArrayOf(0, 4, 4, 8), intArrayOf(2, 0, 4, 4),
             intArrayOf(0, 2, 2, 4), intArrayOf(1, 0, 2, 2), intArrayOf(0, 1, 1, 2),

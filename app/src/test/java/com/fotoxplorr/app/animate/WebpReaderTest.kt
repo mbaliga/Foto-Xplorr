@@ -200,6 +200,15 @@ class WebpReaderTest {
     }
 
     @Test
+    fun `a file of far more frames than the limit is not listed in full`() {
+        val b = HandWebp(8, 6, loop = 0)
+        repeat(30) { b.solid(0, 0, 8, 6, red, durationMs = 50) }
+        val (frames, r) = read(b.build(), DecodeLimits(maxFrames = 3)).let { it.first to it.second }
+        assertEquals("one past the limit is enough for a caller to see the file is longer", 4, frames.size)
+        assertEquals(DecodeProblem.TOO_LARGE, r.problem)
+    }
+
+    @Test
     fun `cutting the file at every length never throws, and what comes back is a prefix of the frames`() {
         val whole = threeFrames()
         val full = read(whole).first.map { it.pixels.toList() }

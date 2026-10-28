@@ -276,6 +276,39 @@ class GifReaderTest {
     }
 
     @Test
+    fun `a frame whose data ends early is part painted and the frames after it are still read`() {
+        val b = HandGif(4, 2, palette)
+        val first = intArrayOf(1, 1, 1, 1, 2, 2, 2, 2)
+        b.gce(0, 10).image(0, 0, 4, 2, first)
+        // The second frame says 4 x 2 but its data holds one row (the writer's end-of-information code came early).
+        val at = b.gce(0, 10).bytes().size
+        b.image(0, 0, 4, 1, intArrayOf(3, 3, 3, 3))
+        b.gce(0, 10).image(0, 0, 4, 2, intArrayOf(0, 0, 0, 0, 0, 0, 0, 0)).trailer()
+        val raw = b.bytes()
+        raw[at + 7] = 2 // the descriptor's height
+        val r = GifReader.decodeAll(raw)
+        val frames = r.sequence!!.frames
+        assertEquals("the frame after the short one is not lost", 3, frames.size)
+        assertEquals(DecodeProblem.CORRUPT, r.problem)
+        assertEquals(opaque(BLUE), frames[1].pixels[0])
+        assertEquals("the unpainted row keeps what the canvas had", opaque(GREEN), frames[1].pixels[4])
+        assertEquals(opaque(WHITE), frames[2].pixels[7])
+    }
+
+    @Test
+    fun `a hard failure after a short frame replaces the soft problem`() {
+        val b = HandGif(4, 2, palette)
+        val at = b.gce(0, 10).bytes().size
+        b.image(0, 0, 4, 1, intArrayOf(3, 3, 3, 3))
+        val raw = b.bytes() + byteArrayOf(0x77, 1, 2, 3)
+        raw[at + 7] = 2
+        val r = GifReader.decodeAll(raw)
+        assertEquals(1, r.sequence!!.frames.size)
+        assertEquals(DecodeProblem.CORRUPT, r.problem)
+        assertTrue(r.detail, r.detail.contains("unknown block"))
+    }
+
+    @Test
     fun `random byte damage never throws and is always reported or harmless`() {
         val sequence = AnimTestKit.photoSequence(24, 18, 4)
         val good = GifEncoder.encode(sequence)

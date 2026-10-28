@@ -21,6 +21,8 @@ package com.fotoxplorr.app.animate
  * ## Damaged files
  * Like the GIF and APNG readers, nothing here throws: [next] returns the frames it could read and
  * sets [problem] at the first thing it cannot. A file that ends inside a frame loses that frame.
+ * At most [DecodeLimits.maxFrames] + 1 frames are listed ([DecodeProblem.TOO_LARGE] after them), so a
+ * 32 MB file of empty frames does not become a million objects before the first is read.
  *
  * ## Delays
  * A duration of 10 ms or less comes back as 100 ms, the rule [GifReader] applies for the same
@@ -132,6 +134,10 @@ internal class WebpReader(
                     val flags = data[payload + 15].toInt() and 255
                     if (x.toLong() + w > width || y.toLong() + h > height) {
                         scanFail(DecodeProblem.CORRUPT, "a frame lies outside the canvas")
+                        break
+                    }
+                    if (recs.size > limits.maxFrames) {
+                        scanFail(DecodeProblem.TOO_LARGE, "more frames than the limit")
                         break
                     }
                     recs.add(Rec(x, y, w, h, le24(payload + 12), (flags and 1) != 0, (flags and 2) == 0, payload + 16, payload + len))
