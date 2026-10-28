@@ -97,8 +97,8 @@ microphone.
 
 The reel maker can put **one sound file you choose** under the video it makes. You pick the
 file with Android's own file picker, so Fotoz needs no audio permission and cannot see your
-other music. The file is read only while the video is being made, and nothing is played back
-in Fotoz. The new video is saved on your device; nothing is sent anywhere.
+other music. The file is read to make the video, and Fotoz keeps the right to read that one file until
+you remove it or replace it. Nothing is played back in Fotoz. The new video is saved on your device; nothing is sent anywhere.
 
 ## Organising is reversible
 

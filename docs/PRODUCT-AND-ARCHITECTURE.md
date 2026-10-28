@@ -724,16 +724,20 @@ no manifest change. A pure core has no Android types; one Android seam sits arou
 
 Each is a pure core plus Android seams, with every sentence in its own Copy object, in the panorama's pattern.
 The sizes are `main` / `test` lines. **None of it has run on a device.** The per-tool device checks are in
-`docs/device-test/batch-8-checklist.md`; the traps are TRAPS #99 to #124.
+`docs/device-test/batch-8-checklist.md`; the traps are TRAPS #99 to #125.
 
 - **Colour vision** (`vision/`, 3.2k / 2.9k). Simulation is the Machado 2009 severity-1 matrices (33 published, taken
   from two published copies that agree to the last digit; the authors' own page was not reachable, so not compared
-  directly) applied in linear light; daltonize is one 3x3 (`I + A(I - S)`) so it is exact per pixel and exportable.
-  In the viewer (`ViewerSettingsRoom` gained an optional slot; `ViewerScreen` a defaulted `colourVisionMayCopy`)
+  directly) applied in linear light; daltonize is one 3x3 (`I + A(I - S)`) scaled per colour to stay in the gamut
+  (`Daltonizer.fitInto`), so it is exact per pixel and exportable.
+  In the viewer (`ViewerSettingsRoom` gained an optional slot; `ViewerScreen` a defaulted `colourVisionMayCopy`,
+  which `FotoXplorrActivity` now passes: it reads the sensitive store and the locked folders live and refuses a locked
+  folder's copy that would land outside the folder)
   the photo is first drawn through the 4x5 `ColorMatrix` preview, then replaced by the exact per-pixel picture
   from a 2048 px / 3 MP `decodeUpright` read. Names, patterns and the corrected copy read pixels the same way and
   are tagged with a `PhotoKey` so a swipe never shows the previous photo's colours. The corrected copy is a job
-  through `EditedCopyWriter` (`-edited.jpg`, so it keeps the location like an editor copy); it is refused for
+  through `EditedCopyWriter` (the original's format, JPEG, PNG or WebP, `-edited.<ext>`; `keepLocation = false`, so it
+  carries no place); it is refused for
   sensitive photos, photos opened from another app, and anything but a plain still photo. The check is seven dot
   plates and a result that is a maybe. Not for video (`VideoView` is surface-backed).
 - **Editor hub** (`editor/`, `ToolCatalog`, `HubModel`, `ToolUsage`, `HubRing*`). The tab strip is gone. Home is
@@ -741,15 +745,18 @@ The sizes are `main` / `test` lines. **None of it has run on a device.** The per
   changed; the centre moves only when a tool is closed and only when a newcomer beats the weakest centre tool by 25
   percent plus half a use, in that tool's slot. Memory is one `SharedPreferences` string. The editor is a full-screen
   branch of the activity that replaces the shell, so the shell's edge zones do not apply under it (TRAPS #72 note).
-  `EditTool` and the slider labels stay literals in `EditorScreen.kt` because `ToolCatalogTest` scans them.
+  `EditTool` names and each `shows(ToolIds.X)` block's first slider label stay literals in `EditorScreen.kt` because
+  `ToolCatalogTest` scans them; titles are not matched any more.
 - **Palette builder** (`palettebuilder/`, 4.0k / 3.5k). One saved string carries the draft through process death;
   saved palettes are `filesDir/palettes/palettes.txt` (atomic, a name is the identity, a damaged entry copied to
   `.bad`). Photos are read only through `ExperimentEnv`; share is plain text per format or a swatch-card PNG through a
-  `palette-cards` cache path in `file_paths.xml`. A recoloured copy goes through the editor's writer and so carries
+  `palette-cards` cache path in `file_paths.xml`. A new default-named palette takes the first free "My palette N". A
+  recoloured copy goes through the editor's writer and so carries
   the original's metadata including its place (an owner decision, see MASTER-PROGRESS batch 8).
 - **Animated pictures** (`animate/`, 7.6k / 8.4k). GIF is streamed, APNG needs the whole sequence (held to 30 percent
   of the heap before it is tried), the planner caps long edge, frames, bytes and seconds and steps down; an
-  over-size or out-of-memory result is remade smaller by a ladder and says so. `ImageDecoder` cannot step an
+  over-size or out-of-memory result is remade smaller by a ladder and says so; a capped fading slideshow keeps every
+  photo's hold and drops fade frames first. `ImageDecoder` cannot step an
   animation, so GIF and APNG use the package's own readers and animated WebP uses a pure-Kotlin container reader plus
   the platform still-WebP decoder (works from API 26; real encoders' files untested). Output goes to
   `Pictures/Fotoz/Animations`; APNG is saved as a `.png`.
@@ -767,9 +774,10 @@ The sizes are `main` / `test` lines. **None of it has run on a device.** The per
   metadata, in `Pictures/Fotoz/Boards`. Multiply on API 26 to 28 uses a white-backing fallback.
 - **Chroma ID** (`chroma/`, 4.5k / 3.1k). Method: a torch-off and a torch-on frame under one locked exposure,
   white balance and focus; the difference is the surface lit by the torch alone, and a white card shot under the same
-  lock fixes the torch's own colour and brightness (without one the reading is labelled approximate and the lightness
-  is a guess). On synthetic frames that obey the model exactly the card reading has a mean CIEDE2000 of 0.4 to 0.8 with
-  noise; a phone's tone curve is the biggest unverified assumption. Camera2 not CameraX (ADR-017).
+  lock fixes the torch's own colour and brightness, to about 3 to 6 at best (without one the reading is labelled
+  approximate: only the shade is recovered, and its lightness is not measured and is shown at a fixed middle level,
+  because auto exposure lights a dark surface and a light one alike). On synthetic frames that obey the model exactly
+  the card reading has a mean CIEDE2000 of 0.4 to 0.8 with noise; a phone's tone curve is the biggest unverified assumption. Camera2 not CameraX (ADR-017).
 
 ---
 
@@ -869,8 +877,9 @@ The sizes are `main` / `test` lines. **None of it has run on a device.** The per
 - **Batch 8 has not run on a device.** The colour-vision filter, the editor hub, the palette builder, the GIF/APNG/MP4
   maker, the reel maker, the mood board and Chroma ID are built and tested against fakes, Robolectric and synthetic data
   only. The riskiest unknowns: the reel's layered fade render, whether a phone's tone curve leaves Chroma ID's
-  flash-minus-ambient subtraction linear enough, and APNG/GIF output in other apps. Two copies (the colour-vision
-  corrected copy and the palette recolour) keep the photo's location because they use the editor's writer. Tools that read
+  flash-minus-ambient subtraction linear enough, and APNG/GIF output in other apps. One copy (the palette recolour)
+  keeps the photo's location because it uses the editor's writer with the default; the colour-vision corrected copy
+  passes `keepLocation = false`. Tools that read
   library photos are unverified on Android 8.0 and 8.1 (`decodeUpright`). The checklist is
   `docs/device-test/batch-8-checklist.md`; the camera and sound decisions are ADR-017.
 - **Panorama (batch 7) has not run on a device and no real photograph has gone through it.** Procedural scenes

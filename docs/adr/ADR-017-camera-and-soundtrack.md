@@ -15,7 +15,7 @@ Batch 8 adds two tools that each need one narrow exception. The owner decided bo
 
 ## Decision 1 — Chroma ID may use the camera, inside that tool only
 
-**Chroma ID** (`chroma/`, Experimental > Explore) reads the colour of a surface from two phone pictures, one with the torch off and one with it on, and subtracts the room's light (a white card beside the surface makes it exact). It cannot work from library photos: it needs two frames taken under the same locked exposure, white balance and focus, and a controlled light.
+**Chroma ID** (`chroma/`, Experimental > Explore) reads the colour of a surface from two phone pictures, one with the torch off and one with it on, and subtracts the room's light (a white card beside the surface corrects it, to about 3 to 6 CIEDE2000 off at best). It cannot work from library photos: it needs two frames taken under the same locked exposure, white balance and focus, and a controlled light.
 
 What is allowed:
 
@@ -36,8 +36,8 @@ What stays forbidden: a camera in any other screen; a live-camera wall or AR; sa
 What is allowed:
 
 - The file comes from the system **document picker** (`ACTION_OPEN_DOCUMENT`, audio types only). **No audio permission** is declared or requested: not `READ_MEDIA_AUDIO`, not `RECORD_AUDIO`, not `READ_EXTERNAL_STORAGE` for audio. `SoundtrackPickerTest` checks the merged manifest for both. The persistable read grant on the picked address (`SoundtrackAccess.keep`) lets a saved reel find the file again; if the grant is refused the screen says it may need picking again.
-- The file is read **only by the export**, by Media3 Transformer, as an audio track of the new video. **Nothing is ever played back in Fotoz.** There is no audio player, no preview of the sound, no waveform and no music library; the reel preview is pictures only.
-- If the sound file cannot be read or fails during the export, **nothing is saved** and the job asks "Make the reel without sound?"; only a yes makes a silent reel. A file is never silently dropped.
+- The file's name is asked from the provider when the Sound panel opens, it is probed with `MediaExtractor` at the start of the job, and it is read by the export, by Media3 Transformer, as an audio track of the new video. The app holds the persistable read grant for it until the sound is replaced or removed or its reel is deleted (released only if no other saved reel lays it; `ReelSoundGrants`). **Nothing is ever played back in Fotoz.** There is no audio player, no preview of the sound, no waveform and no music library; the reel preview is pictures only.
+- If the sound file cannot be read or fails during the export (a container the export cannot parse arrives as `ExportException` `ERROR_CODE_UNSPECIFIED` with a `ParserException` in the causes, since Media3 1.9.0 has no `PARSING_CONTAINER_*` codes there; it is not retried smaller), **nothing is saved** and the job asks "Make the reel without sound?"; only a yes makes a silent reel. A file is never silently dropped.
 - The video is written by a muxer that drops every metadata entry of the source clips (including where and when they were filmed) and the finished file is looked at for a place and refused if it has one.
 - The Experimental page says so in one line (`HelpCopy.Note.EXPERIMENTAL_SOUND`): *"Fotoz has no music library; a reel can carry one sound file you pick."*
 

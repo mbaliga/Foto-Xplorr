@@ -1403,10 +1403,13 @@ not write a test that assumes "simulate twice changes nothing"; the tests pin th
 
 An `android.graphics.ColorMatrix` has no transfer curve, so `GpuFilter` applies the 3x3 to encoded values. Measured
 against the exact linear-light result: simulate is off by up to 83 to 89 steps over all colours and 27 to 33 over
-muted ones; daltonize by up to 111 to 117 and 91 to 103. A least-squares refit in the encoded domain was tried and
-was no better in the worst case. Rule: `GpuFilter.simulate` is the live preview only, `GpuFilter.daltonize` is a rough
-hint, and the viewer's exact picture, the names, the patterns and the corrected copy all use `Simulation.simulateAll` and
-`Daltonizer.daltonizeAll`. The viewer shows the preview first and swaps in the exact picture a moment later; a visible
+muted ones; daltonize by up to 227 to 242 over all colours and 60 to 61 over muted ones (mean 10 to 13), because the
+exact reference is now the in-gamut `Daltonizer.fitInto` (one scale per colour, so no channel is clamped), not a plain
+clamped product. A least-squares refit in the encoded domain was tried and was no better in the worst case. Rule:
+`GpuFilter.simulate` is the live preview only, `GpuFilter.daltonize` is a rough hint (at the extremes it is now much
+further from the exact result), and the viewer's exact picture, the names, the patterns and the corrected copy all use
+`Simulation.simulateAll` and `Daltonizer.daltonizeAll`. A file that can only be previewed (animated, vector, RAW) stays
+on the preview for good and says "rough view" on the chip and in the room. The viewer shows the preview first and swaps in the exact picture a moment later; a visible
 shift at the swap on dark or saturated photos is expected and is a device check. Daltonize makes confusable colours
 distinguishable; it does not show a colour-blind person normal vision (the KDoc says so).
 
@@ -1419,7 +1422,9 @@ would draw the previous photo's filtered bitmap and a tap would read the previou
 on the asset and captures its first closure (#50), so the new `onTap` reads one remembered holder, the
 delegated-state geometry at call time and the key through `rememberUpdatedState`. A tap with names on is consumed
 only when it hit the picture and the pixels are read; otherwise it is the ordinary chrome toggle, so the black margin
-always brings the bars back (#62, #76, #78). No drag was added to the viewer, and the name label, chip and notice stay
+always brings the bars back (#62, #76, #78). The colour index is stored as a `KeyedIndex` and `putIndex` ignores a key
+that is not the current photo (a late quantize of the previous photo cannot hatch the next one); a photo whose read
+failed is drawn as it is (`displayPlan(unreadable)`). No drag was added to the viewer, and the name label, chip and notice stay
 `ShellEdges.INSET_DP` from every edge (#72). Compose 1.8's `GraphicsLayerScope` here has no `colorFilter`, so the live
 preview is an offscreen `saveLayer` with a `Paint` colour filter in `colourMatrixLayer`, not an edit of `MediaImage`.
 Video is not supported (`VideoView` is surface-backed, a Compose filter would not apply); the room says so in one sentence.
@@ -1445,21 +1450,29 @@ ordinary failed `Result` after the file exists. The corrected-copy job (vision) 
 builder) therefore run the writer inside `NonCancellable` and discard the new row themselves when the cancel
 arrived meanwhile, so "Cancelled." never has a copy behind it. A test fake that cancels inside `save` will never see a
 discard: the fake must be uncancellable too and the test must wait for the caller job's `isCancelled` before it
-releases the write, or the job simply completes first. The writer also has one fixed marker (`-edited.jpg`) and copies
-the source's EXIF/XMP **including the place**, as an editor copy in the library does. So the colour-vision corrected
-copy and the palette recolour copy both carry GPS; they are not the stripped `Save to...` export. This is on the
-owner list (a `keepLocation` switch on `save()` is a small change in `editor/`).
+releases the write, or the job simply completes first. The writer keeps one fixed marker (`-edited`) and, by default,
+copies the source's EXIF/XMP **including the place**, as an editor copy in the library does. `save()` now has a
+`keepLocation` switch (default true, so every other caller is unchanged): the colour-vision corrected copy passes false
+(`EditorCopySink`; `CorrectedCopySinkTest` proves no GPS tag reaches the copy while date and make stay) and keeps the
+original's JPEG, PNG or WebP format (`-edited.png`, `-edited.webp`; HEIC and other sources give JPEG). Only the palette
+recolour copy still carries GPS, so it is not the stripped `Save to...` export; passing `keepLocation = false` there
+is an owner decision. The corrected copy is also refused when the photo's folder is locked and the copy would land
+outside it (`colourVisionCopyAllowed`, wired in `FotoXplorrActivity`).
 
 ## 104. The editor hub: the catalogue is tied to `EditorScreen.kt` by tests, and a new control must call `hub.applied()`
 
-`EditTool` (the old tab enum) is private and was not changed; `ToolCatalog` carries each tool's `hostTab` as the enum
-entry's name, and `ToolCatalogTest` scans `EditorScreen.kt` as text (same technique as `HelpCopyTest`) for the tab
-names, every `LabelledSlider` label and every catalogue title as a literal, and checks that every `Adjustments` and
-`EditRecipe` property is claimed by exactly one tool. Rename a tab or a label and the test fails until the catalogue
-follows; the scan guards itself (it asserts it found at least 9 tabs and 15 labels). A tool shows only its own control
-now (`shows(ToolIds.X)` around each existing control); Vignette is hosted by the Detail panel but filed under Effects;
-Reset all and Revert to original are catalogue *actions*, never centre-eligible, and now take two taps. **A new tool
-control added later must call `hub.applied()` where it changes the recipe, or it will never be learned**; Undo, Redo
+`EditTool` (the old tab enum) is private and is now a plain enum without a label string; `ToolCatalog` carries each
+tool's `hostTab` as the enum entry's name, and `ToolCatalogTest` scans `EditorScreen.kt` as text (same technique as
+`HelpCopyTest`) for the tab names, each `if (shows(ToolIds.X)) { LabelledSlider("Title"` block (the id and the first
+slider label must match the catalogue), `shows(ToolIds.X)` for every BUTTON and ACTION tool, and a drawing block per
+host tab (`CurvesEditor` for Curves), and checks that every `Adjustments` and `EditRecipe` property is claimed by
+exactly one tool. Titles are no longer matched as literals. Rename a tab or a label and the test fails until the
+catalogue follows; the scan guards itself (it asserts it found at least 9 tabs and 15 drawn sliders). It does not check
+that a `shows` block sits inside its own host tab's branch. A tool shows only its own control now (`shows(ToolIds.X)`
+around each existing control); Vignette is hosted by the Detail panel but filed under Effects; Reset all and Revert to
+original are catalogue *actions*, never centre-eligible, take two taps, and are not counted as uses (`HubModel.record`
+ignores them and `groupPage` never promotes them), so they stay one tap deeper. **A new tool control added later must
+call `hub.applied()` where it changes the recipe (except an ACTION tool), or it will never be learned**; Undo, Redo
 and the auto-fix chips deliberately do not count. `HubModel.view` never recomputes the centre; only `settle`, `closeTool`,
 `showGroup` and back-from-tool do, and `settle` runs when a *new* `HubSession` is made (editor entry), not when one is
 restored, so a restored session cannot move the centre under an open tool.
@@ -1473,7 +1486,13 @@ The hub's `BackHandler` is composed inside `EditorScreen` after the activity's `
 asked first, and it is enabled only while `HubModel.back(state) != null`; with the Save sheet or the Continue-editing
 dialog open the back press must still be theirs. A hub session restored after rotation or process death re-reads the
 memory from `SharedPreferences` and the page from the saved Bundle; the recipe and the crop aspect/heal radius are not in
-the hub's saved state (the existing Continue-editing dialog offers the recipe back).
+the hub's saved state (the existing Continue-editing dialog offers the recipe back). The labelled Back on a group page
+calls `HubSession.home()` and leaves the page in one tap even with More open; the system Back still steps More, then the
+page. The list layout's `ScrollState` is held in `HubRingPanel` (it stays composed while a tool is open), so Back from a
+tool returns to the same place. `LabelledSlider`'s reset uses a `neutral` value: the Heal spot size must name
+`HealSpot.DEFAULT_RADIUS`, because zero is outside `HealSpot`'s range and `require` throws on the next tap. Windows under
+560 dp tall (`HubRingLayout.MIN_RING_HEIGHT_DP`) get the list, and the ring's centre and a group page are capped at the
+controls height and scroll.
 
 ## 106. `ContrastMatrix` takes places in the palette, not colours
 
@@ -1520,7 +1539,13 @@ first. GIF has one bit of alpha: pixels under alpha 128 are clear, and if any fr
 delta-code (every frame is cropped to its opaque box with disposal 2: a 30-frame sticker is 371 KB as GIF, 62 KB as
 APNG). GIF delays are hundredths, carry the rounding error and are never under 2 (browsers show 0 and 1 as 10); the
 decoder returns delays of 10 ms or less as 100 ms unless `browserDelays = false`; a loop count N is N+1 plays.
-A truncated GIF frame is returned part-painted and flagged; a truncated APNG frame is dropped. APNG is held to 30
+A truncated GIF frame is returned part-painted and flagged; a truncated APNG frame is dropped. A GIF frame whose data
+ends early (end code before all pixels, file not cut) is painted and reading continues (problem CORRUPT, a soft one that
+a later hard failure replaces). An out-of-order APNG sequence number stops the scan like a bad CRC and keeps the frames
+before it. The APNG and WebP scans list at most `maxFrames + 1` frames (APNG also 200000 chunks). Thinning a capped
+fading slideshow keeps every photo's hold and drops fade frames first (`keepFrames`, `FrameTiming.evenPicksKeeping`).
+A killed video job's `frames-*` folder is swept by `AnimateWriter.pruneStaleStaging` at the next job start or save,
+once nothing in it is an hour old. APNG is held to 30
 percent of the heap before it is tried; GIF is streamed. APNG is saved as `.png`/`image/png` on purpose, so the name
 does not say it moves. Whether the platform accepts `Pictures/Fotoz/Animations` for a *video* row is unverified.
 
@@ -1564,8 +1589,15 @@ finished file is walked box by box (`ReelMp4Check`) for the QuickTime `xyz` atom
 refuses the save (`PLACE_LEFT_IN`). The scan looks in `moov` only because four-byte patterns occur by chance in picture
 data about once per 100 MB. The muxer drop has only been tested with a fake muxer. A sound file that cannot be used
 means nothing is saved and the screen asks "Make the reel without sound?"; the job never retries without sound by
-itself. A reel's staging JPEGs are swept by the writer when older than an hour; a process kill mid-export leaves no
-row on Android 10 and later (pending), and on API 26 to 28 can leave a truncated file nothing removes.
+itself. A killed export leaves its `job-<n>/` folder (decoded copies of the photos, title cards, a partial mp4) in
+`cacheDir/reel-staging`; `ReelWriter.pruneStaging` (run at every save and when the Make panel opens) deletes job folders
+whose newest file is over an hour old. Before that fix the shared sweep skipped folders and nothing ever removed them.
+A process kill mid-export leaves no row on Android 10 and later (pending), and on API 26 to 28 can leave a truncated
+file nothing removes. A container the export cannot parse arrives as `ExportException` `ERROR_CODE_UNSPECIFIED` with a
+`ParserException` (or `PlaybackException` 3001 to 3004) in the causes, since Media3 1.9.0 has no `PARSING_CONTAINER_*`
+codes in `ExportException`; `ReelFailures` scans the cause chain and gives `PARSE`. The job asks "Make the reel without
+sound?" if a sound file is laid, else reports an unreadable source, and does not retry smaller. The export cannot say
+which file failed, so the question may blame the sound when a clip is the bad file.
 
 ## 114. A main class named like a test class shadows it, and a saved reel is a file, not a bundle
 
@@ -1594,7 +1626,11 @@ same doubled description and was not changed.
 
 `PorterDuff.Mode.MULTIPLY` is the componentwise product *including alpha*, so a half-opacity multiply layer halves the
 backdrop's alpha (probed: `0x80804000` over opaque grey). The renderer uses `BlendMode.MULTIPLY` on API 29 and later and
-on 26 to 28 lays the layer on white first (`backWithWhite`); screen and overlay are fine through `PorterDuff`. Drawing an
+on 26 to 28 lays the layer on white first (`backWithWhite`); screen and overlay are fine through `PorterDuff`. Over a
+transparent or translucent board on 26 to 28 a copy of the masked layer is also laid behind (`DST_OVER`), because
+`PorterDuff.MULTIPLY` gives alpha Sa*Da and would hide the layer where nothing is drawn yet. `PhotoRef.widthPx` and
+`heightPx` must be the UPRIGHT size read through `env.decode` (`MediaAsset.width` and `height` are the stored pixels, so
+a portrait is swapped; #34), and the renderer centre-crops, never fills, a photo whose aspect is off the box. Drawing an
 `ALPHA_8` bitmap with `DST_IN` left the destination unchanged under Robolectric native graphics (an `ARGB_8888` mask
 worked), so mask planes are multiplied into the layer bitmap row by row. The renderer draws bitmaps on a software canvas
 only: a decoder must not return `Config.HARDWARE` (`decodeUpright` does not). A photo shared by several layers is decoded
@@ -1610,7 +1646,10 @@ renderer replays `SelectionOps.replay` over the layer's pixels at a 512 px worki
 and the codec zero it), hit-testing treats it as the whole box, and each subject layer multiplies the cost. The
 alternative (freeze the cut as a transparent PNG layer) is a different model and is an owner decision. Stored boards
 write `argb` as a signed int and read it back through `Long.toInt`; `JsonValue` numbers are doubles. A board over
-`BoardJson.SAVED_STATE_SAFE_CHARS` (200k) comes back from its autosaved file, so the last second of edits can be lost.
+`BoardJson.SAVED_STATE_SAFE_CHARS` (200k) is not put in the saved-state bundle; after a kill the screen comes back on the
+saved-boards list (the board is as its autosaved file has it, so the last second of edits is lost) and is opened by hand.
+A text layer's box is grown by the renderer when it draws, if the real line wrap is taller; `Board.nextLayerId` is not
+monotonic across an undo, and the box height is not adjustable by hand.
 Each finger gesture gets a process-wide counter in its merge key (`gesture:N`): a per-`pointerInput` counter restarts at
 0 whenever the board's scale changes and could merge two gestures into one undo step.
 
@@ -1645,13 +1684,17 @@ script.
 is a valid answer (the first version refused it as `TOO_DARK` and every near-dark-room trial failed). A matte surface's
 room-lit brightness does not change with distance, so only the *flash* frame's distance matters: the correction is
 `(d_surface / d_card)^2`, applied only when both distances are known and differ by more than 5 percent, refused beyond
-1.5x (a 10 percent distance error leaves a mean dE of about 3.9). `TOO_BRIGHT_ROOM` versus `TOO_FAR` is decided by the
+1.5x (1.25x when the camera calls its lens distance only approximate; an uncalibrated lens distance, or a missing
+`LENS_INFO_FOCUS_DISTANCE_CALIBRATION`, is not used at all). A 10 percent distance error leaves a mean dE of about 3.9. `TOO_BRIGHT_ROOM` versus `TOO_FAR` is decided by the
 ambient patch's absolute level (>= 0.15 linear) *and* its share of the flash frame (>= 0.5); a share-only version called a
 dim room "too bright". The noise the signal is judged against includes a 1 percent frame-to-frame jitter term (flicker,
 imperfect lock), which keeps a thin signal honest; if the real jitter is 3 percent the dE grows (mean 1.8 at 3, 3.6 at 6
 on synthetic frames) and the solver does not know. **Phones apply a tone curve (sometimes local tone mapping) to JPEGs,
 so the linearity the method rests on holds only approximately; this is the biggest unverified assumption**, and every
-accuracy figure is from synthetic frames that obey the model exactly. The blue/purple boundary of the plain-word hue
+accuracy figure is from synthetic frames that obey the model exactly. The request now asks for the sRGB tone curve, fast
+noise reduction and no edge enhancement where the camera lists them (`CameraFacts.knownTone`; otherwise every reading
+carries `TONE_CURVE_UNKNOWN`); nothing reads back that a phone applied it, and local tone mapping or HDR is untouched.
+The blue/purple boundary of the plain-word hue
 families is set at 315 degrees by eye (pure sRGB blue is at 306 in CIELAB). Colour name lists are original words with
 hex values written by hand (not copied from xkcd, Pantone or RAL; a test splits names into words so "floral white" does
 not trip the "ral" check); `vision/VisionCopy.COLOUR_TABLE` holds a second list of about 162.
@@ -1666,10 +1709,11 @@ locked exposure, then the flash frame with the torch on: the ambient frame is th
 a burst (a burst's timing against a locked exposure is not ours; a pre-flash would break the subtraction); the price is a
 dimmer LED and a short hold distance (10 to 15 cm). Focus is settled once per pair, not locked for the whole lock,
 because the surface's own distance is wanted; the distance is reported only when the AF state was FOCUSED_LOCKED or
-PASSIVE_FOCUSED for the flash frame. Frames are matched to the capture result by `SENSOR_TIMESTAMP` (the wanted image is
+PASSIVE_FOCUSED for the flash frame and the lens distance is calibrated or approximate. Frames are matched to the capture result by `SENSOR_TIMESTAMP` (the wanted image is
 the first with timestamp >= latest result + 1); if image and result timestamps are on different bases the wait times out
 after 3 s and the person sees "The camera took too long": a safe failure that would make the tool unusable on that phone.
-A pair whose reported exposure, ISO or white balance differs by more than 2 percent is refused (`LOCK_SLIPPED`). A card
+A pair whose reported exposure, ISO or white balance differs by more than 2 percent is refused (`LOCK_SLIPPED`); with no white-balance lock, a pair that reports no gains
+is refused too, and a camera with no lock and no gains is refused at open (`NO_LOCK`). A card
 shot is valid only for its own exposure, so the job keeps it as patches (numbers) only while the lock is held and drops it
 on relock, unlock, stop, cancel or failure. The job and the gyroscope listener assume one thread (main); only the solver
 runs off it. In `kotlinx-coroutines-test`, `advanceUntilIdle` does not run coroutines launched in `backgroundScope` when
@@ -1688,7 +1732,9 @@ behind an opaque sibling on every device is a device check. Leaving the measurin
 the camera body, which stops the camera on purpose (no camera indicator while browsing); coming back reopens it because
 an observer added to an already RESUMED lifecycle is replayed ON_CREATE/ON_START/ON_RESUME. The card measurement is lost
 by that trip, the shown colour is not. The palette builder's store replaces a palette of the same name (case-insensitive)
-and moves it first, so a new palette from Chroma gets "Chroma ID", "Chroma ID 2", ... chosen again from a fresh load at
+and moves it first; the builder also gives a NEW default-named palette (from photos or a colour) the first free
+"My palette N" against the saved names when it is made (`Palette.freeName`, `PaletteDraft.started` and `fromColour`), so
+only a name the person typed, or a reopened one, replaces. A new palette from Chroma gets "Chroma ID", "Chroma ID 2", ... chosen again from a fresh load at
 save time; a palette needs 2 to 12 colours, so a single reading cannot make one alone (read-then-save is two store
 calls, not a transaction). The history is plain text (colour, kind, time) in `filesDir/chroma`, so `ChromaPrivacyTest`
 had to stop forbidding file writers in the whole package: it exempts `ChromaHistory.kt` only, and a second test pins that
@@ -1712,9 +1758,27 @@ full description is capped at 4000 characters and is now 3985, so the next line 
 `vision/ColourCheck` runs seven dot plates (one easy control, two each for red-green in two kinds and blue-yellow, in a
 seeded order). It cannot tell a red-weak person from a green-weak one (two plates per axis cannot) and says so by never
 naming a condition: a banned-word scan covers the result, which always carries the "this is a game, not a test" line and
-"An eye doctor can test you properly." A missed control plate is "check your screen" (night mode, blue-light filters and
+"An eye doctor can test you properly." A number read as a one-stroke seven-segment lookalike (3/9, 5/6, 5/9, 6/8, 8/9,
+0/8, 1/7) counts as a slip and not toward an axis (Mixed at most); "I see nothing" and other wrong numbers still count.
+A typical result reads "You saw every number on this screen." plus "A pass does not rule out a mild difference." The
+lookalike rule is a guess that no one has tried on people. A missed control plate is "check your screen" (night mode, blue-light filters and
 screen colour all degrade the blue-yellow plates, and the screen warns). The plates are our own seven-segment digits on a
 seeded dart-throwing packing; the figure/ground hue is pushed along the null direction of the full-severity matrix
 (inverse iteration), lightness is randomised per dot. The grey square behind the dots is untested on a screen. The step
 and answers survive recreation via `rememberSaveable` and the host's restorable id; the host's Back is free only at the
 introduction.
+
+## 125. Chroma ID without a card has no lightness, and a pipeline test must settle the exposure on the surface
+
+With no card the job locks the light with the torch on, so auto exposure settles on the torch-lit surface and lights black
+cloth and white paper alike; the flash difference then says nothing about how light the surface is. `FlashSolver` uses
+only the channel proportions and shows the colour at a fixed luminance (`UNMEASURED_LUMINANCE` 0.2, about L 52). A reading
+whose kind does not measure lightness (approximate and room) shows no lightness word, no black or white and no lightness
+number, says "How light or dark it is was not measured.", names its nearest colours by shade and strength only (names
+that start with dark, light, pale, deep, soft, jet or off, and every near-neutral name except grey, are left out), and is
+compared at one common luminance (`ColourSpace.atLuminance`) so a card reading and a no-card reading of one dark surface
+come out too close to call. A shade-only comparison of a very dark surface rests on coarse 8-bit codes. A test that locks
+the exposure on the card for every trial cannot see any of this: use `ChromaTestKit.Conditions.autoExposureOnSurface`.
+The kind label for a card reading is "With card" ("Corrected with your card; off by about 3 to 6 at best"), not
+"Calibrated" or "exact"; a card is assumed to be plain white paper of 0.85 reflectance, and two card readings closer than 3
+(`CALIBRATED_FLOOR`) are too close to call.
