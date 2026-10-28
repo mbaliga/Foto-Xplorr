@@ -3,12 +3,14 @@ package com.fotoxplorr.app.jobs
 import com.fotoxplorr.app.hyle.ActivityKind
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
@@ -76,9 +78,13 @@ class JobRunner(private val scope: CoroutineScope) {
         val id = "job-${nextId.incrementAndGet()}"
         lateinit var handle: JobHandle
 
-        val job = scope.launch {
+        // Lazy, started only once the job is in the list: on an immediate dispatcher (viewModelScope) a block that
+        // finishes without ever suspending, or whose first hop comes back before the caller's thread has looked
+        // at it, would otherwise run to its end first -- its removal then finds nothing, and the job is listed
+        // as running for good with its outcome already gone by.
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             fun updateProgress(progress: Float?) {
-                _jobs.value = _jobs.value.map { if (it.id == id) it.copy(progress = progress) else it }
+                _jobs.update { list -> list.map { if (it.id == id) it.copy(progress = progress) else it } }
             }
             // runCatching around the WHOLE call, not just trusting block's own Result: block is
             // caller-supplied glue code, and a thrown exception in it (including the
@@ -90,11 +96,12 @@ class JobRunner(private val scope: CoroutineScope) {
             // them still run after a cancellation was requested: Kotlin's cancellation is
             // cooperative and only throws at an actual suspension point, and runCatching just
             // above already absorbed the one that would otherwise have hit here.
-            _jobs.value = _jobs.value.filterNot { it.id == id }
+            _jobs.update { list -> list.filterNot { it.id == id } }
             _outcomes.tryEmit(JobOutcome(id, title, kind, result))
         }
         handle = JobHandle(id, job)
-        _jobs.value = _jobs.value + RunningJob(id, title, kind, progress = null, cancel = handle::cancel)
+        _jobs.update { it + RunningJob(id, title, kind, progress = null, cancel = handle::cancel) }
+        job.start()
         return handle
     }
 

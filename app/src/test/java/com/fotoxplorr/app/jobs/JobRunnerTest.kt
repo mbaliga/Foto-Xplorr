@@ -2,6 +2,9 @@ package com.fotoxplorr.app.jobs
 
 import com.fotoxplorr.app.hyle.ActivityKind
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -151,5 +154,35 @@ class JobRunnerTest {
 
         gate.complete(Unit)
         advanceUntilIdle()
+    }
+
+    // An immediate dispatcher runs a block that never suspends to its end inside launch. The job must already be
+    // listed by then, or its removal finds nothing and it stays "running" for good.
+    @Test
+    fun `a block that finishes without suspending leaves nothing listed and its outcome is delivered`() {
+        val runner = JobRunner(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        val seen = mutableListOf<String>()
+        val collector = CoroutineScope(Dispatchers.Unconfined).launch { runner.outcomes.collect { seen += it.id } }
+
+        val handle = runner.launch("Quick job", ActivityKind.EXPORTING) { Result.success("done") }
+
+        assertTrue(runner.jobs.value.isEmpty())
+        assertFalse(runner.hasRunningJobs())
+        assertEquals(listOf(handle.id), seen)
+        collector.cancel()
+    }
+
+    @Test
+    fun `a job is already listed while its block runs on an immediate dispatcher`() {
+        val runner = JobRunner(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        var listedInside: List<String>? = null
+
+        runner.launch("Inside job", ActivityKind.EXPORTING) {
+            listedInside = runner.jobs.value.map { it.id }
+            Result.success(Unit)
+        }
+
+        assertEquals(1, listedInside?.size)
+        assertTrue(runner.jobs.value.isEmpty())
     }
 }
