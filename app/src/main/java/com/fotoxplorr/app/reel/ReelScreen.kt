@@ -222,12 +222,16 @@ internal fun ReelScreen(
     // ---- making the video ----
     val jobs by (runner?.jobs ?: NO_JOBS).collectAsState()
     val making = jobs.firstOrNull { it.title == ReelCopy.JOB_TITLE }
-    // The videos this screen started: only their outcomes are shown. A job starts on the main thread and cannot
-    // finish before the id is noted here, because its outcome is collected on the same thread.
+    // The videos this screen started: only their outcomes are shown. A job that refuses at once can finish, and its
+    // outcome be collected, while launch is still on the stack, before its id can be noted: such an outcome is
+    // taken as ours (and noted in [early]) when it is the reel job's and a launch of ours is under way.
     val started = remember { mutableSetOf<String>() }
+    val early = remember { mutableSetOf<String>() }
+    val launching = remember { BooleanArray(1) }
     LaunchedEffect(runner) {
         runner?.outcomes?.collect { outcome ->
-            if (!started.remove(outcome.id)) return@collect
+            val ours = started.remove(outcome.id) || (launching[0] && outcome.title == ReelCopy.JOB_TITLE && early.add(outcome.id))
+            if (!ours) return@collect
             state.result = outcome.result.fold(
                 onSuccess = { value -> (value as? ReelOutcome.Done)?.let { ReelResult.Saved(it) } },
                 onFailure = { error ->
@@ -259,7 +263,13 @@ internal fun ReelScreen(
             transitions = !state.plainCuts,
             withoutSound = withoutSound,
         )
-        started += ReelJob.launch(runner, request, latestNewHost(), latestNewEncoder(), latestNewSink()).id
+        launching[0] = true
+        val id = try {
+            ReelJob.launch(runner, request, latestNewHost(), latestNewEncoder(), latestNewSink()).id
+        } finally {
+            launching[0] = false
+        }
+        if (!early.remove(id)) started += id
     }
 
     // ---- opening, closing, leaving ----
