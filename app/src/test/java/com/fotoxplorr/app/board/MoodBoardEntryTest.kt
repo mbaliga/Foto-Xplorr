@@ -87,7 +87,8 @@ class MoodBoardEntryTest {
     fun `the entry opens on its list, makes a board, and keeps it in the app's own folder`() {
         boardsDir.deleteRecursively()
         compose.setContent { Host() }
-        compose.onNodeWithText(BoardCopy.NO_BOARDS).assertExists()
+        // The list is read off the main thread, so its first frame has no rows and no 'none yet' line.
+        compose.waitUntil(10_000) { compose.onAllNodes(hasText(BoardCopy.NO_BOARDS)).fetchSemanticsNodes().isNotEmpty() }
         tap(BoardCopy.NEW_BOARD)
         tap(BoardCopy.TOOL_ADD)
         tap(BoardCopy.ADD_COLOUR)
