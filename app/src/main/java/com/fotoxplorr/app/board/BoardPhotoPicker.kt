@@ -45,9 +45,9 @@ import com.fotoxplorr.app.ui.RoomStyle
  * Choose photos to put on the board: a grid of the gallery's browsable stills (the host's list, so a
  * protected photo is not offered, TRAPS #33). Tapping a photo chooses it and numbers it, tapping again
  * un-chooses it; nothing is added until Add is pressed, so choosing never closes the picker (TRAPS #61).
- * [room] is how many more layers the board can take. The grid only scrolls up and down and stops short
- * of the bottom edge with a bar, as the panorama's picker does. The chosen ids are kept across the process
- * being killed; the picture grid is not.
+ * [room] is how many more layers the board can take; [busy] holds Add while the photos' sizes are being
+ * read. The grid only scrolls up and down and stops short of the bottom edge with a bar, as the panorama's
+ * picker does. The chosen ids are kept across the process being killed; the picture grid is not.
  */
 @Composable
 internal fun BoardPhotoPicker(
@@ -56,6 +56,7 @@ internal fun BoardPhotoPicker(
     onAdd: (List<MediaAsset>) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    busy: Boolean = false,
 ) {
     var chosen by rememberSaveable { mutableStateOf(listOf<Long>()) }
     val byId = remember(stills) { stills.associateBy { it.id.value } }
@@ -114,7 +115,7 @@ internal fun BoardPhotoPicker(
             BoardButton(
                 BoardCopy.addPhotos(live.size),
                 { onAdd(live.mapNotNull(byId::get)) },
-                enabled = live.isNotEmpty(),
+                enabled = live.isNotEmpty() && !busy,
                 primary = true,
             )
         }

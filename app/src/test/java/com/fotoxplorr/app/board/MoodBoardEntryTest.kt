@@ -108,6 +108,8 @@ class MoodBoardEntryTest {
         tap(BoardCopy.ADD_PHOTO)
         compose.onNodeWithContentDescription("a.jpg").performClick()
         tap(BoardCopy.addPhotos(1))
+        // The photos' sizes are read first (off the main thread), then the picker closes.
+        compose.waitUntil(10_000) { compose.onAllNodes(hasText(BoardCopy.TOOL_LAYERS)).fetchSemanticsNodes().isNotEmpty() }
         // Locked again while the board is open: the host's live list no longer holds it.
         browsable.remove(a.id)
         tap(BoardCopy.TOOL_LAYERS)

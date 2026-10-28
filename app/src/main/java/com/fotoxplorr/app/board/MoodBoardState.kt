@@ -41,8 +41,9 @@ internal class OpenBoard(
  * What survives the process being killed: the board as text, which layer was picked, its place in the
  * store and its name. NOT the undo history. A board whose text is longer than
  * [BoardJson.SAVED_STATE_SAFE_CHARS] is not put in the saved-state bundle (which has a limit of about a
- * megabyte for the whole screen); only its place in the store goes, and it is opened again from the
- * autosaved file when the screen comes back, so what was done in the last moments before the kill is lost.
+ * megabyte for the whole screen); only its place in the store goes, and nothing reads it: the screen
+ * comes back on the saved-boards list, where the board is as its autosaved file has it (the last
+ * second of edits before the kill is lost) and is opened again by hand.
  */
 internal val OpenBoardSaver: Saver<OpenBoard?, Any> = Saver(
     save = { open ->

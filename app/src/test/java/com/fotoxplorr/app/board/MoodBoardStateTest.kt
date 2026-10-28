@@ -125,7 +125,7 @@ class MoodBoardStateTest {
         val o = OpenBoard(nextToken(), "11111111-2222-3333-4444-555555555555", "Big", BoardEditor.of(b))
         val saved = with(OpenBoardSaver) { scope.save(o) }!!
         assertTrue((saved as List<*>).none { it is String && it.length > BoardJson.SAVED_STATE_SAFE_CHARS })
-        assertNull("it is opened again from its file instead", OpenBoardSaver.restore(saved))
+        assertNull("the screen comes back on the list, where the board is its autosaved file", OpenBoardSaver.restore(saved))
     }
 
     @Test

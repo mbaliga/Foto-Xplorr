@@ -57,6 +57,28 @@ class BoardAutosaverTest {
     }
 
     @Test
+    fun `a board opened from its file is not written again until it is changed`() = runBlocking {
+        val id = library.put("Old", one)
+        val opened = open(2, one, name = "Old", id = id)
+        saver.baseline(opened)
+        assertEquals("nothing to write for a board that is as it was opened", BoardSave.Saved(id), saver.save(opened))
+        assertTrue(library.saves.isEmpty())
+        saver.save(open(2, one.copy(background = BoardBackground.Transparent), name = "Old", id = id))
+        assertEquals(1, library.saves.size)
+        saver.save(open(2, one, name = "Renamed", id = id))
+        assertEquals("a new name is a change", 2, library.saves.size)
+    }
+
+    @Test
+    fun `a baseline for one board does not hold back the next board`() = runBlocking {
+        val id = library.put("Old", one)
+        saver.baseline(open(2, one, name = "Old", id = id))
+        saver.save(open(3, one, name = "Other"))
+        assertEquals("the new board has no file yet and gets one", 1, library.saves.size)
+        assertNull(library.saves.single().first)
+    }
+
+    @Test
     fun `a second board is its own file`() = runBlocking {
         val a = (saver.save(open(1, one)) as BoardSave.Saved).id
         val b = (saver.save(open(2, one.copy(background = BoardBackground.Transparent))) as BoardSave.Saved).id

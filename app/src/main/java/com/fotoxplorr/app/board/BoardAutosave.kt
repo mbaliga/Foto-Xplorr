@@ -11,6 +11,9 @@ import kotlinx.coroutines.withContext
  * torn down; the lock makes those meet in order, so a board that has no file yet gets exactly one (the
  * second caller finds the id the first made and the same board, and does nothing).
  *
+ * A board opened from its file is [baseline]d first: it is then as saved, and is written only once the person changes
+ * it. Without that, opening a board that was only partly readable (a newer file, a layer or mask that could
+ * not be decoded) would write the readable part over the whole file a second later, unasked.
  * A new board with nothing on it is never written, so opening New board and going back leaves no file.
  * Plain Kotlin and the store interface, no Android, so it is tested on the JVM with an in-memory library.
  */
@@ -20,6 +23,14 @@ internal class BoardAutosaver(private val library: BoardLibrary) {
     private var id: String? = null
     private var name: String? = null
     private var board: Board? = null
+
+    /** Tells the saver that [open] is exactly what its file holds, as it was opened (relinked photos included). */
+    suspend fun baseline(open: OpenBoard) = lock.withLock {
+        token = open.token
+        id = open.storeId
+        name = open.name
+        board = open.board
+    }
 
     /** The result of a save that wrote, or null when there was nothing to write. */
     suspend fun save(open: OpenBoard): BoardSave? = lock.withLock {

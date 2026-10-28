@@ -32,6 +32,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.conflate
@@ -65,8 +66,8 @@ import kotlinx.coroutines.withContext
  * its name and its place in the store), the open panel, snapping, the colour for new things, the text being
  * typed and the export choices. Not kept: the undo history, the picture on screen, the palette strip, a
  * tap-the-points step, the saved-boards list and a save in progress (a killed process ends it and leaves
- * no file, see [BoardWriter]). A board too long for the saved-state bundle comes back from its autosaved
- * file instead ([OpenBoardSaver]).
+ * no file, see [BoardWriter]). A board too long for the saved-state bundle is not
+ * kept: the screen comes back on the list, and the board is as its autosaved file has it ([OpenBoardSaver]).
  *
  * Nothing here has run on a device: the feel of the drag, pinch and twist, the board's inset on a narrow
  * phone, and the layout with a large font are unchecked.
@@ -141,6 +142,7 @@ internal fun MoodBoardScreen(
     val lastWords = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
     var listVersion by remember { mutableIntStateOf(0) }
     var opening by remember { mutableStateOf(false) }
+    var adding by remember { mutableStateOf(false) }
 
     // ---- where photos come from ----
     val board = state.open?.board
@@ -160,7 +162,10 @@ internal fun MoodBoardScreen(
     }
 
     // ---- the picture of the board, drawn behind the finger ----
-    LaunchedEffect(previewSource) {
+    // Keyed on [source] too: when the host's list changes (a library that finished loading after a restore,
+    // a photo locked or unlocked) the picture is drawn again, so placeholders give way to photos and a photo
+    // that may no longer be shown does not stay on screen (TRAPS #33).
+    LaunchedEffect(previewSource, source) {
         snapshotFlow { state.open?.board to state.previewEdge }
             .conflate()
             .collect { (current, edge) ->
@@ -235,7 +240,12 @@ internal fun MoodBoardScreen(
     }
 
     // ---- opening, closing, leaving ----
+    var paletteSearch by remember { mutableStateOf<Job?>(null) }
+
     fun resetEditor() {
+        // A colour search for the board being left must not finish onto the next one.
+        paletteSearch?.cancel()
+        paletteSearch = null
         state.panel = Panel.NONE
         state.mode = CanvasMode.Edit
         state.picker = false
@@ -270,8 +280,11 @@ internal fun MoodBoardScreen(
                 state.openFailed = true
             } else {
                 val (l, board) = loaded
+                val fresh = OpenBoard(nextToken(), l.id, l.name, BoardEditor.of(board), noticeFor(l.decoded))
+                // As opened it is what the file holds: it is written only once the person changes it.
+                autosaver.baseline(fresh)
                 resetEditor()
-                state.open = OpenBoard(nextToken(), l.id, l.name, BoardEditor.of(board), noticeFor(l.decoded))
+                state.open = fresh
             }
         }
     }
@@ -304,10 +317,11 @@ internal fun MoodBoardScreen(
 
     fun findColours() {
         val current = state.open?.board ?: return
+        val token = state.open?.token
         if (state.paletteBusy) return
         state.paletteBusy = true
         state.paletteChosen = null
-        scope.launch {
+        paletteSearch = scope.launch {
             val found = try {
                 withContext(Dispatchers.Default) { BoardPalette.of(live, current.photoRefs) }
             } catch (e: CancellationException) {
@@ -315,8 +329,10 @@ internal fun MoodBoardScreen(
             } catch (e: Exception) {
                 emptyList()
             }
-            state.palette = found
-            state.paletteBusy = false
+            if (state.open?.token == token) {
+                state.palette = found
+                state.paletteBusy = false
+            }
         }
     }
 
@@ -336,10 +352,29 @@ internal fun MoodBoardScreen(
             state.picker -> BoardPhotoPicker(
                 stills = stills,
                 room = BoardLimits.MAX_LAYERS - open.board.layers.size,
+                busy = adding,
                 onAdd = { chosen ->
-                    val refs = chosen.map(PhotoRefs::of)
-                    state.edit { BoardEditing.addPhotos(it, refs).editor }
-                    state.picker = false
+                    if (!adding) {
+                        adding = true
+                        val token = open.token
+                        val reader = latestNewSource(open.board)
+                        scope.launch {
+                            // The sizes are read from the photos: the library's own are the stored pixels, not the upright ones.
+                            val refs = try {
+                                chosen.map { PhotoRefs.uprightOf(it, reader) }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                chosen.map(PhotoRefs::of)
+                            }
+                            adding = false
+                            // Back while the sizes were being read cancels the add, and so does leaving the board.
+                            if (state.picker && state.open?.token == token) {
+                                state.edit { BoardEditing.addPhotos(it, refs).editor }
+                                state.picker = false
+                            }
+                        }
+                    }
                 },
                 onBack = { state.picker = false },
             )

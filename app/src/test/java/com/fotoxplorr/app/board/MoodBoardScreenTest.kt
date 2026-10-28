@@ -6,6 +6,7 @@ import androidx.activity.OnBackPressedDispatcherOwner
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsNodeInteraction
@@ -88,7 +89,7 @@ class MoodBoardScreenTest {
     private val owner = BackOwner()
     private val scope = CoroutineScope(Dispatchers.Unconfined)
     private val library = MemoryBoardLibrary()
-    private val source = FakePhotoSource(mapOf(1L to RED, 2L to BLUE, 3L to RED))
+    private var source = FakePhotoSource(mapOf(1L to RED, 2L to BLUE, 3L to RED))
     private val sink = FakeBoardSink()
     private var state: MoodBoardState? = null
     private val board: Board? get() = state?.open?.board
@@ -109,6 +110,9 @@ class MoodBoardScreenTest {
     private val c = photo(3, "c.jpg")
     private val gallery = listOf(c, b, a)
 
+    /** A new source each time, as the host makes one, over the one fake whose calls the tests read. */
+    private fun sourceFor(): BoardPhotoSource = object : BoardPhotoSource by source {}
+
     private var relinkTo: ((Board) -> Board) = { it }
 
     @Composable
@@ -120,7 +124,7 @@ class MoodBoardScreenTest {
             CompositionLocalProvider(LocalOnBackPressedDispatcherOwner provides owner) {
                 MoodBoardScreen(
                     assets = assets,
-                    newSource = { source },
+                    newSource = { sourceFor() },
                     relink = { relinkTo(it) },
                     library = library,
                     newSink = { sink },
@@ -260,6 +264,40 @@ class MoodBoardScreenTest {
         assertEquals(listOf(2L, 1L), layers().map { (it.content as LayerContent.Photo).ref.mediaId })
         assertEquals("the photo's identity is kept for finding it again", "b.jpg", (layers()[0].content as LayerContent.Photo).ref.identity!!.displayName)
         compose.onNodeWithContentDescription(BoardCopy.UNDO).assertIsEnabled()
+    }
+
+    @Test
+    fun `a photo taken in portrait gets a portrait box though the library lists it landscape`() {
+        // The library says 400 x 300 (stored); the photo is upright 300 x 400.
+        source = FakePhotoSource(mapOf(1L to RED), actualSize = mapOf(1L to (300 to 400)))
+        startNew()
+        tapText(BoardCopy.TOOL_ADD)
+        tapText(BoardCopy.ADD_PHOTO)
+        press("a.jpg")
+        tapText(BoardCopy.addPhotos(1))
+        waitFor { layers().size == 1 }
+        val ref = (layers().single().content as LayerContent.Photo).ref
+        assertEquals(300, ref.widthPx)
+        assertEquals(400, ref.heightPx)
+        val l = layers().single()
+        assertTrue("the box is taller than wide: ${l.width} x ${l.height}", l.height > l.width)
+    }
+
+    @Test
+    fun `Back while the sizes are being read adds nothing`() {
+        val gate = CompletableDeferred<Unit>()
+        source.sizeGate = gate
+        startNew()
+        tapText(BoardCopy.TOOL_ADD)
+        tapText(BoardCopy.ADD_PHOTO)
+        press("a.jpg")
+        tapText(BoardCopy.addPhotos(1))
+        compose.onNodeWithText(BoardCopy.addPhotos(1)).assertIsNotEnabled()
+        pressBack()
+        compose.waitForIdle()
+        gate.complete(Unit)
+        compose.waitForIdle()
+        assertEquals(0, layers().size)
     }
 
     @Test
@@ -755,6 +793,55 @@ class MoodBoardScreenTest {
     }
 
     @Test
+    fun `the picture is drawn again when the host's list of photos changes`() {
+        source.available = { false }
+        val list = mutableStateOf(gallery)
+        compose.setContent { Screen(assets = list.value) }
+        tapText(BoardCopy.NEW_BOARD)
+        tapText(BoardCopy.TOOL_ADD)
+        tapText(BoardCopy.ADD_PHOTO)
+        press("a.jpg")
+        tapText(BoardCopy.addPhotos(1))
+        waitFor { layers().size == 1 && state!!.preview != null }
+        assertTrue("no photo could be read, so none was decoded", source.calls.isEmpty())
+        // The library finishes loading (or the photo is unlocked): the list changes and the photo can be read.
+        source.available = { true }
+        list.value = listOf(b, a)
+        waitFor { source.calls.isNotEmpty() }
+    }
+
+    @Test
+    fun `a board that could not be fully read is not written over its file just by opening it`() {
+        val id = library.put("Odd", Board(), decoded = BoardJson.Decoded(Board(layers = listOf(layer(1, 100f, 100f))), 2, 1, false))
+        val modified = library.entries.getValue(id).modified
+        compose.setContent { Screen() }
+        waitFor { compose.onAllNodes(hasText("Odd")).fetchSemanticsNodes().isNotEmpty() }
+        tapText("Odd")
+        waitFor { board != null }
+        Thread.sleep(400)
+        compose.waitForIdle()
+        assertTrue("opening wrote the file: ${library.saves.size} saves", library.saves.isEmpty())
+        assertEquals("and the list does not reorder for a look", modified, library.entries.getValue(id).modified)
+        press(BoardCopy.BACK)
+        compose.waitForIdle()
+        Thread.sleep(200)
+        assertTrue("leaving it untouched writes nothing either", library.saves.isEmpty())
+    }
+
+    @Test
+    fun `the first edit of a board that could not be fully read does save it`() {
+        val id = library.put("Odd", Board(), decoded = BoardJson.Decoded(Board(layers = listOf(layer(1, 100f, 100f)), nextLayerId = 2), 2, 0, false))
+        compose.setContent { Screen() }
+        waitFor { compose.onAllNodes(hasText("Odd")).fetchSemanticsNodes().isNotEmpty() }
+        tapText("Odd")
+        waitFor { board != null }
+        addColour()
+        waitFor { library.saves.isNotEmpty() }
+        assertEquals(id, library.saves.last().first)
+        assertEquals(2, library.saves.last().second.layers.size)
+    }
+
+    @Test
     fun `photos that moved are pointed at their new rows when a board is opened`() {
         val photoLayer = layer(1, 300f, 300f, content = BoardTestKit.photo(7))
         library.put("With a photo", Board(layers = listOf(photoLayer), nextLayerId = 2))
@@ -1031,6 +1118,31 @@ class MoodBoardScreenTest {
         // The photos' colours are offered in the other pickers as well.
         tapText(BoardCopy.TOOL_CANVAS)
         assertNotNull(compose.onAllNodes(hasContentDescription("#0000FF", substring = true)).fetchSemanticsNodes().firstOrNull())
+    }
+
+    @Test
+    fun `a colour search still running when the board is left does not colour the next board`() {
+        startNew()
+        tapText(BoardCopy.TOOL_ADD)
+        tapText(BoardCopy.ADD_PHOTO)
+        press("b.jpg")
+        tapText(BoardCopy.addPhotos(1))
+        tapText(BoardCopy.TOOL_COLOURS)
+        val gate = CompletableDeferred<Unit>()
+        source.decodeGate = gate
+        tapText(BoardCopy.FIND_COLOURS)
+        // Back closes the panel, then leaves the board; the search has not finished.
+        pressBack()
+        compose.waitForIdle()
+        pressBack()
+        compose.waitForIdle()
+        tapText(BoardCopy.NEW_BOARD)
+        gate.complete(Unit)
+        compose.waitForIdle()
+        Thread.sleep(400)
+        compose.waitForIdle()
+        assertTrue("the old board's colours were not put on the new one", state!!.palette.isEmpty())
+        assertFalse(state!!.paletteBusy)
     }
 
     // ---- reaching everything with a screen reader and a thumb ----
