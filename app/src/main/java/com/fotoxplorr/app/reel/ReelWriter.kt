@@ -6,7 +6,6 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
-import com.fotoxplorr.app.lift.pruneStaleFiles
 import java.io.File
 import java.io.IOException
 import java.time.Instant
@@ -33,6 +32,12 @@ interface ReelSink {
      * [onProgress] is 0..1 over the sink's own work.
      */
     suspend fun publish(staged: File, stem: String, dateTakenMillis: Long, stillAllowed: () -> Boolean, onProgress: (Float) -> Unit): String
+
+    /**
+     * Delete working files an export the system killed left behind and nothing else will remove. Cheap, blocking:
+     * call it off the main thread, and never while a video is being made (the real one spares anything written lately).
+     */
+    fun sweepStaging() {}
 }
 
 /**
@@ -100,9 +105,17 @@ class ReelWriter(
         return if (low) ReelNoSpaceException(failure) else failure
     }
 
-    /** Delete working files left by a run the system killed. Cheap; called at the start of every save. */
+    override fun sweepStaging() {
+        pruneStaging()
+    }
+
+    /**
+     * Delete working files left by a run the system killed: loose files, and the `job-*` folders the job builds in
+     * (a killed export leaves its pictures and half a video there). Cheap; called at the start of every save and
+     * when the Make panel opens.
+     */
     fun pruneStaging(maxAgeMillis: Long = STAGING_MAX_AGE_MILLIS): Int =
-        pruneStaleFiles(File(appContext.cacheDir, STAGING_DIRECTORY), System.currentTimeMillis(), maxAgeMillis)
+        pruneStaleStaging(File(appContext.cacheDir, STAGING_DIRECTORY), System.currentTimeMillis(), maxAgeMillis)
 
     /** Create the pending row, copy [staged] into it, make it visible; any failure or cancel deletes the row. */
     private suspend fun insertFrom(staged: File, stem: String, dateTakenMillis: Long, onProgress: (Float) -> Unit): Uri {
@@ -190,6 +203,31 @@ class ReelWriter(
     }
 }
 
+/**
+ * Delete what in [directory] is older than [maxAgeMillis] before [nowMillis]: a file by its own date, a folder (a
+ * job's working folder) with all it holds by the newest date of the folder or anything inside it, so an export
+ * still writing is spared. Returns how many entries went; a missing directory or an entry that refuses to go is
+ * skipped. Not [com.fotoxplorr.app.lift.pruneStaleFiles], which leaves folders alone.
+ */
+internal fun pruneStaleStaging(directory: File, nowMillis: Long, maxAgeMillis: Long): Int {
+    val entries = directory.listFiles() ?: return 0
+    var removed = 0
+    for (entry in entries) {
+        if (nowMillis - newestModified(entry, 0) <= maxAgeMillis) continue
+        if ((if (entry.isDirectory) entry.deleteRecursively() else entry.delete())) removed++
+    }
+    return removed
+}
+
+private fun newestModified(entry: File, depth: Int): Long {
+    var newest = entry.lastModified()
+    if (entry.isDirectory && depth < MAX_STAGING_DEPTH) {
+        entry.listFiles()?.forEach { newest = maxOf(newest, newestModified(it, depth + 1)) }
+    }
+    return newest
+}
+
+private const val MAX_STAGING_DEPTH = 4
 private const val MAX_STEM = 100
 private const val MAX_NUMBER = 1000
 

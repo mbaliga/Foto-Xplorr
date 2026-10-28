@@ -251,6 +251,14 @@ internal fun ReelScreen(
 
     fun makingNow(): Boolean = runner?.jobs?.value?.any { it.title == ReelCopy.JOB_TITLE } == true
 
+    // ---- what a killed export left in the cache: swept when the Make panel opens (the writer only sweeps when a save is made) ----
+    val makePanelOpen = state.open != null && state.panel == ReelPanel.MAKE
+    LaunchedEffect(makePanelOpen) {
+        if (makePanelOpen && runner != null && !makingNow()) {
+            withContext(Dispatchers.IO) { runCatching { latestNewSink().sweepStaging() } }
+        }
+    }
+
     fun startMaking(withoutSound: Boolean) {
         val project = state.project ?: return
         if (runner == null || makingNow()) return

@@ -755,6 +755,16 @@ class ReelScreenTest {
     private fun openMake() = tapText(ReelCopy.TOOL_MAKE)
 
     @Test
+    fun `opening the make panel sweeps what a killed export left, once, and not before`() {
+        openSaved(stills(1, 2), name = "Beach")
+        compose.waitForIdle()
+        assertEquals("nothing is swept for opening a reel", 0, sink.sweeps)
+        openMake()
+        waitFor { sink.sweeps >= 1 }
+        assertEquals(1, sink.sweeps)
+    }
+
+    @Test
     fun `making the video runs the job with the choices and shows how it ended`() {
         openSaved(stills(1, 2, 3).withTransitions(ReelTransition.CROSS_FADE), name = "Beach")
         openMake()

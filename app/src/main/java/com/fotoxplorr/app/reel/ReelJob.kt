@@ -142,8 +142,9 @@ class ReelNeedsAnswer(message: String) : Exception(message)
  * Cancelling the coroutine stops the export, deletes the working files and returns by throwing
  * [CancellationException] so [JobRunner] reports it as cancelled. No MediaStore row exists before the file is
  * complete and checked, and the sink deletes one on a cancel that arrives later. If the process is killed
- * nothing has been saved: the working files are in the cache and the next save sweeps them
- * ([ReelWriter.pruneStaging]). What the person had in the project is the screen's to save, not this job's.
+ * nothing has been saved: the working files stay in a `job-*` folder of the cache until [ReelSink.sweepStaging]
+ * removes it, which the Make panel does when it opens and a later save does too, once the folder is an hour
+ * old ([ReelWriter.pruneStaging]); until then they are decoded copies of the person's photos. What the person had in the project is the screen's to save, not this job's.
  */
 object ReelJob {
     private const val STAGE_END = 0.2f

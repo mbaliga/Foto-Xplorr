@@ -114,8 +114,13 @@ internal class ScreenEncoder : ReelEncoder {
 internal class ScreenSink(val dir: File) : ReelSink {
     val published = Collections.synchronizedList(ArrayList<String>())
     @Volatile var failWith: IOException? = null
+    @Volatile var sweeps = 0
 
     override fun stagingDirectory(): File = dir.apply { mkdirs() }
+
+    override fun sweepStaging() {
+        sweeps++
+    }
 
     override suspend fun publish(staged: File, stem: String, dateTakenMillis: Long, stillAllowed: () -> Boolean, onProgress: (Float) -> Unit): String {
         if (!stillAllowed()) throw ReelProtectedException()

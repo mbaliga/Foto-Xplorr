@@ -291,6 +291,49 @@ class ReelWriterTest {
     }
 
     @Test
+    fun `an old job folder is swept with what is in it and a fresh one is kept`() {
+        val dir = writer().stagingDirectory()
+        val old = File(dir, "job-1").apply { mkdirs() }
+        File(old, "still-r1.jpg").writeText("x")
+        File(old, "reel-0.mp4").writeText("x")
+        old.walkTopDown().forEach { it.setLastModified(System.currentTimeMillis() - 3 * 3_600_000L) }
+        val fresh = File(dir, "job-2").apply { mkdirs() }
+        File(fresh, "still-r1.jpg").writeText("x")
+        assertEquals(1, writer().pruneStaging())
+        assertFalse("a killed export's folder goes with its pictures", old.exists())
+        assertTrue(fresh.isDirectory)
+        assertTrue(File(fresh, "still-r1.jpg").exists())
+    }
+
+    @Test
+    fun `a job folder that was written to lately is kept whatever its own date says`() {
+        val dir = writer().stagingDirectory()
+        val running = File(dir, "job-3").apply { mkdirs() }
+        File(running, "card-t1.png").writeText("x").also { File(running, "card-t1.png").setLastModified(System.currentTimeMillis() - 3 * 3_600_000L) }
+        File(running, "reel-0.mp4").writeText("still being written")
+        running.setLastModified(System.currentTimeMillis() - 3 * 3_600_000L)
+        assertEquals(0, writer().pruneStaging())
+        assertTrue(File(running, "card-t1.png").exists())
+        assertTrue(File(running, "reel-0.mp4").exists())
+    }
+
+    @Test
+    fun `the writer sweeps when asked and publishing sweeps job folders too`() {
+        val dir = writer().stagingDirectory()
+        val old = File(dir, "job-4").apply { mkdirs() }
+        File(old, "reel-0.mp4").writeText("x")
+        old.walkTopDown().forEach { it.setLastModified(System.currentTimeMillis() - 3 * 3_600_000L) }
+        writer().sweepStaging()
+        assertFalse(old.exists())
+
+        val again = File(dir, "job-5").apply { mkdirs() }
+        File(again, "reel-0.mp4").writeText("x")
+        again.walkTopDown().forEach { it.setLastModified(System.currentTimeMillis() - 3 * 3_600_000L) }
+        publish()
+        assertFalse(again.exists())
+    }
+
+    @Test
     fun `the staging directory is made when missing`() {
         File(context.cacheDir, ReelWriter.STAGING_DIRECTORY).deleteRecursively()
         assertTrue(writer().stagingDirectory().isDirectory)
