@@ -21,11 +21,56 @@ internal object VisionCopy {
     const val SEVERITY = "How strong"
     const val SIMULATE = "Show how it looks"
     const val DALTONIZE = "Help me tell colours apart"
-    const val DALTONIZE_NOTE = "This changes the colours so they differ more. It is not what others see."
+    const val DALTONIZE_NOTE = "This moves colours apart, and it is not what others see."
     const val ORIGINAL = "Original"
     const val NAME_A_COLOUR = "Tap a colour to name it."
-    const val PATTERNS = "Mark confusable colours with patterns"
+    const val PATTERNS = "Marks colours that look alike with lines and dots."
     const val NO_CONFUSION = "Nothing here looks alike."
+
+    // The viewer's view-options section.
+    const val ROOM_EYEBROW = "COLOUR VISION"
+    const val OFF = "Off"
+    const val TYPE_LABEL = "Which colours"
+    const val KIND_LABEL = "What to show"
+    const val NAME_COLOURS = "Name colours"
+    const val PATTERNS_LABEL = "Patterns"
+    const val PATTERNS_NEED_TYPE = "Pick which colours first."
+    const val NOT_FOR_VIDEO = "Colour vision is for photos, not video."
+    const val FILTER_ONLY = "Only the colour view works for this file."
+    const val SAVE_HELP = "Save a corrected copy"
+    const val SAVE_SIMULATED = "Save this view as a copy"
+    const val SAVE_CAPTION = "The original stays as it is."
+    const val SAVE_NEED_TYPE = "Pick which colours first."
+    const val SAVE_SENSITIVE = "Not for photos marked sensitive."
+    const val SAVE_NO_JOBS = "Saving is not available here."
+    const val SAVE_CANCEL = "Cancel"
+    const val SEVERITY_SLIDER = "How strong, in steps of ten percent"
+    const val WORKING = "Working on the colours."
+
+    /** The chip over the photo while a filter is on; a tap turns it off. */
+    fun badge(deficiency: Deficiency, kind: VisionKind): String = when (kind) {
+        VisionKind.SIMULATE -> "${deficiencyLabel(deficiency)}, as seen"
+        VisionKind.HELP -> "${deficiencyLabel(deficiency)}, adjusted"
+    }
+
+    const val BADGE_TURN_OFF = "Turn colour vision off"
+
+    /** What the pill says and speaks for a tapped colour. */
+    fun nameDescription(label: String): String = "Colour: $label"
+
+    const val NAME_SWATCH = "The colour tapped"
+
+    // The corrected-copy job.
+    const val JOB_TITLE = "Saving a corrected copy"
+    const val SAVING = "Saving the copy."
+    const val COPY_SAVED = "Copy saved, and it will show in the gallery soon."
+    const val COPY_SAVED_SMALLER = "Copy saved, a little smaller to fit the memory."
+    const val COPY_CANCELLED = "Cancelled."
+    const val COPY_PROTECTED = "This photo cannot be copied."
+    const val COPY_CANNOT_READ = "The photo could not be read."
+    const val COPY_NO_SPACE = "There is not enough space on the phone."
+    const val COPY_OUT_OF_MEMORY = "There is not enough memory for this photo."
+    const val COPY_FAILED = "The copy could not be saved."
 
     fun deficiencyLabel(deficiency: Deficiency): String = when (deficiency) {
         Deficiency.PROTAN -> PROTAN
@@ -52,6 +97,41 @@ internal object VisionCopy {
     const val PLATE_SOME_MISSED = "You missed some numbers."
     const val PLATE_MOST_MISSED = "You missed most numbers."
     const val PLATE_CHECK_SCREEN = "You missed the easy one, so check your screen and try again."
+
+    // The check (an Experimental entry).
+    const val CHECK_TITLE = "Colour vision check"
+    const val CHECK_BLURB = "Find the numbers hidden in the dots."
+    const val CHECK_INTRO = "Find the number in each picture of dots."
+    const val CHECK_SETUP = "Use full brightness and turn night mode off."
+    const val CHECK_START = "Start"
+    const val CHECK_AGAIN = "Try again"
+    const val CHECK_WORKING = "Making the pictures."
+    const val PLATE_DESCRIPTION = "Coloured dots with a number hidden in them."
+    const val RESULT_TYPICAL = "This looks like typical colour vision on this screen."
+    const val RESULT_RED_GREEN = "This looks like it may be hard to tell red from green."
+    const val RESULT_BLUE_YELLOW = "This looks like it may be hard to tell blue from yellow."
+    const val RESULT_MIXED = "This looks mixed, so try again in good light."
+    const val RESULT_DOCTOR = "An eye doctor can test you properly."
+    const val RESULT_VIEWER = "To see a photo another way, open it and use View options."
+
+    fun plateProgress(index: Int, total: Int): String = "Picture $index of $total."
+
+    fun digitDescription(digit: Int): String = "The number $digit"
+
+    /** The sentences for a result, best first; the last ones are the same for everyone. */
+    fun resultLines(verdict: CheckVerdict): List<String> {
+        val headline = when (verdict) {
+            CheckVerdict.Unreliable -> listOf(PLATE_CHECK_SCREEN)
+            CheckVerdict.Typical -> listOf(RESULT_TYPICAL)
+            CheckVerdict.Mixed -> listOf(RESULT_MIXED)
+            is CheckVerdict.Hard -> buildList {
+                if (verdict.redGreen) add(RESULT_RED_GREEN)
+                if (verdict.blueYellow) add(RESULT_BLUE_YELLOW)
+            }
+        }
+        val pointer = if (verdict is CheckVerdict.Hard) listOf(RESULT_VIEWER) else emptyList()
+        return headline + PLATE_DISCLAIMER + RESULT_DOCTOR + pointer
+    }
 
     /** One colour per line as `name|rrggbb`, sRGB. Names are plain words of our own; no brand or standard palette. */
     const val COLOUR_TABLE = """
