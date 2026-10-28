@@ -103,6 +103,13 @@ import com.fotoxplorr.app.spatial.MapFocus
 import com.fotoxplorr.app.ui.RoomGeography
 import com.fotoxplorr.app.ui.RoomKind
 import com.fotoxplorr.app.ui.roomSlots
+import com.fotoxplorr.app.vision.ColourVisionOverlay
+import com.fotoxplorr.app.vision.ColourVisionPhoto
+import com.fotoxplorr.app.vision.ColourVisionRoomSection
+import com.fotoxplorr.app.vision.PhotoKey
+import com.fotoxplorr.app.vision.VisionSupport
+import com.fotoxplorr.app.vision.rememberColourVisionViewer
+import com.fotoxplorr.app.vision.visionSupport
 import com.fotoxplorr.core.model.MediaId
 import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.SpatialShell
@@ -322,6 +329,13 @@ fun ViewerScreen(
     libraryAssets: List<MediaAsset> = emptyList(),
     /** Test seam for the plate's map backdrop; null is the flavour's own. See [PhotoDetailRoom]. */
     plateMapBackdrop: (@Composable BoxScope.(settled: Boolean) -> Unit)? = null,
+    /**
+     * Whether the colour-vision "Save a corrected copy" job may still read and copy [MediaAsset]. Asked
+     * before it reads and again right before it makes the file; a host that knows the gallery's
+     * browsable list (TRAPS #33) answers from it. The default says yes, which is only the
+     * viewer's own check (a photo marked sensitive is never copied).
+     */
+    colourVisionMayCopy: (MediaAsset) -> Boolean = { true },
 ) {
     // Chrome starts HIDDEN for a photo and stays hidden across a swipe -- and starts SHOWN the
     // first time a video opens.
@@ -368,6 +382,15 @@ fun ViewerScreen(
     // starts, so anything that can change under it without the asset changing -- the animated flag
     // once the sniff lands -- is read through this (TRAPS 50).
     val liftable by rememberUpdatedState(canLift)
+    // The colour-vision tools: the choice is kept across a swipe (the holder is not keyed on the
+    // photo), what was computed from a photo is not. See ColourVisionViewer.
+    val colourSupport = visionSupport(asset, animatedImage)
+    val colourCanSave = catalogueActions && !asset.isExternal && !asset.isVideo
+    val colourVision = rememberColourVisionViewer(asset, colourSupport, colourCanSave)
+    val colourPhotoKey by rememberUpdatedState(PhotoKey(asset))
+    val liveSensitive by rememberUpdatedState(isSensitive)
+    val liveAssetId by rememberUpdatedState(asset.id)
+    val liveMayCopy by rememberUpdatedState(colourVisionMayCopy)
     val shell = rememberSpatialController()
     // Entering Select text, from the chip, the actions room's row or the details card's line. Rooms
     // close first (a no-op from the chip, which only shows at home) so the mode starts on a clean
@@ -716,6 +739,17 @@ fun ViewerScreen(
                 onSetPinchMode = onSetPinchMode,
                 transparencyBackground = transparencyBackground,
                 onSetTransparencyBackground = onSetTransparencyBackground,
+                colourVisionSection = {
+                    ColourVisionRoomSection(
+                        viewer = colourVision,
+                        asset = asset,
+                        support = colourSupport,
+                        sensitive = isSensitive,
+                        canSave = colourCanSave,
+                        // Read live: the flag can change, and the job can outlive this photo.
+                        mayCopy = { a -> !(a.id == liveAssetId && liveSensitive) && liveMayCopy(a) },
+                    )
+                },
             )
         },
     )
@@ -832,9 +866,15 @@ fun ViewerScreen(
                         // Gated on the mode as well as on the mode's own overlay consuming the
                         // down: a touch that lands outside a rotated or panned text layer reaches
                         // this detector, and a tap there must not hide the chrome under the mode.
-                        onTap = {
+                        onTap = { tap ->
                             if (ViewerChromePolicy.oneFingerGesturesAreViewers(viewerMode.ownsScreen)) {
-                                chromeVisible = !chromeVisible
+                                // With "Name colours" on, a tap on the picture names the colour
+                                // instead; a tap off the picture (or with nothing read yet) is the
+                                // ordinary chrome toggle, so the bars can still be brought up.
+                                val named = colourVision.nameAt(
+                                    colourPhotoKey, tap, containerSize, scale, offsetX, offsetY, rotation,
+                                )
+                                if (!named) chromeVisible = !chromeVisible
                             }
                         },
                         onDoubleTap = {
@@ -935,10 +975,13 @@ fun ViewerScreen(
                             ),
                         )
                     }
-                    MediaImage(
+                    // The photo itself, or the same photo through the colour-vision view the
+                    // person chose (a display filter only: the file is never touched).
+                    ColourVisionPhoto(
+                        viewer = colourVision,
                         asset = asset,
+                        support = colourSupport,
                         modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit,
                         onImageSize = { decodedSize = it },
                         // A GIF plays even before AnimationIndex has sniffed it (P0-14's own
                         // stated fallback) -- almost every real GIF a user has IS animated, and a
@@ -1048,6 +1091,17 @@ fun ViewerScreen(
                         .align(Alignment.BottomStart)
                         .navigationBarsPadding()
                         .padding(start = MINIMAP_INSET_START, bottom = MINIMAP_INSET_BOTTOM),
+                )
+            }
+
+            // The colour-vision chip, the name of a tapped colour and the copy notice: taps only,
+            // clear of the shell's edge zones, lifted over the filmstrip band.
+            if (!modeActive && colourSupport != VisionSupport.NONE) {
+                ColourVisionOverlay(
+                    viewer = colourVision,
+                    support = colourSupport,
+                    container = containerSize,
+                    bottomReserve = ViewerChromePolicy.videoBottomInsetDp(filmstripShown).dp,
                 )
             }
 

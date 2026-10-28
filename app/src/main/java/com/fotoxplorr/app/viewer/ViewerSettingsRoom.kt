@@ -3,6 +3,7 @@ package com.fotoxplorr.app.viewer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -72,6 +73,11 @@ fun ViewerSettingsRoom(
     /** What is drawn behind a see-through photo. See [TransparencyBackground]. */
     transparencyBackground: TransparencyBackground = TransparencyBackground.CHECKERBOARD,
     onSetTransparencyBackground: (TransparencyBackground) -> Unit = {},
+    /**
+     * The "Colour vision" group (`vision/ColourVisionRoomSection`), drawn after the on-screen rows
+     * and bringing its own rule and heading. Null leaves the room without it.
+     */
+    colourVisionSection: (@Composable ColumnScope.() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -129,6 +135,8 @@ fun ViewerSettingsRoom(
                 modifier = Modifier.testTag(TRANSPARENCY_ROW_VALUE_TAG),
             )
         }
+
+        colourVisionSection?.invoke(this)
 
         RoomRule(Modifier.padding(vertical = 14.dp))
         RoomEyebrow("SLIDESHOW")
