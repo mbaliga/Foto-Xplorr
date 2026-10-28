@@ -349,6 +349,9 @@ class ReelWriterTest {
         assertEquals("Summer trip", reelStem("Summer trip.MP4", taken, utc))
         assertEquals("a_b_c_d", reelStem("a/b\\c:d", taken, utc))
         assertEquals("ab", reelStem("a\u0000b\n", taken, utc))
+        // A file name is cut on a whole character: an emoji at the cut does not leave half of itself.
+        val stem = reelStem("z".repeat(99) + "\uD83D\uDE00", taken, utc)
+        assertEquals("z".repeat(99), stem)
         assertEquals("Reel-2025-06-15", reelStem("", taken, utc))
         assertEquals("Reel-2025-06-15", reelStem("   ", taken, utc))
         assertEquals("a name that is only dots falls back", "Reel-2025-06-15", reelStem("...", taken, utc))

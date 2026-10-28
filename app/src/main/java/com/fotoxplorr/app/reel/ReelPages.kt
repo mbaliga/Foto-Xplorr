@@ -150,7 +150,8 @@ internal fun DeleteReelDialog(reel: SavedReel, onDelete: () -> Unit, onKeep: () 
  * Setting up a draft: which months (none chosen is every date), how long, what shape, then Make the draft; or
  * Choose by hand, which opens the picker. A month is a switch (several can be on); a length and a shape are a
  * choice of one. The draft works from dates, favourites and the order of the photos, without looking at them,
- * so it may keep a blurred shot or a near-twin: the words under the title do not promise more.
+ * so it may keep a blurred shot or a near-twin, and skips a photo taken within three seconds of one it kept: the words
+ * under the title do not promise more.
  */
 @Composable
 internal fun ReelDraftPage(

@@ -226,16 +226,22 @@ object ReelEditing {
     }
 
     fun cleanText(text: String): String =
-        text.filter { it == '\n' || !it.isISOControl() }.take(ReelLimits.TEXT_MAX_CHARS)
+        cutAt(text.filter { it == '\n' || !it.isISOControl() }, ReelLimits.TEXT_MAX_CHARS)
+
+    /** [text] cut to at most [max] chars, not between the two halves of a character such as an emoji. */
+    fun cutAt(text: String, max: Int): String {
+        val cut = text.take(max)
+        return if (cut.length < text.length && cut.isNotEmpty() && cut.last().isHighSurrogate()) cut.dropLast(1) else cut
+    }
 
     /** The reel's name, with no control characters, trimmed, cut to [NAME_MAX]: what is saved. */
-    fun cleanName(name: String): String = name.filter { !it.isISOControl() }.trim().take(NAME_MAX).trim()
+    fun cleanName(name: String): String = cutAt(name.filter { !it.isISOControl() }.trim(), NAME_MAX).trim()
 
     const val NAME_MAX = 60
 
     /** The name as it is typed: not trimmed (the person is still writing), the store trims it when it saves. */
     fun setName(project: ReelProject, name: String): ReelProject =
-        project.copy(name = name.filter { !it.isISOControl() }.take(NAME_MAX))
+        project.copy(name = cutAt(name.filter { !it.isISOControl() }, NAME_MAX))
 
     fun setAspect(project: ReelProject, aspect: ReelAspect): ReelProject = project.copy(aspect = aspect)
 
@@ -287,7 +293,9 @@ object ReelEditing {
  * Starting a reel from the library: which pictures a draft may use, the months to choose from, and the draft.
  * Pure, so a test gives it a list. The draft is [ReelDraftBuilder] with no extra facts (no sharpness, no
  * similarity, no places: the library's listing has none of those), so it goes by time, favourites and the order
- * given; it will not drop a blurred shot or a near-twin, and scenes are cut by gaps in time only.
+ * given. It cannot see a blurred shot or a near-twin, but with no picture to compare it takes photos within three
+ * seconds of one it kept as one burst and keeps the first, so a walk shot every two seconds loses about every other
+ * photo (counted in the report's `duplicates`, which the screen does not show). Scenes are cut by gaps in time only.
  */
 object ReelDrafting {
     /** The most months offered as chips; older ones are reached by choosing by hand. */

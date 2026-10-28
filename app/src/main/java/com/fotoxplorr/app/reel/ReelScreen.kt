@@ -54,7 +54,8 @@ import kotlinx.coroutines.withContext
  * Back on the list is the host's, which closes the experiment.
  *
  * **The draft** is [ReelDraftBuilder] on dates, favourites and the order of the photos alone: it does not look at a
- * picture, so it may keep a blurred shot or a near-twin. It is a first cut to change, not a judgement.
+ * picture, so it may keep a blurred shot or a near-twin, and it drops a photo taken within three seconds of one it kept
+ * as part of a burst, whatever it shows. It is a first cut to change, not a judgement.
  *
  * **Photos.** Only `env.assets` is listed and previewed (already browsable-filtered, TRAPS #33), and the picker
  * offers only those. The export reads every pixel through [ReelEnvHost], which asks the host again and refuses

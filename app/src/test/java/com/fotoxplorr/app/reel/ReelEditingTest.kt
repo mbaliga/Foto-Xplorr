@@ -216,6 +216,20 @@ class ReelEditingTest {
         assertEquals(ReelEditing.NAME_MAX, ReelEditing.setName(ReelProject(), "x".repeat(200)).name.length)
     }
 
+    @Test
+    fun `a cut never leaves half of a character that takes two places`() {
+        val grin = "\uD83D\uDE00"
+        val name = "x".repeat(ReelEditing.NAME_MAX - 1) + grin
+        assertEquals("x".repeat(ReelEditing.NAME_MAX - 1), ReelEditing.cleanName(name))
+        assertEquals("x".repeat(ReelEditing.NAME_MAX - 1), ReelEditing.setName(ReelProject(), name).name)
+        assertEquals("a character that fits whole stays", "x".repeat(ReelEditing.NAME_MAX - 2) + grin, ReelEditing.cleanName("x".repeat(ReelEditing.NAME_MAX - 2) + grin))
+        val words = "y".repeat(ReelLimits.TEXT_MAX_CHARS - 1) + grin
+        val card = ReelEditing.addCard(ReelProject(), "x")
+        assertEquals("y".repeat(ReelLimits.TEXT_MAX_CHARS - 1), (ReelEditing.setCardText(card, 0, words).items[0] as TitleItem).text)
+        assertEquals("", ReelEditing.cutAt("", 5))
+        assertEquals("abc", ReelEditing.cutAt("abc", 3))
+    }
+
     // ---- sound ----
 
     @Test

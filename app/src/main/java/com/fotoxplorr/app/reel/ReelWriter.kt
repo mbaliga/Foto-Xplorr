@@ -244,7 +244,7 @@ fun reelStem(name: String, dateMillis: Long, zone: ZoneId = ZoneId.systemDefault
         .joinToString("")
         .trim()
         .trimEnd('.')
-        .take(MAX_STEM)
+        .let { ReelEditing.cutAt(it, MAX_STEM) }
         .trim()
     if (cleaned.isNotEmpty()) return cleaned
     return "Reel-" + Instant.ofEpochMilli(if (dateMillis > 0L) dateMillis else System.currentTimeMillis()).atZone(zone).toLocalDate()
