@@ -3,12 +3,20 @@ package com.fotoxplorr.app.experimental
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesomeMosaic
 import androidx.compose.material.icons.outlined.Brush
+import androidx.compose.material.icons.outlined.Colorize
+import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.Gif
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PanoramaHorizontal
 import androidx.compose.material.icons.outlined.PermMedia
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.ViewInAr
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.Wallpaper
+import android.content.Context
+import android.content.pm.PackageManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -19,12 +27,24 @@ import com.fotoxplorr.app.ai.AiSettingsScreen
 import com.fotoxplorr.app.ai.SimilarityExplorerScreen
 import com.fotoxplorr.app.aquarium.AquariumCopy
 import com.fotoxplorr.app.aquarium.AquariumExperience
+import com.fotoxplorr.app.animate.AnimateScreenCopy
+import com.fotoxplorr.app.animate.AnimatedImages
+import com.fotoxplorr.app.board.BoardCopy
+import com.fotoxplorr.app.board.MoodBoard
+import com.fotoxplorr.app.chroma.ChromaCopy
+import com.fotoxplorr.app.chroma.ChromaId
 import com.fotoxplorr.app.experience.GalleryPreviewScreen
 import com.fotoxplorr.app.experience.PhotoWallScreen
+import com.fotoxplorr.app.palettebuilder.PaletteBuilder
+import com.fotoxplorr.app.palettebuilder.PaletteBuilderCopy
 import com.fotoxplorr.app.pano.PanoCopy
 import com.fotoxplorr.app.pano.PanoramaExperience
+import com.fotoxplorr.app.reel.ReelCopy
+import com.fotoxplorr.app.reel.ReelMaker
 import com.fotoxplorr.app.spatial.SpatialPhotoSceneScreen
 import com.fotoxplorr.app.ui.HelpCopy
+import com.fotoxplorr.app.vision.ColourVisionCheck
+import com.fotoxplorr.app.vision.VisionCopy
 import com.fotoxplorr.app.wall.WallCopy
 import com.fotoxplorr.app.wall.WallExperience
 
@@ -77,6 +97,46 @@ internal val builtInExperiments: List<ExperimentEntry> = listOf(
         icon = Icons.Outlined.PanoramaHorizontal,
     ) { env, onClose ->
         PanoramaExperience(env, onClose)
+    },
+    // Restorable, all four: opening one starts no work and asks no permission. Each keeps its own draft
+    // (reel, mood board and palette autosave to private files; the GIF/video maker keeps its choices
+    // in saved state), so after a kill the person is put back where they were. A render or a save
+    // that was running is gone with no file. None of them reads a photo except through ExperimentEnv.
+    ExperimentEntry(
+        id = "reel",
+        title = ReelCopy.TITLE,
+        blurb = ReelCopy.BLURB,
+        group = ExperimentGroup.MAKE,
+        icon = Icons.Outlined.Movie,
+    ) { env, onClose ->
+        ReelMaker(env, onClose)
+    },
+    ExperimentEntry(
+        id = "animate",
+        title = AnimateScreenCopy.TITLE,
+        blurb = AnimateScreenCopy.BLURB,
+        group = ExperimentGroup.MAKE,
+        icon = Icons.Outlined.Gif,
+    ) { env, onClose ->
+        AnimatedImages(env, onClose)
+    },
+    ExperimentEntry(
+        id = "board",
+        title = BoardCopy.TITLE,
+        blurb = BoardCopy.BLURB,
+        group = ExperimentGroup.MAKE,
+        icon = Icons.Outlined.Dashboard,
+    ) { env, onClose ->
+        MoodBoard(env, onClose)
+    },
+    ExperimentEntry(
+        id = "palette",
+        title = PaletteBuilderCopy.TITLE,
+        blurb = PaletteBuilderCopy.BLURB,
+        group = ExperimentGroup.MAKE,
+        icon = Icons.Outlined.Palette,
+    ) { env, onClose ->
+        PaletteBuilder(env, onClose)
     },
     // Explore.
     ExperimentEntry(
@@ -142,6 +202,30 @@ internal val builtInExperiments: List<ExperimentEntry> = listOf(
             onClose = onClose,
         )
     },
+    ExperimentEntry(
+        id = "chroma",
+        title = ChromaCopy.TITLE,
+        blurb = ChromaCopy.BLURB,
+        group = ExperimentGroup.EXPLORE,
+        icon = Icons.Outlined.Colorize,
+        // Not restorable: it opens the camera (and asks for the camera permission in context), so a
+        // restored id must not put the person back in front of the camera after a kill. Dimmed on a
+        // phone with no camera at all; the screen also says so if the camera cannot be opened.
+        restorable = false,
+        available = ::deviceHasCamera,
+    ) { env, onClose ->
+        ChromaId(env, onClose)
+    },
+    // Restorable: opening it starts nothing and asks nothing; the step and the answers come back.
+    ExperimentEntry(
+        id = "colourcheck",
+        title = VisionCopy.CHECK_TITLE,
+        blurb = VisionCopy.CHECK_BLURB,
+        group = ExperimentGroup.EXPLORE,
+        icon = Icons.Outlined.Visibility,
+    ) { env, onClose ->
+        ColourVisionCheck(env, onClose)
+    },
     // Setup, always last.
     ExperimentEntry(
         id = "ai",
@@ -154,6 +238,16 @@ internal val builtInExperiments: List<ExperimentEntry> = listOf(
         AiSettingsScreen(onClose = onClose)
     },
 )
+
+/**
+ * Whether this phone has any camera (front, back or external), asked of the package manager: the same
+ * feature the manifest declares as optional, so a phone without one still installs Fotoz and Chroma ID
+ * is dimmed. It opens nothing and needs no permission.
+ */
+internal fun deviceHasCamera(context: Context): Boolean = cameraFeaturePresent { context.packageManager.hasSystemFeature(it) }
+
+/** [deviceHasCamera] with the feature lookup handed in, so a test needs no phone. */
+internal fun cameraFeaturePresent(has: (String) -> Boolean): Boolean = has(PackageManager.FEATURE_CAMERA_ANY)
 
 /** Asks for a location read once per time the compass opens, if nothing has been scanned yet. */
 @Composable

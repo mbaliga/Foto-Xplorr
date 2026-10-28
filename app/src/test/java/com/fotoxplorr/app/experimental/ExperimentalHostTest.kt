@@ -138,15 +138,22 @@ class ExperimentalHostTest {
         assertTrue(duplicateIds(builtInExperiments).isEmpty())
         // These are saved state and the "Open the app on"-style stable names: a rename is a break.
         assertEquals(
-            listOf("aquarium", "wall-mockup", "panorama", "similarity", "wall", "preview", "compass", "ai"),
+            listOf(
+                "aquarium", "wall-mockup", "panorama", "reel", "animate", "board", "palette",
+                "similarity", "wall", "preview", "compass", "chroma", "colourcheck", "ai",
+            ),
             builtInExperiments.map { it.id },
         )
         assertEquals("ai", builtInExperiments.last().id)
         assertEquals(ExperimentGroup.SETUP, builtInExperiments.last().group)
         assertEquals("Compass view", builtInExperiments.first { it.id == "compass" }.title)
         assertEquals(
-            listOf("aquarium", "wall-mockup", "panorama"),
+            listOf("aquarium", "wall-mockup", "panorama", "reel", "animate", "board", "palette"),
             builtInExperiments.filter { it.group == ExperimentGroup.MAKE }.map { it.id },
+        )
+        assertEquals(
+            listOf("similarity", "wall", "preview", "compass", "chroma", "colourcheck"),
+            builtInExperiments.filter { it.group == ExperimentGroup.EXPLORE }.map { it.id },
         )
         assertTrue("the old street and photo map cards are gone", builtInExperiments.none { it.title.contains("map", ignoreCase = true) })
     }
@@ -163,11 +170,44 @@ class ExperimentalHostTest {
     }
 
     @Test
+    fun `the six new tools take their titles and blurbs from their own copy objects`() {
+        fun entry(id: String) = builtInExperiments.single { it.id == id }
+        assertEquals(com.fotoxplorr.app.reel.ReelCopy.TITLE, entry("reel").title)
+        assertEquals(com.fotoxplorr.app.reel.ReelCopy.BLURB, entry("reel").blurb)
+        assertEquals(com.fotoxplorr.app.animate.AnimateScreenCopy.TITLE, entry("animate").title)
+        assertEquals(com.fotoxplorr.app.animate.AnimateScreenCopy.BLURB, entry("animate").blurb)
+        assertEquals(com.fotoxplorr.app.board.BoardCopy.TITLE, entry("board").title)
+        assertEquals(com.fotoxplorr.app.board.BoardCopy.BLURB, entry("board").blurb)
+        assertEquals(com.fotoxplorr.app.palettebuilder.PaletteBuilderCopy.TITLE, entry("palette").title)
+        assertEquals(com.fotoxplorr.app.palettebuilder.PaletteBuilderCopy.BLURB, entry("palette").blurb)
+        assertEquals(com.fotoxplorr.app.chroma.ChromaCopy.TITLE, entry("chroma").title)
+        assertEquals(com.fotoxplorr.app.chroma.ChromaCopy.BLURB, entry("chroma").blurb)
+        assertEquals(com.fotoxplorr.app.vision.VisionCopy.CHECK_TITLE, entry("colourcheck").title)
+        assertEquals(com.fotoxplorr.app.vision.VisionCopy.CHECK_BLURB, entry("colourcheck").blurb)
+        assertEquals("Colour vision check", entry("colourcheck").title)
+        assertEquals(ExperimentGroup.EXPLORE, entry("chroma").group)
+        assertEquals(ExperimentGroup.EXPLORE, entry("colourcheck").group)
+    }
+
+    @Test
+    fun `the camera tool asks for any camera and nothing narrower`() {
+        assertTrue(cameraFeaturePresent { it == android.content.pm.PackageManager.FEATURE_CAMERA_ANY })
+        assertFalse("a front-only or external camera is still a camera, but no feature at all is not", cameraFeaturePresent { false })
+        var asked: String? = null
+        cameraFeaturePresent { asked = it; true }
+        assertEquals(android.content.pm.PackageManager.FEATURE_CAMERA_ANY, asked)
+    }
+
+    @Test
     fun `an entry that reads the location on open is not reopened after the process was killed`() {
         // The compass starts a location read when it opens and asks for the location permission in
         // context (ExperimentEntry.restorable), so a restored id must not put the person back in it.
-        assertEquals(listOf("compass"), builtInExperiments.filter { !it.restorable }.map { it.id })
+        assertEquals(listOf("compass", "chroma"), builtInExperiments.filter { !it.restorable }.map { it.id })
         assertNull(idToRestore(builtInExperiments, idToSave("compass", "before"), "after"))
+        assertNull("the camera tool never reopens by itself", idToRestore(builtInExperiments, idToSave("chroma", "before"), "after"))
+        for (id in listOf("reel", "animate", "board", "palette", "colourcheck")) {
+            assertEquals(id, idToRestore(builtInExperiments, idToSave(id, "before"), "after"))
+        }
         assertEquals("aquarium", idToRestore(builtInExperiments, idToSave("aquarium", "before"), "after"))
         assertEquals("wall-mockup", idToRestore(builtInExperiments, idToSave("wall-mockup", "before"), "after"))
         // The same process (the viewer round trip, leaving the destination) keeps the compass.
