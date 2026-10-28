@@ -323,13 +323,15 @@ class BoardRendererTest {
         lateinit var running: kotlinx.coroutines.Job
         source.onDecoded = { running.cancel() }
         runBlocking {
-            running = launch(kotlinx.coroutines.Dispatchers.Default) {
+            // Started only once `running` is set: the decode hook cancels it, and on another thread it could run first.
+            running = launch(kotlinx.coroutines.Dispatchers.Default, start = kotlinx.coroutines.CoroutineStart.LAZY) {
                 try {
                     BoardRenderer(source).render(b, one, MissingPhotos.PLACEHOLDER)
                 } finally {
                     job.complete(Unit)
                 }
             }
+            running.start()
             job.await()
             running.join()
             assertTrue(running.isCancelled)
