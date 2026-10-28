@@ -24,19 +24,43 @@ class ChromaPrivacyTest {
         return dir.listFiles { f -> f.extension == "kt" }!!.toList()
     }
 
+    /** The one file in the package that writes anything: the reading history, which holds colours and times. */
+    private val historyStore = "ChromaHistory.kt"
+
     @Test
     fun noChromaFileWritesAPictureOrTouchesTheLibrary() {
         val forbidden = listOf(
             "MediaStore", "ContentResolver", "FileOutputStream", "openOutputStream", ".compress(", "FileWriter",
             "writeBytes", "writeText", "getExternalStorage", "SharedPreferences", "DataStore", "openFileOutput",
         )
+        // The history store writes its own text file; it is held to the stricter tokens below and in its own test.
+        val pictureTokens = setOf("MediaStore", "ContentResolver", "openOutputStream", ".compress(", "getExternalStorage", "SharedPreferences", "DataStore", "openFileOutput")
         for (f in chromaSources()) {
             // The comments say what is NOT done, so scan code lines only.
             val code = f.readLines().filterNot { it.trim().startsWith("*") || it.trim().startsWith("//") || it.trim().startsWith("/*") }
             for (token in forbidden) {
+                if (f.name == historyStore && token !in pictureTokens) continue
                 assertFalse("${f.name} uses $token", code.any { token in it })
             }
         }
+    }
+
+    @Test
+    fun onlyTheHistoryStoreWritesAFileAndItWritesOnlyUnderTheToolsFolder() {
+        val writers = chromaSources().filter { f ->
+            f.readLines().filterNot { it.trim().startsWith("*") || it.trim().startsWith("//") }.any { "FileOutputStream" in it || ".renameTo(" in it }
+        }.map { it.name }
+        assertEquals(listOf(historyStore), writers)
+        val src = appFile("src/main/java/com/fotoxplorr/app/chroma/$historyStore").readText()
+        assertTrue("\"chroma\"" in src)
+        // It has no way to be handed a picture: it takes colours, a kind and a time.
+        assertFalse(Regex("""\b(Bitmap|ChromaFrame|ByteArray\s*\()""").containsMatchIn(src.lines().filter { "toByteArray" !in it && "writeFile" !in it && "bytes" !in it }.joinToString("\n")))
+    }
+
+    @Test
+    fun theHistoryHoldsNoPictureField() {
+        val line = SavedReading(0xFFB03020.toInt(), ReadingKind.CALIBRATED, 1_700_000_000_000L).toLine()
+        assertEquals("reading #B03020 card 1700000000000", line)
     }
 
     @Test
