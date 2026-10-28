@@ -25,6 +25,7 @@ internal object ReelCopy {
     const val SAVED_SMALLER = "Saved smaller, to fit this phone."
     const val SAVED_CUTS = "Saved with plain cuts, to fit this phone."
     const val SAVED_SILENT = "Reel saved without sound."
+    const val SAVED_SOUND_SHORT = "The sound ends before the video does."
     const val PROTECTED = "A protected photo or clip cannot be used."
     const val NO_ENCODER = "This phone cannot make a video."
     const val SOURCE_UNREADABLE = "A photo, clip or sound file could not be read."

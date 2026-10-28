@@ -2,6 +2,7 @@ package com.fotoxplorr.app.reel
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -98,6 +99,36 @@ class ReelMp4CheckTest {
         assertFalse(ReelMp4Check.carriesPlace(file(ftyp, byteArrayOf(0, 0, 0, 4) + "moov".toByteArray() + ByteArray(10))))
         assertFalse(ReelMp4Check.carriesPlace(folder.newFile()))
         assertFalse(ReelMp4Check.carriesPlace(File(folder.root, "missing.mp4")))
+    }
+
+    // ---- a sound track ----
+
+    private fun trak(handler: String) = box("trak", box("mdia", box("hdlr", ByteArray(8) + handler.toByteArray() + ByteArray(12))))
+
+    @Test
+    fun `a file with a sound track says so, and one with only pictures says it has none`() {
+        val video = file(ftyp, box("mdat", randomData(500)), box("moov", box("mvhd", ByteArray(100)) + trak("vide")))
+        val both = file(ftyp, box("mdat", randomData(500)), box("moov", box("mvhd", ByteArray(100)) + trak("vide") + trak("soun")))
+        assertEquals(false, ReelMp4Check.hasSoundTrack(video))
+        assertEquals(true, ReelMp4Check.hasSoundTrack(both))
+        // Metadata first, as a file written for streaming has it.
+        assertEquals(true, ReelMp4Check.hasSoundTrack(file(ftyp, box("moov", trak("soun")), box("mdat", randomData(500)))))
+    }
+
+    @Test
+    fun `the word sound is only a track when it is a track's handler`() {
+        assertEquals(false, ReelMp4Check.hasSoundTrack(file(ftyp, box("moov", box("udta", "soun".toByteArray() + ByteArray(30))))))
+        assertEquals("not in the picture data", false, ReelMp4Check.hasSoundTrack(file(ftyp, box("mdat", box("hdlr", ByteArray(8) + "soun".toByteArray())), box("moov", trak("vide")))))
+    }
+
+    @Test
+    fun `a file that cannot be read for tracks says nothing rather than no`() {
+        assertNull(ReelMp4Check.hasSoundTrack(file(ftyp, box("mdat", randomData(100)))))
+        assertNull(ReelMp4Check.hasSoundTrack(folder.newFile()))
+        assertNull(ReelMp4Check.hasSoundTrack(File(folder.root, "missing.mp4")))
+        assertNull(ReelMp4Check.hasSoundTrack(file(ftyp, byteArrayOf(0x7F, 0, 0, 0) + "moov".toByteArray() + ByteArray(10))))
+        val rnd = Random(9)
+        repeat(300) { ReelMp4Check.hasSoundTrack(folder.newFile().apply { writeBytes(randomData(rnd.nextInt(400), it)) }) }
     }
 
     @Test

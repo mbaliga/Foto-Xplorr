@@ -7,7 +7,7 @@ import org.junit.Test
 /** The words the export says: one short sentence each (owner feedback #6), and none that names the machinery. */
 class ReelExportCopyTest {
     private val sentences = listOf(
-        ReelCopy.SAVED, ReelCopy.SAVED_SMALLER, ReelCopy.SAVED_CUTS, ReelCopy.SAVED_SILENT, ReelCopy.PROTECTED, ReelCopy.NO_ENCODER,
+        ReelCopy.SAVED, ReelCopy.SAVED_SMALLER, ReelCopy.SAVED_CUTS, ReelCopy.SAVED_SILENT, ReelCopy.SAVED_SOUND_SHORT, ReelCopy.PROTECTED, ReelCopy.NO_ENCODER,
         ReelCopy.SOURCE_UNREADABLE, ReelCopy.OUT_OF_MEMORY, ReelCopy.NO_SPACE, ReelCopy.SAVE_FAILED, ReelCopy.FAILED, ReelCopy.PLACE_LEFT_IN,
         ReelCopy.CANCELLED, ReelCopy.SOUND_UNREADABLE, ReelCopy.SOUND_STARTS_LATE, ReelCopy.SOUND_FAILED, ReelCopy.SOUND_NONE,
         ReelCopy.noLongerAvailable(3), ReelCopy.cannotRead(12),

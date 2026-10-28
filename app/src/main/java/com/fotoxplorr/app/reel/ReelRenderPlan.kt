@@ -231,7 +231,9 @@ data class ReelAudioPlan(val uri: String, val startUs: Long, val lengthUs: Long,
 
         /**
          * Lay [sound] under a reel [reelUs] long. Null when nothing would play: the file is known and
-         * ends before [ReelSoundtrack.trimStartMs], or the reel is empty. [fileDurationMs] of 0 means the file did not say.
+         * ends before [ReelSoundtrack.trimStartMs], or the reel is empty. [fileDurationMs] of 0 means the file did not say:
+         * it is then taken as long enough, so a file that is in fact short stops where it ends, its fade not reached, and
+         * nothing can tell the person (the finished-video note about a short sound needs a known length).
          */
         fun plan(sound: ReelSoundtrack, fileDurationMs: Long, reelUs: Long, mixedWithClipSound: Boolean): ReelAudioPlan? {
             if (reelUs <= 0L || sound.uri.isBlank()) return null

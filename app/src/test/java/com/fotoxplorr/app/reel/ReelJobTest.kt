@@ -96,7 +96,8 @@ class ReelJobTest {
         val plans = ArrayList<ReelRenderPlan>()
         val stagedSeen = ArrayList<ReelStaged>()
         var behaviour: suspend (index: Int, plan: ReelRenderPlan) -> Unit = { _, _ -> }
-        var content: ByteArray = cleanMp4()
+        /** What the file is, or null: a file with a sound track when the plan has sound, else one with pictures only. */
+        var content: ByteArray? = null
 
         override fun canEncode(): Boolean = can
 
@@ -105,7 +106,7 @@ class ReelJobTest {
             stagedSeen += staged
             onProgress(0.3f)
             behaviour(plans.size - 1, plan)
-            output.writeBytes(content)
+            output.writeBytes(content ?: if (plan.hasAudio) soundMp4() else cleanMp4())
             onProgress(1f)
         }
     }
@@ -139,6 +140,9 @@ class ReelJobTest {
         }
 
         fun cleanMp4(): ByteArray = box("ftyp", "isom".toByteArray()) + box("mdat", ByteArray(2000)) + box("moov", box("mvhd", ByteArray(100)))
+        fun hdlr(handler: String) = box("trak", box("mdia", box("hdlr", ByteArray(8) + handler.toByteArray() + ByteArray(12))))
+        fun soundMp4(): ByteArray = box("ftyp", "isom".toByteArray()) + box("mdat", ByteArray(2000)) + box("moov", box("mvhd", ByteArray(100)) + hdlr("vide") + hdlr("soun"))
+        fun silentMp4(): ByteArray = box("ftyp", "isom".toByteArray()) + box("mdat", ByteArray(2000)) + box("moov", box("mvhd", ByteArray(100)) + hdlr("vide"))
         fun placeMp4(): ByteArray = box("ftyp", "isom".toByteArray()) + box("mdat", ByteArray(2000)) + box("moov", box("udta", byteArrayOf(0xA9.toByte()) + "xyz+38.7-009.1/".toByteArray()))
     }
 
@@ -373,6 +377,38 @@ class ReelJobTest {
         assertEquals(5_000_000L, audio.startUs)
         assertEquals(6_000_000L, audio.lengthUs)
         assertTrue(d.hasSound)
+    }
+
+    @Test
+    fun `a sound the finished file does not hold is not reported as sound`() {
+        val c = case(1, 2, videos = setOf(2))
+        c.encoder.content = silentMp4()
+        // The plan carried the clip's own sound, but the clip had none to give.
+        val d = done(run(c, ReelProject(listOf(still(1), clip(2))), keep = true))
+        assertTrue(c.encoder.plans.single().hasAudio)
+        assertFalse(d.hasSound)
+    }
+
+    @Test
+    fun `a file that cannot be looked into is taken at the plan's word about sound`() {
+        val c = case(1)
+        c.encoder.content = box("ftyp", "isom".toByteArray()) + box("mdat", ByteArray(2000))
+        assertTrue(done(run(c, ReelProject(listOf(still(1)), soundtrack = track))).hasSound)
+    }
+
+    @Test
+    fun `a sound that ends before the video is said so, and one that lasts is not`() {
+        val short = case(1, 2)
+        short.host.probe = SoundtrackProbe.Usable(8_000L)
+        val d = done(run(short, ReelProject(listOf(still(1), still(2)), soundtrack = track)))
+        assertEquals("6 s of video, 3 s of file left after the start", listOf(ReelCopy.SAVED_SOUND_SHORT), d.notes)
+
+        val long = case(1, 2)
+        assertTrue(done(run(long, ReelProject(listOf(still(1), still(2)), soundtrack = track))).notes.isEmpty())
+
+        val unknown = case(1, 2)
+        unknown.host.probe = SoundtrackProbe.Usable(0L)
+        assertTrue("a file that does not say its length cannot be called short", done(run(unknown, ReelProject(listOf(still(1), still(2)), soundtrack = track))).notes.isEmpty())
     }
 
     @Test

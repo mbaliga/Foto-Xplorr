@@ -327,8 +327,11 @@ object ReelJob {
                 if (smaller) add(ReelCopy.SAVED_SMALLER)
                 if (cuts) add(ReelCopy.SAVED_CUTS)
                 if (request.withoutSound && (project.soundtrack != null || request.keepClipSound)) add(ReelCopy.SAVED_SILENT)
+                if (plan.audio?.let { it.lengthUs < plan.totalUs } == true) add(ReelCopy.SAVED_SOUND_SHORT)
             }
-            return ReelOutcome.Done(uri, plan.frame.width, plan.frame.height, plan.totalMs, plan.hasAudio, smaller, cuts, notes)
+            // What the file holds beats what was planned: a clip with no sound of its own leaves a plan with sound and a silent video.
+            val hasSound = ReelMp4Check.hasSoundTrack(output) ?: plan.hasAudio
+            return ReelOutcome.Done(uri, plan.frame.width, plan.frame.height, plan.totalMs, hasSound, smaller, cuts, notes)
         }
 
         private class StageFailure(message: String) : Exception(message)
