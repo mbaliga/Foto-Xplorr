@@ -44,17 +44,21 @@ class AnimateLibrary(assets: List<MediaAsset>) {
 
         /**
          * A file worth offering as "a GIF": every GIF and WebP, and a PNG saved into this app's own
-         * animation album (an APNG looks like any PNG; the file is read to find out). Whether it
-         * really moves is only known when the job opens it, and it then says so.
+         * animation album, or named as [AnimateWriter] names one (Android 8 and 9 give the row no album);
+         * an APNG looks like any PNG and the file is read to find out. Whether it really moves is only
+         * known when the job opens it, and it then says so. An APNG made by another app is not offered.
          */
         fun isMovingCandidate(a: MediaAsset): Boolean {
             if (a.isVideo || a.isTrashed) return false
             return when (a.format) {
                 MediaFormat.Gif, MediaFormat.WebP -> true
-                MediaFormat.Png -> a.relativePath.orEmpty().contains(ANIMATIONS_ALBUM, ignoreCase = true)
+                MediaFormat.Png -> a.relativePath.orEmpty().contains(ANIMATIONS_ALBUM, ignoreCase = true) || OWN_PNG_NAME.containsMatchIn(a.displayName)
                 else -> false
             }
         }
+
+        /** A name [animationFileName] gives a PNG: the stem, `-animation`, and a number when the name was taken. */
+        private val OWN_PNG_NAME = Regex("-animation(-\\d+)?\\.png$", RegexOption.IGNORE_CASE)
 
         /** The folder name [AnimateWriter] saves into. */
         const val ANIMATIONS_ALBUM = "Fotoz/Animations"

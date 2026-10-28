@@ -51,6 +51,17 @@ class AnimateDraftTest {
     }
 
     @Test
+    fun `a PNG this app named as an animation is offered wherever it landed, an ordinary one is not`() {
+        // Android 8 and 9 set no folder, so the row has no album to recognise; the name still says what it is.
+        val defaultFolder = AnimateKit.asset(40, "trip-animation.png", mime = "image/png").copy(relativePath = null)
+        val numbered = AnimateKit.asset(41, "trip-animation-12.png", mime = "image/png").copy(relativePath = "Pictures/")
+        val lookalike = AnimateKit.asset(42, "animation.png", mime = "image/png").copy(relativePath = "Pictures/")
+        val wrongType = AnimateKit.asset(43, "trip-animation.jpg")
+        val lib = AnimateLibrary(listOf(defaultFolder, numbered, lookalike, wrongType))
+        assertEquals(listOf(40L, 41L), lib.files.map { it.id.value })
+    }
+
+    @Test
     fun `the saved file is found by the row id at the end of its uri or by the whole uri`() {
         val saved = AnimateKit.asset(900)
         val list = photos + saved
