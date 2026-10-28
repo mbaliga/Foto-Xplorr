@@ -78,12 +78,13 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
      * The picture to save. Refused (nothing drawn) if any photo on the canvas cannot be read now;
      * otherwise drawn at the editor's ceiling for [options] and, if memory runs out, one rung down at
      * a time ([renderDownTheLadder]). The caller re-checks protection again before it publishes.
+     * [onLayer] hears (layers drawn, layers to draw) after each layer, and starts over at 0 on a smaller rung.
      */
-    suspend fun export(board: Board, options: ExportOptions = ExportOptions()): BoardRender {
+    suspend fun export(board: Board, options: ExportOptions = ExportOptions(), onLayer: (done: Int, total: Int) -> Unit = { _, _ -> }): BoardRender {
         val gone = missingNow(board)
         if (gone.isNotEmpty()) return BoardRender.Refused(gone)
         val outcome = renderDownTheLadder(BoardRenderPlan.exportLadder(board, options)) { edge ->
-            renderOnce(board, BoardRenderPlan.sizeForEdge(board.canvas, edge), MissingPhotos.REFUSE)
+            renderOnce(board, BoardRenderPlan.sizeForEdge(board.canvas, edge), MissingPhotos.REFUSE, onLayer)
         } ?: return BoardRender.OutOfMemory
         val result = outcome.value
         return if (result is BoardRender.Done) BoardRender.Done(result.bitmap, result.edge, outcome.steppedDown, result.missing) else result
@@ -105,7 +106,12 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
 
     private fun isDrawn(layer: Layer, canvas: CanvasSize): Boolean = layer.opacity > 0f && BoardGeometry.isOnCanvas(layer, canvas)
 
-    private suspend fun renderOnce(board: Board, size: RenderSize, policy: MissingPhotos): BoardRender {
+    private suspend fun renderOnce(
+        board: Board,
+        size: RenderSize,
+        policy: MissingPhotos,
+        onLayer: (done: Int, total: Int) -> Unit = { _, _ -> },
+    ): BoardRender {
         val s = size.pxPerUnit
         val drawn = board.layers.filter { isDrawn(it, board.canvas) && it.drawnWidth * s >= MIN_DRAWN_PX && it.drawnHeight * s >= MIN_DRAWN_PX }
 
@@ -134,7 +140,8 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
             val job = currentCoroutineContext()[Job]
             val shouldStop = { job?.isActive == false }
 
-            for (layer in drawn) {
+            onLayer(0, drawn.size)
+            for ((index, layer) in drawn.withIndex()) {
                 currentCoroutineContext().ensureActive()
                 var bitmap: Bitmap? = null
                 var own = false
@@ -163,6 +170,7 @@ class BoardRenderer(private val photos: BoardPhotoSource) {
                         if (left <= 0) kept.remove(ref.mediaId)?.recycle()
                     }
                 }
+                onLayer(index + 1, drawn.size)
             }
             finished = true
             return BoardRender.Done(out, max(out.width, out.height), false, missing)
