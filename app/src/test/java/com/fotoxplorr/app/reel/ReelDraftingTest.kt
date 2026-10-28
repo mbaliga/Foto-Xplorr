@@ -62,6 +62,21 @@ class ReelDraftingTest {
         assertEquals(8_000L, v.durationMs)
     }
 
+    private fun raw(id: Long, date: Long) = photo(id, date).copy(mimeType = "", displayName = "IMG_$id.NEF")
+
+    @Test
+    fun `a photo this phone cannot decode is not offered, counted or drafted`() {
+        val withRaw = library + raw(20, at(2026, 3, 3)) + raw(21, at(2026, 2, 3)).copy(isFavorite = true)
+        assertEquals("a RAW file is not a candidate", setOf(1L, 2L, 3L, 4L, 5L, 6L), ReelDrafting.candidatesOf(withRaw).map { it.mediaId }.toSet())
+        val months = ReelDrafting.months(withRaw, utc)
+        assertEquals("no month made only of RAW files", listOf("2026-03", "2026-01", "2025-12"), months.map { it.code })
+        assertEquals(listOf(3, 2, 1), months.map { it.count })
+        val d = ReelDrafting.draft(withRaw, emptySet(), 120_000L, ReelAspect.WIDE, utc)
+        val used = d.project.items.mapNotNull { (it as? StillItem)?.mediaId ?: (it as? ClipItem)?.mediaId }
+        assertTrue(used.isNotEmpty())
+        assertTrue("used $used", used.none { it == 20L || it == 21L })
+    }
+
     @Test
     fun `the draft is a reel that can be made, within the length asked, and the same twice`() {
         val pile = (1..40L).map { photo(it, at(2026, 3, 1) + it * 90_000L + (it / 10) * DAY) } + video(100, 9_000L, at(2026, 3, 2))

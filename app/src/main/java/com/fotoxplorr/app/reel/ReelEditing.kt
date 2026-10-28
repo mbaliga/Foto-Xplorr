@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.reel
 
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.core.formats.MediaFormat
 import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneId
@@ -105,6 +106,14 @@ object ReelEditing {
         CardColour(0xFFFFFFFF.toInt(), "White"),
     )
 
+    /**
+     * Whether [asset] may be put in a reel: not trashed, and a video, or a photo this phone is likely to decode (not a RAW
+     * file it has no decoder for, and not a vector picture, which the export's decode does not rasterise). One such photo
+     * would otherwise make the whole video fail, naming only its place. A GIF goes in as its first frame.
+     */
+    fun canUse(asset: MediaAsset): Boolean =
+        !asset.isTrashed && (asset.isVideo || (asset.format.isLikelyDecodable && asset.format != MediaFormat.Svg))
+
     /** How many more items the project takes. */
     fun room(project: ReelProject): Int = (ReelLimits.MAX_ITEMS - project.items.size).coerceAtLeast(0)
 
@@ -115,7 +124,7 @@ object ReelEditing {
      * [assets] added in the order given, right after [after] (an index; -1 for the front), or at the end when
      * [after] is null. A photo becomes a still of the default length; a video a clip from its start for up to
      * [ReelLimits.CLIP_MAX_MS]. A video that is under [ReelLimits.MIN_ITEM_MS] long, or has no length, is left out
-     * (counted in [Added.skipped]), as is anything past [room]. A trashed asset is left out too.
+     * (counted in [Added.skipped]), as is anything past [room]. A trashed asset, and a photo that is not [canUse]ble, are left out too.
      */
     fun add(project: ReelProject, assets: List<MediaAsset>, after: Int? = null): Added {
         var next = project
@@ -123,7 +132,7 @@ object ReelEditing {
         var added = 0
         var skipped = 0
         for (asset in assets) {
-            if (asset.isTrashed || room(next) == 0) {
+            if (!canUse(asset) || room(next) == 0) {
                 skipped++
                 continue
             }
@@ -292,9 +301,9 @@ object ReelDrafting {
 
     fun codeOf(month: YearMonth): String = "%04d-%02d".format(month.year, month.monthValue)
 
-    /** What a draft may use: not trashed, not undated; the caller's list is already the browsable one (TRAPS #33). */
+    /** What a draft may use: not trashed, not undated, nothing the phone cannot decode ([ReelEditing.canUse]); the caller's list is already the browsable one (TRAPS #33). */
     fun candidatesOf(assets: List<MediaAsset>): List<ReelCandidate> =
-        assets.asSequence().filter { !it.isTrashed && it.dateTakenMillis > 0L }.map {
+        assets.asSequence().filter { ReelEditing.canUse(it) && it.dateTakenMillis > 0L }.map {
             ReelCandidate(
                 mediaId = it.id.value,
                 dateTakenMillis = it.dateTakenMillis,
@@ -310,7 +319,7 @@ object ReelDrafting {
 
     /** The months that have something in them, newest first, at most [MAX_MONTHS]. */
     fun months(assets: List<MediaAsset>, zone: ZoneId): List<Month> =
-        assets.asSequence().filter { !it.isTrashed && it.dateTakenMillis > 0L }
+        assets.asSequence().filter { ReelEditing.canUse(it) && it.dateTakenMillis > 0L }
             .groupingBy { monthOf(it.dateTakenMillis, zone) }.eachCount()
             .entries.sortedByDescending { it.key }.take(MAX_MONTHS)
             .map { Month(it.key.year, it.key.monthValue, it.value) }

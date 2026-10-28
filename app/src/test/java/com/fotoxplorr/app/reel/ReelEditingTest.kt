@@ -46,6 +46,22 @@ class ReelEditingTest {
     }
 
     @Test
+    fun `a photo this phone cannot decode is left out and counted, and a video is never judged by its format`() {
+        val nef = photo(5).copy(mimeType = "", displayName = "IMG_5.NEF")
+        val svg = photo(6).copy(mimeType = "image/svg+xml", displayName = "logo.svg")
+        val gif = photo(7).copy(mimeType = "image/gif", displayName = "loop.gif")
+        val added = ReelEditing.add(ReelProject(), listOf(photo(1), nef, svg, gif, video(2, 5_000L)))
+        assertEquals(listOf(1L, 7L, 2L), added.project.items.map { (it as? StillItem)?.mediaId ?: (it as ClipItem).mediaId })
+        assertEquals(3, added.added)
+        assertEquals(2, added.skipped)
+        assertTrue(ReelEditing.canUse(photo(1)))
+        assertTrue(ReelEditing.canUse(video(2)))
+        assertFalse(ReelEditing.canUse(nef))
+        assertFalse(ReelEditing.canUse(svg))
+        assertFalse(ReelEditing.canUse(photo(1).copy(isTrashed = true)))
+    }
+
+    @Test
     fun `items go in after the one named, in the order given, with ids no item has`() {
         val base = stills(10, 11, 12)
         val added = ReelEditing.add(base, listOf(photo(20), photo(21)), after = 0)

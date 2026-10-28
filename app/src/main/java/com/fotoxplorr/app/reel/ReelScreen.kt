@@ -178,6 +178,8 @@ internal fun ReelScreen(
     val latestWatch by rememberUpdatedState(onWatch)
     val usable = remember(assets) { assets.filter { !it.isTrashed } }
     val byId = remember(assets) { usable.associateBy { it.id.value } }
+    // What the picker offers: a photo the phone cannot decode would make the whole video fail, so it is not offered.
+    val pickable = remember(usable) { usable.filter { ReelEditing.canUse(it) } }
     val autosaver = remember(library) { ReelAutosaver(library) }
     // Work that must outlive the screen (the last save of a reel) runs here, not in the screen's own scope.
     val lastWords = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
@@ -407,7 +409,7 @@ internal fun ReelScreen(
     Box(modifier.fillMaxSize()) {
         when {
             state.picker -> ReelItemPicker(
-                candidates = usable,
+                candidates = pickable,
                 room = if (open == null) ReelLimits.MAX_ITEMS else ReelEditing.room(open.project),
                 onAdd = ::addPicked,
                 onBack = { state.picker = false },
