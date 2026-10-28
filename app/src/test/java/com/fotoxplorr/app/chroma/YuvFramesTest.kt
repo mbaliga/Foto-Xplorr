@@ -50,6 +50,14 @@ class YuvFramesTest {
     }
 
     @Test
+    fun clearingThePlanesOverwritesTheCopiesOfTheCamerasBytes() {
+        val p = solid(90, 100, 160)
+        assertTrue(p.y.any { it.toInt() != 0 } && p.u.any { it.toInt() != 0 } && p.v.any { it.toInt() != 0 })
+        p.clear()
+        assertTrue(p.y.all { it.toInt() == 0 } && p.u.all { it.toInt() == 0 } && p.v.all { it.toInt() == 0 })
+    }
+
+    @Test
     fun rowPaddingAndInterleavedChromaGiveTheSamePicture() {
         val plain = YuvFrames.toFrame(solid(90, 100, 160))
         val padded = YuvFrames.toFrame(solid(90, 100, 160, pad = 8))

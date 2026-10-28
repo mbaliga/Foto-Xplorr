@@ -25,7 +25,8 @@ internal enum class ShotRole { SURFACE, CARD }
  * 3. The camera's flash and focus are released, then the two checks that need the facts of the
  *    frames: the gyroscope saw no movement between the shots ([MotionWindow.moved]) and the camera
  *    says the exposure and white balance did not change ([LockCheck]).
- * 4. Off the main thread, [ChromaMeter] turns the two frames into an [Outcome].
+ * 4. Off the main thread, [ChromaMeter] turns the two frames into an [Outcome]. Unless a card is kept to be
+ *    used under the held light, the light is then let go of (so the preview and its live guidance come back).
  *
  * ## The card
  * A card is only good for the exposure it was shot under, so the card's PATCHES (numbers, no
@@ -158,6 +159,9 @@ internal class ChromaJob(
                 cardFacts = flash!!.facts
                 _cardKept.value = true
             }
+            // The held light is only for a card to be used under; with none kept it would leave the preview at
+            // the torch-lit exposure and the live guidance frozen.
+            if (card == null) releaseLight()
             _outcome.value = result
             if (newCard != null) dispatch(CaptureEvent.Reset(keepLock = true))
         } catch (c: CancellationException) {
@@ -208,6 +212,16 @@ internal class ChromaJob(
             } else {
                 runCatching { source.endShots(); source.unlock() }
             }
+        }
+    }
+
+    private suspend fun releaseLight() {
+        try {
+            source.unlock()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (e: Exception) {
+            // A camera that is already gone has no light to let go of.
         }
     }
 

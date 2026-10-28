@@ -18,16 +18,23 @@ internal class YuvPlanes(
     val v: ByteArray,
     val uvRowStride: Int,
     val uvPixelStride: Int,
-)
+) {
+    /** Overwrites the copies of the camera's bytes; call once the picture has been made from them. */
+    fun clear() {
+        y.fill(0)
+        u.fill(0)
+        v.fill(0)
+    }
+}
 
 /**
  * YUV to RGB, and the preview's look at the middle of the view.
  *
  * The conversion is the full-range BT.601 (JFIF) one, which is what the camera2 API documents for
- * YUV_420_888 from the camera. The result is still the phone's own processed picture: its tone curve
- * is in it, so the sRGB codes here are only approximately sRGB. That is the biggest unverified
- * assumption of the whole tool (the physics wants linear light), and the Android seam cannot fix
- * it; a raw capture with a known curve could.
+ * YUV_420_888 from the camera. The result is still the phone's own processed picture: unless the camera
+ * accepted the sRGB tone curve that the request asks for (see [CameraFacts.knownTone]), its own curve is
+ * in it, so the sRGB codes here are only approximately sRGB. That is the biggest unverified assumption of
+ * the whole tool (the physics wants linear light); a raw capture with a known curve could remove it.
  */
 internal object YuvFrames {
     /** Every pixel of [p] as a [ChromaFrame]. */
@@ -41,8 +48,9 @@ internal object YuvFrames {
 
     /**
      * The share of the middle of the picture ([region], sampled on a grid of about [grid] pixels a
-     * side) whose brightest channel is at or above [PatchSampler.CLIP_CODE]: the same rule the
-     * measurement uses, so the preview warns about exactly what the measurement would refuse.
+     * side) whose brightest channel is at or above [PatchSampler.CLIP_CODE]: the rule the measurement
+     * uses, applied to the auto-exposed preview. It is a hint: the measurement judges the flash frame at
+     * the locked exposure, which can clip where this does not.
      */
     fun clippedShare(p: YuvPlanes, region: PatchRegion = PatchRegion.CENTRE, grid: Int = 48): Double {
         val x0 = (region.left * p.width).toInt().coerceIn(0, p.width - 1)

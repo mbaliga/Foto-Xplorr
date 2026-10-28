@@ -66,7 +66,7 @@ class ChromaJobTest {
         r.job.measure(ShotRole.SURFACE)
         advanceUntilIdle()
         assertEquals(
-            listOf("open", "lock(torch=true)", "focus(torch=true)", "shoot(torch=false)", "shoot(torch=true)", "endShots"),
+            listOf("open", "lock(torch=true)", "focus(torch=true)", "shoot(torch=false)", "shoot(torch=true)", "endShots", "unlock"),
             r.camera.calls,
         )
         assertTrue(r.job.state.value is CaptureState.Done)
@@ -103,7 +103,7 @@ class ChromaJobTest {
         val r = opened(flash = false)
         r.job.measure(ShotRole.SURFACE, ambientOnly = true)
         advanceUntilIdle()
-        assertEquals(listOf("open", "lock(torch=false)", "focus(torch=false)", "shoot(torch=false)", "endShots"), r.camera.calls)
+        assertEquals(listOf("open", "lock(torch=false)", "focus(torch=false)", "shoot(torch=false)", "endShots", "unlock"), r.camera.calls)
         assertTrue(r.job.state.value is CaptureState.Done)
         assertTrue(r.job.outcome.value is Outcome.RoomLight)
         assertTrue(r.camera.shots.all(::allZero))
@@ -225,6 +225,57 @@ class ChromaJobTest {
         advanceUntilIdle()
         assertEquals(1, r.camera.calls.count { it.startsWith("lock") })
         r.job.stop()
+    }
+
+    // ---- the light is let go of when nothing needs it ---------------------------------------------
+
+    @Test
+    fun aReadingWithNoCardLetsGoOfTheLightSoTheLiveGuidanceComesBack() = runTest {
+        val r = opened()
+        r.job.measure(ShotRole.SURFACE)
+        advanceUntilIdle()
+        // Held exposure with the torch-lit level would leave the preview dark and the guidance frozen.
+        assertEquals("unlock", r.camera.calls.last())
+        assertEquals(1, r.camera.calls.count { it == "unlock" })
+        r.job.again()
+        assertTrue(r.job.state.value is CaptureState.Ready)
+        // Measuring again locks afresh.
+        r.job.measure(ShotRole.SURFACE)
+        advanceUntilIdle()
+        assertEquals(2, r.camera.calls.count { it.startsWith("lock") })
+        assertEquals(2, r.camera.calls.count { it == "unlock" })
+    }
+
+    @Test
+    fun aKeptCardKeepsTheLightAndLosingItLetsGo() = runTest {
+        val r = opened()
+        r.camera.rho = LinearRgb(0.85, 0.85, 0.85)
+        r.job.measure(ShotRole.CARD)
+        advanceUntilIdle()
+        assertTrue(r.job.cardKept.value)
+        assertEquals(0, r.camera.calls.count { it == "unlock" })
+        r.camera.rho = LinearRgb(0.5, 0.3, 0.2)
+        r.job.measure(ShotRole.SURFACE, relock = false)
+        advanceUntilIdle()
+        // The card is still good for the next surface: its light stays held.
+        assertTrue(r.job.outcome.value is Outcome.Reading)
+        assertTrue(r.job.cardKept.value)
+        assertEquals(0, r.camera.calls.count { it == "unlock" })
+        r.job.again()
+        assertTrue(r.job.state.value is CaptureState.Locked)
+    }
+
+    @Test
+    fun aCardThatIsRefusedLetsGoOfTheLightBecauseThereIsNoCardToKeepItFor() = runTest {
+        val r = opened()
+        r.camera.rho = LinearRgb(0.0, 0.0, 0.0)
+        r.job.measure(ShotRole.CARD)
+        advanceUntilIdle()
+        assertTrue(r.job.outcome.value is Outcome.Refused)
+        assertFalse(r.job.cardKept.value)
+        assertEquals("unlock", r.camera.calls.last())
+        r.job.again()
+        assertTrue(r.job.state.value is CaptureState.Ready)
     }
 
     // ---- the card ------------------------------------------------------------------------------

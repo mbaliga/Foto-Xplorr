@@ -124,8 +124,10 @@ internal object CameraProbe {
  * whether AE lock really freezes the exposure with the torch on (the report check says), whether
  * the focus distance is accurate at 10 to 40 cm, and which phones allow a torch with manual exposure.
  *
- * Frames live in memory only. Every callback runs on one background thread; every wait is bounded
- * and fails with a [CameraProblem]; [close] is idempotent and releases the device, session, reader and thread.
+ * Frames live in memory only: the pixels are converted and the copies of the camera's bytes are zeroed
+ * at once. Every callback runs on one background thread; every wait is bounded and fails with a
+ * [CameraProblem]; [close] is idempotent and releases the device, session, reader and thread (the reader
+ * and the thread's end are queued on that thread, behind a frame that is being handled).
  */
 @SuppressLint("MissingPermission")
 internal class Camera2Source(
@@ -222,7 +224,9 @@ internal class Camera2Source(
                 if (closed || mine != epoch || !cont.isActive) {
                     camera.close()
                 } else {
-                    cont.resume(camera)
+                    // If the screen is left between this callback and the coroutine running again, nobody else
+                    // holds the device: it is closed here, or the camera would stay busy for other apps.
+                    cont.resume(camera) { _, _, _ -> camera.close() }
                 }
             }
 
@@ -262,7 +266,7 @@ internal class Camera2Source(
                     targets,
                     object : CameraCaptureSession.StateCallback() {
                         override fun onConfigured(s: CameraCaptureSession) {
-                            if (closed || mine != epoch || !cont.isActive) s.close() else cont.resume(s)
+                            if (closed || mine != epoch || !cont.isActive) s.close() else cont.resume(s) { _, _, _ -> s.close() }
                         }
 
                         override fun onConfigureFailed(s: CameraCaptureSession) {
@@ -385,18 +389,38 @@ internal class Camera2Source(
         } catch (e: IllegalStateException) {
             null
         } ?: return
+        var taken: Want? = null
         try {
             val ts = image.timestamp
             val w = want
             if (w != null && ts >= w.fromTimestamp) {
                 want = null
-                w.result.complete(ts to YuvFrames.toFrame(planesOf(image)))
+                taken = w
+                val planes = planesOf(image)
+                try {
+                    w.result.complete(ts to YuvFrames.toFrame(planes))
+                } finally {
+                    planes.clear()
+                }
             } else if (++imagesSeen % ANALYSE_EVERY == 0 && held == null && !torch) {
-                val share = YuvFrames.clippedShare(planesOf(image))
+                val planes = planesOf(image)
+                val share = try {
+                    YuvFrames.clippedShare(planes)
+                } finally {
+                    planes.clear()
+                }
                 _live.update { it.copy(clippedShare = share) }
             }
+        } catch (e: IllegalStateException) {
+            // The reader was closed under this frame (the screen was left mid-measurement). close() normally
+            // waits for the frame, so this is a backstop: nothing may take the camera thread down with it.
+            taken?.result?.completeExceptionally(CameraProblem(CaptureFailure.DISCONNECTED, e))
         } finally {
-            image.close()
+            try {
+                image.close()
+            } catch (e: IllegalStateException) {
+                // Already gone with its reader.
+            }
         }
     }
 
@@ -560,17 +584,33 @@ internal class Camera2Source(
         runCatching { session?.stopRepeating() }
         runCatching { session?.close() }
         runCatching { device?.close() }
-        runCatching { reader?.close() }
+        val r = reader
+        val t = thread
+        val h = handler
+        runCatching { r?.setOnImageAvailableListener(null, null) }
         session = null
         device = null
         reader = null
         surface = null
         held = null
         torch = false
-        runCatching { thread?.quitSafely() }
         thread = null
         handler = null
         _live.value = LiveView()
+        // The reader is closed ON the camera thread, behind any frame being handled there: closing it from
+        // here would free an image (and its buffers) under a conversion that is still reading it.
+        if (t != null) {
+            val posted = h != null && h.post {
+                runCatching { r?.close() }
+                t.quitSafely()
+            }
+            if (!posted) {
+                runCatching { r?.close() }
+                runCatching { t.quitSafely() }
+            }
+        } else {
+            runCatching { r?.close() }
+        }
     }
 
     private companion object {
