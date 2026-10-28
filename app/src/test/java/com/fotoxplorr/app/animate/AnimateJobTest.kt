@@ -92,6 +92,17 @@ class AnimateJobTest {
     }
 
     @Test
+    fun `no metadata of any kind is written into a GIF or an APNG, so no location can leave with it`() {
+        val markers = listOf("Exif", "eXIf", "GPS", "tEXt", "iTXt", "zTXt", "xmpmeta", "XMP", "Comment")
+        for (output in listOf(AnimOutput.GIF, AnimOutput.APNG)) {
+            val sink = FakeAnimateSink()
+            done(run(request(stills(4), output), sink = sink))
+            val text = String(sink.published.single().bytes, Charsets.ISO_8859_1)
+            for (m in markers) assertFalse("$output carries $m", text.contains(m))
+        }
+    }
+
+    @Test
     fun `a slideshow loops for ever unless told otherwise`() {
         val sink = FakeAnimateSink()
         done(run(request(stills(3)), sink = sink))
