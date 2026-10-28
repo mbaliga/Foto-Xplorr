@@ -139,4 +139,10 @@ internal class FakeSoundFiles : ReelSoundFiles {
     override fun keep(uri: String): Boolean = keeps.also { kept += uri }
 
     override fun nameOf(uri: String): String? = names[uri]
+
+    val released = java.util.Collections.synchronizedList(ArrayList<String>())
+
+    override fun release(uri: String) {
+        released += uri
+    }
 }

@@ -641,6 +641,46 @@ class ReelScreenTest {
     }
 
     @Test
+    fun `a sound file that is replaced or taken away is let go when no other reel keeps it`() {
+        library.put(stills(3).copy(name = "Other", soundtrack = ReelSoundtrack("content://docs/shared", 0L, 3_000L)))
+        openSaved(stills(1, 2).copy(soundtrack = ReelSoundtrack("content://docs/shared", 0L, 3_000L)))
+        tapText(ReelCopy.TOOL_SOUND)
+
+        picked = Uri.parse("content://docs/mine-1")
+        tapText(ReelCopy.SOUND_PICK)
+        waitFor { project!!.soundtrack?.uri == "content://docs/mine-1" }
+        compose.waitForIdle()
+        assertTrue("the other reel still lays that file", sounds.released.isEmpty())
+
+        picked = Uri.parse("content://docs/mine-2")
+        tapText(ReelCopy.SOUND_PICK)
+        waitFor { sounds.released.isNotEmpty() }
+        assertEquals(listOf("content://docs/mine-1"), sounds.released.toList())
+
+        tapText(ReelCopy.SOUND_REMOVE)
+        waitFor { sounds.released.size == 2 }
+        assertEquals("content://docs/mine-2", sounds.released[1])
+    }
+
+    @Test
+    fun `deleting a reel lets go of its sound file unless another reel keeps it`() {
+        library.put(stills(1).copy(name = "Beach", soundtrack = ReelSoundtrack("content://docs/beach", 0L, 3_000L)))
+        library.put(stills(2).copy(name = "Hills", soundtrack = ReelSoundtrack("content://docs/shared", 0L, 3_000L)))
+        library.put(stills(3).copy(name = "Lake", soundtrack = ReelSoundtrack("content://docs/shared", 0L, 3_000L)))
+        compose.setContent { Screen() }
+        press(ReelCopy.deleteReel("Beach"))
+        tapText(ReelCopy.DELETE)
+        waitFor { sounds.released.isNotEmpty() }
+        assertEquals(listOf("content://docs/beach"), sounds.released.toList())
+
+        press(ReelCopy.deleteReel("Hills"))
+        tapText(ReelCopy.DELETE)
+        waitFor { library.entries.size == 1 }
+        compose.waitForIdle()
+        assertEquals("Lake still lays the shared file", listOf("content://docs/beach"), sounds.released.toList())
+    }
+
+    @Test
     fun `backing out of the file picker changes nothing, and a file that cannot be kept is said so`() {
         openSaved(stills(1, 2))
         tapText(ReelCopy.TOOL_SOUND)

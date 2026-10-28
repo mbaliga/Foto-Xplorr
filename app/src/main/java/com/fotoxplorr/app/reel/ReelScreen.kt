@@ -198,6 +198,21 @@ internal fun ReelScreen(
         state.soundName = soundUri?.let { uri -> withContext(Dispatchers.IO) { latestSounds.nameOf(uri) } }
     }
 
+    // ---- letting go of a sound file that is replaced or removed, when no other reel lays it ----
+    LaunchedEffect(Unit) {
+        var last: Pair<Long, String?>? = null
+        snapshotFlow { state.open?.let { it.token to it.project.soundtrack?.uri } }.collect { now ->
+            val before = last
+            last = now
+            // Only a change inside one reel: opening another is not a file given up.
+            val gone = before?.takeIf { now != null && it.first == now.first && it.second != null && it.second != now.second }?.second
+            if (gone != null) {
+                val open = state.open
+                withContext(Dispatchers.IO) { ReelSoundGrants.releaseUnused(setOf(gone), open?.project, open?.storeId, library, latestSounds) }
+            }
+        }
+    }
+
     // ---- saving the reel as the person works ----
     suspend fun persist(open: OpenReel) {
         when (val result = autosaver.save(open)) {
@@ -463,7 +478,11 @@ internal fun ReelScreen(
                 onDelete = {
                     state.deleting = null
                     scope.launch {
-                        withContext(Dispatchers.IO) { library.delete(doomed.id) }
+                        withContext(Dispatchers.IO) {
+                            val sound = (library.load(doomed.id) as? ReelLoad.Loaded)?.decoded?.project?.soundtrack?.uri
+                            library.delete(doomed.id)
+                            if (sound != null) ReelSoundGrants.releaseUnused(setOf(sound), null, null, library, latestSounds)
+                        }
                         listVersion++
                     }
                 },

@@ -48,6 +48,17 @@ object SoundtrackAccess {
         false
     }
 
+    /** Give back the right [keep] took; nothing happens when it was never held or the provider will not say. */
+    fun release(context: Context, uri: Uri) {
+        try {
+            context.contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (e: SecurityException) {
+            // Not held: nothing to give back.
+        } catch (e: IllegalArgumentException) {
+            // An address the system does not know.
+        }
+    }
+
     /** The file's name as the provider gives it, for the line "Sound: name"; null when it will not say. */
     fun displayName(context: Context, uri: Uri): String? = try {
         context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
