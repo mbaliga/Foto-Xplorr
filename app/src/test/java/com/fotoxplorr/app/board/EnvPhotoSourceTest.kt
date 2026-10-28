@@ -103,4 +103,31 @@ class EnvPhotoSourceTest {
         val s = source(listOf(reused), listOf(old))
         assertFalse(s.isAvailable(old))
     }
+
+    private fun sized(assets: List<MediaAsset>, bitmapW: Int, bitmapH: Int, sourceW: Int, sourceH: Int) =
+        EnvPhotoSource(assets, emptyList(), { true }) { _, _ ->
+            DecodedBitmap(Bitmap.createBitmap(bitmapW, bitmapH, Bitmap.Config.ARGB_8888), sourceW, sourceH, true)
+        }
+
+    @Test
+    fun `the upright size of a photo is what the decoder says, not what the library columns say`() {
+        val a = asset(1) // the library lists it 4000 x 3000
+        val s = sized(listOf(a), 48, 64, 3000, 4000)
+        assertEquals(3000 to 4000, runBlocking { s.uprightSize(PhotoRefs.of(a)) })
+    }
+
+    @Test
+    fun `a decoder that reports the stored size beside upright pixels is corrected by the pixels`() {
+        val a = asset(1)
+        val s = sized(listOf(a), 48, 64, 4000, 3000)
+        assertEquals(3000 to 4000, runBlocking { s.uprightSize(PhotoRefs.of(a)) })
+    }
+
+    @Test
+    fun `the size of a photo that cannot be read is not known`() {
+        val a = asset(1)
+        val s = EnvPhotoSource(listOf(a), emptyList(), { false }) { _, _ -> null }
+        assertNull(runBlocking { s.uprightSize(PhotoRefs.of(a)) })
+        assertNull(runBlocking { s.uprightSize(PhotoRefs.of(asset(9))) })
+    }
 }

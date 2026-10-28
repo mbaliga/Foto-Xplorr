@@ -27,6 +27,13 @@ interface BoardPhotoSource {
      * `decodeUpright` gives that.
      */
     suspend fun decode(ref: PhotoRef, limits: DecodeLimits): Bitmap?
+
+    /**
+     * The photo's size as it is shown, upright (width, height), or null when it cannot be read now. The
+     * library's own width and height are the stored pixels and are swapped for a photo taken in portrait,
+     * so a [PhotoRef] is made from this and not from them. Default: not known.
+     */
+    suspend fun uprightSize(ref: PhotoRef): Pair<Int, Int>? = null
 }
 
 /** What a [PhotoRef] is made from, and back. */
@@ -35,6 +42,17 @@ object PhotoRefs {
 
     /** The reference a board keeps for [asset]: its id, its identity and its size. */
     fun of(asset: MediaAsset) = PhotoRef(asset.id.value, identityOf(asset), asset.width, asset.height)
+
+    /**
+     * The reference a board keeps for [asset] with its UPRIGHT size, read through [source]. The library's
+     * width and height are the stored pixels (a portrait phone photo is stored landscape), so using them
+     * would give the photo a box of the wrong shape. When the size cannot be read the library's own is kept.
+     */
+    suspend fun uprightOf(asset: MediaAsset, source: BoardPhotoSource): PhotoRef {
+        val ref = of(asset)
+        val (w, h) = source.uprightSize(ref) ?: return ref
+        return if (w > 0 && h > 0) ref.copy(widthPx = w, heightPx = h) else ref
+    }
 
     /** The photos that may be shown, as the resolver wants them. */
     fun catalogue(assets: List<MediaAsset>): Map<Long, MediaIdentity> = assets.associate { it.id.value to identityOf(it) }
@@ -74,7 +92,29 @@ class EnvPhotoSource(
     override suspend fun decode(ref: PhotoRef, limits: DecodeLimits): Bitmap? =
         assetOf(ref)?.let { decodeAsset(it, limits)?.bitmap }
 
+    /**
+     * A small decode through the host, whose [DecodedBitmap.sourceWidth] and `sourceHeight` are the upright
+     * size. The pixels settle which way round it is: if the two disagree about portrait or landscape, the
+     * pixels are right, because they are what the board draws.
+     */
+    override suspend fun uprightSize(ref: PhotoRef): Pair<Int, Int>? {
+        val asset = assetOf(ref)?.takeIf(mayExport) ?: return null
+        val decoded = decodeAsset(asset, SIZE_PROBE) ?: return null
+        val bitmap = decoded.bitmap
+        val w = decoded.sourceWidth
+        val h = decoded.sourceHeight
+        val bitmapLandscape = bitmap.width > bitmap.height
+        val bitmapPortrait = bitmap.width < bitmap.height
+        val swapped = (bitmapLandscape && w < h) || (bitmapPortrait && w > h)
+        bitmap.recycle()
+        if (w <= 0 || h <= 0) return null
+        return if (swapped) h to w else w to h
+    }
+
     companion object {
+        /** Small enough to be quick for every photo in a choice of twenty-four; only its shape and the reported source size are used. */
+        private val SIZE_PROBE = DecodeLimits(64, 64L * 64L)
+
         fun of(env: ExperimentEnv, board: Board): EnvPhotoSource =
             EnvPhotoSource(env.assets, board.photoRefs, env::mayExport) { asset, limits -> env.decode(asset, limits) }
     }

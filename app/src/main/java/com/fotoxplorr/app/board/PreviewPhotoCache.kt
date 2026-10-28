@@ -38,6 +38,8 @@ class PreviewPhotoCache(
 
     override fun isAvailable(ref: PhotoRef): Boolean = inner.isAvailable(ref)
 
+    override suspend fun uprightSize(ref: PhotoRef): Pair<Int, Int>? = inner.uprightSize(ref)
+
     override suspend fun decode(ref: PhotoRef, limits: DecodeLimits): Bitmap? {
         if (!inner.isAvailable(ref)) {
             forget(ref.mediaId)
@@ -117,4 +119,6 @@ class SwitchingPhotoSource(first: BoardPhotoSource) : BoardPhotoSource {
     override fun isAvailable(ref: PhotoRef): Boolean = current.isAvailable(ref)
 
     override suspend fun decode(ref: PhotoRef, limits: DecodeLimits): Bitmap? = current.decode(ref, limits)
+
+    override suspend fun uprightSize(ref: PhotoRef): Pair<Int, Int>? = current.uprightSize(ref)
 }
