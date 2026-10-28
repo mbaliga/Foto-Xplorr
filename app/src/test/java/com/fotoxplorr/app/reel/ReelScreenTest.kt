@@ -168,7 +168,12 @@ class ReelScreenTest {
         return node
     }
 
-    private fun tapText(text: String) = act(compose.onNodeWithText(text))
+    // The saved-reels list is read off the main thread, so a row can appear a moment after the screen does: wait for
+    // the text before pressing it, or a busy machine finds nothing there yet.
+    private fun tapText(text: String): SemanticsNodeInteraction {
+        waitFor { textShown(text) }
+        return act(compose.onNodeWithText(text))
+    }
 
     private fun press(description: String) = act(compose.onNodeWithContentDescription(description))
 
