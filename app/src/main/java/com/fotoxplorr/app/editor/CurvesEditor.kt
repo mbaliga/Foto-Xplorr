@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -41,8 +42,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.coerceAtLeast
@@ -123,14 +127,17 @@ fun CurvesEditor(
                             if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
                             RoundedCornerShape(50),
                         )
-                        .clickable { onChannelChange(entry) }
-                        .padding(vertical = 8.dp),
+                        // A tab: 48 dp tall and it says whether it is the current one.
+                        .selectable(selected = selected, role = Role.Tab) { onChannelChange(entry) }
+                        .chipHeight(),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         entry.label,
                         color = if (selected) Color.Black else entry.color,
                         style = MaterialTheme.typography.labelLarge,
+                        // Bold as well as filled: the current channel is not shown by colour alone.
+                        fontWeight = if (selected) FontWeight.Bold else null,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                     )
@@ -386,13 +393,17 @@ private fun ShortcutChip(label: String, selected: Boolean, enabled: Boolean, onC
             else -> Color.White.copy(alpha = 0.35f)
         },
         style = MaterialTheme.typography.labelLarge,
+        // Bold as well as filled: the preset in use is not shown by colour alone.
+        fontWeight = if (selected) FontWeight.Bold else null,
         modifier = Modifier
             .background(
                 if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
                 RoundedCornerShape(50),
             )
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics { this.selected = selected }
+            .chipHeight()
+            .padding(horizontal = 14.dp),
     )
 }
 

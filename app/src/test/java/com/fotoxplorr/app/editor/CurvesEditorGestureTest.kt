@@ -8,7 +8,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -238,5 +242,18 @@ class CurvesEditorGestureTest {
         compose.onNodeWithText("Soft contrast").performClick()
         compose.waitForIdle()
         assertEquals(CurvePreset.SOFT_CONTRAST.curve, curve)
+    }
+
+    @Test
+    fun `channel tabs and shortcut chips are 48 dp targets and the current tab says it is selected`() {
+        host()
+        CurveChannel.entries.forEach { compose.onNodeWithText(it.label).assertHeightIsAtLeast(48.dp) }
+        compose.onNodeWithText(CurveChannel.RGB.label).assertIsSelected()
+        compose.onNodeWithText(CurveChannel.RED.label).assertIsNotSelected()
+        compose.onNodeWithText("Reset").assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithText(CurveChannel.RED.label).performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText(CurveChannel.RED.label).assertIsSelected()
+        compose.onNodeWithText(CurveChannel.RGB.label).assertIsNotSelected()
     }
 }
