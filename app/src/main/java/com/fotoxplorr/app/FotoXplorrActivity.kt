@@ -483,6 +483,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // progress tick the same list of jobs produces.
     val runningJobs by viewModel.jobRunner.jobs.collectAsStateWithLifecycle()
     val anyJobRunning = runningJobs.isNotEmpty()
+    // Keeps cloud sync's library current whichever pane is open, and takes it back (sending nothing)
+    // when the activity's content leaves the composition.
+    com.fotoxplorr.app.gallery.SyncLibraryFeed(assets, library.archivedIds, sensitiveIds, lockedFolders, viewModel.jobRunner)
     // The progress notification needs POST_NOTIFICATIONS on Android 13+, and this is the only place
     // that asks for it: once, the first time a job actually runs (see shouldAskForJobNotifications).
     // "Asked" is recorded when the system dialog has been ANSWERED, not when it was launched: a

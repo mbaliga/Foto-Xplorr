@@ -11,7 +11,9 @@
     <!-- Sign-in for Google Drive / Dropbox: the system browser comes back to this custom scheme
          (OAuthRedirect.SCHEME; a test keeps the two equal). Connect build only, so the Offline
          manifest is unchanged. No code of ours runs before the user taps Sign in. -->
-    <application>
+    <!-- networkSecurityConfig: lets sync talk plain http to a NAS the person opted into and the AI client reach a
+         local Ollama; the rules that make that safe are in the code (see the xml file's own comment). -->
+    <application android:networkSecurityConfig="@xml/network_security_config">
         <activity
             android:name="com.fotoxplorr.app.sync.OAuthRedirectActivity"
             android:exported="true"
@@ -26,4 +28,5 @@
             </intent-filter>
         </activity>
     </application>
+
 </manifest>

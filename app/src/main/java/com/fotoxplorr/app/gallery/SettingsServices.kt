@@ -92,20 +92,38 @@ fun syncFolderChoices(library: List<MediaAsset>): List<SyncFolderChoice> =
 
 /**
  * Holds the one [SyncService] for the process. The service keeps the run state, so it must outlive the
- * Settings pane (a run started here continues, as a job, after the pane is closed); the library it
- * reads is replaced whenever the caller passes a new browsable list, and the runner likewise.
+ * Settings pane (a run started here continues, as a job, after the pane is closed).
+ *
+ * The library the service reads is fed by [SyncLibraryFeed], which lives in the activity and so outlives
+ * the pane: a folder locked, a photo marked sensitive, archived or trashed after the pane was closed
+ * reaches the gate of a run that is still going. And it FAILS CLOSED: until something has fed a list,
+ * and again after [detach] (the feeder left the composition), the list is empty and nothing is sent.
  */
 class SyncServiceHolder(private val create: (browsable: () -> List<MediaAsset>, runner: () -> JobRunner?) -> SyncService) {
     @Volatile private var library: List<MediaAsset> = emptyList()
     @Volatile private var runner: JobRunner? = null
     private var service: SyncService? = null
 
-    @Synchronized
-    fun obtain(browsable: List<MediaAsset>, jobRunner: JobRunner?): SyncService {
+    /** Replaces the list and runner (the feeder, and the pane, call this). */
+    fun feed(browsable: List<MediaAsset>, jobRunner: JobRunner?) {
         library = browsable
         runner = jobRunner
+    }
+
+    /** The feeder is gone: nothing may be sent until it is back. */
+    fun detach() {
+        library = emptyList()
+    }
+
+    @Synchronized
+    fun obtain(browsable: List<MediaAsset>, jobRunner: JobRunner?): SyncService {
+        feed(browsable, jobRunner)
         return service ?: create({ library }, { runner }).also { service = it }
     }
+
+    /** The service without feeding it (the list stays whatever the feeder last gave). */
+    @Synchronized
+    fun obtain(): SyncService = service ?: create({ library }, { runner }).also { service = it }
 }
 
 /** The process's sync service; see [SyncServiceHolder]. */
@@ -113,9 +131,37 @@ internal object SyncServices {
     private var holder: SyncServiceHolder? = null
 
     @Synchronized
-    fun obtain(context: Context, browsable: List<MediaAsset>, jobRunner: JobRunner?): SyncService {
+    private fun holder(context: Context): SyncServiceHolder {
         val app = context.applicationContext
-        val h = holder ?: SyncServiceHolder { lib, run -> SyncAndroid.createService(app, lib, run) }.also { holder = it }
-        return h.obtain(browsable, jobRunner)
+        return holder ?: SyncServiceHolder { lib, run -> SyncAndroid.createService(app, lib, run) }.also { holder = it }
     }
+
+    fun obtain(context: Context, browsable: List<MediaAsset>, jobRunner: JobRunner?): SyncService =
+        holder(context).obtain(browsable, jobRunner)
+
+    fun feed(context: Context, browsable: List<MediaAsset>, jobRunner: JobRunner?) = holder(context).feed(browsable, jobRunner)
+
+    fun detach(context: Context) = holder(context).detach()
+}
+
+/**
+ * Keeps the sync service's library current for as long as the app is on screen, whichever pane is open.
+ * Placed once in the activity. Nothing here starts anything; it only hands over the strictest browsable
+ * list (TRAPS #33) and takes it back when it leaves the composition.
+ */
+@Composable
+fun SyncLibraryFeed(
+    assets: List<MediaAsset>,
+    archivedIds: Set<com.fotoxplorr.core.model.MediaId>,
+    sensitiveIds: Set<com.fotoxplorr.core.model.MediaId>,
+    lockedFolders: Set<String>,
+    runner: JobRunner?,
+) {
+    val context = LocalContext.current
+    val library = remember(assets, archivedIds, sensitiveIds, lockedFolders) {
+        SyncCandidates.browsableForSync(assets, archivedIds, sensitiveIds, lockedFolders)
+    }
+    // Before the first frame draws, not after: a lock that just landed must not wait for a later effect pass.
+    androidx.compose.runtime.SideEffect { SyncServices.feed(context, library, runner) }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { SyncServices.detach(context) } }
 }
