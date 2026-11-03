@@ -199,10 +199,10 @@ class RecognitionStoreMigrationTest {
         assertEquals(1, count(dbFile, "asset_text_block"))
         assertEquals(1, count(dbFile, "recognition_failure"))
 
-        // The palette table exists, at version 5, and is empty -- nothing was invented for old rows.
+        // The palette table exists, and the database is now at version 6, and is empty -- nothing was invented for old rows.
         assertTrue("asset_palette" in tableNames(dbFile))
         assertEquals(0, count(dbFile, "asset_palette"))
-        SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(5, it.version) }
+        SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(6, it.version) }
         assertTrue(index.paletteFor(legacy.id).isEmpty())
 
         // The upgraded row is exactly what the palette-only pass must pick up -- and NOT what the

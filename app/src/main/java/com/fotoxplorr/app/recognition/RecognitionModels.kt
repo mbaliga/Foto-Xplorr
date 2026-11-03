@@ -100,6 +100,12 @@ data class FaceDescriptor(
     val vector: FloatArray,
     /** Face bounding-box area as a fraction of the frame; larger faces cluster more reliably. */
     val relativeArea: Float,
+    /**
+     * Where the face sat in the frame, for the card that shows it. Null for a row indexed before
+     * boxes were stored (v6): the indexer's box backfill re-reads those photos first, and until it
+     * has, the card shows a neutral placeholder rather than a guessed crop.
+     */
+    val box: FaceBox? = null,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -107,6 +113,7 @@ data class FaceDescriptor(
         return mediaId == other.mediaId &&
             faceIndex == other.faceIndex &&
             relativeArea == other.relativeArea &&
+            box == other.box &&
             vector.contentEquals(other.vector)
     }
 
@@ -114,6 +121,7 @@ data class FaceDescriptor(
         var result = mediaId.hashCode()
         result = 31 * result + faceIndex
         result = 31 * result + relativeArea.hashCode()
+        result = 31 * result + (box?.hashCode() ?: 0)
         result = 31 * result + vector.contentHashCode()
         return result
     }
@@ -200,6 +208,20 @@ data class PersonCluster(
     val id: Int,
     val mediaIds: List<MediaId>,
     val faceCount: Int,
+    /**
+     * The faces behind [mediaIds], by address and size, with the box where one is stored. What the
+     * people roster matches stored people against and picks a card's face from; the descriptor
+     * vectors are deliberately not carried (they are the bulk, and nothing after clustering needs them).
+     */
+    val faces: List<ClusterFace> = emptyList(),
 ) {
     val size: Int get() = mediaIds.size
 }
+
+/** One clustered face, without its descriptor vector. See [PersonCluster.faces]. */
+data class ClusterFace(
+    val mediaId: MediaId,
+    val faceIndex: Int,
+    val relativeArea: Float,
+    val box: FaceBox? = null,
+)

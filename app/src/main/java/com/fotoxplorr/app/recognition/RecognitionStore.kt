@@ -60,8 +60,36 @@ class RecognitionStore(context: Context) {
     /** Loads everything from disk and republishes the derived index. Safe to call repeatedly. */
     suspend fun reload() = withContext(Dispatchers.IO) {
         val rows = helper.readAll()
-        index.value = RecognitionIndex.from(rows)
+        val base = RecognitionIndex.from(rows)
+        // The roster is resolved here, against what is stored, rather than inside `from`: it has
+        // to WRITE (a new person's record, a person's grown witness list), and `from` is pure.
+        val roster = mutex.withLock {
+            val resolution = PeopleRoster.resolve(base.people, helper.readBook())
+            helper.writeRecords(resolution.insert + resolution.update)
+            resolution.people
+        }
+        index.value = base.copy(roster = roster)
         progress.value = progress.value.copy(indexedCount = rows.size)
+    }
+
+    /** Gives [personId] a name; blank clears it. */
+    suspend fun renamePerson(personId: Long, name: String) = changePeople { book -> listOfNotNull(book.rename(personId, name)) }
+
+    /** Hides a person from the People destination (their photos stay in the library), or shows them again. */
+    suspend fun hidePerson(personId: Long, hidden: Boolean) = changePeople { book -> listOfNotNull(book.setHidden(personId, hidden)) }
+
+    /** Folds [sourceId] into [targetId]: one person from then on, wherever the clusters fall. */
+    suspend fun mergePeople(sourceId: Long, targetId: Long) = changePeople { book -> book.merge(sourceId, targetId) }
+
+    /** "Not this person": takes [mediaId] out of [personId]'s photos. */
+    suspend fun excludeFromPerson(personId: Long, mediaId: MediaId) = withContext(Dispatchers.IO) {
+        mutex.withLock { helper.readBook().exclude(personId, mediaId)?.let(helper::writeExclusion) }
+        reload()
+    }
+
+    private suspend fun changePeople(change: (PeopleBook) -> List<PersonRecord>) = withContext(Dispatchers.IO) {
+        mutex.withLock { helper.writeRecords(change(helper.readBook())) }
+        reload()
     }
 
     /**
@@ -73,13 +101,17 @@ class RecognitionStore(context: Context) {
     suspend fun pendingAssets(assets: List<MediaAsset>): List<MediaAsset> = withContext(Dispatchers.IO) {
         val revisions = helper.revisions()
         val failures = helper.failures()
+        // Photos indexed before face boxes were stored (v6) are read again, once, and FIRST: there
+        // are few of them (only the photos with a clear face) and they are what the People cards
+        // wait on, where the rest of the library is not.
+        val boxless = helper.mediaIdsWithoutFaceBox()
         assets.filter { asset ->
             if (asset.isVideo || asset.isTrashed) return@filter false
             val revision = asset.recognitionRevision()
-            if (revisions[asset.id] == revision) return@filter false
+            if (revisions[asset.id] == revision && asset.id !in boxless) return@filter false
             val failure = failures[asset.id]
             !(failure != null && failure.revision == revision && failure.attempts >= MAX_FAILURE_ATTEMPTS)
-        }
+        }.sortedByDescending { it.id in boxless }
     }
 
     /**
@@ -231,6 +263,11 @@ private class RecognitionOpenHelper(context: Context) :
                 face_index INTEGER NOT NULL,
                 relative_area REAL NOT NULL,
                 vector BLOB NOT NULL,
+                box_left REAL NOT NULL DEFAULT -1,
+                box_top REAL NOT NULL DEFAULT -1,
+                box_right REAL NOT NULL DEFAULT -1,
+                box_bottom REAL NOT NULL DEFAULT -1,
+                frame_aspect REAL NOT NULL DEFAULT 0,
                 PRIMARY KEY (media_id, face_index)
             )
             """.trimIndent(),
@@ -254,6 +291,7 @@ private class RecognitionOpenHelper(context: Context) :
         db.execSQL("CREATE INDEX ${TABLE_TEXT}_media ON $TABLE_TEXT (media_id)")
         createFailureTable(db)
         createPaletteTable(db)
+        createPeopleTables(db)
     }
 
     /**
@@ -284,6 +322,122 @@ private class RecognitionOpenHelper(context: Context) :
         }
         createFailureTable(db)
         createPaletteTable(db)
+        if (oldVersion < 6) {
+            // v6: where each face sat (for the People cards) and the people the owner has named.
+            // Additive, and for the strongest reason of all the steps: the person tables hold
+            // names the owner typed, which no re-index can bring back, and the face rows are what
+            // the next clustering reads. Existing faces get "no box" (-1 / aspect 0); the indexer
+            // re-reads exactly those photos first -- see RecognitionStore.pendingAssets.
+            addFaceBoxColumns(db)
+            createPeopleTables(db)
+        }
+    }
+
+    /** `ALTER TABLE ... ADD COLUMN` has no IF NOT EXISTS, so each column asks first. */
+    private fun addFaceBoxColumns(db: SQLiteDatabase) {
+        val have = HashSet<String>()
+        db.rawQuery("PRAGMA table_info($TABLE_FACES)", null).use { cursor ->
+            while (cursor.moveToNext()) have += cursor.getString(1)
+        }
+        listOf(
+            "box_left" to "REAL NOT NULL DEFAULT -1",
+            "box_top" to "REAL NOT NULL DEFAULT -1",
+            "box_right" to "REAL NOT NULL DEFAULT -1",
+            "box_bottom" to "REAL NOT NULL DEFAULT -1",
+            "frame_aspect" to "REAL NOT NULL DEFAULT 0",
+        ).forEach { (column, type) ->
+            if (column !in have) db.execSQL("ALTER TABLE $TABLE_FACES ADD COLUMN $column $type")
+        }
+    }
+
+    /**
+     * People the owner has met: `merged_into` is 0 for "not merged"; `witnesses` is
+     * `mediaId:faceIndex` pairs joined by commas (see [PersonRecord]); `name` is '' for unnamed.
+     */
+    private fun createPeopleTables(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_PEOPLE (
+                person_id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                hidden INTEGER NOT NULL DEFAULT 0,
+                merged_into INTEGER NOT NULL DEFAULT 0,
+                witnesses TEXT NOT NULL DEFAULT ''
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_EXCLUSIONS (
+                person_id INTEGER NOT NULL,
+                media_id INTEGER NOT NULL,
+                PRIMARY KEY (person_id, media_id)
+            )
+            """.trimIndent(),
+        )
+    }
+
+    fun readBook(): PeopleBook {
+        val records = buildList {
+            readableDatabase.query(
+                TABLE_PEOPLE, arrayOf("person_id", "name", "hidden", "merged_into", "witnesses"),
+                null, null, null, null, "person_id ASC",
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    add(
+                        PersonRecord(
+                            id = cursor.getLong(0),
+                            name = cursor.getString(1)?.takeIf { it.isNotBlank() },
+                            hidden = cursor.getInt(2) != 0,
+                            mergedInto = cursor.getLong(3).takeIf { it > 0L },
+                            witnesses = decodeWitnesses(cursor.getString(4)),
+                        ),
+                    )
+                }
+            }
+        }
+        val exclusions = buildSet {
+            readableDatabase.query(TABLE_EXCLUSIONS, arrayOf("person_id", "media_id"), null, null, null, null, null)
+                .use { cursor -> while (cursor.moveToNext()) add(Exclusion(cursor.getLong(0), cursor.getLong(1))) }
+        }
+        return PeopleBook(records, exclusions)
+    }
+
+    fun writeRecords(records: List<PersonRecord>) {
+        if (records.isEmpty()) return
+        writableDatabase.transaction {
+            records.forEach { record ->
+                insertWithOnConflict(
+                    TABLE_PEOPLE, null,
+                    ContentValues().apply {
+                        put("person_id", record.id)
+                        put("name", record.name.orEmpty())
+                        put("hidden", if (record.hidden) 1 else 0)
+                        put("merged_into", record.mergedInto ?: 0L)
+                        put("witnesses", encodeWitnesses(record.witnesses))
+                    },
+                    SQLiteDatabase.CONFLICT_REPLACE,
+                )
+            }
+        }
+    }
+
+    fun writeExclusion(exclusion: Exclusion) {
+        writableDatabase.insertWithOnConflict(
+            TABLE_EXCLUSIONS, null,
+            ContentValues().apply {
+                put("person_id", exclusion.personId)
+                put("media_id", exclusion.mediaId)
+            },
+            SQLiteDatabase.CONFLICT_IGNORE,
+        )
+    }
+
+    /** Photos with a stored face and no stored box for it: indexed before v6. */
+    fun mediaIdsWithoutFaceBox(): Set<MediaId> = buildSet {
+        readableDatabase.rawQuery("SELECT DISTINCT media_id FROM $TABLE_FACES WHERE frame_aspect <= 0", null).use { cursor ->
+            while (cursor.moveToNext()) add(MediaId(cursor.getLong(0)))
+        }
     }
 
     /**
@@ -468,7 +622,11 @@ private class RecognitionOpenHelper(context: Context) :
         }
         val faces = HashMap<Long, MutableList<FaceDescriptor>>()
         readableDatabase.query(
-            TABLE_FACES, arrayOf("media_id", "face_index", "relative_area", "vector"),
+            TABLE_FACES,
+            arrayOf(
+                "media_id", "face_index", "relative_area", "vector",
+                "box_left", "box_top", "box_right", "box_bottom", "frame_aspect",
+            ),
             null, null, null, null, "media_id ASC, face_index ASC",
         ).use { cursor ->
             while (cursor.moveToNext()) {
@@ -478,6 +636,10 @@ private class RecognitionOpenHelper(context: Context) :
                     faceIndex = cursor.getInt(1),
                     relativeArea = cursor.getFloat(2),
                     vector = decodeVector(cursor.getBlob(3)),
+                    box = FaceBox(
+                        cursor.getFloat(4), cursor.getFloat(5), cursor.getFloat(6), cursor.getFloat(7),
+                        cursor.getFloat(8),
+                    ).takeIf { it.isUsable },
                 )
             }
         }
@@ -558,6 +720,13 @@ private class RecognitionOpenHelper(context: Context) :
                             put("face_index", face.faceIndex)
                             put("relative_area", face.relativeArea)
                             put("vector", encodeVector(face.vector))
+                            face.box?.takeIf { it.isUsable }?.let { box ->
+                                put("box_left", box.left)
+                                put("box_top", box.top)
+                                put("box_right", box.right)
+                                put("box_bottom", box.bottom)
+                                put("frame_aspect", box.frameAspect)
+                            }
                         },
                         SQLiteDatabase.CONFLICT_REPLACE,
                     )
@@ -582,6 +751,8 @@ private class RecognitionOpenHelper(context: Context) :
                 delete(TABLE_PALETTE, "media_id = ?", args)
                 delete(TABLE_ASSETS, "media_id = ?", args)
                 delete(TABLE_FAILURES, "media_id = ?", args)
+                // A "not this person" about a photo that is gone is dead weight; people themselves stay.
+                delete(TABLE_EXCLUSIONS, "media_id = ?", args)
             }
         }
     }
@@ -593,6 +764,10 @@ private class RecognitionOpenHelper(context: Context) :
             delete(TABLE_PALETTE, null, null)
             delete(TABLE_ASSETS, null, null)
             delete(TABLE_FAILURES, null, null)
+            // A reset of recognition is a reset of people: their witnesses name faces that no
+            // longer exist, so a kept name could only ever attach to the wrong cluster.
+            delete(TABLE_PEOPLE, null, null)
+            delete(TABLE_EXCLUSIONS, null, null)
         }
     }
 
@@ -606,12 +781,14 @@ private class RecognitionOpenHelper(context: Context) :
         // why its own arrival is additive rather than another drop-and-recreate. v5 added
         // TABLE_PALETTE, also additively -- see onUpgrade for why a derived cache still earns an
         // additive step this time.
-        const val DATABASE_VERSION = 5
+        const val DATABASE_VERSION = 6
         const val TABLE_ASSETS = "asset_recognition"
         const val TABLE_FACES = "face_descriptor"
         const val TABLE_FAILURES = "recognition_failure"
         const val TABLE_PALETTE = "asset_palette"
         const val TABLE_TEXT = "asset_text_block"
+        const val TABLE_PEOPLE = "person_record"
+        const val TABLE_EXCLUSIONS = "person_exclusion"
 
         /** A share above this cannot have come from the quantiser; the row is garbage. */
         const val MAX_PROPORTION = 1.0001f
@@ -621,6 +798,19 @@ private class RecognitionOpenHelper(context: Context) :
             values.firstOrNull { it.name == stored } ?: fallback
     }
 }
+
+/** `mediaId:faceIndex` pairs, comma-joined; digits and colons only, so nothing to escape. */
+internal fun encodeWitnesses(witnesses: Set<FaceKey>): String =
+    witnesses.joinToString(",") { "${it.mediaId}:${it.faceIndex}" }
+
+/** Tolerant: a malformed pair is skipped, not fatal -- a bad cell must not hide every person. */
+internal fun decodeWitnesses(stored: String?): Set<FaceKey> =
+    stored?.split(',')?.mapNotNullTo(linkedSetOf()) { pair ->
+        val parts = pair.split(':')
+        val media = parts.getOrNull(0)?.toLongOrNull()
+        val index = parts.getOrNull(1)?.toIntOrNull()
+        if (parts.size == 2 && media != null && index != null) FaceKey(media, index) else null
+    }.orEmpty()
 
 internal fun encodeVector(vector: FloatArray): ByteArray {
     val buffer = ByteBuffer.allocate(vector.size * Float.SIZE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
