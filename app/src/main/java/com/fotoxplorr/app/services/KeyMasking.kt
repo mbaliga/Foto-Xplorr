@@ -19,3 +19,11 @@ object KeyMasking {
     fun savedLabel(tail: String): String =
         if (tail.isEmpty()) ServicesCopy.KEY_SAVED else "${ServicesCopy.KEY_SAVED}, ending $tail"
 }
+
+/** The id of the matching entry in the shared free-tiers file, or null when none fits (own server, etc.). */
+fun com.fotoxplorr.app.ai.AiProviderKind.freeTierId(): String? = when (this) {
+    com.fotoxplorr.app.ai.AiProviderKind.OPENAI_RESPONSES -> "openai"
+    com.fotoxplorr.app.ai.AiProviderKind.ANTHROPIC_MESSAGES -> "anthropic"
+    com.fotoxplorr.app.ai.AiProviderKind.GEMINI_GENERATE_CONTENT -> "google_gemini"
+    com.fotoxplorr.app.ai.AiProviderKind.OPENAI_COMPATIBLE_CHAT -> null
+}

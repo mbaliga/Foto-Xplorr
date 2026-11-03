@@ -53,6 +53,10 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import com.fotoxplorr.app.services.KeyMasking
+import com.fotoxplorr.app.services.catalogue.CataloguePolicy
+import com.fotoxplorr.app.services.catalogue.FreeTier
+import com.fotoxplorr.app.services.CatalogueStore
+import com.fotoxplorr.app.services.freeTierId
 import com.fotoxplorr.app.services.ServicesCopy
 import com.fotoxplorr.app.ui.HelpCopy
 
@@ -108,6 +112,8 @@ fun AiSettingsScreen(onClose: () -> Unit, showModels: Boolean = true) {
     var testResult by remember { mutableStateOf<String?>(null) }
     var testingId by remember { mutableStateOf<String?>(null) }
     var showModelDetails by remember { mutableStateOf(false) }
+    // Free-tier facts come from the shared catalogue (bundled or last updated by tap); read once.
+    val snapshot = remember(context) { CatalogueStore(context.applicationContext).load() }
 
     val modelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch { modelManager.installFromUri(uri) }
@@ -187,6 +193,10 @@ fun AiSettingsScreen(onClose: () -> Unit, showModels: Boolean = true) {
                         tail
                     },
                     canTest = bindings.remoteAi.available,
+                    freeTier = CataloguePolicy.freeTierFor(
+                        snapshot.tiers?.tiers.orEmpty(),
+                        provider.kind.freeTierId(),
+                    )?.let { it to CataloguePolicy.freeTierLine(it, snapshot.tiers?.lastUpdated) },
                     onEnabledChange = { providerStore.setEnabled(provider.id, it) },
                     onEdit = { editing = provider },
                     onDelete = { providerStore.remove(provider.id) },
@@ -354,6 +364,7 @@ private fun ProviderCard(
     testing: Boolean,
     keyTail: String,
     canTest: Boolean,
+    freeTier: Pair<FreeTier, String>?,
     onEnabledChange: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -375,6 +386,10 @@ private fun ProviderCard(
                 onCheckedChange = onEnabledChange,
                 description = provider.label,
             )
+        }
+        freeTier?.let { (tier, line) ->
+            Text(line, color = SECONDARY_TEXT, style = MaterialTheme.typography.bodySmall)
+            tier.sourceUrl?.let { Text("Source: $it", color = MUTED_TEXT, style = MaterialTheme.typography.labelSmall) }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (!canTest) {
@@ -463,6 +478,7 @@ private fun ProviderEditorDialog(
             { secret = it },
             if (initial.hasSecret) "Replace key (optional)" else "API key",
             HelpCopy.Hint.AI_KEY_SOURCE,
+            password = true,
         )
         DarkField(
             timeout,
@@ -576,15 +592,22 @@ private fun DarkField(
     onValueChange: (String) -> Unit,
     label: String,
     caption: String,
+    password: Boolean = false,
 ) {
-    // The shared Hyle field. Its public signature has no password mode, so a key being typed or
-    // pasted is visible until saved; once saved it is never shown again (only its last four).
+    // The shared Hyle field. A key being typed or pasted is masked (visualTransformation); once
+    // saved it is never shown again (only its last four).
     Column {
         Text(label, color = SECONDARY_TEXT, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp, bottom = 4.dp))
         com.fotoxplorr.app.hyle.HyleTextField(
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier.fillMaxWidth(),
+            visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+            keyboardOptions = if (password) {
+                androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password)
+            } else {
+                androidx.compose.foundation.text.KeyboardOptions.Default
+            },
         )
         Text(caption, color = MUTED_TEXT, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp, top = 2.dp))
     }

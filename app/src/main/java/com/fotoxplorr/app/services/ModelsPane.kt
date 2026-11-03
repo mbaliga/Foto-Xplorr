@@ -58,6 +58,7 @@ fun ModelsPane(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val state by manager.observe().collectAsStateWithLifecycle()
     val canDownload = bindings.remoteAi.available
     val entries = remember(state, canDownload) { ModelCatalogue.entries(state, canDownload) }
+    val catalogueStore = remember(context) { CatalogueStore(context.applicationContext) }
     val scope = rememberCoroutineScope()
     var job by remember { mutableStateOf<Job?>(null) }
     var confirm by remember { mutableStateOf<ModelSpec?>(null) }
@@ -76,6 +77,9 @@ fun ModelsPane(onBack: () -> Unit, modifier: Modifier = Modifier) {
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            item {
+                Text(ServicesCopy.BUILT_IN_GROUP, color = SERVICES_SECONDARY, style = MaterialTheme.typography.labelLarge)
+            }
             items(entries, key = { it.spec.id }) { entry ->
                 ModelRow(
                     entry = entry,
@@ -91,6 +95,7 @@ fun ModelsPane(onBack: () -> Unit, modifier: Modifier = Modifier) {
                     onImport = { picker.launch(arrayOf("application/octet-stream", "*/*")) },
                 )
             }
+            item { CatalogueSection(store = catalogueStore, bridge = bindings.remoteAi) }
             item {
                 StorageFooter(
                     line = ModelCatalogue.storageLine(entries),
