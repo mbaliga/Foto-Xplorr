@@ -175,7 +175,11 @@ class ReelScreenTest {
         return act(compose.onNodeWithText(text))
     }
 
-    private fun press(description: String) = act(compose.onNodeWithContentDescription(description))
+    // Like tapText: a saved reel's buttons arrive with its row, after the off-main-thread list read.
+    private fun press(description: String): SemanticsNodeInteraction {
+        waitFor { descriptionShown(description) }
+        return act(compose.onNodeWithContentDescription(description))
+    }
 
     private fun pressBack() = compose.runOnUiThread { owner.onBackPressedDispatcher.onBackPressed() }
 

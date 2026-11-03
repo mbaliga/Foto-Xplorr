@@ -150,9 +150,17 @@ class MoodBoardScreenTest {
         return node
     }
 
-    private fun tapText(text: String) = act(compose.onNodeWithText(text))
+    // Wait for the node first: the saved list (and a saved board's controls) arrive after an off-main-thread
+    // read, and a busy machine otherwise clicks on nothing.
+    private fun tapText(text: String): SemanticsNodeInteraction {
+        waitFor { compose.onAllNodes(hasText(text)).fetchSemanticsNodes().isNotEmpty() }
+        return act(compose.onNodeWithText(text))
+    }
 
-    private fun press(description: String) = act(compose.onNodeWithContentDescription(description))
+    private fun press(description: String): SemanticsNodeInteraction {
+        waitFor { compose.onAllNodes(hasContentDescription(description)).fetchSemanticsNodes().isNotEmpty() }
+        return act(compose.onNodeWithContentDescription(description))
+    }
 
     private fun pressBack() = compose.runOnUiThread { owner.onBackPressedDispatcher.onBackPressed() }
 
