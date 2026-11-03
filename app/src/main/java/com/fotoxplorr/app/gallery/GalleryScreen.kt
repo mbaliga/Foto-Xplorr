@@ -285,6 +285,7 @@ data class GalleryActions(
     val onSetTimelineOn: (Boolean) -> Unit = {},
     /** Which edge the timeline strip sits on. */
     val onSetTimelinePlacement: (TimelinePlacement) -> Unit = {},
+    val onSetTimelineVisibility: (TimelineVisibility) -> Unit = {},
     /** Which way the photos scroll (down or across); the stamps and masonry stay vertical. */
     val onSetScrollAxis: (ScrollAxis) -> Unit = {},
     val onSetThemeMode: (ThemeMode) -> Unit,
@@ -293,7 +294,6 @@ data class GalleryActions(
      *  "Custom…" flow, whose confirm dialog is what actually validates it before this is ever
      *  called. */
     val onSetCustomTheme: (String) -> Unit,
-    val onSetTimelineVisibility: (TimelineVisibility) -> Unit = {},
     val onSetSlideshowInterval: (Int) -> Unit,
     val onSetDefaultDestination: (HyleDestination) -> Unit,
     val onSetKeepScreenOn: (Boolean) -> Unit,
@@ -1646,7 +1646,6 @@ private fun GalleryBrowser(
                                     inkColor = Color.White,
                                     accentColor = MaterialTheme.colorScheme.primary,
                                     bubbleTextColor = MaterialTheme.colorScheme.onPrimary,
-                                    restAlpha = EDGE_SCRUBBER_REST_ALPHA,
                                     edge = timelinePlacement.edge(),
                                     visibility = timelineVisibility,
                                     restAlpha = EDGE_SCRUBBER_REST_ALPHA,
