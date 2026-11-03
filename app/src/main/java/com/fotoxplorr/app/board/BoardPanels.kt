@@ -15,8 +15,6 @@ import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -42,22 +40,13 @@ internal fun List<PaletteSwatch>.asChoices(): List<Pair<Int, String>> = map { it
 
 @Composable
 private fun BoardTextField(label: String, value: String, onChange: (String) -> Unit, enabled: Boolean = true) {
-    OutlinedTextField(
+    com.fotoxplorr.app.hyle.HyleTextField(
         value = value,
         onValueChange = onChange,
-        label = { Text(label) },
+        label = label,
         enabled = enabled,
+        singleLine = false,
         modifier = Modifier.fillMaxWidth(),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedTextColor = RoomStyle.Ink,
-            unfocusedTextColor = RoomStyle.Ink,
-            disabledTextColor = RoomStyle.InkFaint,
-            focusedBorderColor = Color.White,
-            unfocusedBorderColor = RoomStyle.InkFaint,
-            focusedLabelColor = RoomStyle.InkMuted,
-            unfocusedLabelColor = RoomStyle.InkMuted,
-            cursorColor = Color.White,
-        ),
     )
 }
 

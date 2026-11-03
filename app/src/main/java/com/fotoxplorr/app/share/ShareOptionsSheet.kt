@@ -17,8 +17,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -277,23 +275,10 @@ private fun SheetField(
     caption: String,
 ) {
     Column {
-        OutlinedTextField(
+        com.fotoxplorr.app.hyle.HyleTextField(
             value = value,
             onValueChange = onValueChange,
-            label = { Text(label) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = PRIMARY_TEXT,
-                unfocusedTextColor = PRIMARY_TEXT,
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
-                focusedLabelColor = MaterialTheme.colorScheme.primary,
-                unfocusedLabelColor = SECONDARY_TEXT,
-                cursorColor = MaterialTheme.colorScheme.primary,
-                focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent,
-            ),
+            label = label,
         )
         Text(caption, color = MUTED_TEXT, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp, top = 2.dp))
     }

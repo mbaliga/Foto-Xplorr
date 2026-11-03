@@ -15,7 +15,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -163,11 +162,12 @@ private fun NamePromptDialog(title: String, initial: String, confirmLabel: Strin
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(
+            com.fotoxplorr.app.hyle.HyleTextField(
                 value = text,
                 onValueChange = { text = it },
-                singleLine = true,
+                label = title,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { onConfirm(text.trim()) }),
             )
             Row(horizontalArrangement = Arrangement.End, modifier = Modifier.padding(top = 4.dp)) {
                 TextButton(onClick = onDismiss) { Text("Cancel", color = Color.White.copy(alpha = 0.6f)) }

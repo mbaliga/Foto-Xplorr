@@ -12,8 +12,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -112,7 +110,7 @@ internal fun NumberField(label: String, value: Float, onValue: (Float) -> Unit, 
     LaunchedEffect(value) {
         if ((text.toFloatOrNull() ?: 0f) != value) text = if (value > 0f) FramePresets.number(value) else ""
     }
-    OutlinedTextField(
+    com.fotoxplorr.app.hyle.HyleTextField(
         value = text,
         onValueChange = { typed ->
             val clean = typed.filter { it.isDigit() || it == '.' }.take(7)
@@ -123,17 +121,7 @@ internal fun NumberField(label: String, value: Float, onValue: (Float) -> Unit, 
             }
         },
         modifier = modifier,
-        label = { Text(label) },
-        singleLine = true,
+        label = label,
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedTextColor = RoomStyle.Ink,
-            unfocusedTextColor = RoomStyle.Ink,
-            focusedLabelColor = RoomStyle.Ink,
-            unfocusedLabelColor = RoomStyle.InkMuted,
-            focusedBorderColor = Color.White,
-            unfocusedBorderColor = RoomStyle.InkFaint,
-            cursorColor = Color.White,
-        ),
     )
 }

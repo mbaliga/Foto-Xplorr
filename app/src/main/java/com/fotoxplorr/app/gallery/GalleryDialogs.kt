@@ -18,7 +18,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -59,12 +58,12 @@ fun TextEntryDialog(
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
+                com.fotoxplorr.app.hyle.HyleTextField(
                     value = value,
                     onValueChange = { value = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text(label) },
-                    singleLine = true,
+                    label = label,
+                    clearable = true,
                 )
                 if (suggestions.isNotEmpty()) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -106,12 +105,11 @@ fun CollectionPickerDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (creating) {
-                    OutlinedTextField(
+                    com.fotoxplorr.app.hyle.HyleTextField(
                         value = name,
                         onValueChange = { name = it },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("New collection name") },
-                        singleLine = true,
+                        label = "New collection name",
                     )
                     TextButton(
                         enabled = name.isNotBlank(),
@@ -165,14 +163,13 @@ fun PasswordDialog(
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
+                com.fotoxplorr.app.hyle.HyleTextField(
                     value = password,
                     onValueChange = { password = it; error = null },
                     enabled = !busy,
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Password") },
+                    label = "Password",
                     visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
                 )
                 if (busy) CircularProgressIndicator()
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -239,20 +236,19 @@ fun BulkRenameDialog(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                OutlinedTextField(
+                com.fotoxplorr.app.hyle.HyleTextField(
                     value = pattern,
                     onValueChange = { pattern = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Naming pattern") },
-                    singleLine = true,
+                    label = "Naming pattern",
                 )
-                OutlinedTextField(
+                com.fotoxplorr.app.hyle.HyleTextField(
                     value = startAtText,
                     onValueChange = { startAtText = it.filter(Char::isDigit).take(9) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Start counting at") },
-                    isError = startAt == null,
-                    singleLine = true,
+                    label = "Start counting at",
+                    error = startAt == null,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
                 )
                 Text(
                     HelpCopy.Note.RENAME_TOKENS,
@@ -336,15 +332,15 @@ fun CustomThemeJsonDialog(
                         HelpCopy.Hint.THEME_PASTE,
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    OutlinedTextField(
+                    com.fotoxplorr.app.hyle.HyleTextField(
                         value = text,
                         onValueChange = { text = it; error = null },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 180.dp)
-                            .testTag(CUSTOM_THEME_JSON_INPUT_TAG),
-                        label = { Text("Theme JSON") },
-                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        modifier = Modifier.fillMaxWidth(),
+                        fieldTag = CUSTOM_THEME_JSON_INPUT_TAG,
+                        label = "Theme JSON",
+                        singleLine = false,
+                        minLines = 7,
+                        monospace = true,
                     )
                     error?.let { message ->
                         Text(

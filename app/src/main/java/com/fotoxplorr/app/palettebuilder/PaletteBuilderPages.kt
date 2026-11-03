@@ -28,8 +28,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -233,25 +231,13 @@ internal fun DarkField(
     imeAction: ImeAction = ImeAction.Done,
     onDone: () -> Unit = {},
 ) {
-    OutlinedTextField(
+    com.fotoxplorr.app.hyle.HyleTextField(
         value = value,
         onValueChange = onValueChange,
-        label = { Text(label) },
-        singleLine = true,
+        label = label,
         modifier = modifier,
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, imeAction = imeAction),
         keyboardActions = KeyboardActions(onDone = { onDone() }),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedTextColor = RoomStyle.Ink,
-            unfocusedTextColor = RoomStyle.Ink,
-            focusedBorderColor = RoomStyle.Ink,
-            unfocusedBorderColor = RoomStyle.InkFaint,
-            focusedLabelColor = RoomStyle.Ink,
-            unfocusedLabelColor = RoomStyle.InkMuted,
-            cursorColor = RoomStyle.Ink,
-            focusedContainerColor = Color.Transparent,
-            unfocusedContainerColor = Color.Transparent,
-        ),
     )
 }
 

@@ -48,6 +48,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.basemap.BasemapCanvas
+import com.fotoxplorr.app.basemap.MapMath
+import com.fotoxplorr.app.basemap.MapViewport
+import com.fotoxplorr.app.basemap.mapGestures
+import com.fotoxplorr.app.basemap.rememberImportedTiles
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.ui.FotoStamp
@@ -149,9 +154,8 @@ fun StampMapScreen(
     }
 
     var selected by remember { mutableStateOf<MediaId?>(null) }
-    var zoom by remember { mutableFloatStateOf(1f) }
-    var panX by remember { mutableFloatStateOf(0f) }
-    var panY by remember { mutableFloatStateOf(0f) }
+    val tiles = rememberImportedTiles()
+    val maxLevel = if (tiles != null) IMPORTED_MAX_LEVEL else MapMath.MAX_LEVEL
 
     if (stamps.isEmpty() || bounds == null) {
         if (embedded && bounds != null) {
@@ -171,40 +175,35 @@ fun StampMapScreen(
     }
 
     Box(modifier.fillMaxSize().background(FIELD)) {
-        BoxWithConstraints(
-            Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, gestureZoom, _ ->
-                        zoom = (zoom * gestureZoom).coerceIn(MIN_ZOOM, MAX_ZOOM)
-                        panX += pan.x
-                        panY += pan.y
-                    }
-                },
-        ) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
             val density = LocalDensity.current
             val widthPx = with(density) { maxWidth.toPx() }
             val heightPx = with(density) { maxHeight.toPx() }
             val stampPx = with(density) { STAMP_SIZE.dp.toPx() }
-
-            // The graticule, so a position reads as a position. Drawn under everything and
-            // scaled with the map so it acts like a real reference grid rather than screen
-            // furniture that happens to sit on top.
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = zoom
-                        scaleY = zoom
-                        translationX = panX
-                        translationY = panY
-                    }
-                    .background(
-                        Brush.linearGradient(listOf(FIELD, FIELD_DEEP)),
-                    ),
-            ) {
-                Graticule()
+            val viewport = MapViewport(widthPx.toDouble(), heightPx.toDouble())
+            // Framed to the photos' bounds as before, but as a real Web Mercator camera so the
+            // basemap under the stamps lines up with them; pan and pinch move the camera.
+            var camera by remember(bounds, viewport) {
+                mutableStateOf(
+                    MapMath.fitted(bounds.minLongitude, bounds.minLatitude, bounds.maxLongitude, bounds.maxLatitude, viewport, maxLevel = maxLevel),
+                )
             }
+
+            // The bundled world under everything: land, coastlines, borders and the largest city
+            // names, plus the imported raster map file when there is one. Gestures sit on this
+            // layer; a stamp's own tap wins over them.
+            BasemapCanvas(
+                camera = { camera },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .mapGestures(
+                        camera = { camera },
+                        viewport = { viewport },
+                        onCamera = { camera = it },
+                        maxLevel = { maxLevel },
+                    ),
+                tiles = tiles,
+            )
 
             if (focus != null) {
                 // Every located photo as one filled dot in its own colour, drawn in a single
@@ -214,33 +213,27 @@ fun StampMapScreen(
                 val dotRadiusPx = with(density) { FOCUS_DOT_DP.dp.toPx() }
                 val dots = remember(located, bounds, focus) {
                     located.filter { it.first.id != focus.assetId }.map { (asset, geo) ->
-                        val p = StampMapProjection.project(geo.latitude, geo.longitude, bounds)
-                        Triple(p.x, p.y, Color(focus.colorFor(asset.id)))
+                        Triple(geo.latitude, geo.longitude, Color(focus.colorFor(asset.id)))
                     }
                 }
                 Canvas(Modifier.fillMaxSize()) {
-                    dots.forEach { (x, y, color) ->
-                        drawCircle(
-                            color = color,
-                            radius = dotRadiusPx,
-                            center = Offset(
-                                x = (x - 0.5f) * widthPx * zoom + widthPx / 2f + panX,
-                                y = (y - 0.5f) * heightPx * zoom + heightPx / 2f + panY,
-                            ),
-                        )
+                    val cam = camera
+                    dots.forEach { (lat, lon, color) ->
+                        val p = MapMath.toScreen(cam, viewport, lon, lat)
+                        drawCircle(color = color, radius = dotRadiusPx, center = Offset(p.x.toFloat(), p.y.toFloat()))
                     }
                 }
                 val self = located.firstOrNull { it.first.id == focus.assetId }
                 if (self != null) {
-                    val point = StampMapProjection.project(self.second.latitude, self.second.longitude, bounds)
+                    val point = MapMath.toScreen(camera, viewport, self.second.longitude, self.second.latitude)
                     val pinWidthPx = with(density) { PlaceMorph.PIN_SIZE_DP.dp.toPx() }
                     val pinHeightPx = with(density) { PlaceMorph.PIN_GROUP_HEIGHT_DP.dp.toPx() }
                     PlacePin(
                         asset = self.first,
                         modifier = Modifier.offset {
                             IntOffset(
-                                x = ((point.x - 0.5f) * widthPx * zoom + widthPx / 2f - pinWidthPx / 2f + panX).roundToInt(),
-                                y = ((point.y - 0.5f) * heightPx * zoom + heightPx / 2f - pinHeightPx / 2f + panY).roundToInt(),
+                                x = (point.x - pinWidthPx / 2f).roundToInt(),
+                                y = (point.y - pinHeightPx / 2f).roundToInt(),
                             )
                         },
                     )
@@ -248,7 +241,7 @@ fun StampMapScreen(
             }
 
             if (focus == null) stamps.forEach { (asset, geo) ->
-                val point = StampMapProjection.project(geo.latitude, geo.longitude, bounds)
+                val point = MapMath.toScreen(camera, viewport, geo.longitude, geo.latitude)
                 val isSelected = selected == asset.id
                 val scale by animateFloatAsState(
                     targetValue = if (isSelected) 1.35f else 1f,
@@ -260,15 +253,11 @@ fun StampMapScreen(
                             // Placement offset, not a layer translation: a stamp has to answer
                             // touches where it is drawn, and the whole map pans underneath.
                             //
-                            // Scaled about the centre of the viewport, matching the pivot
-                            // `graphicsLayer` uses for the graticule below. Scaling these about
-                            // the top-left instead -- the obvious reading of the arithmetic --
-                            // slides the pins off the grid the moment you pinch.
+                            // The camera's own projection, the one the basemap is drawn with, so a
+                            // stamp stays on its place through every pan and pinch.
                             IntOffset(
-                                x = ((point.x - 0.5f) * widthPx * zoom + widthPx / 2f -
-                                    stampPx / 2f + panX).roundToInt(),
-                                y = ((point.y - 0.5f) * heightPx * zoom + heightPx / 2f -
-                                    stampPx / 2f + panY).roundToInt(),
+                                x = (point.x - stampPx / 2f).roundToInt(),
+                                y = (point.y - stampPx / 2f).roundToInt(),
                             )
                         }
                         .size(STAMP_SIZE.dp)
@@ -570,5 +559,5 @@ private const val THIN_CELLS = 12
 
 /** One turn of the empty field. Slow enough to read as "still looking", not as an animation. */
 private const val EMPTY_SPIN_MILLIS = 30_000
-private const val MIN_ZOOM = 0.6f
-private const val MAX_ZOOM = 6f
+/** Levels the map may zoom to when an imported tile file supplies the detail (the bundled data stops at 8). */
+private const val IMPORTED_MAX_LEVEL = 12.0

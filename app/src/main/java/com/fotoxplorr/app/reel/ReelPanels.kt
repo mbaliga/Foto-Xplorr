@@ -11,8 +11,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -36,21 +34,12 @@ import com.fotoxplorr.app.ui.RoomStyle
 
 @Composable
 private fun ReelTextField(label: String, value: String, onChange: (String) -> Unit, singleLine: Boolean = true) {
-    OutlinedTextField(
+    com.fotoxplorr.app.hyle.HyleTextField(
         value = value,
         onValueChange = onChange,
-        label = { Text(label) },
+        label = label,
         singleLine = singleLine,
         modifier = Modifier.fillMaxWidth(),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedTextColor = RoomStyle.Ink,
-            unfocusedTextColor = RoomStyle.Ink,
-            focusedBorderColor = Color.White,
-            unfocusedBorderColor = RoomStyle.InkFaint,
-            focusedLabelColor = RoomStyle.InkMuted,
-            unfocusedLabelColor = RoomStyle.InkMuted,
-            cursorColor = Color.White,
-        ),
     )
 }
 

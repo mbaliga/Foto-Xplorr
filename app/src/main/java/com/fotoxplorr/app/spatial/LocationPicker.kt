@@ -1,6 +1,5 @@
 package com.fotoxplorr.app.spatial
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,11 +21,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -38,19 +38,25 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomStyle
-import com.fotoxplorr.app.viewer.GRATICULE
+import com.fotoxplorr.app.basemap.BasemapCanvas
+import com.fotoxplorr.app.basemap.MapMath
+import com.fotoxplorr.app.basemap.MapViewport
+import com.fotoxplorr.app.basemap.PinMath
+import com.fotoxplorr.app.basemap.PxPoint
+import com.fotoxplorr.app.basemap.mapGestures
+import com.fotoxplorr.app.basemap.rememberImportedTiles
+import com.fotoxplorr.app.hyle.HyleTextField
 import com.fotoxplorr.app.viewer.PLATE_ASPECT
 import com.fotoxplorr.app.viewer.PLATE_CORNER_DP
 import com.fotoxplorr.app.viewer.PLATE_GROUND
@@ -155,6 +161,8 @@ fun LocationPicker(
         RoomEyebrow("PLACE")
 
         val shape = RoundedCornerShape(PLATE_CORNER_DP.dp)
+        val tiles = rememberImportedTiles()
+        val maxLevel = if (tiles != null) IMPORTED_MAX_LEVEL else MapMath.MAX_LEVEL
         BoxWithConstraints(
             Modifier
                 .fillMaxWidth()
@@ -168,18 +176,49 @@ fun LocationPicker(
             val density = LocalDensity.current
             val widthPx = with(density) { maxWidth.toPx() }
             val heightPx = with(density) { maxHeight.toPx() }
+            val viewport = MapViewport(widthPx.toDouble(), heightPx.toDouble())
             val pinPx = with(density) { PIN_SIZE.dp.toPx() }
             val grabPx = with(density) { GRAB_RADIUS.dp.toPx() }
+            var camera by remember(viewport) {
+                mutableStateOf(
+                    if (placed) MapMath.centeredOn(longitude!!, latitude!!, PLACED_LEVEL, viewport)
+                    else MapMath.centeredOn(0.0, 0.0, 0.0, viewport),
+                )
+            }
+
+            fun pinScreen(): PxPoint = MapMath.toScreen(camera, viewport, pinLongitude, pinLatitude)
+
+            // A typed coordinate can put the pin off the visible map; bring the map to it.
+            LaunchedEffect(pinLatitude, pinLongitude, hasPin) {
+                if (!hasPin) return@LaunchedEffect
+                val p = pinScreen()
+                if (p.x < 0 || p.y < 0 || p.x > viewport.widthPx || p.y > viewport.heightPx) {
+                    camera = MapMath.centeredOn(pinLongitude, pinLatitude, maxOf(camera.level, PLACED_LEVEL), viewport, maxLevel)
+                }
+            }
 
             Box(
                 Modifier
                     .fillMaxSize()
                     .semantics { contentDescription = "Pick a place on the map" }
-                    .pointerInput(widthPx, heightPx) {
+                    .mapGestures(
+                        camera = { camera },
+                        viewport = { viewport },
+                        onCamera = { camera = it },
+                        maxLevel = { maxLevel },
+                        // One finger scrolls the room (and the shell owns the screen's side edges,
+                        // TRAPS #72); two fingers and the buttons below move the map.
+                        onePointerPans = false,
+                        onTap = { at ->
+                            val p = PinMath.pinAt(camera, viewport, at.x.toDouble(), at.y.toDouble())
+                            moveLocally(p.lat, p.lon)
+                            commit()
+                        },
+                    )
+                    .pointerInput(viewport) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
-                            val pin = Offset(fieldX(pinLongitude, widthPx), fieldY(pinLatitude, heightPx))
-                            val grabbed = hasPin && (down.position - pin).getDistance() <= grabPx
+                            val grabbed = hasPin && PinMath.grabs(pinScreen(), down.position.x.toDouble(), down.position.y.toDouble(), grabPx.toDouble())
                             if (grabbed) {
                                 // Fine-tuning the pin that is already there. Consumed, so the
                                 // room does not scroll while it is being moved.
@@ -187,42 +226,26 @@ fun LocationPicker(
                                 drag(down.id) { change ->
                                     change.consume()
                                     moved = true
-                                    moveLocally(
-                                        fieldLatitude(change.position.y, heightPx),
-                                        fieldLongitude(change.position.x, widthPx),
-                                    )
+                                    val p = PinMath.pinAt(camera, viewport, change.position.x.toDouble(), change.position.y.toDouble())
+                                    moveLocally(p.lat, p.lon)
                                 }
                                 // Both endings commit: a cancelled drag (a second finger landing,
                                 // the gesture being taken over) still leaves the pin somewhere,
                                 // and that somewhere should not silently fail to save.
                                 if (moved) commit()
-                            } else {
-                                // Anywhere else: a tap places the pin; a drag is the room being
-                                // scrolled, which the parent takes (waitForUpOrCancellation
-                                // returns null once it has), so it is not ours to consume.
-                                val up = waitForUpOrCancellation()
-                                if (up != null && (up.position - down.position).getDistance() <= viewConfiguration.touchSlop) {
-                                    up.consume()
-                                    moveLocally(
-                                        fieldLatitude(up.position.y, heightPx),
-                                        fieldLongitude(up.position.x, widthPx),
-                                    )
-                                    commit()
-                                }
                             }
                         }
                     },
             ) {
-                StaticGraticule()
+                BasemapCanvas(camera = { camera }, modifier = Modifier.fillMaxSize(), tiles = tiles)
 
                 // The pin: only once a place exists. A circle, in the same visual language as the
                 // plate's pin rather than a square outline.
                 if (hasPin) {
-                    val x = fieldX(pinLongitude, widthPx)
-                    val y = fieldY(pinLatitude, heightPx)
+                    val p = pinScreen()
                     Box(
                         Modifier
-                            .offset { IntOffset((x - pinPx / 2f).roundToInt(), (y - pinPx / 2f).roundToInt()) }
+                            .offset { IntOffset((p.x - pinPx / 2f).roundToInt(), (p.y - pinPx / 2f).roundToInt()) }
                             .size(PIN_SIZE.dp)
                             .semantics { contentDescription = "Chosen place" },
                         contentAlignment = Alignment.Center,
@@ -234,16 +257,28 @@ fun LocationPicker(
             }
 
             Text(
-                text = if (hasPin) "Drag the pin, or type below" else "Tap the map to place this photo",
-                color = Color.White.copy(alpha = 0.45f),
+                text = if (hasPin) "Drag the pin to move it" else "Tap the map to place this photo",
+                color = Color.White.copy(alpha = 0.55f),
                 style = RoomStyle.Caption,
                 modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
             )
+            // The non-drag way to move around: zoom about the pin (or the middle), one tap each.
+            Column(Modifier.align(Alignment.TopEnd).padding(4.dp)) {
+                ZoomButton("+", "Zoom the map in") {
+                    val f = if (hasPin) pinScreen() else PxPoint(viewport.widthPx / 2, viewport.heightPx / 2)
+                    camera = MapMath.zoomedAt(camera, viewport, camera.level + 1.0, f.x, f.y, maxLevel)
+                }
+                ZoomButton("\u2212", "Zoom the map out") {
+                    val f = if (hasPin) pinScreen() else PxPoint(viewport.widthPx / 2, viewport.heightPx / 2)
+                    camera = MapMath.zoomedAt(camera, viewport, camera.level - 1.0, f.x, f.y, maxLevel)
+                }
+            }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             CoordinateField(
                 label = "Latitude",
+                limit = 90.0,
                 value = latitudeText,
                 onValueChange = { text ->
                     latitudeText = text
@@ -257,6 +292,7 @@ fun LocationPicker(
             )
             CoordinateField(
                 label = "Longitude",
+                limit = 180.0,
                 value = longitudeText,
                 onValueChange = { text ->
                     longitudeText = text
@@ -306,37 +342,31 @@ fun LocationPicker(
     }
 }
 
-/**
- * The field's grid: the world, still. Rows and columns at the plate's own ink, the equator and
- * the prime meridian a shade brighter so it reads as a globe's and not as decoration. Nothing
- * here moves, and nothing is drawn outside the field's clip.
- */
 @Composable
-private fun StaticGraticule() {
-    Canvas(Modifier.fillMaxSize()) {
-        val stroke = 1.dp.toPx()
-        // A touch quieter than the located plate's own lines: this is a tool surface, not data.
-        val ink = GRATICULE.copy(alpha = 0.7f)
-        val rows = 6
-        val columns = 6
-        for (row in 1 until rows) {
-            val y = size.height * row / rows
-            drawLine(ink, Offset(0f, y), Offset(size.width, y), strokeWidth = stroke)
+private fun ZoomButton(glyph: String, description: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(48.dp)
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.size(34.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
+            Text(glyph, color = Color.White, style = RoomStyle.Caption.copy(fontSize = 18.sp))
         }
-        for (column in 1 until columns) {
-            val x = size.width * column / columns
-            drawLine(ink, Offset(x, 0f), Offset(x, size.height), strokeWidth = stroke)
-        }
-        val axis = Color.White.copy(alpha = 0.14f)
-        drawLine(axis, Offset(0f, size.height / 2f), Offset(size.width, size.height / 2f), strokeWidth = stroke)
-        drawLine(axis, Offset(size.width / 2f, 0f), Offset(size.width / 2f, size.height), strokeWidth = stroke)
     }
 }
 
+/**
+ * One coordinate on the shared Hyle field: a decimal keyboard, a clear button, and a line saying
+ * what is wrong when the text is not a number in range. The keyboard's decimal layout often has no
+ * minus sign, so a 48 dp +/- button flips the sign (southern and western hemispheres).
+ */
 @Composable
 private fun CoordinateField(
     label: String,
     value: String,
+    limit: Double,
     onValueChange: (String) -> Unit,
     onFocusLost: () -> Unit,
     modifier: Modifier = Modifier,
@@ -345,59 +375,52 @@ private fun CoordinateField(
     // callback fires on ATTACH as "not focused" too (nothing was ever focused to lose), which
     // would call onFocusLost on first composition. Only a genuine focused-to-unfocused edge counts.
     var wasFocused by remember { mutableStateOf(false) }
-    Column(modifier) {
-        Text(label, color = RoomStyle.InkFaint, style = RoomStyle.Caption)
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = true,
-            textStyle = TextStyle(color = Color.White, fontSize = 16.sp),
-            cursorBrush = SolidColor(Color.White),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp)
-                .border(1.dp, Color.White.copy(alpha = 0.22f))
-                .padding(horizontal = 10.dp, vertical = 10.dp)
-                .height(20.dp)
-                .onFocusChanged { state ->
-                    if (wasFocused && !state.isFocused) onFocusLost()
-                    wasFocused = state.isFocused
-                },
-        )
+    val number = value.toDoubleOrNull()
+    val problem = when {
+        value.isBlank() || value == "-" || value == "." || value == "-." -> null
+        number == null -> "Use digits, like 17.4435."
+        number !in -limit..limit -> "Between -${limit.toInt()} and ${limit.toInt()}."
+        else -> null
     }
+    HyleTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = label,
+        errorText = problem,
+        clearable = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { onFocusLost() }),
+        modifier = modifier.onFocusChanged { state ->
+            if (wasFocused && !state.isFocused) onFocusLost()
+            wasFocused = state.isFocused
+        },
+        trailing = {
+            Box(
+                Modifier
+                    .size(48.dp)
+                    .clickable {
+                        onValueChange(if (value.startsWith("-")) value.drop(1) else "-$value")
+                    }
+                    .semantics { contentDescription = "Flip the sign of $label" },
+                contentAlignment = Alignment.Center,
+            ) { Text("\u00B1", color = Color(0xFF3A3A44), style = RoomStyle.Caption.copy(fontSize = 18.sp)) }
+        },
+    )
 }
-
-// ── The field's mapping between pixels and degrees ─────────────────────────────────────────────
-// Pure, so a tap's coordinate can be asserted without a device. The window is the whole world in
-// Web Mercator's latitude range, x linear in longitude and y linear in latitude (a plate-carrée
-// grid, not a Mercator projection -- it is a graticule, not a map).
-
-/** Degrees of longitude under pixel column [x] of a field [width] px wide, clamped to the world. */
-internal fun fieldLongitude(x: Float, width: Float): Double =
-    if (width <= 0f) 0.0 else ((x / width).coerceIn(0f, 1f) * 360.0 - 180.0)
-
-/** Degrees of latitude under pixel row [y] of a field [height] px tall, clamped to the window. */
-internal fun fieldLatitude(y: Float, height: Float): Double =
-    if (height <= 0f) 0.0 else (MAX_LATITUDE - (y / height).coerceIn(0f, 1f) * 2.0 * MAX_LATITUDE)
-
-/** The inverse of [fieldLongitude]. */
-internal fun fieldX(longitude: Double, width: Float): Float =
-    (((longitude.coerceIn(-MAX_LONGITUDE, MAX_LONGITUDE) + 180.0) / 360.0) * width).toFloat()
-
-/** The inverse of [fieldLatitude]; a latitude beyond the window is drawn at its edge. */
-internal fun fieldY(latitude: Double, height: Float): Float =
-    (((MAX_LATITUDE - latitude.coerceIn(-MAX_LATITUDE, MAX_LATITUDE)) / (2.0 * MAX_LATITUDE)) * height).toFloat()
 
 /** Five decimals is about a metre, and past what any phone's GPS resolves. */
 private fun trim(value: Double): String = ((value * 100_000).roundToInt() / 100_000.0).toString()
 
 /** The Web Mercator cutoff, so the pin cannot be dragged into the projection's singularity. */
-internal const val MAX_LATITUDE = 85.05112878
+internal const val MAX_LATITUDE = MapMath.MAX_LAT
 internal const val MAX_LONGITUDE = 180.0
 private const val PIN_SIZE = 28
 
 /** How near the existing pin a touch must start to drag IT rather than place a new one. */
 private const val GRAB_RADIUS = 36
+
+/** How far the map opens in on a photo that already has a place, and how far an imported file lets it go. */
+private const val PLACED_LEVEL = 4.0
+private const val IMPORTED_MAX_LEVEL = 12.0
 // Fixed on purpose (semantic): the set-pin red is a conventional map colour.
 private val PIN_SET = Color(0xFFE65A58)

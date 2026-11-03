@@ -18,7 +18,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -172,29 +171,22 @@ private fun PassphraseDialog(stage: BackupStage.Passphrase, onSubmit: (CharArray
                     Text("Backup in ${stage.folderLabel}.")
                     if (stage.wrong) Text(BackupCopy.WRONG_PASSPHRASE, color = MaterialTheme.colorScheme.error)
                 }
-                OutlinedTextField(
+                com.fotoxplorr.app.hyle.HyleTextField(
                     value = passphrase,
                     onValueChange = { passphrase = it },
-                    label = { Text("Passphrase") },
-                    singleLine = true,
+                    label = "Passphrase",
                     visualTransformation = transformation,
                     keyboardOptions = options,
                 )
                 if (stage.newSet) {
                     Text(BackupCopy.strengthHint(strength), style = RoomStyle.Caption)
-                    OutlinedTextField(
+                    com.fotoxplorr.app.hyle.HyleTextField(
                         value = confirm,
                         onValueChange = { confirm = it },
-                        label = { Text("Passphrase again") },
-                        singleLine = true,
+                        label = "Passphrase again",
                         visualTransformation = transformation,
                         keyboardOptions = options,
-                        isError = problem == PassphraseProblem.MISMATCH,
-                        supportingText = if (problem == PassphraseProblem.MISMATCH) {
-                            { Text(BackupCopy.MISMATCH) }
-                        } else {
-                            null
-                        },
+                        errorText = if (problem == PassphraseProblem.MISMATCH) BackupCopy.MISMATCH else null,
                     )
                 }
                 TextButton(onClick = { visible = !visible }) { Text(if (visible) "Hide" else "Show") }

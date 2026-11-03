@@ -61,6 +61,12 @@ class LocationPickerTest {
         compose.waitForIdle()
     }
 
+    /** A single tap is reported after the double-tap window, so the clock has to pass it. */
+    private fun settleTap() {
+        compose.mainClock.advanceTimeBy(500)
+        compose.waitForIdle()
+    }
+
     @Test
     fun `no pin is drawn and nothing is reported before a place exists`() {
         picker()
@@ -85,11 +91,12 @@ class LocationPickerTest {
         val field = compose.onNodeWithContentDescription("Pick a place on the map")
         val size = field.fetchSemanticsNode().size
         field.performTouchInput { click(Offset(size.width * 0.75f, size.height * 0.25f)) }
-        compose.waitForIdle()
+        settleTap()
         compose.onNodeWithContentDescription("Chosen place", useUnmergedTree = true).assertExists()
         assertEquals(1, sets.size)
-        // A quarter down the window is half the Mercator limit north; three quarters across is 90 E.
-        assertEquals(MAX_LATITUDE / 2.0, sets[0].first, 0.5)
+        // The unplaced map shows the whole world in Web Mercator: three quarters across is 90 E, a
+        // quarter down is where a quarter of the world's height falls (not linear in latitude).
+        assertEquals(com.fotoxplorr.app.basemap.MapMath.yToLat(0.25), sets[0].first, 0.5)
         assertEquals(90.0, sets[0].second, 0.5)
     }
 
@@ -100,7 +107,7 @@ class LocationPickerTest {
         val size = field.fetchSemanticsNode().size
         val start = Offset(size.width * 0.5f, size.height * 0.5f)
         field.performTouchInput { click(start) }
-        compose.waitForIdle()
+        settleTap()
         assertEquals(1, sets.size)
 
         val end = Offset(size.width * 0.8f, size.height * 0.3f)
@@ -108,8 +115,8 @@ class LocationPickerTest {
         compose.waitForIdle()
         // The tap, plus ONE report for the whole drag.
         assertEquals(2, sets.size)
-        assertEquals(fieldLongitude(end.x, size.width.toFloat()), sets[1].second, 1.0)
-        assertEquals(fieldLatitude(end.y, size.height.toFloat()), sets[1].first, 1.0)
+        assertEquals(com.fotoxplorr.app.basemap.MapMath.xToLon(0.8), sets[1].second, 1.0)
+        assertEquals(com.fotoxplorr.app.basemap.MapMath.yToLat(0.3), sets[1].first, 1.0)
     }
 
     @Test
@@ -118,7 +125,7 @@ class LocationPickerTest {
         val field = compose.onNodeWithContentDescription("Pick a place on the map")
         val size = field.fetchSemanticsNode().size
         field.performTouchInput { click(Offset(size.width * 0.2f, size.height * 0.2f)) }
-        compose.waitForIdle()
+        settleTap()
         val before = sets.size
         // Far from the pin, and not a tap: no placement and no report.
         field.performTouchInput {
@@ -139,26 +146,5 @@ class LocationPickerTest {
         assertEquals(1, cleared)
         assertEquals(1, done)
         assertTrue("those actions must not report a location", sets.isEmpty())
-    }
-
-    @Test
-    fun `the pixel to degree mapping round-trips and is clamped to the world`() {
-        assertEquals(-180.0, fieldLongitude(0f, 400f), 1e-6)
-        assertEquals(180.0, fieldLongitude(400f, 400f), 1e-6)
-        assertEquals(0.0, fieldLongitude(200f, 400f), 1e-6)
-        assertEquals(MAX_LATITUDE, fieldLatitude(0f, 400f), 1e-6)
-        assertEquals(-MAX_LATITUDE, fieldLatitude(400f, 400f), 1e-6)
-        assertEquals(0.0, fieldLatitude(200f, 400f), 1e-6)
-        // Off the field is the edge, not past it.
-        assertEquals(180.0, fieldLongitude(900f, 400f), 1e-6)
-        assertEquals(MAX_LATITUDE, fieldLatitude(-50f, 400f), 1e-6)
-        for ((lat, lon) in listOf(17.4435 to 78.3772, -33.8688 to -151.2093, 0.0 to 0.0)) {
-            assertEquals(lon, fieldLongitude(fieldX(lon, 400f), 400f), 1e-3)
-            assertEquals(lat, fieldLatitude(fieldY(lat, 400f), 400f), 1e-3)
-        }
-        // A latitude beyond the window is drawn at its edge.
-        assertEquals(0f, fieldY(89.0, 400f), 1e-3f)
-        // Degenerate size never produces NaN.
-        assertEquals(0.0, fieldLongitude(10f, 0f), 0.0)
     }
 }
