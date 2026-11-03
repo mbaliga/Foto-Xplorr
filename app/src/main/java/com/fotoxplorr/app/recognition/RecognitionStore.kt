@@ -54,7 +54,9 @@ class RecognitionStore(context: Context) {
     fun observeProgress(): StateFlow<RecognitionProgress> = progress.asStateFlow()
 
     internal fun publishProgress(update: RecognitionProgress) {
-        progress.value = update
+        // A pass's own updates do not know how many photos are indexed (reload() fills that in), so
+        // an update that says 0 keeps the figure already there rather than wiping it.
+        progress.value = if (update.indexedCount > 0) update else update.copy(indexedCount = progress.value.indexedCount)
     }
 
     /** Loads everything from disk and republishes the derived index. Safe to call repeatedly. */
@@ -82,8 +84,15 @@ class RecognitionStore(context: Context) {
     suspend fun mergePeople(sourceId: Long, targetId: Long) = changePeople { book -> book.merge(sourceId, targetId) }
 
     /** "Not this person": takes [mediaId] out of [personId]'s photos. */
-    suspend fun excludeFromPerson(personId: Long, mediaId: MediaId) = withContext(Dispatchers.IO) {
-        mutex.withLock { helper.readBook().exclude(personId, mediaId)?.let(helper::writeExclusion) }
+    suspend fun excludeFromPerson(personId: Long, mediaId: MediaId) = excludeFromPerson(personId, setOf(mediaId))
+
+    /** [excludeFromPerson] for a whole selection: one transaction and ONE reload, not one per photo. */
+    suspend fun excludeFromPerson(personId: Long, mediaIds: Set<MediaId>) = withContext(Dispatchers.IO) {
+        if (mediaIds.isEmpty()) return@withContext
+        mutex.withLock {
+            val book = helper.readBook()
+            helper.writeExclusions(mediaIds.mapNotNull { book.exclude(personId, it) })
+        }
         reload()
     }
 
@@ -101,9 +110,11 @@ class RecognitionStore(context: Context) {
     suspend fun pendingAssets(assets: List<MediaAsset>): List<MediaAsset> = withContext(Dispatchers.IO) {
         val revisions = helper.revisions()
         val failures = helper.failures()
-        // Photos indexed before face boxes were stored (v6) are read again, once, and FIRST: there
-        // are few of them (only the photos with a clear face) and they are what the People cards
-        // wait on, where the rest of the library is not.
+        // Photos indexed before face boxes were stored (v6) are read again, once, and FIRST: they are
+        // what the People cards wait on. This is NOT cheap -- each is a full pass of all three
+        // detectors, the same cost as a new photo -- it is only bounded (photos with a clear face,
+        // a fraction of the library) and one-off: a face whose box was tried and could not be used
+        // is stored as such (frame_aspect -1) and is not asked again.
         val boxless = helper.mediaIdsWithoutFaceBox()
         assets.filter { asset ->
             if (asset.isVideo || asset.isTrashed) return@filter false
@@ -227,7 +238,15 @@ data class RecognitionProgress(
     val indexedCount: Int = 0,
     val failed: Int = 0,
     val message: String? = null,
-)
+) {
+    /**
+     * A pass has run to its end over everything it was given and nothing failed. False on a fresh
+     * install (nothing indexed), while running, after a failure, and when some photos could not be
+     * read -- the only state in which "every photo has been checked" is a true sentence.
+     */
+    val passFinished: Boolean
+        get() = !running && message == null && failed == 0 && indexedCount > 0 && completed == total
+}
 
 /**
  * Cheap change-detector for a media file. Two different files essentially never collide on
@@ -422,20 +441,25 @@ private class RecognitionOpenHelper(context: Context) :
         }
     }
 
-    fun writeExclusion(exclusion: Exclusion) {
-        writableDatabase.insertWithOnConflict(
-            TABLE_EXCLUSIONS, null,
-            ContentValues().apply {
-                put("person_id", exclusion.personId)
-                put("media_id", exclusion.mediaId)
-            },
-            SQLiteDatabase.CONFLICT_IGNORE,
-        )
+    fun writeExclusions(exclusions: List<Exclusion>) {
+        if (exclusions.isEmpty()) return
+        writableDatabase.transaction {
+            exclusions.forEach { exclusion ->
+                insertWithOnConflict(
+                    TABLE_EXCLUSIONS, null,
+                    ContentValues().apply {
+                        put("person_id", exclusion.personId)
+                        put("media_id", exclusion.mediaId)
+                    },
+                    SQLiteDatabase.CONFLICT_IGNORE,
+                )
+            }
+        }
     }
 
-    /** Photos with a stored face and no stored box for it: indexed before v6. */
+    /** Photos with a stored face whose box was never tried (frame_aspect 0): indexed before v6. */
     fun mediaIdsWithoutFaceBox(): Set<MediaId> = buildSet {
-        readableDatabase.rawQuery("SELECT DISTINCT media_id FROM $TABLE_FACES WHERE frame_aspect <= 0", null).use { cursor ->
+        readableDatabase.rawQuery("SELECT DISTINCT media_id FROM $TABLE_FACES WHERE frame_aspect = 0", null).use { cursor ->
             while (cursor.moveToNext()) add(MediaId(cursor.getLong(0)))
         }
     }
@@ -720,12 +744,17 @@ private class RecognitionOpenHelper(context: Context) :
                             put("face_index", face.faceIndex)
                             put("relative_area", face.relativeArea)
                             put("vector", encodeVector(face.vector))
-                            face.box?.takeIf { it.isUsable }?.let { box ->
+                            val box = face.box?.takeIf { it.isUsable }
+                            if (box != null) {
                                 put("box_left", box.left)
                                 put("box_top", box.top)
                                 put("box_right", box.right)
                                 put("box_bottom", box.bottom)
                                 put("frame_aspect", box.frameAspect)
+                            } else {
+                                // Tried, and there is no usable box: -1, so the boxless re-read
+                                // (frame_aspect = 0) does not pick this photo up on every pass.
+                                put("frame_aspect", -1f)
                             }
                         },
                         SQLiteDatabase.CONFLICT_REPLACE,

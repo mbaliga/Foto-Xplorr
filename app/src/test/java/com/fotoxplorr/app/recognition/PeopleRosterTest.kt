@@ -82,6 +82,52 @@ class PeopleRosterTest {
     }
 
     @Test
+    fun `a big person split 45-45-10 keeps one identity and the name`() {
+        // 200 faces, areas descending, so the 48 witnesses are the biggest 48 and interleave the pieces.
+        val faces = (1L..200L).map { face(it, area = 1f - it / 1000f) }
+        val whole = PersonCluster(0, faces.map { it.mediaId }.sortedByDescending { it.value }, 200, faces)
+        val first = PeopleRoster.resolve(listOf(whole), PeopleBook())
+        val named = first.insert.map { it.copy(name = "Asha") }
+        // Pieces by index modulo: 45% / 45% / 10%, each holding a spread of the witnesses.
+        fun piece(pick: (Long) -> Boolean, rank: Int): PersonCluster {
+            val f = faces.filter { pick(it.mediaId.value) }
+            return PersonCluster(rank, f.map { it.mediaId }.sortedByDescending { it.value }, f.size, f)
+        }
+        val a = piece({ it % 20 in 0..8 }, 0)
+        val b = piece({ it % 20 in 9..17 }, 1)
+        val c = piece({ it % 20 in 18..19 }, 2)
+        assertEquals(200, a.faces.size + b.faces.size + c.faces.size)
+        val after = PeopleRoster.resolve(listOf(a, b, c), PeopleBook(named))
+        assertEquals("one person, not a person plus orphans", 1, after.people.size)
+        assertEquals("Asha", after.people.single().name)
+        assertEquals(200, after.people.single().mediaIds.size)
+        assertTrue(after.insert.isEmpty())
+    }
+
+    @Test
+    fun `a hidden big person stays hidden when split`() {
+        val faces = (1L..200L).map { face(it, area = 1f - it / 1000f) }
+        val whole = PersonCluster(0, faces.map { it.mediaId }.sortedByDescending { it.value }, 200, faces)
+        val first = PeopleRoster.resolve(listOf(whole), PeopleBook())
+        val hidden = first.insert.map { it.copy(hidden = true) }
+        fun half(pick: (Long) -> Boolean, rank: Int): PersonCluster {
+            val f = faces.filter { pick(it.mediaId.value) }
+            return PersonCluster(rank, f.map { it.mediaId }.sortedByDescending { it.value }, f.size, f)
+        }
+        val after = PeopleRoster.resolve(listOf(half({ it % 2 == 0L }, 0), half({ it % 2 == 1L }, 1)), PeopleBook(hidden))
+        assertTrue(after.people.single().hidden)
+    }
+
+    @Test
+    fun `unnamed people are numbered 1 to N by id, not by the raw id`() {
+        val book = PeopleBook(listOf(PersonRecord(44, witnesses = setOf(FaceKey(1, 0))), PersonRecord(71, witnesses = setOf(FaceKey(4, 0)))))
+        val result = PeopleRoster.resolve(listOf(cluster(0, 1, 2), cluster(1, 4, 5)), book)
+        assertEquals(listOf("Person 1", "Person 2"), result.people.sortedBy { it.id }.map { it.displayName })
+        val cards = PeopleRoster.cards(result.people, (1L..5L).map { MediaId(it) }.toSet(), false)
+        assertEquals(setOf("Person 1", "Person 2"), cards.map { it.displayName }.toSet())
+    }
+
+    @Test
     fun `witnesses are capped and grow only while below the cap`() {
         val many = cluster(0, *(1L..200L).toList().toLongArray())
         val first = PeopleRoster.resolve(listOf(many), PeopleBook())

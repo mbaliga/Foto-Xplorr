@@ -89,7 +89,11 @@ object PeopleTags {
 internal fun peopleStatusLine(progress: RecognitionProgress): String = when {
     progress.message != null -> PeopleCopy.stopped(progress.message)
     progress.running -> PeopleCopy.working(progress.completed, progress.total)
-    else -> PeopleCopy.UP_TO_DATE
+    progress.failed > 0 -> PeopleCopy.couldNotCheck(progress.failed)
+    progress.passFinished -> PeopleCopy.UP_TO_DATE
+    // A fresh install, or before the first pass has begun: nothing has been checked, and saying
+    // otherwise would be the one false thing this line can say.
+    else -> PeopleCopy.NOT_CHECKED
 }
 
 /**
@@ -178,14 +182,20 @@ internal fun PeopleEmptyState(allHidden: Boolean) {
     }
 }
 
-/** Status bar plus the collapsed activity shade's band, in dp. */
+/**
+ * Status bar plus the activity shade's band, in dp: [shadeReserve] is the shade's current height
+ * (0 when no job is running, so a pane with no shade does not leave a blank strip), capped at the
+ * collapsed band. Capped, not followed: an opened shade is a transient overlay that covers more
+ * for a moment, and a pane that slid down with it would be the jiggle the shade was built to avoid.
+ */
 @Composable
-internal fun peopleTopInset(): Dp =
-    WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + SHADE_BAND_DP.dp
+internal fun peopleTopInset(shadeReserve: Dp = 0.dp): Dp =
+    WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
+        minOf(shadeReserve, COLLAPSED_SHADE_DP.dp) + AIR_DP.dp
 
-// The collapsed shade's height (hyle/ActivityShade.kt COLLAPSED_HEIGHT, 28) plus a little air. The
-// shade can be pulled taller; that is a transient overlay by design and covers more for a moment.
-private const val SHADE_BAND_DP = 36
+// hyle/ActivityShade.kt COLLAPSED_HEIGHT.
+private const val COLLAPSED_SHADE_DP = 28
+private const val AIR_DP = 8
 
 @Composable
 internal fun PersonCardView(
@@ -411,6 +421,7 @@ internal fun PeopleOverviewHost(
     assets: List<MediaAsset>,
     actions: PeopleActions,
     onOpenPerson: (Long) -> Unit,
+    shadeReserve: Dp = 0.dp,
 ) {
     var showHidden by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var managing by remember { mutableStateOf<Long?>(null) }
@@ -433,6 +444,7 @@ internal fun PeopleOverviewHost(
         onToggleHidden = { showHidden = !showHidden },
         onOpen = onOpenPerson,
         onManage = { managing = it.id },
+        topInset = peopleTopInset(shadeReserve),
     )
     everyone.firstOrNull { it.id == managing }?.let { card ->
         PersonManageDialog(
@@ -455,7 +467,14 @@ internal fun PersonFilterHeader(
     onSelectionChange: (GallerySelection) -> Unit,
     actions: PeopleActions,
     onClear: () -> Unit,
+    shadeReserve: Dp = 0.dp,
 ) {
+    // Leaving the person also leaves the selection: it was of THEIR photos, and a selection left
+    // active on the overview would keep the selection bar up and the shade's activities hidden.
+    val leave = {
+        onSelectionChange(selection.clear())
+        onClear()
+    }
     var managing by remember { mutableStateOf(false) }
     val roster = state.recognition.roster
     val person = roster.firstOrNull { it.id == personId }
@@ -472,8 +491,9 @@ internal fun PersonFilterHeader(
     PersonFilterBar(
         name = person?.displayName ?: PeopleCopy.unnamed(personId),
         selectedCount = selection.selectedIds.size,
-        onBack = onClear,
+        onBack = leave,
         onManage = { managing = true },
+        topInset = peopleTopInset(shadeReserve),
         onNotThisPerson = {
             actions.onNotThisPerson(personId, selection.selectedIds)
             onSelectionChange(selection.clear())
@@ -486,8 +506,8 @@ internal fun PersonFilterHeader(
             others = everyone.filter { it.id != personId },
             onDismiss = { managing = false },
             onRename = { actions.onRename(personId, it); managing = false },
-            onToggleHidden = { actions.onHide(personId, !card.hidden); managing = false; onClear() },
-            onMerge = { actions.onMerge(personId, it); managing = false; onClear() },
+            onToggleHidden = { actions.onHide(personId, !card.hidden); managing = false; leave() },
+            onMerge = { actions.onMerge(personId, it); managing = false; leave() },
         )
     }
 }

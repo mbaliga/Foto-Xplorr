@@ -549,6 +549,15 @@ private fun GalleryBrowser(
     var personFilter by rememberSaveable { mutableStateOf<Long?>(null) }
     val peopleOverview = destination == HyleDestination.PEOPLE && personFilter == null
     LaunchedEffect(destination) { if (destination != HyleDestination.PEOPLE) personFilter = null }
+    // A saved filter can outlive its person (merged away, every photo excluded, recognition reset):
+    // the header would read "Person N x" over an empty grid. Drop it, and the selection with it.
+    LaunchedEffect(state.recognition.roster, personFilter) {
+        val id = personFilter
+        if (id != null && state.recognition.roster.none { it.id == id }) {
+            personFilter = null
+            selection = selection.clear()
+        }
+    }
     // Where the grid last opened at its latest end (see the anchor effect further down) and how
     // many times choosing a rail word has asked for it again. Saveable for the same reason as the
     // search: after the viewer round trip or a restore the grid's own scroll position comes back,
@@ -1227,7 +1236,8 @@ private fun GalleryBrowser(
             GalleryInfoRoom(
                 title = personFilter?.let { id ->
                     state.recognition.roster.firstOrNull { it.id == id }?.displayName?.let { "People: $it" }
-                } ?: route.title(destination),
+                } ?: com.fotoxplorr.app.recognition.PeopleCopy.OVERVIEW_TITLE.takeIf { peopleOverview }
+                    ?: route.title(destination),
                 assets = currentAssets,
                 state = state,
                 lift = { shell.lift },
@@ -1586,6 +1596,7 @@ private fun GalleryBrowser(
                                                 experimentalState = experimentalState,
                                                 personFilter = personFilter,
                                                 onPersonFilter = { personFilter = it },
+                                                shadeReserve = notificationReserve,
                                             )
                                         }
                                     }

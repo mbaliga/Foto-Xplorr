@@ -43,16 +43,15 @@ object FaceCropLoader {
         val made = gate.withPermit {
             val decoded = decodeUpright(context.applicationContext, asset.contentUri, limits) ?: return@withPermit null
             val source = decoded.bitmap
-            try {
-                val (x, y, w, h) = rect.toPixels(source.width, source.height).toList()
-                val cut = Bitmap.createBitmap(source, x, y, w, h)
-                val scaled = if (cut.width == sizePx && cut.height == sizePx) cut
-                else Bitmap.createScaledBitmap(cut, sizePx, sizePx, true)
-                if (scaled !== cut) cut.recycle()
-                scaled
-            } finally {
-                source.recycle()
-            }
+            val (x, y, w, h) = rect.toPixels(source.width, source.height).toList()
+            // createBitmap and createScaledBitmap both hand back their input when nothing changes,
+            // so each step is recycled only if it is not what the next step (or the caller) holds.
+            val cut = Bitmap.createBitmap(source, x, y, w, h)
+            val scaled = if (cut.width == sizePx && cut.height == sizePx) cut
+            else Bitmap.createScaledBitmap(cut, sizePx, sizePx, true)
+            if (cut !== scaled && cut !== source) cut.recycle()
+            if (source !== scaled) source.recycle()
+            scaled
         } ?: return null
         cache.put(key, made)
         return made

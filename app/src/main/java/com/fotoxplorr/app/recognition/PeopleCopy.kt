@@ -19,7 +19,15 @@ object PeopleCopy {
 
     fun stopped(reason: String): String = "Face recognition stopped: $reason"
 
-    const val UP_TO_DATE = "Every photo has been checked for faces."
+    /** Only said once a pass has run to its end with nothing failed (see RecognitionProgress.passFinished). */
+    const val UP_TO_DATE = "The face check has finished."
+    const val NOT_CHECKED = "Faces have not been checked yet."
+
+    fun couldNotCheck(count: Int) =
+        if (count == 1) "1 photo could not be checked for faces." else "$count photos could not be checked for faces."
+
+    /** The details room's title for the overview: its photo count is photos with a face, not people. */
+    const val OVERVIEW_TITLE = "People: photos with faces"
 
     const val EMPTY_NOTHING_YET = "No people found yet."
     const val EMPTY_WHAT_TO_DO = "People appear here once a photo has a clear face in it, twice or more."

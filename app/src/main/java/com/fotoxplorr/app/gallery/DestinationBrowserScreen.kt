@@ -300,6 +300,7 @@ internal fun DestinationContent(
     experimentalState: SaveableStateHolder? = null,
     personFilter: Long? = null,
     onPersonFilter: (Long?) -> Unit = {},
+    shadeReserve: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp.Hairline,
 ) {
     when (destination) {
         HyleDestination.PLACES -> {
@@ -337,6 +338,7 @@ internal fun DestinationContent(
                     onSelectionChange = onSelectionChange,
                     actions = actions.onPeople,
                     onClear = { onPersonFilter(null) },
+                    shadeReserve = shadeReserve,
                 )
             }
             // Either the grid or the empty state, never both: the grid renders its own generic
@@ -349,6 +351,7 @@ internal fun DestinationContent(
                     assets = assets,
                     actions = actions.onPeople,
                     onOpenPerson = { onPersonFilter(it) },
+                    shadeReserve = shadeReserve,
                 )
             } else if (assets.isEmpty()) {
                 DestinationMessage(destinationEmptyMessage(destination, state.recognitionProgress))

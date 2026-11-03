@@ -179,9 +179,52 @@ class RecognitionStorePeopleTest {
 
     @Test
     fun `boxless photos are queued ahead of new ones`() = runBlocking {
-        val store = RecognitionStore(RuntimeEnvironment.getApplication())
-        store.upsert(listOf(row(1, withBox = false)))
+        val context = RuntimeEnvironment.getApplication()
+        val store = RecognitionStore(context)
+        store.upsert(listOf(row(1)))
+        // A legacy face (frame_aspect 0 = box never tried), as v5 wrote it.
+        SQLiteDatabase.openDatabase(
+            context.getDatabasePath("foto_xplorr_recognition.db").path, null, SQLiteDatabase.OPEN_READWRITE,
+        ).use { it.execSQL("UPDATE face_descriptor SET frame_aspect = 0 WHERE media_id = 1") }
         val fresh = asset(5)
         assertEquals(listOf(asset(1), fresh), store.pendingAssets(listOf(fresh, asset(1))))
+    }
+
+    @Test
+    fun `a face whose box was tried and unusable is not read again on every pass`() = runBlocking {
+        val store = RecognitionStore(RuntimeEnvironment.getApplication())
+        store.upsert(listOf(row(1, withBox = false)))
+        assertTrue(store.pendingAssets(listOf(asset(1))).isEmpty())
+    }
+
+    @Test
+    fun `not this person on a selection is one write and keeps every other photo`() = runBlocking {
+        val store = RecognitionStore(RuntimeEnvironment.getApplication())
+        store.upsert((1L..6L).map { row(it) })
+        store.reload()
+        val id = store.observe().value.roster.single().id
+        store.excludeFromPerson(id, setOf(MediaId(2), MediaId(4), MediaId(6)))
+        assertEquals(setOf(MediaId(1), MediaId(3), MediaId(5)), store.observe().value.roster.single().mediaIds.toSet())
+        store.excludeFromPerson(id, emptySet())
+        assertEquals(3, store.observe().value.roster.single().mediaIds.size)
+    }
+
+    @Test
+    fun `a finished pass says so only once something is indexed and nothing failed`() {
+        assertEquals(false, RecognitionProgress().passFinished)
+        assertEquals(true, RecognitionProgress(indexedCount = 10, completed = 3, total = 3).passFinished)
+        assertEquals(false, RecognitionProgress(indexedCount = 10, completed = 3, total = 3, failed = 1).passFinished)
+        assertEquals(false, RecognitionProgress(running = true, indexedCount = 10, completed = 1, total = 3).passFinished)
+        assertEquals(false, RecognitionProgress(indexedCount = 10, completed = 1, total = 3).passFinished)
+    }
+
+    @Test
+    fun `publishing a pass update keeps the indexed count reload recorded`() = runBlocking {
+        val store = RecognitionStore(RuntimeEnvironment.getApplication())
+        store.upsert(listOf(row(1), row(2)))
+        store.reload()
+        store.publishProgress(RecognitionProgress(running = false, completed = 0, total = 0))
+        assertEquals(2, store.observeProgress().value.indexedCount)
+        assertTrue(store.observeProgress().value.passFinished)
     }
 }

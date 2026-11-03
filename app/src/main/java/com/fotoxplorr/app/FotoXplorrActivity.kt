@@ -1285,6 +1285,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     }
 
     LaunchedEffect(Unit) { recognitionStore.reload() }
+    // Face crops are pictures of people, held in memory for the People cards: a protected folder
+    // locking (or unlocking) must not leave the last set behind.
+    LaunchedEffect(unlockedFolders) { com.fotoxplorr.app.recognition.FaceCropLoader.clear() }
 
     // Guarded on a generation counter rather than the asset list itself, so a recomposition
     // never restarts a pass that already finished. RecognitionIndexer is itself idempotent:
@@ -1731,7 +1734,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                         onHide = { id, hidden -> scope.launch { recognitionStore.hidePerson(id, hidden) } },
                         onMerge = { from, into -> scope.launch { recognitionStore.mergePeople(from, into) } },
                         onNotThisPerson = { id, media ->
-                            scope.launch { media.forEach { recognitionStore.excludeFromPerson(id, it) } }
+                            scope.launch { recognitionStore.excludeFromPerson(id, media) }
                         },
                     ),
                     onProtectFolder = privateFolderStore::protect,

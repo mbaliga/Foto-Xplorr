@@ -97,9 +97,18 @@ class PeopleDestinationTest {
         val running = com.fotoxplorr.app.recognition.RecognitionProgress(running = true, completed = 749, total = 20_743)
         assertTrue(peopleStatusLine(running).let { it.contains("749") && it.contains("20") && it.startsWith("Recognising faces:") })
         assertTrue(peopleStatusLine(com.fotoxplorr.app.recognition.RecognitionProgress(message = "no space")).contains("no space"))
+        // A fresh install has checked nothing, so it must not say it has.
+        assertEquals(
+            com.fotoxplorr.app.recognition.PeopleCopy.NOT_CHECKED,
+            peopleStatusLine(com.fotoxplorr.app.recognition.RecognitionProgress()),
+        )
         assertEquals(
             com.fotoxplorr.app.recognition.PeopleCopy.UP_TO_DATE,
-            peopleStatusLine(com.fotoxplorr.app.recognition.RecognitionProgress()),
+            peopleStatusLine(com.fotoxplorr.app.recognition.RecognitionProgress(indexedCount = 50, completed = 50, total = 50)),
+        )
+        assertEquals(
+            "3 photos could not be checked for faces.",
+            peopleStatusLine(com.fotoxplorr.app.recognition.RecognitionProgress(indexedCount = 50, completed = 10, total = 10, failed = 3)),
         )
         assertTrue(RecognitionIndex.EMPTY.roster.isEmpty())
     }

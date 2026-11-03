@@ -98,8 +98,15 @@ data class Person(
     val hidden: Boolean,
     val mediaIds: List<MediaId>,
     val faces: List<ClusterFace>,
+    /**
+     * This person's place, 1..N, among everyone this run found, by id. What "Person N" shows
+     * instead of the raw id: ids have gaps (people merged away, groups that dissolved), and
+     * "Person 71" of nine people reads as a bug. Stable between runs unless someone with a lower
+     * id appears or goes, which is rare next to the count-order reshuffles ids exist to avoid.
+     */
+    val ordinal: Int = id.toInt(),
 ) {
-    val displayName: String get() = name ?: PeopleCopy.unnamed(id)
+    val displayName: String get() = name ?: PeopleCopy.unnamed(ordinal.toLong())
 }
 
 /** What the People destination draws for one person. */
@@ -109,8 +116,9 @@ data class PersonCard(
     val count: Int,
     val cover: ClusterFace?,
     val hidden: Boolean,
+    val ordinal: Int = id.toInt(),
 ) {
-    val displayName: String get() = name ?: PeopleCopy.unnamed(id)
+    val displayName: String get() = name ?: PeopleCopy.unnamed(ordinal.toLong())
 }
 
 /** What a run of [PeopleRoster.resolve] found, and what the store must write to remember it. */
@@ -140,6 +148,14 @@ object PeopleRoster {
     /** ...or this share of the person's witnesses (a small old person absorbed into a big new cluster). */
     const val MIN_WITNESS_SHARE = 0.5f
 
+    /**
+     * ...or, failing both, this many witnesses when no other person has as many in the cluster.
+     * A person with hundreds of faces keeps only [MAX_WITNESSES] of them, so split three ways
+     * (45/45/10) each piece holds under a quarter of its own faces and under half the witnesses,
+     * and neither share rule above would match any of them: the name would stay on an orphan.
+     */
+    const val MIN_UNIQUE_VOTES = 3
+
     fun resolve(
         clusters: List<PersonCluster>,
         book: PeopleBook,
@@ -167,14 +183,16 @@ object PeopleRoster {
                     ?.toSet()
                     ?.forEach { person -> votes.merge(person, 1, Int::plus) }
             }
-            val best = votes.entries
-                .filter { (person, count) ->
+            val ranked = votes.entries.sortedWith(compareByDescending<Map.Entry<Long, Int>> { it.value }.thenBy { it.key })
+            val best = ranked
+                .firstOrNull { (person, count) ->
                     val share = count.toFloat() / cluster.faces.size.coerceAtLeast(1)
                     val ofWitnesses = count.toFloat() / (witnessesOf[person]?.size ?: 1).coerceAtLeast(1)
                     share >= MIN_CLUSTER_SHARE || ofWitnesses >= MIN_WITNESS_SHARE
-                }
-                .maxWithOrNull(compareBy<Map.Entry<Long, Int>> { it.value }.thenByDescending { it.key })
-                ?.key
+                }?.key
+                ?: ranked.firstOrNull()?.takeIf { top ->
+                    top.value >= MIN_UNIQUE_VOTES && (ranked.size == 1 || top.value > ranked[1].value)
+                }?.key
             if (best != null) {
                 grouped.getOrPut(best) { mutableListOf() } += cluster
             } else if (cluster.size >= MIN_CARD_PHOTOS && cluster.faces.isNotEmpty()) {
@@ -210,7 +228,7 @@ object PeopleRoster {
                     faces = faces,
                 )
             }
-        }
+        }.sortedBy { it.id }.mapIndexed { index, person -> person.copy(ordinal = index + 1) }
         return RosterResolution(people, insert, update)
     }
 
@@ -249,6 +267,7 @@ object PeopleRoster {
                     count = count,
                     cover = coverFace(person.faces.filter { it.mediaId in visibleIds }),
                     hidden = person.hidden,
+                    ordinal = person.ordinal,
                 )
             }
             .sortedWith(
