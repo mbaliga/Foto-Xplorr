@@ -14,7 +14,17 @@ enum class SyncDestinationKind(val code: String) {
 
     /** S3-compatible storage. Connect build only. */
     S3("s3"),
+
+    /** Google Drive (scope drive.file only), the person's own OAuth client id. Connect build only. */
+    GDRIVE("gdrive"),
+
+    /** Dropbox (App folder access), the person's own app key. Connect build only. */
+    DROPBOX("dropbox"),
     ;
+
+    /** Signs in with OAuth instead of a typed password; the refresh token is the destination's secret. */
+    val usesOAuth: Boolean get() = this == GDRIVE || this == DROPBOX
+
 
     val needsNetwork: Boolean get() = this != FOLDER
 
@@ -32,6 +42,15 @@ data class SyncEncryptionSettings(
 )
 
 /**
+ * Google Drive / Dropbox settings. [clientId] is the person's own OAuth client id / app key (not a secret).
+ * [accountLabel] is the signed-in account's name or mail as the provider reported it; blank means "not signed in"
+ * (signing out clears it). The tokens are NOT here: the refresh token is the destination's secret ([SyncSecrets]).
+ */
+data class OAuthSettings(val clientId: String, val accountLabel: String = "") {
+    val signedIn: Boolean get() = accountLabel.isNotBlank()
+}
+
+/**
  * Everything about the one destination, EXCEPT its secret (WebDAV password, S3 secret key), which is
  * in [SyncSecrets]. Plain text on disk ([SyncConfigCodec]); contains addresses and user names, so it is
  * app-private and never logged.
@@ -44,6 +63,7 @@ data class SyncDestinationConfig(
     val folderTreeUri: String? = null,
     val webDav: WebDavSettings? = null,
     val s3: S3Settings? = null,
+    val oauth: OAuthSettings? = null,
     val selection: SyncSelection = SyncSelection(),
     val wifiOnly: Boolean = true,
     /** Most bytes one run may send, or null for no limit. */
@@ -76,6 +96,10 @@ object SyncConfigCodec {
             put("s3.pathstyle", it.pathStyle.toString())
             put("s3.prefix", it.prefix)
             put("s3.plainhttp", it.allowPlainHttpOnLocal.toString())
+        }
+        c.oauth?.let {
+            put("oauth.client", it.clientId)
+            put("oauth.account", it.accountLabel)
         }
         put("sel.all", c.selection.allPhotos.toString())
         put("sel.fav", c.selection.favourites.toString())
@@ -119,6 +143,7 @@ object SyncConfigCodec {
                 allowPlainHttpOnLocal = flag("s3.plainhttp", false),
             )
         }
+        val oauth = single["oauth.client"]?.let { OAuthSettings(it, single["oauth.account"].orEmpty()) }
         val encryption = if (single["enc.salt"] != null && single["enc.iter"]?.toIntOrNull() != null && single["enc.check"] != null) {
             SyncEncryptionSettings(single["enc.salt"]!!, single["enc.iter"]!!.toInt(), single["enc.check"]!!)
         } else {
@@ -131,6 +156,7 @@ object SyncConfigCodec {
             folderTreeUri = single["folder"],
             webDav = webDav,
             s3 = s3,
+            oauth = oauth,
             selection = SyncSelection(
                 allPhotos = flag("sel.all", false),
                 folderKeys = folders,
@@ -176,7 +202,7 @@ class FileSyncConfigStore(private val file: File) : SyncConfigStore {
     }
 }
 
-/** Secrets of destinations, encrypted at rest on the phone (the Android adapter is [KeystoreSyncSecrets]). Never logged. */
+/** Secrets of destinations (a password, a secret key, a Drive/Dropbox refresh token), encrypted at rest on the phone (the Android adapter is [KeystoreSyncSecrets]). Never logged. */
 interface SyncSecrets {
     fun get(id: String): CharArray?
     fun put(id: String, value: CharArray)

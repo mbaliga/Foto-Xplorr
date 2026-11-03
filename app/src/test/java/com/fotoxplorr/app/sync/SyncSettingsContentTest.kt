@@ -70,13 +70,15 @@ class SyncSettingsContentTest {
     }
 
     @Test
-    fun `connect shows all three and the not yet built ones disabled`() {
+    fun `connect shows all five kinds and no coming-next cards`() {
         show(FakeSyncService())
         compose.onNodeWithTag("sync-kind-folder").assertExists()
         compose.onNodeWithTag("sync-kind-webdav").assertExists()
         compose.onNodeWithTag("sync-kind-s3").assertExists()
-        compose.onNodeWithTag("sync-soon-gdrive").assertIsNotEnabled()
-        compose.onNodeWithTag("sync-soon-dropbox").assertIsNotEnabled()
+        compose.onNodeWithTag("sync-kind-gdrive").assertExists()
+        compose.onNodeWithTag("sync-kind-dropbox").assertExists()
+        compose.onAllNodesWithTagCount("sync-soon-gdrive", 0)
+        compose.onAllNodesWithTagCount("sync-soon-dropbox", 0)
         compose.onNodeWithText(SyncCopy.KIND_DRIVE).assertExists()
     }
 

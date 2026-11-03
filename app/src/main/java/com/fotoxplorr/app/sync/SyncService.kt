@@ -102,6 +102,17 @@ interface SyncService {
 
     /** Forgets the destination and its stored secret. Nothing remote or local is deleted. */
     fun forgetDestination()
+
+    /**
+     * Google Drive / Dropbox only: from the person's tap on Sign out. Forgets the stored sign-in on this phone
+     * FIRST (and the account name in the saved settings), then asks the provider to end the grant, best effort:
+     * a failure of that call is not reported, the local forgetting has already happened. [unsavedToken] is a
+     * sign-in the person made on the screen but never saved (with its [kind] and [clientId]); it is revoked too and zeroed. Nothing remote is deleted.
+     */
+    suspend fun signOut(unsavedToken: CharArray? = null, kind: SyncDestinationKind? = null, clientId: String? = null): Result<Unit> {
+        unsavedToken?.fill('\u0000')
+        return Result.success(Unit)
+    }
 }
 
 /**
@@ -157,6 +168,13 @@ class FakeSyncService(
     override fun pause() {
         calls += "pause"
         (_state.value as? SyncRunState.Running)?.let { _state.value = SyncRunState.Paused(it.tally, it.filesTotal - it.filesDone) }
+    }
+
+    override suspend fun signOut(unsavedToken: CharArray?, kind: SyncDestinationKind?, clientId: String?): Result<Unit> {
+        calls += "signout:unsaved=${unsavedToken != null}"
+        unsavedToken?.fill('\u0000')
+        _config.value = _config.value?.let { c -> c.copy(oauth = c.oauth?.copy(accountLabel = "")) }
+        return Result.success(Unit)
     }
 
     override fun forgetDestination() {

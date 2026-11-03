@@ -7,4 +7,23 @@
          (ConnectionCheck). Declared here rather than left to the map library's own manifest, so
          the app's check does not depend on a library keeping it; the offline flavor removes it. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Sign-in for Google Drive / Dropbox: the system browser comes back to this custom scheme
+         (OAuthRedirect.SCHEME; a test keeps the two equal). Connect build only, so the Offline
+         manifest is unchanged. No code of ours runs before the user taps Sign in. -->
+    <application>
+        <activity
+            android:name="com.fotoxplorr.app.sync.OAuthRedirectActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.fotoxplorr.app.oauth" />
+            </intent-filter>
+        </activity>
+    </application>
 </manifest>

@@ -44,6 +44,8 @@ fun SyncSettingsContent(
     onPickFolder: () -> Unit,
     modifier: Modifier = Modifier,
     pickedFolderUri: String? = null,
+    /** Google Drive / Dropbox sign-in. Null: the platform's (Connect build: the system browser; Offline build: none). */
+    oauth: SyncOAuth? = null,
 ) {
     val config by service.config.collectAsState()
     val run by service.state.collectAsState()
@@ -59,6 +61,9 @@ fun SyncSettingsContent(
     var askForget by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val signIn = oauth ?: remember { OAuthPlatform.signIn(context) }
+    var signingIn by remember { mutableStateOf(false) }
+    var oauthMessage by remember { mutableStateOf<SyncOutcomeLine?>(null) }
 
     LaunchedEffect(pickedFolderUri) {
         if (!pickedFolderUri.isNullOrBlank() && pickedFolderUri != form.folderUri) {
@@ -74,6 +79,7 @@ fun SyncSettingsContent(
     val facts = SyncSecretFacts(
         secretEntered = secret.isNotEmpty(),
         storedSecretKept = sameAsSaved,
+        signedIn = form.kind?.usesOAuth == true && form.oauthAccount.isNotBlank() && (secret.isNotEmpty() || sameAsSaved),
         passphrase = SyncUi.passphraseStatus(form, passphrase, confirm, needConfirm = !(sameAsSaved && existing?.encryption != null)),
     )
     val errors = SyncUi.validate(form, facts, attempted)
@@ -101,6 +107,43 @@ fun SyncSettingsContent(
         } else {
             message = SyncOutcomeLine(false, result.exceptionOrNull()?.message ?: SyncCopy.SAVE_FAILED)
             false
+        }
+    }
+
+    fun doSignIn() {
+        val kind = form.kind ?: return
+        if (signingIn) return
+        if (form.oauthClientId.isBlank()) {
+            oauthMessage = SyncOutcomeLine(false, SyncCopy.NEED_CLIENT_ID)
+            return
+        }
+        if (SyncUi.clientIdProblem(form) != null) return // the field already says what is wrong
+        signingIn = true
+        oauthMessage = SyncOutcomeLine(true, SyncCopy.SIGNING_IN)
+        scope.launch {
+            val result = signIn.signIn(kind, form.oauthClientId)
+            signingIn = false
+            result.fold(
+                onSuccess = { signed ->
+                    secret = String(signed.refreshToken)
+                    signed.refreshToken.fill('\u0000')
+                    edit(form.copy(oauthAccount = signed.accountLabel))
+                    oauthMessage = SyncOutcomeLine(true, SyncCopy.signedInAs(signed.accountLabel) + " " + SyncCopy.SAVE_TO_KEEP_SIGN_IN)
+                },
+                onFailure = { oauthMessage = SyncOutcomeLine(false, it.message?.takeIf { m -> m.isNotBlank() } ?: SyncCopy.SIGN_IN_FAILED) },
+            )
+        }
+    }
+
+    fun doSignOut() {
+        val kind = form.kind
+        val id = form.oauthClientId.trim()
+        scope.launch {
+            val unsaved = secret.toCharArray().takeIf { it.isNotEmpty() }
+            secret = ""
+            service.signOut(unsaved, kind, id.ifEmpty { null })
+            edit(form.copy(oauthAccount = ""))
+            oauthMessage = SyncOutcomeLine(true, SyncCopy.SIGNED_OUT)
         }
     }
 
@@ -145,6 +188,11 @@ fun SyncSettingsContent(
                 onForm = ::edit,
                 onSecret = { secret = it; testState = null },
                 onPickFolder = onPickFolder,
+                signedIn = facts.signedIn,
+                signingIn = signingIn,
+                oauthMessage = oauthMessage,
+                onSignIn = ::doSignIn,
+                onSignOut = ::doSignOut,
             )
             entry.form(scopeForForm)
             run {
@@ -240,6 +288,7 @@ fun SyncSettingsContent(
                         service.forgetDestination()
                         form = SyncForm()
                         secret = ""
+                        oauthMessage = null
                         passphrase = ""
                         confirm = ""
                         attempted = false

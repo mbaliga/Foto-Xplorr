@@ -44,6 +44,7 @@ class DefaultSyncService(
     private val random: Random = Random.Default,
     private val clock: () -> Long = System::currentTimeMillis,
     private val sleep: suspend (Long) -> Unit = { kotlinx.coroutines.delay(it) },
+    private val revoker: OAuthRevoker = OAuthRevoker.NONE,
 ) : SyncService {
     private val _config = MutableStateFlow(configStore.load())
     override val config: StateFlow<SyncDestinationConfig?> = _config.asStateFlow()
@@ -116,6 +117,31 @@ class DefaultSyncService(
             }
         }
         return SyncStartResult.Started
+    }
+
+    override suspend fun signOut(unsavedToken: CharArray?, kind: SyncDestinationKind?, clientId: String?): Result<Unit> = withContext(io) {
+        val config = _config.value
+        // Local first: the stored token is gone and the account name cleared before the provider is even asked.
+        val stored = config?.let { secrets.get(it.id) }
+        if (config != null) {
+            secrets.remove(config.id)
+            val cleared = config.copy(oauth = config.oauth?.copy(accountLabel = ""))
+            runCatching { configStore.save(cleared) }
+            _config.value = cleared
+        }
+        // Best effort, on this tap only. Whatever happens the person is signed out here.
+        stored?.let { token ->
+            val savedId = config?.oauth?.clientId
+            if (config != null && savedId != null) runCatching { revoker.revoke(config.kind, savedId, token) }
+            token.fill('\u0000')
+        }
+        unsavedToken?.let { token ->
+            val k = kind ?: config?.kind
+            val id = clientId ?: config?.oauth?.clientId
+            if (k != null && id != null) runCatching { revoker.revoke(k, id, token) }
+            token.fill('\u0000')
+        }
+        Result.success(Unit)
     }
 
     override fun pause() {
@@ -224,6 +250,7 @@ class DefaultSyncService(
             SyncDestinationKind.FOLDER -> !config.folderTreeUri.isNullOrBlank()
             SyncDestinationKind.WEBDAV -> config.webDav != null && config.webDav.username.isNotBlank()
             SyncDestinationKind.S3 -> config.s3 != null
+            SyncDestinationKind.GDRIVE, SyncDestinationKind.DROPBOX -> config.oauth?.clientId?.isNotBlank() == true
         }
         if (!ok) throw SyncException(SyncFailure.REJECTED, SyncCopy.NO_DESTINATION)
     }

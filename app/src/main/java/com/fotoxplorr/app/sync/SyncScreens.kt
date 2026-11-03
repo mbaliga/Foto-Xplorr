@@ -65,6 +65,12 @@ internal class SyncFormScope(
     val onForm: (SyncForm) -> Unit,
     val onSecret: (String) -> Unit,
     val onPickFolder: () -> Unit,
+    /** Google Drive / Dropbox: an account is shown and a token is held (in memory or saved). */
+    val signedIn: Boolean = false,
+    val signingIn: Boolean = false,
+    val oauthMessage: SyncOutcomeLine? = null,
+    val onSignIn: () -> Unit = {},
+    val onSignOut: () -> Unit = {},
 )
 
 /**
@@ -83,14 +89,8 @@ internal val syncKindRegistry: List<SyncKindUi> = listOf(
     SyncKindUi(SyncDestinationKind.FOLDER, SyncCopy.KIND_FOLDER, SyncCopy.KIND_FOLDER_ABOUT, Icons.Outlined.Folder) { SyncFolderForm(it) },
     SyncKindUi(SyncDestinationKind.WEBDAV, SyncCopy.KIND_WEBDAV, SyncCopy.KIND_WEBDAV_ABOUT, Icons.Outlined.CloudQueue) { SyncWebDavForm(it) },
     SyncKindUi(SyncDestinationKind.S3, SyncCopy.KIND_S3, SyncCopy.KIND_S3_ABOUT, Icons.Outlined.Storage) { SyncS3Form(it) },
-)
-
-/** Providers that are promised but not built. Each is shown disabled only while no supported kind has its [code]. */
-internal class SyncComingNext(val code: String, val title: String, val icon: ImageVector)
-
-internal val syncComingNext: List<SyncComingNext> = listOf(
-    SyncComingNext("gdrive", SyncCopy.KIND_DRIVE, Icons.Outlined.AddToDrive),
-    SyncComingNext("dropbox", SyncCopy.KIND_DROPBOX, Icons.Outlined.Cloud),
+    SyncKindUi(SyncDestinationKind.GDRIVE, SyncCopy.KIND_DRIVE, SyncCopy.KIND_DRIVE_ABOUT, Icons.Outlined.AddToDrive) { SyncOAuthForm(it, google = true) },
+    SyncKindUi(SyncDestinationKind.DROPBOX, SyncCopy.KIND_DROPBOX, SyncCopy.KIND_DROPBOX_ABOUT, Icons.Outlined.Cloud) { SyncOAuthForm(it, google = false) },
 )
 
 internal fun Modifier.minTarget(): Modifier = this.heightIn(min = 48.dp)
@@ -195,9 +195,6 @@ internal fun SyncKindChoices(supported: Set<SyncDestinationKind>, selected: Sync
                 tag = "sync-kind-${entry.kind.code}",
                 onClick = { onChoose(entry.kind) },
             )
-        }
-        syncComingNext.filter { next -> supported.none { it.code == next.code } }.forEach { next ->
-            SyncChoiceCard(next.title, SyncCopy.COMING_NEXT, next.icon, selected = false, tag = "sync-soon-${next.code}", onClick = null)
         }
         if (syncKindRegistry.any { it.kind !in supported }) {
             Text(SyncCopy.NEEDS_CONNECT_BUILD, style = MaterialTheme.typography.bodySmall)
@@ -316,6 +313,43 @@ internal fun SyncS3Form(s: SyncFormScope) {
         SyncSwitchRow(SyncCopy.ALLOW_PLAIN_HTTP, s.form.s3PlainHttp, "sync-s3-http", note = if (s.form.s3PlainHttp) SyncCopy.PLAIN_HTTP_WARNING else null) {
             s.onForm(s.form.copy(s3PlainHttp = it))
         }
+    }
+}
+
+/**
+ * Google Drive / Dropbox: the person's own client ID (or app key), the redirect address to register, and Sign in /
+ * Sign out. Sign in opens the system browser from this explicit tap and nowhere else.
+ */
+@Composable
+internal fun SyncOAuthForm(s: SyncFormScope, google: Boolean) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        SyncField(
+            label = if (google) SyncCopy.GOOGLE_CLIENT_ID else SyncCopy.DROPBOX_APP_KEY,
+            value = s.form.oauthClientId,
+            error = s.errors.oauthClientId,
+            tag = "sync-oauth-client",
+            onChange = { s.onForm(s.form.copy(oauthClientId = it, oauthAccount = "")) },
+        )
+        Text(if (google) SyncCopy.HOWTO_GOOGLE else SyncCopy.HOWTO_DROPBOX, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("sync-oauth-howto"))
+        Text(SyncCopy.ONE_TIME_SETUP, style = MaterialTheme.typography.bodySmall)
+        Text(SyncCopy.REGISTER_REDIRECT, style = MaterialTheme.typography.bodySmall)
+        Text(
+            if (google) OAuthRedirect.GOOGLE_URI else OAuthRedirect.DROPBOX_URI,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.testTag("sync-oauth-redirect"),
+        )
+        Text(if (google) SyncCopy.GOOGLE_SCOPE_NOTE else SyncCopy.DROPBOX_SCOPE_NOTE, style = MaterialTheme.typography.bodySmall)
+        if (s.signedIn) {
+            Text(SyncCopy.signedInAs(s.form.oauthAccount), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.testTag("sync-oauth-account"))
+            OutlinedButton(onClick = s.onSignOut, modifier = Modifier.minTarget().testTag("sync-signout")) { Text(SyncCopy.SIGN_OUT) }
+            Text(SyncCopy.SIGN_OUT_NOTE, style = MaterialTheme.typography.bodySmall)
+        } else {
+            Text(SyncCopy.NOT_SIGNED_IN, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.testTag("sync-oauth-account"))
+            Button(onClick = s.onSignIn, enabled = !s.signingIn, modifier = Modifier.minTarget().testTag("sync-signin")) { Text(SyncCopy.SIGN_IN) }
+            s.errors.secret?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        }
+        s.oauthMessage?.let { SyncResultLine(it, "sync-oauth-message") }
     }
 }
 

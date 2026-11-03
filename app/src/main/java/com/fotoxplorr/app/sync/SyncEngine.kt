@@ -195,7 +195,8 @@ class SyncEngine(
             } catch (e: SyncException) {
                 if (!retry.shouldRetry(e.failure, attempt)) throw e
                 attempt++
-                sleep(retry.delayBefore(attempt, random))
+                val asked = (e as? SyncRateLimited)?.retryAfterMillis?.coerceIn(0L, MAX_RETRY_AFTER_MILLIS) ?: 0L
+                sleep(maxOf(retry.delayBefore(attempt, random), asked))
             }
         }
     }
@@ -209,5 +210,6 @@ class SyncEngine(
 
     private companion object {
         const val MAX_NAME_PROBES = 50
+        const val MAX_RETRY_AFTER_MILLIS = 120_000L
     }
 }

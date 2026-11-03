@@ -55,6 +55,10 @@ data class SyncForm(
     val wifiOnly: Boolean = true,
     val cap: SyncByteCap = SyncByteCap.NONE,
     val encrypt: Boolean = false,
+    /** Google client ID / Dropbox app key (not a secret). */
+    val oauthClientId: String = "",
+    /** The signed-in account as shown; blank when not signed in. The token itself is never here. */
+    val oauthAccount: String = "",
 ) {
     val selection: SyncSelection
         get() = SyncSelection(allPhotos, folderKeys, favourites, includeVideos)
@@ -63,6 +67,7 @@ data class SyncForm(
         kind?.code.orEmpty(), folderUri, webDavUrl, webDavUser, webDavPlainHttp,
         s3Endpoint, s3Region, s3Bucket, s3Access, s3PathStyle, s3Prefix, s3PlainHttp,
         allPhotos, ArrayList(folderKeys.sorted()), favourites, includeVideos, wifiOnly, cap.name, encrypt,
+        oauthClientId, oauthAccount,
     )
 
     companion object {
@@ -89,6 +94,8 @@ data class SyncForm(
                 wifiOnly = saved[16] as Boolean,
                 cap = SyncByteCap.valueOf(saved[17] as String),
                 encrypt = saved[18] as Boolean,
+                oauthClientId = saved.getOrNull(19) as? String ?: "",
+                oauthAccount = saved.getOrNull(20) as? String ?: "",
             )
         } catch (e: RuntimeException) {
             null
@@ -116,6 +123,8 @@ data class SyncForm(
                 wifiOnly = config.wifiOnly,
                 cap = SyncByteCap.of(config.byteCapPerRun),
                 encrypt = config.encryptEnabled,
+                oauthClientId = config.oauth?.clientId.orEmpty(),
+                oauthAccount = config.oauth?.accountLabel.orEmpty(),
             )
         }
     }
@@ -136,6 +145,8 @@ data class SyncSecretFacts(
     val secretEntered: Boolean = false,
     /** The saved destination is the same target, so its stored secret will be kept when none is typed. */
     val storedSecretKept: Boolean = false,
+    /** Google/Dropbox: an account is shown AND a token is in memory or kept from the saved destination. */
+    val signedIn: Boolean = false,
     val passphrase: PassphraseStatus = PassphraseStatus.NOT_NEEDED,
 )
 
@@ -149,13 +160,14 @@ data class SyncFormErrors(
     val s3Region: String? = null,
     val s3Bucket: String? = null,
     val s3Access: String? = null,
+    val oauthClientId: String? = null,
     val selection: String? = null,
     val passphrase: String? = null,
 ) {
     /** The destination details are complete enough to try. */
     val destinationOk: Boolean
         get() = folder == null && webDavUrl == null && webDavUser == null && secret == null &&
-            s3Endpoint == null && s3Region == null && s3Bucket == null && s3Access == null
+            s3Endpoint == null && s3Region == null && s3Bucket == null && s3Access == null && oauthClientId == null
 }
 
 /** Whether Send is allowed and, if not, the one sentence saying why. */
@@ -199,7 +211,7 @@ object SyncUi {
 
     /** REJECTED carries a sentence of its own (a wrong passphrase, a bad bucket); the others are said the same way every time. */
     fun failureLine(failed: SyncRunState.Failed): String =
-        if (failed.failure == SyncFailure.REJECTED && failed.message.isNotBlank()) failed.message else SyncCopy.failureSentence(failed.failure)
+        if ((failed.failure == SyncFailure.REJECTED && failed.message.isNotBlank()) || (failed.failure == SyncFailure.AUTH && failed.message in SyncCopy.OWN_AUTH_SENTENCES)) failed.message else SyncCopy.failureSentence(failed.failure)
 
     private fun filesLeft(n: Int) = if (n == 1) "1 file is left." else "$n files are left."
 
@@ -301,13 +313,33 @@ object SyncUi {
                 s3Access = required(form.s3Access, SyncCopy.S3_BAD_ACCESS_KEY),
                 secret = if (secretMissing && attempted) SyncCopy.S3_NEED_SECRET else null,
             )
-            else -> Unit
+            SyncDestinationKind.GDRIVE, SyncDestinationKind.DROPBOX -> errors = errors.copy(
+                oauthClientId = when {
+                    form.oauthClientId.isBlank() -> if (attempted) SyncCopy.NEED_CLIENT_ID else null
+                    clientIdProblem(form) != null -> clientIdProblem(form)
+                    else -> null
+                },
+                secret = if (!facts.signedIn && attempted) SyncCopy.NEED_SIGN_IN else null,
+            )
+            null -> Unit
         }
         errors = errors.copy(
             selection = if (form.selection.isEmpty && attempted) SyncCopy.NOTHING_CHOSEN else null,
             passphrase = facts.passphrase.sentence.takeIf { attempted || facts.passphrase != PassphraseStatus.EMPTY },
         )
         return errors
+    }
+
+    /** Google ids end in `.apps.googleusercontent.com`; a Dropbox key is letters and digits. No spaces in either. */
+    fun clientIdProblem(form: SyncForm): String? {
+        val id = form.oauthClientId.trim()
+        if (id.isEmpty()) return null
+        return when {
+            id.any { it.isWhitespace() } -> if (form.kind == SyncDestinationKind.GDRIVE) SyncCopy.BAD_GOOGLE_CLIENT_ID else SyncCopy.BAD_APP_KEY
+            form.kind == SyncDestinationKind.GDRIVE && !id.endsWith(".apps.googleusercontent.com") -> SyncCopy.BAD_GOOGLE_CLIENT_ID
+            form.kind == SyncDestinationKind.DROPBOX && !id.all { it.isLetterOrDigit() } -> SyncCopy.BAD_APP_KEY
+            else -> null
+        }
     }
 
     private fun isPlainHttpRefused(form: SyncForm): Boolean {
@@ -336,6 +368,7 @@ object SyncUi {
         config.kind, config.folderTreeUri,
         config.webDav?.baseUrl, config.webDav?.username,
         config.s3?.endpoint, config.s3?.bucket, config.s3?.accessKeyId, config.s3?.prefix,
+        config.oauth?.clientId,
     )
 
     fun sameTarget(a: SyncDestinationConfig, b: SyncDestinationConfig): Boolean = targetOf(a) == targetOf(b)
@@ -383,6 +416,15 @@ object SyncUi {
                         allowPlainHttpOnLocal = form.s3PlainHttp,
                     ),
                     displayName = form.s3Bucket.trim(),
+                )
+            }
+            SyncDestinationKind.GDRIVE, SyncDestinationKind.DROPBOX -> {
+                if (form.oauthClientId.isBlank() || clientIdProblem(form) != null) return null
+                val account = form.oauthAccount.trim()
+                val name = if (kind == SyncDestinationKind.GDRIVE) SyncCopy.KIND_DRIVE else SyncCopy.KIND_DROPBOX
+                draft.copy(
+                    oauth = OAuthSettings(form.oauthClientId.trim(), account),
+                    displayName = if (account.isEmpty()) name else "$name ($account)",
                 )
             }
         }

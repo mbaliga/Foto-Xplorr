@@ -179,4 +179,7 @@ enum class SyncFailure(val retryable: Boolean) {
     DESTINATION_GONE(false),
 }
 
-class SyncException(val failure: SyncFailure, message: String, cause: Throwable? = null) : IOException(message, cause)
+open class SyncException(val failure: SyncFailure, message: String, cause: Throwable? = null) : IOException(message, cause)
+
+/** A [SyncFailure.TRANSIENT] failure where the server said how long to wait (429 / Retry-After); the engine waits at least that long, capped. */
+class SyncRateLimited(message: String, val retryAfterMillis: Long) : SyncException(SyncFailure.TRANSIENT, message)

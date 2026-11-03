@@ -49,6 +49,7 @@ object SyncAndroid {
             library = browsable,
             fileSource = { config, snapshot -> MediaStoreSyncFileSource(app, snapshot, includeLocation = config.encryptEnabled) },
             providers = AndroidSyncProviderFactory(app),
+            revoker = if (SyncTransports.available) DefaultOAuthRevoker(SyncTransports.create()) else OAuthRevoker.NONE,
             network = { SyncConnectivity.current(app) },
             runner = jobRunner,
             supportedKinds = kinds,
@@ -80,6 +81,16 @@ class AndroidSyncProviderFactory(private val context: Context) : SyncProviderFac
                 if (!SyncTransports.available) throw SyncException(SyncFailure.UNAVAILABLE_BUILD, SyncCopy.NEEDS_CONNECT_BUILD)
                 val settings = config.s3 ?: throw SyncException(SyncFailure.REJECTED, SyncCopy.NO_DESTINATION)
                 S3CompatibleProvider(settings, secret ?: CharArray(0), SyncTransports.create())
+            }
+            SyncDestinationKind.GDRIVE -> {
+                if (!SyncTransports.available) throw SyncException(SyncFailure.UNAVAILABLE_BUILD, SyncCopy.NEEDS_CONNECT_BUILD)
+                val settings = config.oauth ?: throw SyncException(SyncFailure.REJECTED, SyncCopy.NO_DESTINATION)
+                DriveProvider(settings.clientId, secret ?: throw SyncException(SyncFailure.AUTH, SyncCopy.SIGN_IN_AGAIN), SyncTransports.create())
+            }
+            SyncDestinationKind.DROPBOX -> {
+                if (!SyncTransports.available) throw SyncException(SyncFailure.UNAVAILABLE_BUILD, SyncCopy.NEEDS_CONNECT_BUILD)
+                val settings = config.oauth ?: throw SyncException(SyncFailure.REJECTED, SyncCopy.NO_DESTINATION)
+                DropboxProvider(settings.clientId, secret ?: throw SyncException(SyncFailure.AUTH, SyncCopy.SIGN_IN_AGAIN), SyncTransports.create())
             }
         }
     } finally {
