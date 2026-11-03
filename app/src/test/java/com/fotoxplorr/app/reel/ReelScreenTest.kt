@@ -258,6 +258,8 @@ class ReelScreenTest {
         library.put(stills(1, 2, 3).copy(name = "Beach"))
         library.put(ReelProject(), readable = false)
         compose.setContent { Screen() }
+        // The saved list is read off the main thread: the first frame has no row yet.
+        waitFor { textShown("Beach") && textShown(ReelCopy.DAMAGED_REEL) }
         compose.onNodeWithText("Beach").assertExists()
         compose.onNodeWithText(ReelCopy.reelSummary(3, 9_000L)).assertExists()
         compose.onNodeWithText(ReelCopy.DAMAGED_REEL).assertExists()

@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.viewer
 
+import android.os.Looper
 import android.content.Context
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.assertCountEquals
@@ -30,6 +31,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.Shadows.shadowOf
 
 /**
  * The details room's palette strip against the stored palette it receives: a swatch is a button
@@ -162,6 +164,7 @@ class PhotoDetailRoomPaletteTest {
         val asset = ViewerFixtures.referencePhoto(context)
         room(asset, palette = emptyList(), expanded = false)
         compose.waitUntil(READ_TIMEOUT_MS) {
+            shadowOf(Looper.getMainLooper()).idle()
             compose.onAllNodesWithContentDescription("Search photos coloured", substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
@@ -175,6 +178,7 @@ class PhotoDetailRoomPaletteTest {
         )
         room(broken, palette = emptyList(), expanded = false)
         compose.waitUntil(READ_TIMEOUT_MS) {
+            shadowOf(Looper.getMainLooper()).idle()
             compose.onAllNodesWithText("Couldn't read colours").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onAllNodesWithContentDescription("Search photos coloured", substring = true).assertCountEquals(0)
@@ -202,6 +206,7 @@ class PhotoDetailRoomPaletteTest {
         )
         room(video, palette = emptyList(), expanded = false)
         compose.waitUntil(READ_TIMEOUT_MS) {
+            shadowOf(Looper.getMainLooper()).idle()
             compose.onAllNodesWithText("Couldn't read colours").fetchSemanticsNodes().isNotEmpty()
         }
     }

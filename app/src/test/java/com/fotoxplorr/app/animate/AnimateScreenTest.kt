@@ -93,12 +93,7 @@ class AnimateScreenTest {
 
     // The app's job list runs on the view model's scope, which is Main.immediate.
     //
-    // JobRunner.launch adds a job to its list AFTER it has started it (TRAPS #97), so a job that finishes before launch
-    // returns is kept in the list for ever and the screen shows it as running. In the app that cannot happen (a job's
-    // result comes back to the main thread, which is still inside launch). Under Robolectric it does happen, even with
-    // Main.immediate: a scratch test of 2000 jobs that do nothing left 1882 in the list, 182 with Unconfined. So every
-    // job here takes a few tens of milliseconds before it can finish: the sink waits in stagingDirectory (every job that
-    // passes the first refusals asks for it) and, for the test of a refusal, the host in mayExport.
+    // (JobRunner lists a job before it starts it, so a job that finishes at once is never left on the list.)
     private val scope = CoroutineScope(Dispatchers.Main.immediate)
 
     @After
@@ -117,11 +112,6 @@ class AnimateScreenTest {
 
     /** Returns the library row of [saved] for whatever it is given, as MediaStore would. */
     private class ResultSink(val inner: FakeAnimateSink = FakeAnimateSink()) : AnimateSink by inner {
-        override fun stagingDirectory(): File {
-            Thread.sleep(JOB_STARTS_MS)
-            return inner.stagingDirectory()
-        }
-
         override suspend fun publish(
             staged: File,
             output: AnimOutput,
@@ -162,11 +152,6 @@ class AnimateScreenTest {
                 )
             }
         }
-    }
-
-    private companion object {
-        /** How long a job is held before it can finish (see the scope above). */
-        const val JOB_STARTS_MS = 40L
     }
 
     // ---- helpers ----------------------------------------------------------------------------------
@@ -717,13 +702,6 @@ class AnimateScreenTest {
 
     @Test
     fun `a photo locked before Save is refused with the job's sentence and nothing is saved`() {
-        // The refusal comes before any photo is read, so this host takes its time over the question (see the scope above).
-        hostOverride = object : AnimateHost by host {
-            override fun mayExport(asset: MediaAsset): Boolean {
-                Thread.sleep(JOB_STARTS_MS)
-                return host.mayExport(asset)
-            }
-        }
         compose.setContent { Screen() }
         toOutput(1, 2, 3)
         host.protectedIds += 2L

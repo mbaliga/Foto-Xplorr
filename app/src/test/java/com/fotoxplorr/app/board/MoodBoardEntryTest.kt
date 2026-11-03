@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.board
 
+import android.os.Looper
 import androidx.activity.OnBackPressedDispatcher
 import androidx.activity.OnBackPressedDispatcherOwner
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
@@ -27,6 +28,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -78,7 +80,13 @@ class MoodBoardEntryTest {
         }
     }
 
+    private fun waitFor(timeoutMillis: Long = 60_000, condition: () -> Boolean) =
+        compose.waitUntil(timeoutMillis) { shadowOf(Looper.getMainLooper()).idle(); condition() }
+
+    // Wait for the node first: the saved list (and a saved board's controls) arrive after an off-main-thread
+    // read, and a busy machine otherwise clicks on nothing.
     private fun tap(text: String) {
+        waitFor { compose.onAllNodes(hasText(text)).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText(text).performClick()
         compose.waitForIdle()
     }
@@ -88,11 +96,11 @@ class MoodBoardEntryTest {
         boardsDir.deleteRecursively()
         compose.setContent { Host() }
         // The list is read off the main thread, so its first frame has no rows and no 'none yet' line.
-        compose.waitUntil(10_000) { compose.onAllNodes(hasText(BoardCopy.NO_BOARDS)).fetchSemanticsNodes().isNotEmpty() }
+        waitFor(10_000) { compose.onAllNodes(hasText(BoardCopy.NO_BOARDS)).fetchSemanticsNodes().isNotEmpty() }
         tap(BoardCopy.NEW_BOARD)
         tap(BoardCopy.TOOL_ADD)
         tap(BoardCopy.ADD_COLOUR)
-        compose.waitUntil(30_000) { boardsDir.listFiles().orEmpty().any { it.name.endsWith(".json") } }
+        waitFor(30_000) { boardsDir.listFiles().orEmpty().any { it.name.endsWith(".json") } }
         val file = boardsDir.listFiles()!!.single { it.name.endsWith(".json") }
         assertTrue(BoardStore.isValidId(file.name.removeSuffix(".json")))
         val decoded = BoardJson.decode(file.readText())!!
@@ -110,11 +118,11 @@ class MoodBoardEntryTest {
         compose.onNodeWithContentDescription("a.jpg").performClick()
         tap(BoardCopy.addPhotos(1))
         // The photos' sizes are read first (off the main thread), then the picker closes.
-        compose.waitUntil(10_000) { compose.onAllNodes(hasText(BoardCopy.TOOL_LAYERS)).fetchSemanticsNodes().isNotEmpty() }
+        waitFor(10_000) { compose.onAllNodes(hasText(BoardCopy.TOOL_LAYERS)).fetchSemanticsNodes().isNotEmpty() }
         // Locked again while the board is open: the host's live list no longer holds it.
         browsable.remove(a.id)
         tap(BoardCopy.TOOL_LAYERS)
-        compose.waitUntil(10_000) { compose.onAllNodes(hasText(BoardCopy.MISSING_PHOTO, substring = true)).fetchSemanticsNodes().isNotEmpty() }
+        waitFor(10_000) { compose.onAllNodes(hasText(BoardCopy.MISSING_PHOTO, substring = true)).fetchSemanticsNodes().isNotEmpty() }
         tap(BoardCopy.EXPORT)
         compose.onNodeWithText(BoardCopy.MISSING_PHOTOS_NOTE).assertExists()
     }

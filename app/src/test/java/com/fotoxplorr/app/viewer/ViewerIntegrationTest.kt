@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.viewer
 
+import android.os.Looper
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -47,6 +48,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.Shadows.shadowOf
 
 /**
  * The real [ViewerScreen] with its parts wired together: the filmstrip over a video, the video
@@ -344,6 +346,7 @@ class ViewerIntegrationTest {
         compose.waitForIdle()
         // The editor is up: its loading, ready and failed states all carry Cancel or Close text.
         compose.waitUntil(timeoutMillis = 10_000) {
+            shadowOf(Looper.getMainLooper()).idle()
             compose.onAllNodesWithText("Cancel").fetchSemanticsNodes().isNotEmpty() ||
                 compose.onAllNodesWithText("Close").fetchSemanticsNodes().isNotEmpty()
         }
@@ -375,6 +378,7 @@ class ViewerIntegrationTest {
         compose.waitForIdle()
         // The editor is up: its loading, ready and failed states all carry Cancel or Close.
         compose.waitUntil(timeoutMillis = 10_000) {
+            shadowOf(Looper.getMainLooper()).idle()
             compose.onAllNodesWithText("Cancel").fetchSemanticsNodes().isNotEmpty() ||
                 compose.onAllNodesWithText("Close").fetchSemanticsNodes().isNotEmpty()
         }

@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.reel
 
+import android.os.Looper
 import androidx.activity.OnBackPressedDispatcher
 import androidx.activity.OnBackPressedDispatcherOwner
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
@@ -10,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -32,6 +34,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -79,7 +82,15 @@ class ReelMakerEntryTest {
         }
     }
 
+    private fun waitFor(timeoutMillis: Long = 60_000, condition: () -> Boolean) =
+        compose.waitUntil(timeoutMillis) { shadowOf(Looper.getMainLooper()).idle(); condition() }
+
+    private fun exists(text: String) = compose.onAllNodes(hasText(text)).fetchSemanticsNodes().isNotEmpty()
+
+    // Wait for the node first: the saved list (and a saved reel's controls) arrive after an off-main-thread
+    // read, and a busy machine otherwise clicks on nothing.
     private fun tap(text: String) {
+        waitFor { exists(text) }
         compose.onNodeWithText(text).performClick()
         compose.waitForIdle()
     }
@@ -88,11 +99,13 @@ class ReelMakerEntryTest {
     fun `the entry opens on its list, makes a reel, and keeps only the recipe in the app's own folder`() {
         reelsDir.deleteRecursively()
         compose.setContent { Host() }
+        // The list is read off the main thread, so its first frame has neither a row nor this line.
+        waitFor { exists(ReelCopy.NO_REELS) }
         compose.onNodeWithText(ReelCopy.NO_REELS).assertExists()
         tap(ReelCopy.START_BLANK)
         tap(ReelCopy.TOOL_ADD)
         tap(ReelCopy.ADD_CARD)
-        compose.waitUntil(30_000) { reelsDir.listFiles().orEmpty().any { it.name.endsWith(".json") } }
+        waitFor(30_000) { reelsDir.listFiles().orEmpty().any { it.name.endsWith(".json") } }
         val file = reelsDir.listFiles()!!.single { it.name.endsWith(".json") }
         assertTrue(ReelProjectStore.isValidId(file.name.removeSuffix(".json")))
         val decoded = ReelCodec.decode(file.readText())!!
@@ -150,15 +163,15 @@ class ReelMakerEntryTest {
         tap(ReelCopy.START_BLANK)
         tap(ReelCopy.TOOL_ADD)
         tap(ReelCopy.ADD_CARD)
-        compose.waitUntil(30_000) { reelsDir.listFiles().orEmpty().any { it.name.endsWith(".json") } }
+        waitFor(30_000) { reelsDir.listFiles().orEmpty().any { it.name.endsWith(".json") } }
         // The card was added from its panel, so the first Back closes that and the second leaves the reel.
         compose.onNodeWithContentDescription(ReelCopy.BACK).performClick()
         compose.waitForIdle()
         compose.onNodeWithContentDescription(ReelCopy.BACK).performClick()
         compose.waitForIdle()
-        compose.waitUntil(30_000) { compose.onAllNodesWithTextCount(ReelCopy.reelSummary(1, ReelLimits.TITLE_DEFAULT_MS)) > 0 }
+        waitFor(30_000) { compose.onAllNodesWithTextCount(ReelCopy.reelSummary(1, ReelLimits.TITLE_DEFAULT_MS)) > 0 }
         tap(ReelCopy.DEFAULT_NAME)
-        compose.waitUntil(30_000) { compose.onAllNodesWithTextCount(ReelCopy.PREVIEW_NOTE) > 0 }
+        waitFor(30_000) { compose.onAllNodesWithTextCount(ReelCopy.PREVIEW_NOTE) > 0 }
         assertNotNull(compose.onNodeWithContentDescription(ReelCopy.PREVIEW).fetchSemanticsNode())
         assertFalse(closed)
         compose.onNodeWithContentDescription(ReelCopy.BACK).performClick()

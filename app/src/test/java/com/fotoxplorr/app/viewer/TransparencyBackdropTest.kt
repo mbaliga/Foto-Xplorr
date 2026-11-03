@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.viewer
 
+import android.os.Looper
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -41,6 +42,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.Shadows.shadowOf
 
 /**
  * What the viewer draws behind a see-through photo (owner, #17), through the real [ViewerScreen]
@@ -141,7 +143,7 @@ class TransparencyBackdropTest {
     private fun buttonCount(): Int = compose.onAllNodesWithTag(TRANSPARENCY_BUTTON_TAG).fetchSemanticsNodes().size
 
     private fun awaitButton() {
-        compose.waitUntil(timeoutMillis = 10_000) { buttonCount() == 1 }
+        compose.waitUntil(timeoutMillis = 10_000) { shadowOf(Looper.getMainLooper()).idle(); buttonCount() == 1 }
     }
 
     private class Shot(val image: Bitmap) {

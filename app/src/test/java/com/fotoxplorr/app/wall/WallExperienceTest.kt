@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.wall
 
+import android.os.Looper
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.OnBackPressedDispatcher
@@ -36,6 +37,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.Shadows.shadowOf
 import java.io.File
 import java.io.FileOutputStream
 import kotlin.io.path.createTempFile
@@ -105,10 +107,10 @@ class WallExperienceTest {
     }
 
     private fun waitForText(text: String, substring: Boolean = false) =
-        compose.waitUntil(10_000) { compose.onAllNodes(hasText(text, substring = substring)).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { shadowOf(Looper.getMainLooper()).idle(); compose.onAllNodes(hasText(text, substring = substring)).fetchSemanticsNodes().isNotEmpty() }
 
     private fun waitForNoText(text: String) =
-        compose.waitUntil(10_000) { compose.onAllNodes(hasText(text)).fetchSemanticsNodes().isEmpty() }
+        compose.waitUntil(10_000) { shadowOf(Looper.getMainLooper()).idle(); compose.onAllNodes(hasText(text)).fetchSemanticsNodes().isEmpty() }
 
     /** The wall photo chosen, a distance typed, one picture hung. */
     private fun hangOnePicture() {

@@ -118,10 +118,10 @@ class WallExportControlsTest {
     }
 
     private fun waitForText(text: String, substring: Boolean = false) =
-        compose.waitUntil(10_000) { compose.onAllNodes(hasText(text, substring = substring)).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { shadowOf(Looper.getMainLooper()).idle(); compose.onAllNodes(hasText(text, substring = substring)).fetchSemanticsNodes().isNotEmpty() }
 
     private fun waitForNoText(text: String) =
-        compose.waitUntil(10_000) { compose.onAllNodes(hasText(text)).fetchSemanticsNodes().isEmpty() }
+        compose.waitUntil(10_000) { shadowOf(Looper.getMainLooper()).idle(); compose.onAllNodes(hasText(text)).fetchSemanticsNodes().isEmpty() }
 
     private fun hangOnePicture() {
         compose.onNodeWithContentDescription("wall.jpg").performClick()
@@ -189,7 +189,7 @@ class WallExportControlsTest {
 
         compose.onNodeWithText(WallCopy.SAVE_PRINT).performClick()
         // The job finishes on the main looper after its worker thread is done: let that run.
-        compose.waitUntil(15_000) { shadowOf(Looper.getMainLooper()).idle(); outcomes.isNotEmpty() }
+        compose.waitUntil(15_000) { shadowOf(Looper.getMainLooper()).idle(); shadowOf(Looper.getMainLooper()).idle(); outcomes.isNotEmpty() }
 
         val outcome = outcomes.single()
         assertEquals(WallCopy.PRINT_JOB_TITLE, outcome.title)
@@ -216,7 +216,7 @@ class WallExportControlsTest {
         assertTrue(compose.onAllNodes(hasText(WallCopy.SAVE_PRINT)).fetchSemanticsNodes().isEmpty())
 
         compose.onNodeWithText(WallCopy.CANCEL).performClick()
-        compose.waitUntil(15_000) { shadowOf(Looper.getMainLooper()).idle(); outcomes.isNotEmpty() }
+        compose.waitUntil(15_000) { shadowOf(Looper.getMainLooper()).idle(); shadowOf(Looper.getMainLooper()).idle(); outcomes.isNotEmpty() }
         assertTrue(outcomes.single().result.exceptionOrNull() is CancellationException)
         waitForText(WallCopy.SAVE_PRINT)
         assertTrue(runner.jobs.value.isEmpty())
@@ -269,7 +269,7 @@ class WallExportControlsTest {
 
         compose.onNodeWithText(WallCopy.ENLARGE).performClick()
         compose.onNodeWithText(WallCopy.SAVE_PRINT).performClick()
-        compose.waitUntil(30_000) { shadowOf(Looper.getMainLooper()).idle(); outcomes.isNotEmpty() }
+        compose.waitUntil(30_000) { shadowOf(Looper.getMainLooper()).idle(); shadowOf(Looper.getMainLooper()).idle(); outcomes.isNotEmpty() }
 
         val outcome = outcomes.single()
         assertEquals(WallCopy.ENLARGE_JOB_TITLE, outcome.title)
@@ -296,7 +296,7 @@ class WallExportControlsTest {
         assertTrue(compose.onAllNodes(hasText(WallCopy.SAVE_PRINT)).fetchSemanticsNodes().isEmpty())
 
         compose.onNodeWithText(WallCopy.CANCEL).performClick()
-        compose.waitUntil(15_000) { shadowOf(Looper.getMainLooper()).idle(); outcomes.isNotEmpty() }
+        compose.waitUntil(15_000) { shadowOf(Looper.getMainLooper()).idle(); shadowOf(Looper.getMainLooper()).idle(); outcomes.isNotEmpty() }
         assertTrue(outcomes.single().result.exceptionOrNull() is CancellationException)
         waitForText(WallCopy.SAVE_PRINT)
         assertTrue(runner.jobs.value.isEmpty())

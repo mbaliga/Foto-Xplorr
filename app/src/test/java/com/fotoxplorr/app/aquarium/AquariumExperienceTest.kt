@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.aquarium
 
+import android.os.Looper
 import android.content.Context
 import android.provider.Settings
 import androidx.activity.OnBackPressedDispatcher
@@ -38,6 +39,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.Shadows.shadowOf
 import java.io.File
 
 /**
@@ -87,13 +89,13 @@ class AquariumExperienceTest {
     }
 
     private fun waitForDescription(text: String) =
-        compose.waitUntil(10_000) { compose.onAllNodes(hasContentDescription(text)).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { shadowOf(Looper.getMainLooper()).idle(); compose.onAllNodes(hasContentDescription(text)).fetchSemanticsNodes().isNotEmpty() }
 
     private fun waitForNoDescription(text: String) =
-        compose.waitUntil(10_000) { compose.onAllNodes(hasContentDescription(text)).fetchSemanticsNodes().isEmpty() }
+        compose.waitUntil(10_000) { shadowOf(Looper.getMainLooper()).idle(); compose.onAllNodes(hasContentDescription(text)).fetchSemanticsNodes().isEmpty() }
 
     private fun waitForText(text: String) =
-        compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasText(text)).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { shadowOf(Looper.getMainLooper()).idle(); compose.onAllNodes(androidx.compose.ui.test.hasText(text)).fetchSemanticsNodes().isNotEmpty() }
 
     /** From the empty tank: Draw, a ready shape, Swim; ends in the tank with one creature. */
     private fun makeOne() {
@@ -191,7 +193,7 @@ class AquariumExperienceTest {
         compose.onNodeWithContentDescription(AquariumCopy.remove(1)).performClick()
         waitForDescription(AquariumCopy.tank(0))
         waitForText(AquariumCopy.EMPTY_PROMPT)
-        compose.waitUntil(10_000) { File(context.filesDir, CreatureStore.DIRECTORY_NAME).list()!!.isEmpty() }
+        compose.waitUntil(10_000) { shadowOf(Looper.getMainLooper()).idle(); File(context.filesDir, CreatureStore.DIRECTORY_NAME).list()!!.isEmpty() }
     }
 
     @Test
@@ -215,7 +217,7 @@ class AquariumExperienceTest {
         waitForText(AquariumCopy.EMPTY_PROMPT)
         compose.onNodeWithContentDescription(AquariumCopy.tank(0)).assertExists()
         // Not shown, and not left behind to count toward the cap either.
-        compose.waitUntil(10_000) { !File(dir, "$id.json").exists() }
+        compose.waitUntil(10_000) { shadowOf(Looper.getMainLooper()).idle(); !File(dir, "$id.json").exists() }
         assertFalse(File(dir, "$id.png").exists())
     }
 

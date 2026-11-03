@@ -192,6 +192,8 @@ class MoodBoardScreenTest {
     @Test
     fun `it opens on the list, and New board opens an empty editor`() {
         compose.setContent { Screen() }
+        // The saved list is read off the main thread: the first frame has neither a row nor the 'none yet' line.
+        waitFor { compose.onAllNodes(hasText(BoardCopy.NO_BOARDS)).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText(BoardCopy.NEW_BOARD).assertIsEnabled()
         compose.onNodeWithText(BoardCopy.NO_BOARDS).assertExists()
         compose.onNodeWithText(BoardCopy.SAVES_BY_ITSELF).assertExists()
