@@ -99,7 +99,11 @@ jobs:
 
       - name: Build release APKs for sideloading
         shell: bash
-        run: ./gradlew :app:assembleOfflineRelease :app:assembleConnectRelease -PabiSplits=true
+        run: |
+          # The tests, lint and debug builds above leave a fragmented daemon heap behind; the release
+          # compile of the Connect flavor needs a fresh one (it ran out of memory without this).
+          ./gradlew --stop
+          ./gradlew :app:assembleOfflineRelease :app:assembleConnectRelease -PabiSplits=true
 
       # TRAPS #16 / WP1.9: a read-only regression guard -- AGP already produces 16 KB-aligned
       # output by default, this only catches a future change that breaks it.
