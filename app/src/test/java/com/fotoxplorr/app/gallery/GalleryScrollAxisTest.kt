@@ -106,7 +106,8 @@ class GalleryScrollAxisTest {
         gridZoomRung = rung,
         timelineOn = timelineOn,
         timelinePlacement = placement,
-        scrollAxis = axis,
+        scrollAxis = axis,        // These tests are about the standing gutter, which only 'Always visible' reserves.
+        timelineVisibility = TimelineVisibility.ALWAYS,
     )
 
     // ---- the photos run down a column, then on to the next ----

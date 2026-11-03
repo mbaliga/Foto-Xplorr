@@ -108,7 +108,8 @@ class GalleryTimelineStripTest {
         timelineOn = on,
         timelinePlacement = placement,
         timelineGrouping = grouping,
-        fitToTile = fitToTile,
+        fitToTile = fitToTile,        // These tests are about the standing gutter, which only 'Always visible' reserves.
+        timelineVisibility = TimelineVisibility.ALWAYS,
     )
 
     // ---- the gutter, edge by edge ----
