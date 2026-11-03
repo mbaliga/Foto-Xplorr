@@ -73,6 +73,7 @@ class JobRunner(private val scope: CoroutineScope) {
     fun <T> launch(
         title: String,
         kind: ActivityKind,
+        onRegistered: (id: String) -> Unit = {},
         block: suspend (onProgress: (Float?) -> Unit) -> Result<T>,
     ): JobHandle {
         val id = "job-${nextId.incrementAndGet()}"
@@ -101,6 +102,10 @@ class JobRunner(private val scope: CoroutineScope) {
         }
         handle = JobHandle(id, job)
         _jobs.update { it + RunningJob(id, title, kind, progress = null, cancel = handle::cancel) }
+        // Before the job starts, so a caller that keeps the ids of its own jobs has the id before the outcome can
+        // exist: a job that finishes on another thread while the caller is still between launch() returning and
+        // its own bookkeeping would otherwise have its outcome arrive for an id nobody had written down yet.
+        onRegistered(id)
         job.start()
         return handle
     }

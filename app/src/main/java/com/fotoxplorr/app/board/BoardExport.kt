@@ -189,8 +189,14 @@ object BoardExportJob {
      * Start [run] as a [JobRunner] job (progress, Cancel, the activity shade). The outcome arrives on
      * [JobRunner.outcomes] as a [BoardExportOutcome.Done] result, a [BoardExportFailure], or a cancellation.
      */
-    fun launch(runner: JobRunner, request: BoardExportRequest, photos: BoardPhotoSource, sink: BoardSink): JobHandle =
-        runner.launch(BoardCopy.JOB_TITLE, ActivityKind.EXPORTING) { onProgress ->
+    fun launch(
+        runner: JobRunner,
+        request: BoardExportRequest,
+        photos: BoardPhotoSource,
+        sink: BoardSink,
+        onRegistered: (id: String) -> Unit = {},
+    ): JobHandle =
+        runner.launch(BoardCopy.JOB_TITLE, ActivityKind.EXPORTING, onRegistered) { onProgress ->
             when (val outcome = run(request, photos, sink) { onProgress(it) }) {
                 is BoardExportOutcome.Done -> Result.success(outcome)
                 is BoardExportOutcome.Failed -> Result.failure(BoardExportFailure(outcome.problem, outcome.layerIds))

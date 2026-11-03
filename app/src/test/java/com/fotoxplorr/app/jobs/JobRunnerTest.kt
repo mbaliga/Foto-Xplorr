@@ -185,4 +185,20 @@ class JobRunnerTest {
         assertEquals(1, listedInside?.size)
         assertTrue(runner.jobs.value.isEmpty())
     }
+
+    @Test
+    fun `the caller has the id before the outcome of a job that finishes at once can be seen`() {
+        val runner = JobRunner(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        val order = mutableListOf<String>()
+        val collector = CoroutineScope(Dispatchers.Unconfined).launch {
+            runner.outcomes.collect { order += "outcome ${it.id}" }
+        }
+
+        val handle = runner.launch("Quick job", ActivityKind.EXPORTING, onRegistered = { order += "registered $it" }) {
+            Result.success(Unit)
+        }
+
+        assertEquals(listOf("registered ${handle.id}", "outcome ${handle.id}"), order)
+        collector.cancel()
+    }
 }

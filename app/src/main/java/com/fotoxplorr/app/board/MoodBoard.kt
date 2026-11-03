@@ -209,7 +209,7 @@ internal fun MoodBoardScreen(
     val jobs by (runner?.jobs ?: NO_JOBS).collectAsState()
     val saving = jobs.firstOrNull { it.title == BoardCopy.JOB_TITLE }
     // The saves this screen started: only their outcomes are shown.
-    val started = remember { mutableSetOf<String>() }
+    val started = remember { java.util.Collections.synchronizedSet(mutableSetOf<String>()) }
     LaunchedEffect(runner) {
         runner?.outcomes?.collect { outcome ->
             if (!started.remove(outcome.id)) return@collect
@@ -236,7 +236,9 @@ internal fun MoodBoardScreen(
         if (runner == null || exportRunning()) return
         state.exportResult = null
         val request = BoardExportRequest(open.board, open.name, state.format, state.maxEdge)
-        started += BoardExportJob.launch(runner, request, latestNewSource(open.board), latestNewSink()).id
+        // Written down before the job starts: a refusal finishes in microseconds on another thread, and its outcome
+        // is dropped unless this screen already knows the id.
+        BoardExportJob.launch(runner, request, latestNewSource(open.board), latestNewSink(), onRegistered = { started += it })
     }
 
     // ---- opening, closing, leaving ----
