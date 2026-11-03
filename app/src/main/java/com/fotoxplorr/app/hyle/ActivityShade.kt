@@ -31,6 +31,12 @@ data class BackgroundActivity(
      * exists for exactly that.
      */
     val onCancel: (() -> Unit)? = null,
+    /**
+     * The photos this job is working on, newest first, already limited to what may be shown (the
+     * browsable list: never a protected photo). Empty when the job has none or the host does not
+     * know them; the hero then draws a neutral stack silhouette. See [PhotoStack].
+     */
+    val photos: List<com.fotoxplorr.app.media.MediaAsset> = emptyList(),
 ) {
     /** 0..1, or null when the total is not yet known and the bar should run indeterminate. */
     val fraction: Float?

@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.hyle.SheetGeometry
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomGeography
 import com.fotoxplorr.app.ui.RoomRule
@@ -50,7 +51,24 @@ fun GalleryInfoRoom(
     assets: List<MediaAsset>,
     state: GalleryUiState,
     modifier: Modifier = Modifier,
+    /**
+     * How far the room is pulled open, 0..1, read lazily. The parked card slips over the room's
+     * edge with a corner of [SheetGeometry.sheetCornerDp] of it, and the room's text keeps clear.
+     */
+    lift: () -> Float = { 1f },
+    /** The timeline strip's gutter on the left / right edge, in dp: it is drawn over that edge. */
+    gutterStartDp: Int = 0,
+    gutterEndDp: Int = 0,
 ) {
+    // The corner and the strip both reach over the room's edges (the card is drawn over the room),
+    // so the text is inset past whichever is wider. Depth 0: any row may be the one by the corner.
+    val insets = SheetGeometry.contentInsets(
+        cornerDp = SheetGeometry.sheetCornerDp(lift()),
+        depthDp = 0f,
+        baseDp = RoomStyle.GutterStart.value,
+        gutterStartDp = gutterStartDp.toFloat(),
+        gutterEndDp = gutterEndDp.toFloat(),
+    )
     // One pass over the list rather than six. At 22,000 assets the difference between counting
     // once and calling count{} per statistic is the difference between opening instantly and
     // visibly hitching as the room reveals.
@@ -65,8 +83,8 @@ fun GalleryInfoRoom(
             .clearSystemBarsFor(RoomGeography.Details)
             .verticalScroll(rememberScrollState())
             .padding(
-                start = RoomStyle.GutterStart,
-                end = RoomStyle.GutterEnd,
+                start = insets.startDp.dp,
+                end = insets.endDp.dp,
                 top = 26.dp,
                 bottom = 26.dp,
             ),

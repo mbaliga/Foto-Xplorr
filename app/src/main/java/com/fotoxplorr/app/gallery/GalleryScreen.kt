@@ -103,6 +103,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.hyle.ActivityKind
 import com.fotoxplorr.app.hyle.ActivityShade
+import com.fotoxplorr.app.hyle.ActivityStackEnv
+import com.fotoxplorr.app.hyle.LocalActivityStackEnv
+import com.fotoxplorr.app.hyle.LocalSheetLift
+import com.fotoxplorr.app.hyle.recentlyProcessed
 import com.fotoxplorr.app.hyle.BackgroundActivity
 import com.fotoxplorr.app.hyle.FloatingPillControl
 import com.fotoxplorr.app.hyle.MapToggleFab
@@ -181,7 +185,10 @@ import com.fotoxplorr.app.ui.HelpCopy
  * run. The shade's expanded state gives its first entry the hero panel, so this order decides
  * which job gets the room.
  */
-internal fun buildBackgroundActivities(state: GalleryUiState): List<BackgroundActivity> = buildList {
+internal fun buildBackgroundActivities(
+    state: GalleryUiState,
+    recognitionPhotos: List<MediaAsset> = emptyList(),
+): List<BackgroundActivity> = buildList {
     when (val scan = state.scanState) {
         is ScanState.Scanning -> add(
             BackgroundActivity(
@@ -208,6 +215,7 @@ internal fun buildBackgroundActivities(state: GalleryUiState): List<BackgroundAc
                 completed = recognition.completed,
                 total = recognition.total,
                 error = recognition.message,
+                photos = recognitionPhotos,
             ),
         )
     }
@@ -633,8 +641,28 @@ private fun GalleryBrowser(
     // Never while selecting: the shade and the selection's action bar occupy the same strip, and
     // recognition runs for many minutes on a large library, so the two would collide for most of
     // the time the user spends choosing photos.
-    val activities = remember(state.scanState, state.recognitionProgress, selection.isActive) {
-        if (selection.isActive) emptyList() else buildBackgroundActivities(state)
+    // The shade's photo stack: the browsable photos (never a protected one) the pass has most
+    // recently got through, see recentlyProcessed for why that is an approximation.
+    val stackPool = remember(
+        state.assets, state.library.archivedIds, state.sensitiveIds,
+        state.lockedFolders, state.unlockedFolders, state.preferences.hideSensitive,
+    ) {
+        browsableAssets(
+            assets = state.assets,
+            archivedIds = state.library.archivedIds,
+            sensitiveIds = state.sensitiveIds,
+            lockedFolders = state.lockedFolders,
+            unlockedFolders = state.unlockedFolders,
+            hideSensitive = state.preferences.hideSensitive,
+        ).filterNot { it.isVideo }
+    }
+    val recognitionPhotos = if (state.recognitionProgress.running) {
+        recentlyProcessed(stackPool, state.recognitionProgress.completed)
+    } else {
+        emptyList()
+    }
+    val activities = remember(state.scanState, state.recognitionProgress, selection.isActive, recognitionPhotos) {
+        if (selection.isActive) emptyList() else buildBackgroundActivities(state, recognitionPhotos)
     }
     // Collapse when the last job ends, so the shade does not reappear expanded next time one
     // starts. Keyed on emptiness rather than on the list, which changes on every progress tick.
@@ -1144,7 +1172,15 @@ private fun GalleryBrowser(
     // MediaGridScreen below both sit inside SpatialShell's trailing content, so wrapping the
     // whole shell is what makes bridge.onZoom/onContextAction reach a tile regardless of which
     // of those two paths rendered it. See GridChromeBridge's own doc for the full reasoning.
-    CompositionLocalProvider(LocalGridChromeBridge provides chromeBridge) {
+    CompositionLocalProvider(
+        LocalGridChromeBridge provides chromeBridge,
+        LocalSheetLift provides { shell.lift },
+        LocalActivityStackEnv provides ActivityStackEnv(
+            sensitiveIds = state.sensitiveIds,
+            blurSensitive = state.preferences.blurSensitive,
+            onOpen = { asset -> actions.onOpenAsset(asset, stackPool) },
+        ),
+    ) {
     // Over a pane or the map the details, actions and view options rooms would act on the hidden
     // grid, so only the navigation room stays (and the shell refuses a drag from an edge with no
     // room).
@@ -1194,6 +1230,9 @@ private fun GalleryBrowser(
                 } ?: route.title(destination),
                 assets = currentAssets,
                 state = state,
+                lift = { shell.lift },
+                gutterStartDp = timelineGutter.start,
+                gutterEndDp = timelineGutter.end,
             )
         },
         // BOTTOM = what you can do here, tilted up from under the grid.
