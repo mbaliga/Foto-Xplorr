@@ -32,7 +32,7 @@ edit them. That is the whole reason it asks for media access. It does not ask fo
 access to your music or other audio files, and it has no audio library. (One tool lets you
 pick a single sound file to put under a video; see "The camera, and a sound file" below.)
 
-- **Nothing is uploaded.** There is no cloud, no sync and no backup.
+- **Fotoz uploads nothing.** It has no cloud service. The only way a copy leaves the app is one you start: sync to a folder you pick (the app only writes the files; if that folder belongs to a cloud app, that app sends them), or, in the separate connect build, sync to your own server or account.
 - **Nothing is used to train anything.**
 - **Nothing is indexed remotely.** Everything the app knows about your library —
   the timeline, smart albums, duplicates, similarity, on-device recognition — is

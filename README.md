@@ -10,7 +10,7 @@ Fotoz was previously called Foto Xplorr; the repository name, the `com.fotoxplor
 
 - Nine destinations on a word-only navigation rail: Pets, People, Identity, Screenshots, Photos, Videos, Favourites, Experimental, Protected, plus a Map word that shows the current view on a map (also a round button at the bottom left). (Fotoz no longer has an Audio destination: it is a photo and video app.)
 - Four rooms, one geography, in the gallery and the viewer alike: **left** is where you can go (the rail), **top** is details (the view's counts, or the open photo's facts), **bottom** is actions (pull up a little for a strip of quick actions, further for all of them) and **right** is view options (zoom, order, timeline and scroll direction in the gallery; filmstrip, slideshow, autoplay and the like in the viewer). Settings is not a room: it takes over the page, with a back chevron, from the rail's Settings row.
-- A timeline you can switch off and put on any edge (left, right, top or bottom), with a month scrubber and a gutter so the photos never sit under it; month or day headers on the grid, or none. The photos can scroll down or sideways, and the order reads as where the latest photo sits (top, bottom, left or right).
+- A timeline you can switch off and put on any edge (left, right, top or bottom), with a month scrubber. By default it shows only while you scrub: touch the edge and the months bend away from your finger, with a bubble beside it, then it fades. **Timeline shows: Always visible** keeps the strip on screen with a gutter so the photos never sit under it; month or day headers on the grid, or none. The photos can scroll down or sideways, and the order reads as where the latest photo sits (top, bottom, left or right).
 - A time range (month to month) that narrows the grid and the map together.
 - A query language over filename, folder, media type, tag, date range, camera and boolean/field operators, plus tuning chips.
 - Sort by newest, oldest, name or size. One continuous grid you pinch through: 1 to 6 columns of aspect-ratio tiles, then Stamps, a sheet of tiny perforated stamps grouped by month. What a long press on a photo does is a setting (quick preview, select, favourite, share, edit or nothing), and Back from a photo returns to the same place in the grid.
@@ -43,7 +43,7 @@ Fotoz was previously called Foto Xplorr; the repository name, the `com.fotoxplor
 
 ### Organise
 
-- Persistent favourites, sensitive flags, archive state and user tags; on-device recognition (no network) groups Pets, People and Identity documents.
+- Persistent favourites, sensitive flags, archive state and user tags; on-device recognition (no network) groups Pets, People and Identity documents. People are stable: give a person a name, merge two cards, hide one, or take a photo out of a person (a face-crop card grid, and a person filters the photo grid).
 - Device folders and virtual collections are shown separately.
 - Create, rename and delete collections and add or remove media without moving source files.
 - Bulk selection, select-all, multi-share and multi-item organisation actions; long-running jobs (conversion, export, copy/move) show progress and can be cancelled.
@@ -70,7 +70,9 @@ One page (the rail's Experimental word, and a card on Discover) of optional extr
 - **Explore:** Compass view, the 3D photo wall, the gallery preview and look-alike grouping; *Colour vision check* (seven dot pictures, a game and not a test: it says so, never names a condition and points to an eye doctor); and *Chroma ID* (below).
 - **Chroma ID** reads the colour of a surface with the camera and its torch: one picture with the light off, one with it on, and the difference is the surface (a plain white paper card beside it corrects the reading, to about 3 to 6 off at best; without one it gives the shade of colour only, not how light it is, and says so). It shows the colour as a swatch, a plain-word name, hex, RGB, Lab and LCh, and can compare two readings or add a colour to a palette. **The camera is used only here, only while the tool is on screen, and its pictures are kept in memory for a few seconds and never saved or sent.** It keeps the last 50 colours (no picture, no place), with *Delete all*. The `CAMERA` permission is optional (a phone with no camera still installs Fotoz) and is asked when Chroma ID is opened. The method is proven only on made-up data; how a real phone behaves is unknown (see `docs/device-test/batch-8-checklist.md`).
 - **Sound:** Fotoz still has no music or audio library and no audio permission, and nothing is played back by these tools. The one exception is the reel maker, which can lay one sound file you pick (with the system file picker) under the video it makes. See `docs/adr/ADR-017-camera-and-soundtrack.md`.
-- **Setup:** the on-device model and optional AI keys.
+- **Settings > Services:** optional AI keys (your own; only *Test* sends anything, never a photo), *Models on this phone* (the look-alike model, plus a catalogue read from Nooz's data-only list, updated only when you tap *Update catalogue* in the connect flavor; models Fotoz cannot run are shown but cannot be downloaded) and *Sync* (below). Settings has icons on every tab and row.
+- **Optional cloud sync:** off until you set it up, and it starts only when you tap. It sends **copies** one way and never deletes or overwrites anything at the destination. Photos in locked folders, sensitive, archived or in the trash are never sent. A folder you pick (any flavor, including a cloud app's folder); in the `connect` flavor also WebDAV/Nextcloud, S3-compatible storage, Google Drive and Dropbox. Drive and Dropbox need **your own app registration** (you enter its client id; Fotoz ships none) and only reach the one folder they create. Files can be encrypted first with a passphrase that cannot be recovered. Plain copies may lack the photo's location. See `docs/adr/ADR-018-cloud-sync.md`.
+- **Maps:** a world map (country borders, coasts, large cities, Natural Earth) is built in and works offline in both flavors; *Settings > Data > Maps* imports a raster `.mbtiles` file for street-level detail (vector and PMTiles are refused). The `connect` flavor still has the live street map.
 
 The print file is a new file in `Pictures/Fotoz/Prints` (Android 10 and later; the default Pictures folder before that), at up to 300 dpi with the density written in the file, and without the place the photo was taken. A photo short of pixels is saved at its own pixels unless you tick *Enlarged, no new detail*. Photos in locked or hidden folders are never offered and are checked again when a file is written.
 
@@ -86,7 +88,9 @@ The print file is a new file in `Pictures/Fotoz/Prints` (Android 10 and later; t
 
 ## Privacy model
 
-Fotoz has no application backend, account, analytics or mandatory cloud service. Location indexing is local and starts only after the user opens the Map or Experimental > Compass view.
+Fotoz has no application backend, account, analytics or mandatory cloud service. Sync, remote AI and map downloads are optional and exist only in the `connect` flavor (apart from copying to a folder you pick), and none runs until you ask.
+
+The `connect` flavor allows plain `http://` network traffic app-wide (Android cannot limit that to home networks), so a NAS or a local model server works; sync and AI accept plain http only for local addresses (sync also needs you to switch it on). The `offline` flavor has no network permission at all. Location indexing is local and starts only after the user opens the Map or Experimental > Compass view.
 
 The `connect` flavor can also save a small map area for use without a connection (Settings > Data > Offline maps, or the pill on the Map). That is the one place map data is fetched in bulk, and only after a tap on Download: it shows the area and the device's IP address to the map provider (OpenFreeMap), asks first on mobile data, says so when there is no connection, and keeps within the provider's published limits (4 requests at a time, about 3,000 tiles and 50 MB an area, at most 6 areas and 300 MB). Until that 4-request limit has been checked on a device, a release build does not offer the download. The `offline` flavor has no such code and says so. See `docs/adr/ADR-016-offline-map-regions.md`.
 
@@ -105,7 +109,7 @@ Another app cannot use Fotoz to see what Fotoz hides: an open-with or share requ
 
 The current private-folder feature is an **in-app access gate**. It does not encrypt or relocate original MediaStore files, so other applications that have photo access may still read them. It must not be described as an encrypted vault.
 
-The offline map is a coordinate visualisation, the elevation view uses only embedded metadata, and the depth timeline is an experimental 2.5D presentation. They are not terrain data or a full 3D engine, and the offline map has no downloaded packs; only the `connect` flavor's Offline maps save street-map areas.
+The offline map is a small built-in world map (about 1:50m, no streets), the elevation view uses only embedded metadata, and the depth timeline is an experimental 2.5D presentation. They are not terrain data or a full 3D engine; downloaded street-map areas exist only in the `connect` flavor, and the `offline` flavor can import your own raster `.mbtiles`.
 
 ## Metadata backup
 
@@ -143,7 +147,7 @@ The app ships in two flavors on one `connectivity` dimension: **`offline`** (the
 identity — no network permission, no network library on the classpath, enforced by
 `verifyOfflineManifest` / `verifyOfflineRuntimeClasspath` at build time; installs as the
 historical `com.fotoxplorr.app[.debug]`) and **`connect`** (adds BYOK remote AI, the
-similarity-model download, and the OpenFreeMap street map; installs alongside as
+similarity-model download, the OpenFreeMap street map, and sync to WebDAV, S3, Google Drive and Dropbox; installs alongside as
 `….connect`). For a single quick build: `./gradlew :app:assembleOfflineDebug`.
 
 Local builds require JDK 17, Android SDK 36, and the checked-in Gradle wrapper (8.14.3, matching
@@ -157,7 +161,7 @@ what exists today, and `docs/adr/` holds the individual architecture decisions s
 ## Known gaps
 
 Encrypted media-vault storage (private folders are an in-app access gate, not encryption),
-downloaded offline map packs in the `offline` flavor (the `connect` flavor saves small street-map areas), live-camera or augmented-reality wall previews (the camera is allowed only for Chroma ID, ADR-017), 360 degree or vertical panorama stitching (the horizontal *Stitch a panorama* is built; real-photo quality is unproven), user-supplied terrain datasets, and a true interactive 3D scene
+downloaded offline map packs in the `offline` flavor (it has the built-in world map and your own imported raster files; the `connect` flavor saves small street-map areas), two-way or scheduled sync, running downloaded language or image models, live-camera or augmented-reality wall previews (the camera is allowed only for Chroma ID, ADR-017), 360 degree or vertical panorama stitching (the horizontal *Stitch a panorama* is built; real-photo quality is unproven), user-supplied terrain datasets, and a true interactive 3D scene
 engine are not implemented. On-device face/pet/identity recognition and BYOK remote-AI assistance
 (the `connect` flavor only) are implemented; see `docs/PRODUCT-AND-ARCHITECTURE.md` for what each
 covers and does not.

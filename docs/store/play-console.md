@@ -130,3 +130,5 @@ on ChromeOS.
       no `INTERNET`).
 - [ ] Re-check this sheet's version/versionCode line against `app/build.gradle.kts`
       before each submission — it drifts every release.
+
+Batch 9 added optional cloud sync and a Services hub. In the listed (offline) app the only sync is a copy to a folder the person picks; WebDAV, S3, Google Drive and Dropbox exist only in the connect build, which is not the listed app. If the connect build is ever listed, the Data safety answers ("Encrypted in transit", "collect or share") and the privacy policy must be redone first (ADR-018).

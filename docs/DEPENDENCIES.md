@@ -51,7 +51,7 @@ ID, `BitmapFactory` for one still-WebP frame, and Media3 Transformer and its mux
 are in `docs/adr/ADR-017-camera-and-soundtrack.md`. The `CAMERA` permission and three optional camera `uses-feature`
 lines are manifest changes, not dependencies.
 
-Batch 9 (bundled world basemap and map-file import) adds **no row and no Gradle dependency**. The world data in
+Batch 9 (bundled world basemap and map-file import, cloud sync, the Services hub and Nooz catalogue, People, the timeline rail) adds **no row and no Gradle dependency**; no Gradle file changed. Sync's HTTP uses the OkHttp already in `feature:ai-remote`, its XML and JSON readers are hand-written, and OAuth uses the system browser, not a library. The world-map part: The world data in
 `app/src/main/assets/basemap/world.fxmap` (about 220 KB, 1:50m land, lakes, country borders and the 1,000 largest
 populated places) is built by `scripts/gen_basemap.py` from **Natural Earth** (naturalearthdata.com), which is in the
 **public domain**: no attribution is required and the About screen credits it anyway. The generator is deterministic
