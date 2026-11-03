@@ -53,6 +53,24 @@ data class RailBulgeSpec(
         /** Label row height the radii are measured in: the library strip's 14 dp pitch. */
         const val LABEL_HEIGHT_DP = 14f
 
+        /** Share of the rail's length the arc falls over on each side of the plateau. */
+        const val FALL_SHARE_OF_RAIL = 0.30f
+
+        /** The arc never falls over more than this, so a very tall rail still has a readable slope. */
+        const val MAX_FALL_DP = 220f
+
+        /**
+         * The spec for a rail of [railLengthPx]: [forDensity], with the fall widened to about
+         * [FALL_SHARE_OF_RAIL] of the rail (capped at [MAX_FALL_DP]) so the whole column bends in
+         * one wide arc, as in the reference recordings, instead of a bump around the finger. A
+         * wider fall only adds displacement, so the finger-clearance guarantee is unchanged.
+         */
+        fun forRail(density: Float, railLengthPx: Float): RailBulgeSpec {
+            val base = forDensity(density)
+            val wide = (railLengthPx * FALL_SHARE_OF_RAIL).coerceIn(base.fallPx, MAX_FALL_DP * density)
+            return base.copy(fallPx = wide.coerceAtLeast(base.fallPx))
+        }
+
         fun forDensity(density: Float): RailBulgeSpec = RailBulgeSpec(
             fingerRadiusPx = 28f * density,
             plateauPx = 17f * density,

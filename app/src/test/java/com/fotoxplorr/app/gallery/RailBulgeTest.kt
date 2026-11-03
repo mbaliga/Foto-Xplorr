@@ -218,3 +218,50 @@ class RailMappingTest {
         assertEquals(null, RailMapping.neighbourStop(stops, 3, forward = false))
     }
 }
+
+class RailBulgeWidthTest {
+    @Test
+    fun `the fall is about a third of the rail, floored and capped`() {
+        val d = 2f
+        val base = RailBulgeSpec.forDensity(d)
+        // 700 dp rail: 30 percent is 210 dp, under the 220 dp cap.
+        assertEquals(210f * d, RailBulgeSpec.forRail(d, 700f * d).fallPx, 0.01f)
+        // A very tall rail is capped.
+        assertEquals(220f * d, RailBulgeSpec.forRail(d, 2000f * d).fallPx, 0.01f)
+        // A tiny rail never falls narrower than the base 3.5 rows.
+        assertEquals(base.fallPx, RailBulgeSpec.forRail(d, 50f * d).fallPx, 0.01f)
+        // Everything else is the base spec.
+        assertEquals(base.plateauPx, RailBulgeSpec.forRail(d, 700f * d).plateauPx, 0f)
+    }
+
+    @Test
+    fun `the wide arc still keeps every label out of the finger and falls monotonically`() {
+        for (density in listOf(1f, 2.625f, 3.5f)) {
+            val s = RailBulgeSpec.forRail(density, 700f * density)
+            for (depthDp in 0..44 step 4) {
+                val depth = depthDp * density
+                val finger = 350f * density
+                var label = finger - 3f * s.fingerRadiusPx
+                while (label <= finger + 3f * s.fingerRadiusPx) {
+                    assertTrue(RailBulge.isClearOfFinger(label, finger, depth, 1f, s))
+                    label += 0.5f
+                }
+            }
+            var last = Float.MAX_VALUE
+            for (d in 0..600) {
+                val v = RailBulge.displacement(finger(density) + d * density, finger(density), 22f, 1f, s)
+                assertTrue(v <= last + 1e-4f)
+                last = v
+            }
+        }
+    }
+
+    @Test
+    fun `half the rail away the column is still bending, a whole rail away it is straight`() {
+        val s = RailBulgeSpec.forRail(1f, 700f)
+        assertTrue(RailBulge.displacement(350f + 150f, 350f, 22f, 1f, s) > 5f)
+        assertEquals(0f, RailBulge.displacement(350f + 17f + 210f + 1f, 350f, 22f, 1f, s), 0f)
+    }
+
+    private fun finger(density: Float) = 350f * density
+}
