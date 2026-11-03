@@ -228,13 +228,13 @@ private fun KindGlyph(activity: BackgroundActivity) {
 /** One row per activity: glyph, name, and the count, exactly as the mockup draws it. */
 @Composable
 private fun ActivityRows(activities: List<BackgroundActivity>) {
-    val insets = shadeSideInsets(base = 14f)
+    val lift = LocalSheetLift.current
     activities.take(MAX_LISTED_ROWS).forEach { activity ->
         Row(
             Modifier
                 .fillMaxWidth()
                 .height(NOTIFICATION_ROW.dp)
-                .padding(start = insets.startDp.dp, end = insets.endDp.dp),
+                .sheetInsets(lift, depthDp = 0f, baseDp = 14f),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SpinnerGlyph(activity)
@@ -272,7 +272,7 @@ private fun ActivityRows(activities: List<BackgroundActivity>) {
  */
 @Composable
 private fun HeroPanel(activity: BackgroundActivity) {
-    val insets = shadeSideInsets(base = 18f)
+    val lift = LocalSheetLift.current
     Column(Modifier.fillMaxWidth().height(EXPANDED_HERO.dp)) {
         Box(
             Modifier
@@ -290,7 +290,7 @@ private fun HeroPanel(activity: BackgroundActivity) {
             PhotoStack(photos = activity.photos, seed = activity.id.hashCode().toLong())
         }
         Row(
-            Modifier.fillMaxWidth().padding(start = insets.startDp.dp, end = insets.endDp.dp),
+            Modifier.fillMaxWidth().sheetInsets(lift, depthDp = 0f, baseDp = 18f),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -344,16 +344,6 @@ private fun DrawScope.drawSheetEdge(radiusPx: Float) {
     drawPath(left, Color.Black)
     drawPath(right, Color.Black)
 }
-
-/**
- * The shade's side insets while it sits inside the parked card: the row's own gutter, or more where
- * the card's rounded top corner would bite into it. Depth 0, the worst case: the browser's Scaffold
- * consumes the status bar inset, so the first row can sit right at the card's top edge and under
- * the corner. The timeline's gutter is NOT added here: the shade is drawn inside the grid's gutter box.
- */
-@Composable
-private fun shadeSideInsets(base: Float): SheetGeometry.Insets =
-    SheetGeometry.contentInsets(SheetGeometry.sheetCornerDp(LocalSheetLift.current()), depthDp = 0f, baseDp = base)
 
 /** `4,822 of 12,366` — the count bold, the total muted, as one readout. */
 @Composable

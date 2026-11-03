@@ -66,8 +66,10 @@ class SheetGeometryTest {
     fun `the sheet under the shade is square collapsed and rounds as the shade opens`() {
         assertEquals(0f, SheetGeometry.shadeSheetCornerDp(0f), 0f)
         assertEquals(0f, SheetGeometry.shadeSheetCornerDp(COLLAPSED_HEIGHT.toFloat()), 0f)
-        val half = SheetGeometry.shadeSheetCornerDp(COLLAPSED_HEIGHT + NOTIFICATION_ROW / 2f)
+        val half = SheetGeometry.shadeSheetCornerDp(COLLAPSED_HEIGHT + (NOTIFICATION_ROW - COLLAPSED_HEIGHT) / 2f)
         assertTrue(half > 0f && half < SheetGeometry.FULL_CORNER_DP)
+        // Full radius at one notification row's height, as the KDoc says.
+        assertEquals(SheetGeometry.FULL_CORNER_DP, SheetGeometry.shadeSheetCornerDp(NOTIFICATION_ROW.toFloat()), 1e-3f)
         assertEquals(SheetGeometry.FULL_CORNER_DP, SheetGeometry.shadeSheetCornerDp(EXPANDED_HERO.toFloat()), 0f)
     }
 }

@@ -106,7 +106,7 @@ import com.fotoxplorr.app.hyle.ActivityShade
 import com.fotoxplorr.app.hyle.ActivityStackEnv
 import com.fotoxplorr.app.hyle.LocalActivityStackEnv
 import com.fotoxplorr.app.hyle.LocalSheetLift
-import com.fotoxplorr.app.hyle.recentlyProcessed
+import com.fotoxplorr.app.hyle.photosForIds
 import com.fotoxplorr.app.hyle.BackgroundActivity
 import com.fotoxplorr.app.hyle.FloatingPillControl
 import com.fotoxplorr.app.hyle.MapToggleFab
@@ -650,23 +650,29 @@ private fun GalleryBrowser(
     // Never while selecting: the shade and the selection's action bar occupy the same strip, and
     // recognition runs for many minutes on a large library, so the two would collide for most of
     // the time the user spends choosing photos.
-    // The shade's photo stack: the browsable photos (never a protected one) the pass has most
-    // recently got through, see recentlyProcessed for why that is an approximation.
-    val stackPool = remember(
-        state.assets, state.library.archivedIds, state.sensitiveIds,
+    // The shade's photo stack: the photos the recognition pass reports it has just finished
+    // (RecognitionProgress.recentIds), looked up in the browsable list so a protected photo is
+    // never shown. Indexed only while the pass runs (20k items), then memoised.
+    val recognitionRunning = state.recognitionProgress.running
+    val stackIndex = remember(
+        recognitionRunning, state.assets, state.library.archivedIds, state.sensitiveIds,
         state.lockedFolders, state.unlockedFolders, state.preferences.hideSensitive,
     ) {
-        browsableAssets(
-            assets = state.assets,
-            archivedIds = state.library.archivedIds,
-            sensitiveIds = state.sensitiveIds,
-            lockedFolders = state.lockedFolders,
-            unlockedFolders = state.unlockedFolders,
-            hideSensitive = state.preferences.hideSensitive,
-        ).filterNot { it.isVideo }
+        if (!recognitionRunning) {
+            emptyMap()
+        } else {
+            browsableAssets(
+                assets = state.assets,
+                archivedIds = state.library.archivedIds,
+                sensitiveIds = state.sensitiveIds,
+                lockedFolders = state.lockedFolders,
+                unlockedFolders = state.unlockedFolders,
+                hideSensitive = state.preferences.hideSensitive,
+            ).filterNot { it.isVideo }.associateBy { it.id }
+        }
     }
-    val recognitionPhotos = if (state.recognitionProgress.running) {
-        recentlyProcessed(stackPool, state.recognitionProgress.completed)
+    val recognitionPhotos = if (recognitionRunning) {
+        photosForIds(state.recognitionProgress.recentIds, stackIndex)
     } else {
         emptyList()
     }
@@ -1187,7 +1193,7 @@ private fun GalleryBrowser(
         LocalActivityStackEnv provides ActivityStackEnv(
             sensitiveIds = state.sensitiveIds,
             blurSensitive = state.preferences.blurSensitive,
-            onOpen = { asset -> actions.onOpenAsset(asset, stackPool) },
+            onOpen = { asset -> actions.onOpenAsset(asset, recognitionPhotos) },
         ),
     ) {
     // Over a pane or the map the details, actions and view options rooms would act on the hidden

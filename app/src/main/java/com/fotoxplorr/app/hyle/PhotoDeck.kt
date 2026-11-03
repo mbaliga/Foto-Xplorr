@@ -137,18 +137,20 @@ class RuffleAccumulator(private val stepPx: Float) {
 fun ruffleDelta(dx: Float, dy: Float): Float = if (abs(dy) > abs(dx)) dy else dx
 
 /**
- * The photos the stack shows for a job that works through [photos] in order and has finished
- * [completed] of them: the [limit] most recently processed, newest first, so the top card is the
- * one just done and changes as the job advances.
- *
- * Before anything is finished the first photos stand in (the ones about to be worked on), so the
- * stack is never empty while there is something to show. An approximation, said plainly: the
- * recognition pass skips photos it already has, so on a library that is partly indexed the
- * window is the right size but not exactly the right photos (see the report on RecognitionProgress).
+ * The photos for a stack from the ids a job reports as finished ([recentIds], newest first),
+ * looked up in [byId] (the browsable, safe photos): an id that is not there (locked, archived,
+ * hidden, trashed) is dropped, never shown. Empty until the job has reported any, which the
+ * stack draws as its neutral silhouette.
  */
-fun <T> recentlyProcessed(photos: List<T>, completed: Int, limit: Int = PhotoDeck.MAX_CARDS): List<T> {
-    if (photos.isEmpty() || limit <= 0) return emptyList()
-    val end = completed.coerceIn(0, photos.size)
-    if (end == 0) return photos.take(limit)
-    return photos.subList((end - limit).coerceAtLeast(0), end).asReversed()
+fun <K, T> photosForIds(recentIds: List<K>, byId: Map<K, T>, limit: Int = PhotoDeck.MAX_CARDS): List<T> =
+    recentIds.asSequence().mapNotNull(byId::get).take(limit).toList()
+
+/**
+ * The deck once the person has thumbed it: the cards they were looking at stay exactly where they
+ * are ([frozen], in order) and photos that arrive afterwards go BEHIND them, so the photo they
+ * flipped to never changes under their finger. Bounded by [cap].
+ */
+fun <T> mergeBehind(frozen: List<T>, fresh: List<T>, cap: Int = PhotoDeck.MAX_CARDS * 2): List<T> {
+    val known = frozen.toHashSet()
+    return (frozen + fresh.filter { it !in known }).take(cap)
 }

@@ -118,6 +118,7 @@ class RecognitionIndexer(
         val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
         var completed = 0
+        val recent = RecentIds()
         var failed = 0
         val batch = ArrayList<AssetRecognition>(BATCH_SIZE)
         // Progress is THROTTLED, not published per photo.
@@ -144,6 +145,7 @@ class RecognitionIndexer(
                         null
                     }
                 if (row != null) {
+                    recent.add(asset.id)
                     store.clearFailure(asset.id)
                     batch += row
                     if (batch.size >= BATCH_SIZE) {
@@ -161,6 +163,7 @@ class RecognitionIndexer(
                             completed = completed,
                             total = pending.size,
                             failed = failed,
+                            recentIds = recent.newestFirst(),
                         ),
                     )
                 }

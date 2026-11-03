@@ -23,11 +23,12 @@ object SheetGeometry {
 
     /**
      * The corner of the grid sheet under the activity shade while the shade is [heightDp] tall:
-     * square at the collapsed sliver (nothing changes at rest) and the full radius once one
-     * notification row's worth of height has opened, easing in with the shade's own animation.
+     * square at the collapsed sliver (nothing changes at rest) and the full radius at one
+     * notification row's height (the 22 dp from the 28 dp sliver to the 50 dp row), easing in
+     * with the shade's own animation.
      */
-    fun shadeSheetCornerDp(heightDp: Float, collapsedDp: Float = 28f, rowDp: Float = 50f): Float =
-        sheetCornerDp((heightDp - collapsedDp) / rowDp)
+    fun shadeSheetCornerDp(heightDp: Float, collapsedDp: Float = 28f, rampDp: Float = 22f): Float =
+        sheetCornerDp((heightDp - collapsedDp) / rampDp)
 
     /**
      * How far a row whose text starts [depthDp] below the sheet's top edge must be pushed in from

@@ -31,7 +31,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -66,7 +65,8 @@ internal object PhotoStackCopy {
  *
  * The photos given to the stack are already the browsable list (archived, locked and trashed
  * photos are never in it), so this only decides how a SENSITIVE one that the list still holds
- * is drawn: blurred when [blurSensitive], which is the app's own setting.
+ * is drawn: with [blurSensitive] (the app's own setting) it is not loaded at all and a plate says
+ * "Sensitive", because a blur is a no-op below API 31.
  */
 class ActivityStackEnv(
     val sensitiveIds: Set<MediaId> = emptySet(),
@@ -119,7 +119,11 @@ fun PhotoStack(
     modifier: Modifier = Modifier,
     env: ActivityStackEnv = LocalActivityStackEnv.current,
 ) {
-    val cards = remember(photos) { photos.take(PhotoDeck.MAX_CARDS) }
+    val fresh = remember(photos) { photos.take(PhotoDeck.MAX_CARDS) }
+    // Once the person has thumbed the deck it is pinned: the cards they were looking at stay put
+    // and new photos go behind them, so the photo they flipped to never changes under their finger.
+    var frozen by remember { mutableStateOf<List<MediaAsset>?>(null) }
+    val cards = remember(fresh, frozen) { frozen?.let { mergeBehind(it, fresh) } ?: fresh }
     val reduceMotion = rememberReduceMotion()
     val haptics = LocalHapticFeedback.current
     var deck by remember { mutableStateOf(PhotoDeck(cards.size)) }
@@ -131,6 +135,7 @@ fun PhotoStack(
 
     fun flip(steps: Int) {
         if (steps == 0 || !shown.canFlip) return
+        if (!touched) frozen = cards
         touched = true
         deck = shown.flip(steps)
         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -219,14 +224,15 @@ private fun Card(asset: MediaAsset, seed: Long, isTop: Boolean, reduceMotion: Bo
             .background(Color(0xFF1C1C22))
             .border(1.dp, Color.White.copy(alpha = 0.30f), shape),
     ) {
-        MediaImage(
-            asset = asset,
-            modifier = Modifier
-                .matchParentSize()
-                .then(if (hidden) Modifier.blur(22.dp) else Modifier),
-            contentScale = ContentScale.Crop,
-        )
-        if (hidden) {
+        // A hidden photo is not loaded at all, on any API: Modifier.blur does nothing below API 31
+        // (minSdk is 26), so "blurred" there would have been the sharp photo under a chip.
+        if (!hidden) {
+            MediaImage(
+                asset = asset,
+                modifier = Modifier.matchParentSize(),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
             Text(
                 text = "Sensitive",
                 color = Color.White,

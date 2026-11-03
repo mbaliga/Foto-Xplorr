@@ -105,14 +105,21 @@ class PhotoDeckTest {
     }
 
     @Test
-    fun `the stack shows the most recently processed photos newest first`() {
-        val photos = (1..20).toList()
-        assertEquals(listOf(12, 11, 10, 9, 8, 7, 6, 5), recentlyProcessed(photos, 12))
-        assertEquals(listOf(3, 2, 1), recentlyProcessed(photos, 3))
-        // Nothing done yet: the first photos stand in, in order.
-        assertEquals((1..8).toList(), recentlyProcessed(photos, 0))
-        // Past the end clamps.
-        assertEquals(20, recentlyProcessed(photos, 99).first())
-        assertTrue(recentlyProcessed(emptyList<Int>(), 5).isEmpty())
+    fun `the stack shows only finished photos that are browsable, newest first`() {
+        val byId = mapOf(1L to "a", 2L to "b", 4L to "d")
+        // 3 is not in the browsable map (locked, archived, hidden): dropped, never shown.
+        assertEquals(listOf("d", "b", "a"), photosForIds(listOf(4L, 3L, 2L, 1L), byId))
+        assertEquals(listOf("d"), photosForIds(listOf(4L, 2L, 1L), byId, limit = 1))
+        // Nothing reported yet: nothing to show (the stack draws its silhouette).
+        assertTrue(photosForIds(emptyList(), byId).isEmpty())
+    }
+
+    @Test
+    fun `new photos go behind a thumbed deck and never in front`() {
+        val merged = mergeBehind(listOf("x", "y"), listOf("n2", "x", "n1"))
+        assertEquals(listOf("x", "y", "n2", "n1"), merged)
+        assertEquals(listOf("x", "y"), mergeBehind(listOf("x", "y"), listOf("y", "x")))
+        assertEquals(3, mergeBehind(listOf("x"), listOf("a", "b", "c"), cap = 3).size)
+        assertEquals("x", mergeBehind(listOf("x"), listOf("a", "b", "c"), cap = 3).first())
     }
 }

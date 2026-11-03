@@ -17,7 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.hyle.SheetGeometry
+import com.fotoxplorr.app.hyle.sheetInsets
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomGeography
 import com.fotoxplorr.app.ui.RoomRule
@@ -60,15 +60,6 @@ fun GalleryInfoRoom(
     gutterStartDp: Int = 0,
     gutterEndDp: Int = 0,
 ) {
-    // The corner and the strip both reach over the room's edges (the card is drawn over the room),
-    // so the text is inset past whichever is wider. Depth 0: any row may be the one by the corner.
-    val insets = SheetGeometry.contentInsets(
-        cornerDp = SheetGeometry.sheetCornerDp(lift()),
-        depthDp = 0f,
-        baseDp = RoomStyle.GutterStart.value,
-        gutterStartDp = gutterStartDp.toFloat(),
-        gutterEndDp = gutterEndDp.toFloat(),
-    )
     // One pass over the list rather than six. At 22,000 assets the difference between counting
     // once and calling count{} per statistic is the difference between opening instantly and
     // visibly hitching as the room reveals.
@@ -82,12 +73,17 @@ fun GalleryInfoRoom(
             // so the system bar to clear here is the status bar.
             .clearSystemBarsFor(RoomGeography.Details)
             .verticalScroll(rememberScrollState())
-            .padding(
-                start = insets.startDp.dp,
-                end = insets.endDp.dp,
-                top = 26.dp,
-                bottom = 26.dp,
-            ),
+            // The corner and the strip both reach over the room's edges (the card is drawn over
+            // the room), so the text is inset past whichever is wider. Depth 0: any row may be the
+            // one by the corner. Read in layout, not composition: see sheetInsets.
+            .sheetInsets(
+                lift = lift,
+                depthDp = 0f,
+                baseDp = RoomStyle.GutterStart.value,
+                gutterStartDp = gutterStartDp.toFloat(),
+                gutterEndDp = gutterEndDp.toFloat(),
+            )
+            .padding(top = 26.dp, bottom = 26.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         RoomEyebrow("THIS VIEW")

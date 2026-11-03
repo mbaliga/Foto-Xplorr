@@ -238,6 +238,12 @@ data class RecognitionProgress(
     val indexedCount: Int = 0,
     val failed: Int = 0,
     val message: String? = null,
+    /**
+     * The ids of the last few photos the detector pass finished, newest first (at most
+     * [RecentIds.LIMIT]; ids only). The activity shade's photo stack shows these, intersected with
+     * the browsable list, so it is the photos actually being worked on. Empty outside that pass.
+     */
+    val recentIds: List<MediaId> = emptyList(),
 ) {
     /**
      * A pass has run to its end over everything it was given and nothing failed. False on a fresh
@@ -246,6 +252,22 @@ data class RecognitionProgress(
      */
     val passFinished: Boolean
         get() = !running && message == null && failed == 0 && indexedCount > 0 && completed == total
+}
+
+/** A bounded ring of the most recent ids, newest first. Pure, so the bound is testable. */
+class RecentIds(private val limit: Int = LIMIT) {
+    private val ids = ArrayDeque<MediaId>()
+
+    fun add(id: MediaId) {
+        ids.addFirst(id)
+        while (ids.size > limit) ids.removeLast()
+    }
+
+    fun newestFirst(): List<MediaId> = ids.toList()
+
+    companion object {
+        const val LIMIT = 8
+    }
 }
 
 /**
