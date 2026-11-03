@@ -363,6 +363,10 @@ class GalleryPreferences(context: Context) {
     /**
      * The migration is decided once and written down at once: a later write of any other key would
      * otherwise make a fresh install look like an old one on the next launch.
+     *
+     * Known edge, accepted: an old install that never wrote a single gallery preference has an
+     * empty file, so it is indistinguishable from a fresh one and gets the scrubbing-only default
+     * (it never saw anything but the default strip, and the setting is one tap away).
      */
     private fun loadTimelineVisibility(): TimelineVisibility {
         val stored = preferences.getString(KEY_TIMELINE_VISIBILITY, null)

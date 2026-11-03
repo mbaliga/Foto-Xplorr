@@ -121,8 +121,8 @@ fun FilmstripScrubber(
     // animates to N while the user is still dragging — the strip stutters under the finger.
     var selfReported by remember { mutableIntStateOf(-1) }
     val bulge = remember { Animatable(initialBulge.coerceIn(0f, 1f)) }
-    // Where the finger is on the strip (x in the strip's own px; negative when none is down, in
-    // which case the centre stands in for it).
+    // Where the finger last was on the strip (x in the strip's own px; negative until the first touch,
+    // when the centre stands in for it).
     // Observed on the Initial pass without consuming, so the strip's own drag is untouched; read
     // only from layer and layout lambdas.
     val fingerX = remember { mutableFloatStateOf(-1f) }
@@ -137,11 +137,11 @@ fun FilmstripScrubber(
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         val down = event.changes.firstOrNull { it.pressed }
-                        if (down == null) {
-                            fingerX.floatValue = -1f
-                        } else {
-                            fingerX.floatValue = down.position.x
-                        }
+                        // Kept after the finger lifts: the lift is scaled by the bulge, which eases
+                        // down for a moment, and a jump to the centre would slide the thumbnails
+                        // sideways while they settle. The next touch overwrites it before the
+                        // bulge rises again.
+                        if (down != null) fingerX.floatValue = down.position.x
                     }
                 }
             }
@@ -256,7 +256,7 @@ fun FilmstripScrubber(
             }
         }
 
-        // The frame being chosen, large, above the finger: the finger never hides it. Shown only
+        // The centre frame (the one the strip selects), large, above the finger: the finger never hides it. Shown only
         // while the user moves the strip, placed over the strip's top edge (it sits outside this
         // band's bounds, which nothing clips) and kept on screen. Pointer-free.
         val previewAsset = centreIndex?.let { assets.getOrNull(it) }
