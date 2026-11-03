@@ -1782,3 +1782,88 @@ the exposure on the card for every trial cannot see any of this: use `ChromaTest
 The kind label for a card reading is "With card" ("Corrected with your card; off by about 3 to 6 at best"), not
 "Calibrated" or "exact"; a card is assumed to be plain white paper of 0.85 reflectance, and two card readings closer than 3
 (`CALIBRATED_FLOOR`) are too close to call.
+
+## 126. Several agents share one git index: commit with paths
+
+Parallel units edit one working tree and one index. A bare `git commit` sweeps in whatever another unit staged. Always
+`git add -- <paths> && git commit -m ... -- <paths>`, and look at `git diff --cached --stat` for foreign files first.
+Never reset, stash or `git clean`.
+
+## 127. The timeline rail (batch 9): what is easy to break
+
+`gallery/TimelineRail.kt` replaces the library's `EdgeTimelineScrubber` (read-only here); the arc is `RailBulge` (pure,
+tested). Default is `TimelineVisibility.WHILE_SCRUBBING`: nothing is drawn at rest, the 44 dp touch target is live, the
+rail fades in on a claimed scrub and out `LINGER_MS` after release; `ALWAYS` keeps the old strip.
+- The gutter follows `stripReservesRoom` (true only for `ALWAYS`). In the scrubbing mode the grid must not reflow.
+- `timelineVisibility` is decided at first load by `migratedTimelineVisibility` and **written back then**: an install
+  that had the timeline on keeps `ALWAYS`; a later read of the old boolean must not re-decide.
+- Labels move only by layer translation (a finger move must not recompose). No `BoxWithConstraints` in the rail: a
+  SubcomposeLayout makes the grid lose its taps (found with a probe, `RailPointerComposeTest`).
+- The invisible touch target is a hand-written pointer node that **shares input with siblings**, and takes a touch only
+  after touch slop along the rail. Otherwise it swallows every tap, long-press and fling in the grid's outer 44 dp.
+- `systemGestureExclusion` is on only while the rail is drawn (always / pressed / lingering / focused): the exclusion
+  must exist before a touch, but an always-on band removes back-swipe along 200 dp of the edge. Cost: the first scrub of a
+  session starts without it. Unverified on devices with a back gesture.
+- Filmstrip: `fingerX` is kept after the finger lifts so the settling lift does not slide sideways.
+
+## 128. The activity shade is drawn over content
+
+The Recognising shade and the top room overlay the grid. Anything pinned at the top (the People pane, a chip row) must
+inset by `SheetGeometry` / `peopleTopInset(shadeReserve)`, and room and shade text by `SheetInsets` (rounded corner,
+timeline gutter). The grid under an open shade never moves; the fillets and shadow only make it read as a slipped sheet.
+On the stack: a tap and a ruffle drag compete: the stack ruffles on a drag and opens the top photo on a tap (`detectTapGestures` beside `detectDragGestures`). The stack's photos come from
+`RecognitionIndexer.RecentIds`, are loaded through the browsable list only, and with blur on a sensitive photo is never
+loaded sharp (TRAPS #33).
+
+## 129. People: ids, crops, visibility
+
+`PersonCluster.id` is rank-by-size and changes between runs: never store it. A name, merge or hide hangs on
+`PersonRecord.id`, matched to clusters through remembered face addresses (`PeopleRoster.resolve`). Face crops are
+memory-only and recycled (never written to disk). A person's photos reach the screen only through the destination's
+visible list, never a raw store query (a locked photo has a face too). Recognition DB v6 is additive (face boxes);
+photos stored without boxes are re-read once. `destinationAssets(PEOPLE)` used to be every photo with a face: the old
+strip was also hidden under the shade.
+
+## 130. HyleTextField, maps and imported tiles
+
+- `HyleTextField`'s `modifier` lands on a wrapping Column; a test tag on the inner field needs `fieldTag`. Tests find
+  fields by `contentDescription = label`.
+- Map taps arrive about 300 ms late (double-tap disambiguation). `mapGestures` must read state via
+  `rememberUpdatedState`, or a gesture acts on stale zoom.
+- Imported MBTiles are raster only (PMTiles and vector are refused) and bounded: 64 visible tiles, 512 px tile edge,
+  24 MB tile cache; the TMS row is flipped. The bundled world map stops at level 8.
+
+## 131. Services, the Nooz catalogue and downloaded models
+
+- The Nooz catalogue is **data only**, fetched only on an explicit "Update catalogue" tap, Connect only, from a URL
+  pinned to a Nooz **commit** (`CatalogueStore.BASE_URL`), never a branch. A missing field means unknown (null), not zero.
+- Never offer Get for a kind Fotoz has no runtime for (`LLM_GGUF`, `SD_IMAGE` are shown collapsed with Get disabled;
+  TTS is hidden). Nooz has no vision kind, so the MobileNet embedder is not in it.
+- No downloaded model has a published checksum. The screen shows the SHA-256 it computed, never "verified". Size and
+  hash are checked only when the catalogue states them.
+- The BYOK privacy line must match the code: only Test sends anything, and no photo.
+
+## 132. Cloud sync: the failure modes already met
+
+- `HttpCaller` follows 308; Google Drive's resumable upload uses 308 as "continue". Drive uses a caller built with
+  `followSameHostRedirects = false`.
+- Read a response body once. Copy the passphrase `CharArray` before any async use (the caller clears its buffer).
+- The protected-photo gate is fed by `SyncLibraryFeed` in the activity (the strictest browsable list, TRAPS #33),
+  not by a pane: a run started earlier must see a folder locked later. `BrowsableGate` re-checks each file at upload
+  time. When the feeder leaves, the list is empty and nothing is sent (fail closed).
+- An unconfirmed write is not done: only a confirmed size/hash/status marks a file sent. S3 sends `If-None-Match: *`;
+  adopting an existing remote file needs a hash or mtime match. Never overwrite, never delete.
+- `SyncRateLimited` is a `SyncException` subclass: catch it before the base class. Foreground `SYNCING` must stay in
+  `JobForegroundService.movesBytes()`. `BackupKind.SYNC_FILE` is not part of backups.
+- Plain copies take the platform's view of a photo (GPS may be absent, TRAPS #31); only an encrypted destination asks
+  for the unredacted original (`includeLocation = encryptEnabled`).
+- The Connect build allows cleartext app-wide (`connect/res/xml/network_security_config.xml`): Android cannot scope it
+  to private ranges. The policy is in code (`HostRules`, plain http only when switched on and the host is local); a
+  stray `http://` elsewhere in that build is now sent, not refused. See ADR-018.
+
+## 133. Settings rows and the offline gates
+
+New Settings rows must use `SettingsRow` / `SettingsSection` (a test fails if a row has no icon); `RoomRow` takes
+`leadingIcon` in a fixed parameter position, so name it. `verifyOfflineSourceReferences` scans `src/main` and
+`src/offline` line by line **including comments**: never write `okhttp3.`, `java.net.Socket`, `.openConnection(` etc.
+there, even in KDoc. Network code lives in `src/connect` (or `feature:ai-remote`) with a same-FQN stub in `src/offline`.
