@@ -53,6 +53,9 @@ enum class BackupKind(val code: Int) {
 
     /** The small encrypted index written beside a closed pack; resume reads it, not a local journal. */
     PACK_INDEX(3),
+
+    /** One photo or video sent to a sync destination, encrypted before it leaves the phone (`sync/`). Not part of a backup set. */
+    SYNC_FILE(4),
     ;
 
     companion object {

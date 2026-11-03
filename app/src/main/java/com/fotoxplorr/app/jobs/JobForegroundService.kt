@@ -148,7 +148,7 @@ class JobForegroundService : LifecycleService() {
 
         /** Kinds that copy or fetch bytes rather than transcode media. */
         private fun ActivityKind.movesBytes(): Boolean =
-            this == ActivityKind.BACKING_UP || this == ActivityKind.DOWNLOADING_MAP
+            this == ActivityKind.BACKING_UP || this == ActivityKind.DOWNLOADING_MAP || this == ActivityKind.SYNCING
 
         private const val CHANNEL_ID = "foto_xplorr_jobs"
         private const val NOTIFICATION_ID = 4210

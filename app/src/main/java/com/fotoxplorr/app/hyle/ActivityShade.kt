@@ -74,6 +74,11 @@ enum class ActivityKind(val label: String, val accent: Color, val glyph: ImageVe
     // be read as the pale error salmon. The glyph is the generic sync mark: a download arrow would
     // need a new vector in ActivityGlyphs.
     DOWNLOADING_MAP("Downloading map", Color(0xFFFF4081), ActivityGlyphs.Scan),
+
+    // Copies going to the person's own cloud or folder (sync/). Violet is the stretch between the
+    // blue of Moving and the magenta of Recognising; the glyph is the export arrow, which reads as
+    // "sending out". The foreground-service mapping treats it as a data sync (JobForegroundService).
+    SYNCING("Syncing", Color(0xFF8C6BFF), ActivityGlyphs.Export),
 }
 
 /**
