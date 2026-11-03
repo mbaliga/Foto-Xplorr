@@ -303,7 +303,8 @@ separate choices (owner #25).
 away from the finger (`RailBulge`, pure and tested), a bubble with the month sits level with the finger, and on release the
 rail eases straight. Setting **Timeline shows**: *Only while scrubbing* (default; nothing drawn at rest, the 44 dp edge is
 still a live touch target, no gutter, so the grid never reflows) or *Always visible* (the strip and gutter above). The touch
-target shares input with the grid and claims a touch only after slop along the rail. The system-gesture exclusion is on only
+target shares input with the grid (it is a direct sibling of it) and claims a touch only after slop along the rail. The arc
+falls over 30% of the rail's length on each side of the finger (at least 49 dp, at most 220 dp). The system-gesture exclusion is on only
 while the rail is drawn. TalkBack gets previous/next month and "Scrub timeline" actions. The viewer's **filmstrip** does the
 same with thumbnails (lifted away from the finger, a large preview above it). Same in both flavors. TRAPS #127.
 

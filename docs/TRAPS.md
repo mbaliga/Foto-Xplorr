@@ -1800,10 +1800,12 @@ rail fades in on a claimed scrub and out `LINGER_MS` after release; `ALWAYS` kee
 - Labels move only by layer translation (a finger move must not recompose). No `BoxWithConstraints` in the rail: a
   SubcomposeLayout makes the grid lose its taps (found with a probe, `RailPointerComposeTest`).
 - The invisible touch target is a hand-written pointer node that **shares input with siblings**, and takes a touch only
-  after touch slop along the rail. Otherwise it swallows every tap, long-press and fling in the grid's outer 44 dp.
+  after touch slop along the rail. It reaches the grid only as a DIRECT sibling of it (no wrapper Box around the rail). Otherwise it swallows every tap, long-press and fling in the grid's outer 44 dp.
 - `systemGestureExclusion` is on only while the rail is drawn (always / pressed / lingering / focused): the exclusion
   must exist before a touch, but an always-on band removes back-swipe along 200 dp of the edge. Cost: the first scrub of a
   session starts without it. Unverified on devices with a back gesture.
+- The arc falls over 30% of the rail's length on each side of the finger, floored at 49 dp (3.5 label rows) and capped at
+  220 dp (`RailBulgeSpec.forRail`); a wider fall only adds displacement, so the finger stays clear.
 - Filmstrip: `fingerX` is kept after the finger lifts so the settling lift does not slide sideways.
 
 ## 128. The activity shade is drawn over content
