@@ -166,3 +166,45 @@ internal fun timelineSortLabel(sort: GallerySort, horizontal: Boolean = false): 
     GallerySort.NAME -> "By name"
     GallerySort.SIZE -> "Largest first"
 }
+
+/**
+ * Whether the timeline rail is drawn at rest (owner, batch 9 #5: "the option of having the timeline
+ * always visible or only on scrubbing"). The edge touch target exists in both modes; only the
+ * drawing and the grid's gutter differ.
+ */
+enum class TimelineVisibility(val label: String) {
+    /** The default: hidden at rest, appears when a scrub begins, fades about a second after release. */
+    WHILE_SCRUBBING("Only while scrubbing"),
+
+    /** Drawn all the time, with the grid making room for it (the behaviour before batch 9). */
+    ALWAYS("Always visible"),
+}
+
+/**
+ * The visibility a stored install gets: a stored name wins; otherwise an install that already had
+ * stored settings and the timeline on keeps seeing its strip ([TimelineVisibility.ALWAYS]), and
+ * everyone else (a fresh install, or someone who had it off) gets the new default.
+ */
+internal fun migratedTimelineVisibility(
+    storedName: String?,
+    existingInstall: Boolean,
+    timelineWasOn: Boolean,
+): TimelineVisibility {
+    TimelineVisibility.entries.firstOrNull { it.name == storedName }?.let { return it }
+    return if (existingInstall && timelineWasOn) TimelineVisibility.ALWAYS else TimelineVisibility.WHILE_SCRUBBING
+}
+
+/**
+ * Whether the grid makes room (the gutter and everything that dodges it) for the strip. Only in
+ * [TimelineVisibility.ALWAYS]: in the scrubbing mode the rail is an overlay that appears over the
+ * photos, so the grid must not reflow when it does.
+ */
+internal fun stripReservesRoom(shown: Boolean, visibility: TimelineVisibility): Boolean =
+    shown && visibility == TimelineVisibility.ALWAYS
+
+/**
+ * How visible the rail is at rest: [restAlpha] when always visible, 0 when only shown while
+ * scrubbing. Never affects hit testing (the touch target is there either way).
+ */
+internal fun railRestAlpha(visibility: TimelineVisibility, restAlpha: Float): Float =
+    if (visibility == TimelineVisibility.ALWAYS) restAlpha else 0f

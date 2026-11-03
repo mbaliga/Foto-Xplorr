@@ -222,3 +222,56 @@ class TimelineLayoutTest {
         assertEquals(TimelineGrouping.MONTH, headerGrouping(3, TimelineGrouping.MONTH))
     }
 }
+
+/** The visibility setting (owner, batch 9 #5): the default, the migration, and the gutter rule. */
+class TimelineVisibilityTest {
+
+    @Test
+    fun `a fresh install gets the scrubbing-only default`() {
+        assertEquals(
+            TimelineVisibility.WHILE_SCRUBBING,
+            migratedTimelineVisibility(storedName = null, existingInstall = false, timelineWasOn = true),
+        )
+    }
+
+    @Test
+    fun `an install that had the timeline on keeps it always visible`() {
+        assertEquals(
+            TimelineVisibility.ALWAYS,
+            migratedTimelineVisibility(storedName = null, existingInstall = true, timelineWasOn = true),
+        )
+    }
+
+    @Test
+    fun `an install that had the timeline off gets the default and a stored name always wins`() {
+        assertEquals(
+            TimelineVisibility.WHILE_SCRUBBING,
+            migratedTimelineVisibility(null, existingInstall = true, timelineWasOn = false),
+        )
+        assertEquals(
+            TimelineVisibility.WHILE_SCRUBBING,
+            migratedTimelineVisibility("WHILE_SCRUBBING", existingInstall = true, timelineWasOn = true),
+        )
+        assertEquals(
+            TimelineVisibility.ALWAYS,
+            migratedTimelineVisibility("ALWAYS", existingInstall = false, timelineWasOn = false),
+        )
+        assertEquals(
+            TimelineVisibility.WHILE_SCRUBBING,
+            migratedTimelineVisibility("garbage", existingInstall = false, timelineWasOn = true),
+        )
+    }
+
+    @Test
+    fun `the grid makes room only when always visible`() {
+        assertTrue(stripReservesRoom(true, TimelineVisibility.ALWAYS))
+        assertFalse(stripReservesRoom(true, TimelineVisibility.WHILE_SCRUBBING))
+        assertFalse(stripReservesRoom(false, TimelineVisibility.ALWAYS))
+    }
+
+    @Test
+    fun `the rail is invisible at rest only in the scrubbing mode`() {
+        assertEquals(0f, railRestAlpha(TimelineVisibility.WHILE_SCRUBBING, 0.6f), 0f)
+        assertEquals(0.6f, railRestAlpha(TimelineVisibility.ALWAYS, 0.6f), 0f)
+    }
+}

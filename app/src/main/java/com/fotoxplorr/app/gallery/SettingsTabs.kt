@@ -279,6 +279,12 @@ fun SettingsTabsRoom(
                         actions.onSetTimelinePlacement,
                     )
                     ChoiceRow(
+                        "Timeline shows",
+                        TimelineVisibility.entries.map { it to it.label },
+                        preferences.timelineVisibility,
+                        actions.onSetTimelineVisibility,
+                    )
+                    ChoiceRow(
                         "Group timeline by",
                         TimelineGrouping.entries.map { it to it.name.lowercase().replaceFirstChar(Char::uppercase) },
                         preferences.timelineGrouping,
@@ -388,6 +394,7 @@ fun SettingsTabsRoom(
                     Paragraph(HelpCopy.Hint.RESCAN_AUTO)
                 }
 
+                    if (!com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES) com.fotoxplorr.app.basemap.ImportedMapFileRows()
                 SettingsTab.BACKGROUND -> {
                     // Built the same way the PRO tab reads LocalProEntitlement, above: straight
                     // off Context rather than threaded through GalleryUiState/GalleryActions, so
@@ -572,6 +579,9 @@ fun SettingsTabsRoom(
                             HelpCopy.Note.CONNECT_STATEMENT
                         } else {
                             HelpCopy.Note.OFFLINE_STATEMENT
+                    SectionLabel("MAP DATA")
+                    Paragraph("World map: Natural Earth, public domain.")
+
                         },
                         strong = true,
                     )

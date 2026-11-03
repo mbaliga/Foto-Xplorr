@@ -99,6 +99,11 @@ data class GalleryPreferencesState(
     /** Which edge the timeline strip sits on; independent of which way the photos scroll. */
     val timelinePlacement: TimelinePlacement = TimelinePlacement.RIGHT,
     /**
+     * Whether the rail is drawn at rest. Only while scrubbing for a fresh install (owner, batch 9
+     * #5); an install that already had the timeline on keeps [TimelineVisibility.ALWAYS].
+     */
+    val timelineVisibility: TimelineVisibility = TimelineVisibility.WHILE_SCRUBBING,
+    /**
      * Which way the photos scroll: down (the default) or across. Separate from where the timeline
      * strip sits and from the sort, so any strip can sit beside either grid. The stamp view and
      * the masonry layout stay vertical whatever this says (see [gridScrollsHorizontally]).
@@ -243,6 +248,10 @@ class GalleryPreferences(context: Context) {
         state.value.copy(timelinePlacement = placement),
     ) { putString(KEY_TIMELINE_PLACEMENT, placement.name) }
 
+    fun setTimelineVisibility(visibility: TimelineVisibility) = update(
+        state.value.copy(timelineVisibility = visibility),
+    ) { putString(KEY_TIMELINE_VISIBILITY, visibility.name) }
+
     fun setScrollAxis(axis: ScrollAxis) = update(
         state.value.copy(scrollAxis = axis),
     ) { putString(KEY_SCROLL_AXIS, axis.name) }
@@ -351,6 +360,21 @@ class GalleryPreferences(context: Context) {
         }
     }
 
+    /**
+     * The migration is decided once and written down at once: a later write of any other key would
+     * otherwise make a fresh install look like an old one on the next launch.
+     */
+    private fun loadTimelineVisibility(): TimelineVisibility {
+        val stored = preferences.getString(KEY_TIMELINE_VISIBILITY, null)
+        val decided = migratedTimelineVisibility(
+            storedName = stored,
+            existingInstall = preferences.all.isNotEmpty(),
+            timelineWasOn = preferences.getBoolean(KEY_TIMELINE_ON, true),
+        )
+        if (decided.name != stored) preferences.edit().putString(KEY_TIMELINE_VISIBILITY, decided.name).apply()
+        return decided
+    }
+
     private fun update(
         updated: GalleryPreferencesState,
         write: android.content.SharedPreferences.Editor.() -> Unit,
@@ -370,6 +394,7 @@ class GalleryPreferences(context: Context) {
         timelineGrouping = enumValue(KEY_TIMELINE_GROUPING, TimelineGrouping.MONTH),
         timelineOn = preferences.getBoolean(KEY_TIMELINE_ON, true),
         timelinePlacement = enumValue(KEY_TIMELINE_PLACEMENT, TimelinePlacement.RIGHT),
+        timelineVisibility = loadTimelineVisibility(),
         scrollAxis = enumValue(KEY_SCROLL_AXIS, ScrollAxis.VERTICAL),
         themeMode = enumValue(KEY_THEME_MODE, ThemeMode.SYSTEM),
         accentPalette = enumValue(KEY_ACCENT_PALETTE, AccentPalette.VIOLET),
@@ -437,6 +462,7 @@ class GalleryPreferences(context: Context) {
         const val KEY_TIMELINE_GROUPING = "timeline_grouping"
         const val KEY_TIMELINE_ON = "timeline_on"
         const val KEY_TIMELINE_PLACEMENT = "timeline_placement"
+        const val KEY_TIMELINE_VISIBILITY = "timeline_visibility"
         const val KEY_SCROLL_AXIS = "scroll_axis"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_ACCENT_PALETTE = "accent_palette"

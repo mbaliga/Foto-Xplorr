@@ -120,7 +120,6 @@ import com.fotoxplorr.app.hyle.TRASH_DESIGN_H
 import com.fotoxplorr.app.hyle.TRASH_DESIGN_W
 import com.fotoxplorr.app.hyle.shadeHeight
 import androidx.compose.foundation.layout.offset
-import dev.aarso.cellshell.EdgeTimelineScrubber
 import dev.aarso.cellshell.ShakeToRefresh
 import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.SpatialShell
@@ -286,6 +285,7 @@ data class GalleryActions(
      *  "Custom…" flow, whose confirm dialog is what actually validates it before this is ever
      *  called. */
     val onSetCustomTheme: (String) -> Unit,
+    val onSetTimelineVisibility: (TimelineVisibility) -> Unit = {},
     val onSetSlideshowInterval: (Int) -> Unit,
     val onSetDefaultDestination: (HyleDestination) -> Unit,
     val onSetKeepScreenOn: (Boolean) -> Unit,
@@ -967,7 +967,11 @@ private fun GalleryBrowser(
         paneTakenOver = paneTakenOver,
         hasStops = scrubberStops.isNotEmpty(),
     )
-    val timelineGutter = timelineReserve(stripShown, timelinePlacement)
+    // The grid makes room (and the chrome dodges the strip) only while the rail is always drawn; in
+    // the scrubbing-only mode it is an overlay, so nothing reflows when it appears.
+    val timelineVisibility = state.preferences.timelineVisibility
+    val stripReserves = stripReservesRoom(stripShown, timelineVisibility)
+    val timelineGutter = timelineReserve(stripReserves, timelinePlacement)
 
     // ---- open at the latest end ----
     //
@@ -1562,12 +1566,10 @@ private fun GalleryBrowser(
                             // controls on one screen is one too many, and the edge is the one the owner
                             // asked for.
                             //
-                            // Its edge is the Timeline setting (owner #25), and the grid has made room
-                            // for it (the gutter above), so it sits beside the photos instead of on
-                            // them. That answers the earlier "overlapping with the pictures" the other
-                            // way from the fade it used to do: it is always drawn, at one quiet alpha.
-                            // restAlpha rather than an outer graphicsLayer alpha, so the pixels and the
-                            // touch target stay one thing; the library takes it to full opacity on touch.
+                            // Its edge is the Timeline setting (owner #25). Drawn by TimelineRail, not the
+                            // library's flat strip: the labels bulge away from the finger and a bubble
+                            // names the month (owner, batch 9 #5). Only while scrubbing by default, as an
+                            // overlay (no gutter); in Always visible the grid has made room for it.
                             //
                             // Where a room's edge zone and the strip share pixels, the shell goes first
                             // (its drag runs on the Initial pass) and the strip yields: a horizontal
@@ -1582,7 +1584,7 @@ private fun GalleryBrowser(
                             // top strip does move is the shade, drawn inside the gutter, and with it
                             // the shade's reserve: see shadeTopReserve.)
                             if (stripDrawn(stripShown, selection.isActive)) {
-                                EdgeTimelineScrubber(
+                                TimelineRail(
                                     stops = scrubberStops,
                                     itemCount = gridIndexMap.itemCount,
                                     currentIndex = firstVisibleIndex,
@@ -1596,22 +1598,13 @@ private fun GalleryBrowser(
                                     bubbleTextColor = MaterialTheme.colorScheme.onPrimary,
                                     restAlpha = EDGE_SCRUBBER_REST_ALPHA,
                                     edge = timelinePlacement.edge(),
-                                    modifier = Modifier
-                                        .align(
-                                            when (timelinePlacement) {
-                                                TimelinePlacement.LEFT -> Alignment.CenterStart
-                                                TimelinePlacement.RIGHT -> Alignment.CenterEnd
-                                                TimelinePlacement.TOP -> Alignment.TopCenter
-                                                TimelinePlacement.BOTTOM -> Alignment.BottomCenter
-                                            },
-                                        )
-                                        .then(
-                                            if (timelinePlacement == TimelinePlacement.BOTTOM) {
-                                                Modifier.navigationBarsPadding()
-                                            } else {
-                                                Modifier
-                                            },
-                                        ),
+                                    visibility = timelineVisibility,
+                                    restAlpha = EDGE_SCRUBBER_REST_ALPHA,
+                                    modifier = if (timelinePlacement == TimelinePlacement.BOTTOM) {
+                                        Modifier.navigationBarsPadding()
+                                    } else {
+                                        Modifier
+                                    },
                                 )
                             }
                         }
@@ -1648,7 +1641,7 @@ private fun GalleryBrowser(
                             modifier = Modifier
                                 .align(Alignment.TopStart)
                                 // Below a strip along the top edge, which it would otherwise cover.
-                                .padding(top = routeBarDrop(stripShown, timelinePlacement, searchVisible).dp),
+                                .padding(top = routeBarDrop(stripReserves, timelinePlacement, searchVisible).dp),
                         )
                     }
 
@@ -1663,7 +1656,7 @@ private fun GalleryBrowser(
                         val railInset = railInsetDp(railPresentation).dp
                         // A strip along the bottom edge takes the row the pill and the discs sit
                         // on, so they all rise by its thickness (zero for every other placement).
-                        val chromeLift = floatingChromeLift(stripShown, timelinePlacement)
+                        val chromeLift = floatingChromeLift(stripReserves, timelinePlacement)
                         val rangeApplies = timeRangeApplies(destination)
                         // The one way to zoom without a gesture: a stepper that wraps from the
                         // stamps back to one column, since a button has no way to go back with.

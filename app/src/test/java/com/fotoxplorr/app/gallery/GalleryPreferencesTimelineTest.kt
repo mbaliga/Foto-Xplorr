@@ -79,4 +79,39 @@ class GalleryPreferencesTimelineTest {
         assertEquals("NONE", raw().getString("timeline_grouping", null))
         assertEquals(TimelineGrouping.NONE, preferences().observe().value.timelineGrouping)
     }
+
+    @Test
+    fun `a fresh install shows the rail only while scrubbing and writes that down`() {
+        assertEquals(TimelineVisibility.WHILE_SCRUBBING, preferences().observe().value.timelineVisibility)
+        assertEquals("WHILE_SCRUBBING", raw().getString("timeline_visibility", null))
+    }
+
+    @Test
+    fun `an install that had the timeline on keeps it always visible`() {
+        raw().edit().putBoolean("timeline_on", true).putString("timeline_placement", "LEFT").commit()
+        val state = preferences().observe().value
+        assertEquals(TimelineVisibility.ALWAYS, state.timelineVisibility)
+        assertEquals(TimelinePlacement.LEFT, state.timelinePlacement)
+    }
+
+    @Test
+    fun `an install that had the timeline off gets the scrubbing default`() {
+        raw().edit().putBoolean("timeline_on", false).commit()
+        assertEquals(TimelineVisibility.WHILE_SCRUBBING, preferences().observe().value.timelineVisibility)
+    }
+
+    @Test
+    fun `the migration is decided once so later writes do not turn a fresh install into an old one`() {
+        preferences()
+        raw().edit().putString("sort", "OLDEST").commit()
+        assertEquals(TimelineVisibility.WHILE_SCRUBBING, preferences().observe().value.timelineVisibility)
+    }
+
+    @Test
+    fun `the visibility choice survives a process restart`() {
+        for (v in TimelineVisibility.entries) {
+            preferences().setTimelineVisibility(v)
+            assertEquals(v, preferences().observe().value.timelineVisibility)
+        }
+    }
 }
