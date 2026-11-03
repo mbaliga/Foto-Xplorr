@@ -388,13 +388,13 @@ fun SettingsTabsRoom(
 
                     SectionLabel("MAPS")
                     OfflineMapsSettingsRow(lockedFolders = state.lockedFolders)
+                    if (!com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES) com.fotoxplorr.app.basemap.ImportedMapFileRows()
 
                     SectionLabel("LIBRARY")
                     ActionText("Rescan for new photos", actions.onRefresh)
                     Paragraph(HelpCopy.Hint.RESCAN_AUTO)
                 }
 
-                    if (!com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES) com.fotoxplorr.app.basemap.ImportedMapFileRows()
                 SettingsTab.BACKGROUND -> {
                     // Built the same way the PRO tab reads LocalProEntitlement, above: straight
                     // off Context rather than threaded through GalleryUiState/GalleryActions, so
@@ -573,15 +573,15 @@ fun SettingsTabsRoom(
                     )
                     ActionText("asystemofcells.com", onOpenMoreApps)
 
+                    SectionLabel("MAP DATA")
+                    Paragraph("World map: Natural Earth, public domain.")
+
                     SectionLabel("WHAT THIS BUILD CAN REACH")
                     Paragraph(
                         text = if (com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES) {
                             HelpCopy.Note.CONNECT_STATEMENT
                         } else {
                             HelpCopy.Note.OFFLINE_STATEMENT
-                    SectionLabel("MAP DATA")
-                    Paragraph("World map: Natural Earth, public domain.")
-
                         },
                         strong = true,
                     )

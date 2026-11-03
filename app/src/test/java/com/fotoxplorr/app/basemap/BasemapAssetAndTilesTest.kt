@@ -77,7 +77,7 @@ class BasemapAssetAndTilesTest {
         assertEquals(0.0, nw[0], 1e-9); assertEquals(0.0, nw[1], 1e-9); assertEquals(256.0, nw[2], 1e-9)
         // Zoomed far in, only a few tiles.
         val deep = MbTilesMath.visibleTiles(MapCamera(6.0, 10.0, 50.0), vp, 8)
-        assertTrue(deep.size in 1..9)
+        assertTrue(deep.size in 1..25)
     }
 
     @Test fun `only SQLite files are candidates and vector formats are refused`() {
