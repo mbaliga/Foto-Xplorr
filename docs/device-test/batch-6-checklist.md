@@ -36,7 +36,7 @@ Sandbox coverage: `ExperimentalHostTest`, `ExperimentalScreenTest`, `ShellEdgesT
       ellipsised rather than overlapping its neighbours. Selecting it opens the hub; the Map disc and Map
       word still fall back to Photos from it. Robolectric measured the real font; no device has seen it.
 - [ ] The hub lists **Make** (Draw an aquarium, See it on your wall), then **Explore** (Organise by
-      similarity, 3D photo wall, Gallery preview, Compass view), then **Setup** (AI and provider keys last),
+      similarity, 3D photo wall, Gallery preview, Compass view), (Setup is now empty and not shown; AI keys moved to Settings > Services),
       then the privacy sentence. The header is "Optional extras the gallery works without." and the privacy
       sentence reads, in the Offline build, "Nothing here uploads your photos, and printing uses the printer
       you choose." (the Connect build's is one longer sentence naming the model download and AI services).
@@ -45,7 +45,7 @@ Sandbox coverage: `ExperimentalHostTest`, `ExperimentalScreenTest`, `ShellEdgesT
 - [ ] Discover > Experimental card (Science icon, no count) opens the same page; it is announced once as a
       button, with no "long press" action and no stray number; Back returns to where it went before (there
       is no "Back to Discover" row any more).
-- [ ] Back: open Organise by similarity, then AI and provider keys (neither had a Back handler) and press
+- [ ] Back: open Organise by similarity, then Settings > Services > AI keys (neither had a Back handler) and press
       the system Back and the Back gesture: each returns to the hub. Compass view, the 3D wall and Gallery
       preview still step back inside themselves first. Back on the hub follows the destination's own order.
 - [ ] Back with a left or top room opened while an experiment is open: the room closes first, then the

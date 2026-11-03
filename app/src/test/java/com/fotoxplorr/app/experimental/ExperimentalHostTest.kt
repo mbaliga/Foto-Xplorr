@@ -134,18 +134,17 @@ class ExperimentalHostTest {
     }
 
     @Test
-    fun `the built-in list has unique ids, the pinned ids and the Setup entry last`() {
+    fun `the built-in list has unique ids, the pinned ids and no Setup entry (AI keys moved to Settings)`() {
         assertTrue(duplicateIds(builtInExperiments).isEmpty())
         // These are saved state and the "Open the app on"-style stable names: a rename is a break.
         assertEquals(
             listOf(
                 "aquarium", "wall-mockup", "panorama", "reel", "animate", "board", "palette",
-                "similarity", "wall", "preview", "compass", "chroma", "colourcheck", "ai",
+                "similarity", "wall", "preview", "compass", "chroma", "colourcheck",
             ),
             builtInExperiments.map { it.id },
         )
-        assertEquals("ai", builtInExperiments.last().id)
-        assertEquals(ExperimentGroup.SETUP, builtInExperiments.last().group)
+        assertTrue(builtInExperiments.none { it.group == ExperimentGroup.SETUP })
         assertEquals("Compass view", builtInExperiments.first { it.id == "compass" }.title)
         assertEquals(
             listOf("aquarium", "wall-mockup", "panorama", "reel", "animate", "board", "palette"),
@@ -219,9 +218,9 @@ class ExperimentalHostTest {
         listOf(
             ExperimentalCopy.TITLE, ExperimentalCopy.HEADER, ExperimentalCopy.UNAVAILABLE,
             ExperimentalCopy.PRIVACY_TITLE, ExperimentalCopy.SIMILARITY_TITLE, ExperimentalCopy.WALL_TITLE,
-            ExperimentalCopy.PREVIEW_TITLE, ExperimentalCopy.COMPASS_TITLE, ExperimentalCopy.AI_TITLE,
+            ExperimentalCopy.PREVIEW_TITLE, ExperimentalCopy.COMPASS_TITLE,
             ExperimentalCopy.BADGE_ON_DEVICE, ExperimentalCopy.BADGE_OPENGL, ExperimentalCopy.BADGE_TOUCH_DPAD,
-            ExperimentalCopy.BADGE_KEYSTORE, ExperimentalCopy.BADGE_INDEXING, ExperimentalCopy.located(12),
+            ExperimentalCopy.BADGE_INDEXING, ExperimentalCopy.located(12),
         ).forEach { text ->
             assertTrue("'$text' is short", text.isNotBlank() && text == text.trim() && text.length <= 50)
             assertTrue("'$text' is at most one sentence", text.count { it == '.' } <= 1)

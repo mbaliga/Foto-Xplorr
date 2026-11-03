@@ -1,5 +1,8 @@
 package com.fotoxplorr.app.basemap
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.UploadFile
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
@@ -41,6 +44,7 @@ fun ImportedMapFileRows() {
         }
     }
     RoomRow(
+        leadingIcon = Icons.Outlined.UploadFile,
         label = MapFileCopy.IMPORT,
         caption = message ?: size?.let { "${MapFileCopy.TITLE}: ${MapFileCopy.size(it)}. ${MapFileCopy.SUPPORTED}" }
             ?: "${MapFileCopy.NONE} ${MapFileCopy.SUPPORTED}",
@@ -49,6 +53,7 @@ fun ImportedMapFileRows() {
     )
     if (size != null) {
         RoomRow(
+            leadingIcon = Icons.Outlined.DeleteOutline,
             label = MapFileCopy.DELETE,
             caption = "Frees ${MapFileCopy.size(size ?: 0)}.",
             enabled = !busy,

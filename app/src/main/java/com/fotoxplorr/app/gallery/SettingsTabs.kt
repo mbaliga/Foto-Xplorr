@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -19,6 +20,9 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.Text
@@ -35,6 +39,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -61,6 +67,8 @@ import com.fotoxplorr.app.background.formatHourOfDay
 import com.fotoxplorr.app.background.summarize
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.pro.LocalProEntitlement
+import com.fotoxplorr.app.services.ServicesCopy
+import com.fotoxplorr.app.services.ServicesPane
 import com.fotoxplorr.app.spatial.offline.OfflineMapsSettingsRow
 import com.fotoxplorr.app.ui.BUILT_IN_THEMES
 import com.fotoxplorr.app.ui.RoomEyebrow
@@ -86,6 +94,9 @@ import com.fotoxplorr.app.ui.HelpCopy
  * The compact panel's second half was never settings at all: it was navigation ("MORE" → Albums /
  * Discover / Library). It lives under [SettingsTab.LIBRARY] as a browse row rather than being
  * deleted, because those screens have no other way in.
+ *
+ * [SERVICES] is the one tab that is a doorway: its three rows (AI keys, Models on this phone,
+ * Sync) open [com.fotoxplorr.app.services.ServicesHub] over the whole pane, and Back returns here.
  */
 enum class SettingsTab(val label: String) {
     APPEARANCE("Appearance"),
@@ -94,6 +105,7 @@ enum class SettingsTab(val label: String) {
     PRIVACY("Privacy"),
     VIEWER("Viewer"),
     DATA("Data"),
+    SERVICES("Services"),
     BACKGROUND("Background"),
     PRO("Pro"),
     ABOUT("About"),
@@ -119,6 +131,9 @@ fun SettingsTabsRoom(
     // Saved, so leaving Settings for a tab-specific screen and coming back (or rotating) lands on
     // the tab you were reading rather than on Appearance every time.
     var tab by rememberSaveable { mutableStateOf(initialTab) }
+    // The Services hub, when open, replaces the whole pane (its own header and Back). The pane it
+    // was opened on is saved by name, so a rotation keeps it.
+    var hubAt by rememberSaveable { mutableStateOf<String?>(null) }
     val preferences = state.preferences
     // One stable sample for the whole session: a preview that reshuffled on every toggle would
     // make it impossible to see what the toggle actually changed. Drawn from the one visibility
@@ -141,6 +156,17 @@ fun SettingsTabsRoom(
         ).firstOrNull { !it.isVideo }
     }
 
+    val openHub = hubAt
+    if (openHub != null) {
+        SettingsServicesHost(
+            state = state,
+            startAt = ServicesPane.valueOf(openHub),
+            onBack = { hubAt = null },
+            modifier = modifier,
+        )
+        return
+    }
+
     Column(
         modifier
             .fillMaxSize()
@@ -157,7 +183,7 @@ fun SettingsTabsRoom(
             )
         }
 
-        // All nine at once. A scrolling row clipped at the screen edge ("Vie...") with no sign
+        // All ten at once. A scrolling row clipped at the screen edge ("Vie...") with no sign
         // that Viewer, Data, Background, Pro and About were off to the right.
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -170,6 +196,8 @@ fun SettingsTabsRoom(
                     role = Role.Tab,
                     verticalPadding = 10.dp,
                     onClick = { tab = entry },
+                    icon = iconFor(entry).vector,
+                    showLabel = tabShowsLabel(entry == tab, LocalConfiguration.current.screenWidthDp),
                 )
             }
         }
@@ -183,7 +211,7 @@ fun SettingsTabsRoom(
             when (tab) {
                 SettingsTab.APPEARANCE -> {
                     ChoiceRow(
-                        "Theme",
+                        SettingsRow.THEME,
                         ThemeMode.entries.map { it to it.name.lowercase().replaceFirstChar(Char::uppercase) },
                         preferences.themeMode,
                         actions.onSetThemeMode,
@@ -197,7 +225,7 @@ fun SettingsTabsRoom(
                     val topRung = if (preferences.fitToTile) ZOOM_RUNG_STAMPS else ZOOM_RUNG_LAST_GRID
                     val rung = preferences.gridZoomRung.coerceAtMost(topRung)
                     StepperRow(
-                        label = "Grid zoom",
+                        row = SettingsRow.GRID_ZOOM,
                         value = zoomRungValue(rung),
                         onDecrease = { actions.onSetGridZoomRung(rung - 1) },
                         onIncrease = { actions.onSetGridZoomRung(rung + 1) },
@@ -208,12 +236,12 @@ fun SettingsTabsRoom(
 
                 SettingsTab.MEDIA -> {
                     if (state.partialMediaAccess) {
-                        SectionLabel("MEDIA ACCESS", first = true)
+                        SectionLabel(SettingsSection.MEDIA_ACCESS, "MEDIA ACCESS", first = true)
                         Paragraph(
                             HelpCopy.Caption.PARTIAL_ACCESS,
                             strong = true,
                         )
-                        ActionText("Manage selected photos and videos", actions.onManageSelectedMedia)
+                        ActionText(SettingsRow.MANAGE_SELECTED, "Manage selected photos and videos", actions.onManageSelectedMedia)
                     }
                     // WYSIWYG (owner, 2026-08-15: "I'd want settings to be as visual as
                     // possible"). The sample is drawn from the user's OWN library and rendered by
@@ -226,27 +254,27 @@ fun SettingsTabsRoom(
                         loopAnimations = preferences.loopAnimations,
                     )
                     SwitchRow(
-                        "Fill the tile",
+                        SettingsRow.FILL_TILE,
                         HelpCopy.Caption.FILL_TILE,
                         preferences.fitToTile,
                         actions.onSetFitToTile,
                     )
                     SwitchRow(
-                        "Play animations",
+                        SettingsRow.PLAY_ANIMATIONS,
                         HelpCopy.Caption.LOOP_ANIMATIONS,
                         preferences.loopAnimations,
                         actions.onSetLoopAnimations,
                     )
                     ChoiceRow(
-                        "Long press does",
+                        SettingsRow.LONG_PRESS,
                         GridLongPress.entries.map { it to it.label },
                         preferences.gridLongPress,
                         actions.onSetGridLongPress,
                     )
                     Paragraph(HelpCopy.Caption.LONG_PRESS)
-                    SectionLabel("SAVING EDITS")
+                    SectionLabel(SettingsSection.SAVING_EDITS, "SAVING EDITS")
                     ChoiceRow(
-                        "Saving edits",
+                        SettingsRow.SAVING_EDITS,
                         com.fotoxplorr.app.editor.EditorSaveMode.entries.map { it to it.label },
                         preferences.editorSaveMode,
                         actions.onSetEditorSaveMode,
@@ -261,71 +289,71 @@ fun SettingsTabsRoom(
                         preferences.scrollAxis, preferences.gridZoomRung, masonry = !preferences.fitToTile,
                     )
                     ChoiceRow(
-                        "Sort",
+                        SettingsRow.SORT,
                         GallerySort.entries.map { it to timelineSortLabel(it, horizontal) },
                         preferences.sort,
                         actions.onSetSort,
                     )
                     SwitchRow(
-                        "Timeline",
+                        SettingsRow.TIMELINE,
                         HelpCopy.Caption.TIMELINE,
                         preferences.timelineOn,
                         actions.onSetTimelineOn,
                     )
                     ChoiceRow(
-                        "Timeline edge",
+                        SettingsRow.TIMELINE_EDGE,
                         TimelinePlacement.entries.map { it to it.label },
                         preferences.timelinePlacement,
                         actions.onSetTimelinePlacement,
                     )
                     ChoiceRow(
-                        "Timeline shows",
+                        SettingsRow.TIMELINE_SHOWS,
                         TimelineVisibility.entries.map { it to it.label },
                         preferences.timelineVisibility,
                         actions.onSetTimelineVisibility,
                     )
                     ChoiceRow(
-                        "Group timeline by",
+                        SettingsRow.TIMELINE_GROUP,
                         TimelineGrouping.entries.map { it to it.name.lowercase().replaceFirstChar(Char::uppercase) },
                         preferences.timelineGrouping,
                         actions.onSetTimelineGrouping,
                     )
                     ChoiceRow(
-                        "Scroll direction",
+                        SettingsRow.SCROLL_DIRECTION,
                         ScrollAxis.entries.map { it to it.label },
                         preferences.scrollAxis,
                         actions.onSetScrollAxis,
                     )
                     Paragraph(HelpCopy.Caption.SCROLL_AXIS)
                     ChoiceRow(
-                        "Open the app on",
+                        SettingsRow.OPEN_ON,
                         HyleDestination.entries.map { it to it.label },
                         preferences.defaultDestination,
                         actions.onSetDefaultDestination,
                     )
                     SwitchRow(
-                        "Show videos",
+                        SettingsRow.SHOW_VIDEOS,
                         null,
                         preferences.showVideos,
                         actions.onSetShowVideos,
                     )
-                    SectionLabel("BROWSE")
+                    SectionLabel(SettingsSection.BROWSE, "BROWSE")
                     // Navigation, not settings -- but these screens have no other entry point,
                     // so they are kept here rather than stranded.
                     LegacyScreen.entries.forEach { screen ->
-                        RoomRow(label = screen.label, onClick = { onOpenLegacyScreen(screen) })
+                        RoomRow(label = screen.label, leadingIcon = SettingsIcon.BROWSE.vector, onClick = { onOpenLegacyScreen(screen) })
                     }
                 }
 
                 SettingsTab.PRIVACY -> {
                     SwitchRow(
-                        "Blur sensitive photos",
+                        SettingsRow.BLUR_SENSITIVE,
                         HelpCopy.Caption.BLUR_GRID_ONLY,
                         preferences.blurSensitive,
                         actions.onSetBlurSensitive,
                     )
                     SwitchRow(
-                        "Hide sensitive photos",
+                        SettingsRow.HIDE_SENSITIVE,
                         HelpCopy.Caption.HIDE_FROM_GRID,
                         preferences.hideSensitive,
                         actions.onSetHideSensitive,
@@ -336,7 +364,7 @@ fun SettingsTabsRoom(
 
                 SettingsTab.VIEWER -> {
                     StepperRow(
-                        label = "Slideshow interval",
+                        row = SettingsRow.SLIDESHOW_INTERVAL,
                         value = "${preferences.slideshowIntervalSeconds}s",
                         onDecrease = { actions.onSetSlideshowInterval(preferences.slideshowIntervalSeconds - 1) },
                         onIncrease = { actions.onSetSlideshowInterval(preferences.slideshowIntervalSeconds + 1) },
@@ -344,25 +372,25 @@ fun SettingsTabsRoom(
                         canIncrease = preferences.slideshowIntervalSeconds < MAX_SLIDESHOW_INTERVAL_SECONDS,
                     )
                     SwitchRow(
-                        "Shuffle slideshows",
+                        SettingsRow.SHUFFLE,
                         HelpCopy.Caption.SHUFFLE,
                         preferences.slideshowShuffle,
                         actions.onSetSlideshowShuffle,
                     )
                     SwitchRow(
-                        "Keep the screen on",
+                        SettingsRow.KEEP_SCREEN_ON,
                         HelpCopy.Caption.KEEP_SCREEN_ON,
                         preferences.keepScreenOn,
                         actions.onSetKeepScreenOn,
                     )
                     SwitchRow(
-                        "Play videos automatically",
+                        SettingsRow.AUTOPLAY,
                         HelpCopy.Caption.AUTOPLAY,
                         preferences.autoplayVideos,
                         actions.onSetAutoplayVideos,
                     )
                     SwitchRow(
-                        "Filmstrip",
+                        SettingsRow.FILMSTRIP,
                         HelpCopy.Caption.FILMSTRIP,
                         preferences.showFilmstrip,
                         actions.onSetShowFilmstrip,
@@ -372,27 +400,35 @@ fun SettingsTabsRoom(
                 SettingsTab.DATA -> {
                     // Two named options, never one "backup" that could mean either. This one is the
                     // plain file; the encrypted whole-library backup gets its own section below it.
-                    SectionLabel("BACKUP: TAGS AND COLLECTIONS", first = true)
+                    SectionLabel(SettingsSection.BACKUP_TAGS, "BACKUP: TAGS AND COLLECTIONS", first = true)
                     Paragraph(HelpCopy.Hint.BACKUP, strong = true)
                     Paragraph(HelpCopy.Hint.BACKUP_NOT_ENCRYPTED)
-                    ActionText("Save tags and collections to a file", actions.onExportMetadata)
-                    ActionText("Restore tags and collections from a file", actions.onImportMetadata)
+                    ActionText(SettingsRow.SAVE_TAGS, "Save tags and collections to a file", actions.onExportMetadata)
+                    ActionText(SettingsRow.RESTORE_TAGS, "Restore tags and collections from a file", actions.onImportMetadata)
                     Paragraph(HelpCopy.Hint.BACKUP_RESTORE)
 
                     // The second option. Its rows and dialogs are self-contained (backup/BackupUi.kt),
                     // so no field was added to GalleryActions or GalleryUiState for it.
-                    SectionLabel(BackupCopy.SECTION_LABEL)
+                    SectionLabel(SettingsSection.BACKUP_ENCRYPTED, BackupCopy.SECTION_LABEL)
                     Paragraph(HelpCopy.Hint.BACKUP_ENCRYPTED_ADDS, strong = true)
                     Paragraph(HelpCopy.Note.BACKUP_NO_RECOVERY)
                     EncryptedBackupRows()
 
-                    SectionLabel("MAPS")
+                    SectionLabel(SettingsSection.MAPS, "MAPS")
                     OfflineMapsSettingsRow(lockedFolders = state.lockedFolders)
                     if (!com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES) com.fotoxplorr.app.basemap.ImportedMapFileRows()
 
-                    SectionLabel("LIBRARY")
-                    ActionText("Rescan for new photos", actions.onRefresh)
+                    SectionLabel(SettingsSection.LIBRARY, "LIBRARY")
+                    ActionText(SettingsRow.RESCAN, "Rescan for new photos", actions.onRefresh)
                     Paragraph(HelpCopy.Hint.RESCAN_AUTO)
+                }
+
+                SettingsTab.SERVICES -> {
+                    // Doorways, not settings: each opens the hub on its own pane. The words are the
+                    // hub's own (ServicesCopy), so the row and the card it opens never disagree.
+                    ServicesDoor(SettingsRow.AI_KEYS, ServicesCopy.KEYS_BLURB) { hubAt = ServicesPane.KEYS.name }
+                    ServicesDoor(SettingsRow.MODELS, ServicesCopy.MODELS_BLURB) { hubAt = ServicesPane.MODELS.name }
+                    ServicesDoor(SettingsRow.SYNC, ServicesCopy.SYNC_BLURB) { hubAt = ServicesPane.SYNC.name }
                 }
 
                 SettingsTab.BACKGROUND -> {
@@ -418,29 +454,29 @@ fun SettingsTabsRoom(
                         snapshotFlow { rules }.drop(1).collect { scheduler.reconcile(it) }
                     }
 
-                    SectionLabel("WHEN", first = true)
+                    SectionLabel(SettingsSection.WHEN, "WHEN", first = true)
                     SwitchRow(
-                        "Use background rules",
+                        SettingsRow.BACKGROUND_RULES,
                         HelpCopy.Caption.RULES_SWITCH,
                         rules.enabled,
                         rulesStore::setEnabled,
                     )
                     SwitchRow(
-                        "Only when the phone is idle",
+                        SettingsRow.IDLE,
                         HelpCopy.Caption.IDLE_RULE,
                         rules.requireIdle,
                         rulesStore::setRequireIdle,
                         enabled = rules.enabled,
                     )
                     SwitchRow(
-                        "Only while charging",
+                        SettingsRow.CHARGING,
                         HelpCopy.Caption.CHARGING_RULE,
                         rules.requireCharging,
                         rulesStore::setRequireCharging,
                         enabled = rules.enabled,
                     )
                     StepperRow(
-                        label = "Minimum battery",
+                        row = SettingsRow.MIN_BATTERY,
                         value = "${rules.minBatteryPercent}%",
                         onDecrease = {
                             rulesStore.setMinBatteryPercent(rules.minBatteryPercent - BATTERY_PERCENT_STEP)
@@ -453,9 +489,9 @@ fun SettingsTabsRoom(
                     )
                     Paragraph(HelpCopy.Note.BATTERY_FLOOR)
 
-                    SectionLabel("ACTIVE HOURS")
+                    SectionLabel(SettingsSection.ACTIVE_HOURS, "ACTIVE HOURS")
                     StepperRow(
-                        label = "From",
+                        row = SettingsRow.HOURS_FROM,
                         value = formatHourOfDay(rules.activeHoursStart),
                         onDecrease = {
                             rulesStore.setActiveHoursStart((rules.activeHoursStart - 1).mod(MAX_HOUR_OF_DAY + 1))
@@ -467,7 +503,7 @@ fun SettingsTabsRoom(
                         canIncrease = rules.enabled,
                     )
                     StepperRow(
-                        label = "Until",
+                        row = SettingsRow.HOURS_UNTIL,
                         value = formatHourOfDay(rules.activeHoursEnd),
                         onDecrease = {
                             rulesStore.setActiveHoursEnd((rules.activeHoursEnd - 1).mod(MAX_HOUR_OF_DAY + 1))
@@ -491,9 +527,9 @@ fun SettingsTabsRoom(
                         },
                     )
 
-                    SectionLabel("NETWORK")
+                    SectionLabel(SettingsSection.NETWORK, "NETWORK")
                     SwitchRow(
-                        "Only on Wi-Fi",
+                        SettingsRow.WIFI_ONLY,
                         if (com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES) {
                             "Skips a pass entirely while on mobile data."
                         } else {
@@ -504,7 +540,7 @@ fun SettingsTabsRoom(
                         enabled = rules.enabled && com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES,
                     )
 
-                    SectionLabel("RIGHT NOW")
+                    SectionLabel(SettingsSection.RIGHT_NOW, "RIGHT NOW")
                     Paragraph(
                         summarize(rules),
                         strong = true,
@@ -527,7 +563,7 @@ fun SettingsTabsRoom(
                     val entitlement = remember { LocalProEntitlement(proContext.applicationContext) }
                     val isPro by entitlement.isPro.collectAsState()
 
-                    SectionLabel(if (isPro) "YOU HAVE PRO" else "FREE PLAN", first = true)
+                    SectionLabel(SettingsSection.PLAN, if (isPro) "YOU HAVE PRO" else "FREE PLAN", first = true)
                     Paragraph(
                         if (isPro) {
                             HelpCopy.Caption.PRO_ON
@@ -537,12 +573,12 @@ fun SettingsTabsRoom(
                         strong = true,
                     )
 
-                    SectionLabel("WHAT PRO REMOVES")
+                    SectionLabel(SettingsSection.WHAT_PRO_REMOVES, "WHAT PRO REMOVES")
                     Paragraph(HelpCopy.Caption.PRO_ONLY_MARK, strong = true)
 
                     if (!isPro) {
-                        SectionLabel("UNLOCK")
-                        ActionText("Unlock Pro", entitlement::recordUnlock)
+                        SectionLabel(SettingsSection.UNLOCK, "UNLOCK")
+                        ActionText(SettingsRow.UNLOCK_PRO, "Unlock Pro", entitlement::recordUnlock)
                         Paragraph(
                             // Same honest disclosure as the share sheet's unlock action -- see
                             // ProEntitlement's KDoc for why there is no store, no charge and no
@@ -553,30 +589,31 @@ fun SettingsTabsRoom(
                 }
 
                 SettingsTab.ABOUT -> {
-                    LabelledValue("Version", com.fotoxplorr.app.BuildConfig.VERSION_NAME)
+                    LabelledValue(SettingsRow.VERSION, "Version", com.fotoxplorr.app.BuildConfig.VERSION_NAME)
                     LabelledValue(
+                        SettingsRow.BUILD,
                         "Build",
                         if (com.fotoxplorr.app.BuildConfig.DEBUG) "Debug" else "Release",
                     )
 
-                    SectionLabel("SUPPORT")
+                    SectionLabel(SettingsSection.SUPPORT, "SUPPORT")
                     Paragraph(
                         HelpCopy.Caption.SUPPORT,
                         strong = true,
                     )
-                    ActionText(SUPPORT_EMAIL, onOpenSupport)
+                    ActionText(SettingsRow.SUPPORT, SUPPORT_EMAIL, onOpenSupport)
 
-                    SectionLabel("MORE FROM A SYSTEM OF CELLS")
+                    SectionLabel(SettingsSection.MORE_FROM_US, "MORE FROM A SYSTEM OF CELLS")
                     Paragraph(
                         HelpCopy.Caption.FAMILY,
                         strong = true,
                     )
-                    ActionText("asystemofcells.com", onOpenMoreApps)
+                    ActionText(SettingsRow.MORE_APPS, "asystemofcells.com", onOpenMoreApps)
 
-                    SectionLabel("MAP DATA")
+                    SectionLabel(SettingsSection.MAP_DATA, "MAP DATA")
                     Paragraph("World map: Natural Earth, public domain.")
 
-                    SectionLabel("WHAT THIS BUILD CAN REACH")
+                    SectionLabel(SettingsSection.REACH, "WHAT THIS BUILD CAN REACH")
                     Paragraph(
                         text = if (com.fotoxplorr.app.BuildConfig.NETWORK_FEATURES) {
                             HelpCopy.Note.CONNECT_STATEMENT
@@ -585,7 +622,7 @@ fun SettingsTabsRoom(
                         },
                         strong = true,
                     )
-                    SectionLabel("OPEN SOURCE")
+                    SectionLabel(SettingsSection.OPEN_SOURCE, "OPEN SOURCE")
                     Paragraph(
                         "Fotoz uses AndroidX and Jetpack Compose, Coil, ML Kit and " +
                             "SQLite, each under its own licence. Recognition runs entirely on " +
@@ -609,11 +646,52 @@ const val SUPPORT_EMAIL = "fotoz@asystemofcells.com"
  * [first] drops the rule for the heading that opens a tab, where there is nothing to separate from.
  */
 @Composable
-private fun SectionLabel(text: String, first: Boolean = false) {
+private fun SectionLabel(section: SettingsSection, text: String = section.label, first: Boolean = false) {
     Column(Modifier.fillMaxWidth().padding(top = if (first) 8.dp else 0.dp)) {
         if (!first) RoomRule(Modifier.padding(vertical = 14.dp))
-        RoomEyebrow(text)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // The chip: the section's glyph on a soft accent square, so the headings can be told
+            // apart at a glance without reading them.
+            Box(
+                Modifier.size(28.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f), RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(section.icon.vector, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            }
+            RoomEyebrow(text)
+        }
     }
+}
+
+/** The 24dp glyph that leads a row; faded with the row when it is disabled. */
+@Composable
+private fun RowGlyph(icon: SettingsIcon, enabled: Boolean = true) {
+    Icon(
+        icon.vector,
+        contentDescription = null,
+        tint = if (enabled) MaterialTheme.colorScheme.primary else RoomStyle.InkFaint,
+        modifier = Modifier.padding(end = 14.dp).size(24.dp),
+    )
+}
+
+/** Whether a tab shows its word next to its glyph: always, but for an unselected one on a very narrow screen. */
+fun tabShowsLabel(selected: Boolean, screenWidthDp: Int): Boolean = selected || screenWidthDp >= NARROW_TABS_DP
+
+/** Below this width an unselected tab is its glyph alone (its content description still names it). */
+const val NARROW_TABS_DP = 300
+
+/** A Services doorway: a row with a chevron that opens the hub. */
+@Composable
+private fun ServicesDoor(row: SettingsRow, caption: String, onOpen: () -> Unit) {
+    RoomRow(
+        label = row.label,
+        caption = caption,
+        leadingIcon = row.icon.vector,
+        onClick = onOpen,
+        trailing = {
+            Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = RoomStyle.InkFaint)
+        },
+    )
 }
 
 /**
@@ -633,21 +711,22 @@ private fun Paragraph(text: String, strong: Boolean = false) {
 }
 
 @Composable
-private fun LabelledValue(label: String, value: String) {
+private fun LabelledValue(row: SettingsRow, label: String, value: String) {
     RoomRow(
         label = label,
+        leadingIcon = row.icon.vector,
         trailing = { Text(value, color = RoomStyle.InkMuted, style = RoomStyle.Row) },
     )
 }
 
 @Composable
-private fun ActionText(label: String, onClick: () -> Unit) {
-    RoomRow(label = label, onClick = onClick)
+private fun ActionText(row: SettingsRow, label: String, onClick: () -> Unit) {
+    RoomRow(label = label, leadingIcon = row.icon.vector, onClick = onClick)
 }
 
 @Composable
 private fun SwitchRow(
-    label: String,
+    row: SettingsRow,
     caption: String?,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
@@ -660,7 +739,8 @@ private fun SwitchRow(
     enabled: Boolean = true,
 ) {
     RoomRow(
-        label = label,
+        label = row.label,
+        leadingIcon = row.icon.vector,
         caption = caption,
         enabled = enabled,
         modifier = Modifier
@@ -694,6 +774,8 @@ private fun SettingsChip(
     onClick: () -> Unit,
     verticalPadding: Dp = 8.dp,
     swatch: Color? = null,
+    icon: ImageVector? = null,
+    showLabel: Boolean = true,
 ) {
     val ink = if (selected) MaterialTheme.colorScheme.onPrimary else RoomStyle.InkMuted
     Row(
@@ -707,9 +789,20 @@ private fun SettingsChip(
                 if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.10f),
                 RoundedCornerShape(50),
             )
+            // Selected is also a ring and a bold word, never the fill colour alone.
+            .then(if (selected) Modifier.border(2.dp, Color.White, RoundedCornerShape(50)) else Modifier)
             .selectable(selected = selected, role = role, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = verticalPadding),
     ) {
+        if (icon != null) {
+            Icon(
+                icon,
+                // Named only when the word is not drawn beside it.
+                contentDescription = if (showLabel) null else label,
+                tint = ink,
+                modifier = Modifier.size(20.dp),
+            )
+        }
         if (swatch != null) {
             Box(
                 Modifier
@@ -718,12 +811,14 @@ private fun SettingsChip(
                     .border(1.dp, ink.copy(alpha = 0.6f), CircleShape),
             )
         }
-        Text(
-            text = label,
-            color = ink,
-            style = RoomStyle.Caption,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-        )
+        if (showLabel) {
+            Text(
+                text = label,
+                color = ink,
+                style = RoomStyle.Caption,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            )
+        }
     }
 }
 
@@ -737,19 +832,22 @@ private fun SettingsChip(
  */
 @Composable
 private fun <T> ChoiceRow(
-    label: String,
+    row: SettingsRow,
     options: List<Pair<T, String>>,
     selected: T,
     onSelect: (T) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-        Text(label, color = RoomStyle.Ink, style = RoomStyle.Row)
+        Row(Modifier.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+            RowGlyph(row.icon)
+            Text(row.label, color = RoomStyle.Ink, style = RoomStyle.Row)
+        }
         // Wraps, where it used to scroll: "Open the app on" has nine options and the ones past the
         // edge were simply not there.
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(top = 10.dp),
+            modifier = Modifier.padding(start = 38.dp),
         ) {
             options.forEach { (value, text) ->
                 SettingsChip(
@@ -789,11 +887,14 @@ private fun ThemePaletteRow(
     }
 
     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-        Text("Accent", color = RoomStyle.Ink, style = RoomStyle.Row)
+        Row(Modifier.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+            RowGlyph(SettingsRow.ACCENT.icon)
+            Text(SettingsRow.ACCENT.label, color = RoomStyle.Ink, style = RoomStyle.Row)
+        }
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(top = 10.dp),
+            modifier = Modifier.padding(start = 38.dp),
         ) {
             builtIns.forEach { palette ->
                 SettingsChip(
@@ -865,7 +966,7 @@ private fun ThemePaletteRow(
  */
 @Composable
 private fun StepperRow(
-    label: String,
+    row: SettingsRow,
     value: String,
     onDecrease: () -> Unit,
     onIncrease: () -> Unit,
@@ -873,11 +974,12 @@ private fun StepperRow(
     canIncrease: Boolean,
 ) {
     RoomRow(
-        label = label,
+        label = row.label,
+        leadingIcon = row.icon.vector,
         enabled = canDecrease || canIncrease,
         trailing = {
             com.fotoxplorr.app.hyle.HyleStepper(
-                label = label,
+                label = row.label,
                 value = value,
                 onDecrease = onDecrease,
                 onIncrease = onIncrease,

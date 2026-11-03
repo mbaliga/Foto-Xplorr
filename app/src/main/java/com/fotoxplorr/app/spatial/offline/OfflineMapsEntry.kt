@@ -1,5 +1,7 @@
 package com.fotoxplorr.app.spatial.offline
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DownloadForOffline
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -77,6 +79,7 @@ fun OfflineMapsDialog(placePoints: List<GeoPoint>, currentView: GeoBox?, onDismi
 fun OfflineMapsSettingsRow(lockedFolders: Set<String>) {
     var open by rememberSaveable { mutableStateOf(false) }
     RoomRow(
+        leadingIcon = Icons.Outlined.DownloadForOffline,
         label = OfflineMapsCopy.ROW_LABEL,
         caption = if (BuildConfig.NETWORK_FEATURES) OfflineMapsCopy.ROW_CAPTION else OfflineMapsCopy.STUB_ROW,
         onClick = { open = true },

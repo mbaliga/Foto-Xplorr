@@ -25,13 +25,11 @@ internal object ExperimentalCopy {
     const val WALL_TITLE = "3D photo wall"
     const val PREVIEW_TITLE = "Gallery preview"
     const val COMPASS_TITLE = "Compass view"
-    const val AI_TITLE = "AI and provider keys"
 
     // Badges: a chip on the card, never the only cue (the title names the card).
     const val BADGE_ON_DEVICE = "On-device"
     const val BADGE_OPENGL = "OpenGL ES"
     const val BADGE_TOUCH_DPAD = "Touch + D-pad"
-    const val BADGE_KEYSTORE = "Keystore"
     const val BADGE_INDEXING = "Indexing…"
 
     /** The compass card's badge once a read has finished: "12 located". */

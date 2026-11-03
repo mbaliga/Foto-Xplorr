@@ -1,5 +1,9 @@
 package com.fotoxplorr.app.backup
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.EnhancedEncryption
+import androidx.compose.material.icons.outlined.FactCheck
+import androidx.compose.material.icons.outlined.SettingsBackupRestore
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -83,17 +87,20 @@ fun EncryptedBackupRows() {
     val jobs by (flow.runner()?.jobs ?: NO_JOBS).collectAsState()
     val running = jobs.any { isBackupJob(it.title) }
     RoomRow(
+        leadingIcon = Icons.Outlined.EnhancedEncryption,
         label = BackupCopy.OPTION_LABEL,
         caption = HelpCopy.Hint.BACKUP_ENCRYPTED,
         enabled = !running,
         onClick = { flow.begin(BackupPurpose.BACKUP) },
     )
     RoomRow(
+        leadingIcon = Icons.Outlined.FactCheck,
         label = BackupCopy.CHECK_LABEL,
         caption = HelpCopy.Hint.BACKUP_CHECK,
         onClick = { flow.begin(BackupPurpose.CHECK) },
     )
     RoomRow(
+        leadingIcon = Icons.Outlined.SettingsBackupRestore,
         label = RestoreCopy.ROW_LABEL,
         caption = HelpCopy.Hint.BACKUP_RESTORE_ENCRYPTED,
         enabled = !running,

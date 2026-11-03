@@ -6,7 +6,6 @@ import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Colorize
 import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Gif
-import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PanoramaHorizontal
@@ -23,7 +22,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import com.fotoxplorr.app.ai.AiSettingsScreen
 import com.fotoxplorr.app.ai.SimilarityExplorerScreen
 import com.fotoxplorr.app.aquarium.AquariumCopy
 import com.fotoxplorr.app.aquarium.AquariumExperience
@@ -55,7 +53,7 @@ import com.fotoxplorr.app.wall.WallExperience
  * package; its words are constants in its own copy object, with the one-sentence [blurb] taken
  * from there). Pick a new, permanent `id`. Nothing else in this package changes. Set
  * `restorable = false` for a camera screen or anything that starts work or asks a permission (the
- * compass does both), and keep the Setup entry last in its group. Give a full-screen interactive area
+ * compass does both). The AI keys entry that used to close the Setup group now lives in Settings > Services, so Setup is empty (the host skips an empty group). Give a full-screen interactive area
  * [clearOfShellEdges] (TRAPS #72) and read photos only through [ExperimentEnv].
  *
  * The ids below are saved state: never rename one.
@@ -226,17 +224,6 @@ internal val builtInExperiments: List<ExperimentEntry> = listOf(
         icon = Icons.Outlined.Visibility,
     ) { env, onClose ->
         ColourVisionCheck(env, onClose)
-    },
-    // Setup, always last.
-    ExperimentEntry(
-        id = "ai",
-        title = ExperimentalCopy.AI_TITLE,
-        blurb = HelpCopy.Hint.EXPLORE_AI,
-        group = ExperimentGroup.SETUP,
-        icon = Icons.Outlined.Key,
-        badge = { ExperimentalCopy.BADGE_KEYSTORE },
-    ) { _, onClose ->
-        AiSettingsScreen(onClose = onClose)
     },
 )
 

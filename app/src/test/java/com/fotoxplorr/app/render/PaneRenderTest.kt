@@ -95,12 +95,12 @@ class PaneRenderTest {
         )
     }
 
-    /** Appearance is the tab the pane opens on; all nine tabs must be reachable without scrolling. */
+    /** Appearance is the tab the pane opens on; all ten tabs must be reachable without scrolling. */
     @Test
-    fun `settings pane shows all nine tabs at once`() {
+    fun `settings pane shows all ten tabs at once`() {
         render("settings-3-appearance") { SettingsPane(SettingsTab.APPEARANCE) }
         SettingsTab.entries.forEach { compose.onNodeWithText(it.label).assertIsDisplayed() }
-        assertEquals(9, SettingsTab.entries.size)
+        assertEquals(10, SettingsTab.entries.size)
     }
 
     @Test

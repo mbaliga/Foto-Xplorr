@@ -163,7 +163,6 @@ class ExperimentalScreenTest {
         compose.onNodeWithText(ExperimentalCopy.BADGE_ON_DEVICE).assertExists()
         compose.onNodeWithText(ExperimentalCopy.BADGE_OPENGL).assertExists()
         compose.onNodeWithText(ExperimentalCopy.BADGE_TOUCH_DPAD).assertExists()
-        compose.onNodeWithText(ExperimentalCopy.BADGE_KEYSTORE).assertExists()
         compose.onNodeWithText(ExperimentalCopy.BADGE_INDEXING).assertExists()
     }
 

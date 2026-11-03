@@ -64,9 +64,8 @@ fun syncCardMode(hasSyncContent: Boolean, syncIntegrated: Boolean): SyncCardMode
  * @param startAt open straight on one pane (for example [ServicesPane.MODELS] from a "model
  *   missing" message). Back from that pane leaves the hub, not to the card list.
  *
- * TODO(remove after the Settings entry lands): the Experimental host still has an "AI and
- * provider keys" row in its Setup group (BuiltInExperiments id "ai"); delete it once Settings
- * opens this hub, and update ExperimentalHostTest's expected last id.
+ * Reached from Settings > Services (gallery/SettingsTabs.kt), which opens it on one pane; the old
+ * "AI and provider keys" row in the Experimental Setup group is gone.
  */
 @Composable
 fun ServicesHub(

@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -25,6 +27,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -168,6 +172,9 @@ fun RoomEyebrow(text: String, modifier: Modifier = Modifier) {
  *
  * The whole row is the touch target when [onClick] is given, rather than only the control at its
  * end — a 40dp switch on a 400dp row is a needlessly small thing to hit.
+ *
+ * [leadingIcon] puts a 24dp glyph in the accent before the label (faded with the label when the row
+ * is disabled) and raises the row to 48dp; it is decorative, because the label already names the row.
  */
 @Composable
 fun RoomRow(
@@ -176,15 +183,25 @@ fun RoomRow(
     caption: String? = null,
     enabled: Boolean = true,
     onClick: (() -> Unit)? = null,
+    leadingIcon: ImageVector? = null,
     trailing: @Composable (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .then(if (onClick != null && enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(if (leadingIcon != null) Modifier.heightIn(min = 48.dp) else Modifier)
             .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (leadingIcon != null) {
+            Icon(
+                leadingIcon,
+                contentDescription = null,
+                tint = if (enabled) MaterialTheme.colorScheme.primary else RoomStyle.InkFaint,
+                modifier = Modifier.padding(end = 14.dp).size(24.dp),
+            )
+        }
         Column(Modifier.weight(1f).padding(end = 16.dp)) {
             Text(
                 text = label,

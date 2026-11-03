@@ -112,7 +112,6 @@ internal object HelpCopy {
         const val EXPLORE_WALL = "Walk through a 3D wall of your photos"
         const val EXPLORE_PREVIEW = "Browse photos in depth"
         const val EXPLORE_COMPASS = "Turn toward photos around you"
-        const val EXPLORE_AI = "On-device model and optional AI keys"
         const val WALL_GESTURES = "Drag to look · pinch for depth · tap a photo"
 
         const val SIMILARITY_SUBTITLE = "Groups of look-alike photos"
