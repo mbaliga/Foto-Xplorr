@@ -85,7 +85,17 @@ class HttpResponse(
     private val closer: Closeable = Closeable { },
 ) : Closeable {
     fun header(name: String): String? = headers[name.lowercase(Locale.ROOT)]
-    fun bodyText(limit: Int = 1 shl 20): String = body.readNBytes(limit).toString(Charsets.UTF_8)
+    // InputStream.readNBytes needs API 33; this app's minSdk is 26, so a plain loop reads up to [limit] bytes.
+    fun bodyText(limit: Int = 1 shl 20): String {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (out.size() < limit) {
+            val n = body.read(buffer, 0, minOf(buffer.size, limit - out.size()))
+            if (n < 0) break
+            out.write(buffer, 0, n)
+        }
+        return out.toByteArray().toString(Charsets.UTF_8)
+    }
     override fun close() {
         runCatching { body.close() }
         closer.close()
