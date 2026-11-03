@@ -39,13 +39,13 @@ the reel maker to lay under its video (ADR-017).
 | Destination | What it shows |
 |---|---|
 | **Pets** | Photos where the on-device classifier found a cat, dog or other pet |
-| **People** | Photos with detected faces, grouped into clusters |
+| **People** | A grid of person cards (face crop, name, photo count); a person is a removable filter on the photo grid. See "People" below |
 | **Identity** | Photos heuristically identified as identity documents |
 | **Screenshots** | Screenshots, detected by path and dimensions |
 | **Photos** | All still images |
 | **Videos** | All video |
 | **Favourites** | User-marked favourites |
-| **Experimental** | The extras page (`experimental/`): compass view, 3D wall, gallery preview, look-alike grouping, AI keys. The enum constant is still `PLACES`; only the label changed |
+| **Experimental** | The extras page (`experimental/`): compass view, 3D wall, gallery preview, look-alike grouping and the other extras (AI keys moved to Settings > Services). The enum constant is still `PLACES`; only the label changed |
 | **Protected** | Password-protected folders |
 
 The map is not a tenth destination. It is a **mode of the browser**: a black disc at the bottom
@@ -70,7 +70,17 @@ heuristics over the catalogue, storing results in `RecognitionStore`. It is **in
 construction** — it only visits assets whose stored result is missing or stale — and it is
 bundled-model only, so it has no network path at all.
 
-Face descriptors are clustered locally (`FaceClustering`) to produce the People strip.
+Face descriptors are clustered locally (`FaceClustering`); see "People" below for how clusters become stable people.
+
+### People
+
+`PeopleRoster` keeps stable **people** across runs. `FaceClustering` re-runs from scratch and ranks clusters by size, so
+`PersonCluster.id` changes; a `PersonRecord` (name, hidden, merged-into, a few remembered face addresses) is matched to
+clusters by those addresses. Recognition DB v6 stores face boxes (additive). The People destination (`gallery/PeoplePane`,
+`PeopleActions`) is a grid of cards with face crops (memory only), counts and a status line that says "done" only after a
+pass finished; rename, merge, hide and "not this person" are kept; choosing a person filters the photo grid with a chip.
+A person's photos reach the screen only through the destination's visible list (locked and hidden photos never do).
+Both flavors; no network.
 
 ### Media operations
 
@@ -129,6 +139,20 @@ sharing a photo does not silently share where it was taken.
   (`chroma/`, the camera, ADR-017) and **Colour vision check** (`vision/`). None has run on a device.
 - **Photo scenes** — OpenGL-rendered 3D arrangements of the library (`experience/`, `spatial/`),
   including an orientation-driven photo wall.
+
+### Settings > Services
+
+One tab gathers what was hidden: **AI keys** (BYOK; only Test sends anything, never a photo), **Models on this phone**
+(Fotoz's one downloadable model, plus a catalogue read from Nooz's data-only `ai-catalogue`: a bundled snapshot, an
+explicit "Update catalogue" tap on Connect only, pinned to a Nooz commit; kinds Fotoz cannot run are shown with Get
+disabled; ADR-019) and **Sync**. Offline flavor: no downloads and no catalogue fetch; "import a file" works.
+
+### Optional cloud sync (off by default)
+
+`sync/`: one-way copies of chosen photos to one destination, started by a tap, Wi-Fi only by default, never deleting or
+overwriting, resumable, protected/sensitive/locked/trashed/archived photos never sent (fail-closed feed). Folder picker in
+both flavors; WebDAV/Nextcloud, S3-compatible, Google Drive and Dropbox in the Connect flavor only (Drive and Dropbox need
+the owner's own app registration and sign in with OAuth PKCE). Optional passphrase encryption. ADR-018.
 
 ### Optional remote AI (off by default)
 
@@ -242,7 +266,9 @@ under the thumb and a haptic tick at each month boundary: this is what makes a 2
 navigable. Where the strip sits, which way the photos scroll, and the order they are in are three
 separate choices (owner #25).
 
-- **A permanent 44 dp gutter.** While the strip is part of the screen the grid is padded by its
+- **Batch 9 changed the default (see "The timeline rail" below):** the strip is now visible only while scrubbing, and
+  the gutter described next is reserved only in the **Always visible** mode.
+- **A 44 dp gutter (Always visible mode).** While the strip is part of the screen the grid is padded by its
   thickness on that side, so photos never sit under it. This reverses an earlier decision, recorded
   in a since-replaced comment in `GalleryScreen`, that the strip would be a transient overlay because a permanent
   stripe was cluttered; the owner asked for the grid to make room. The strip rests at a constant
@@ -270,6 +296,16 @@ separate choices (owner #25).
   (destination, route, sort) change and when a rail word is chosen (even the current one). It waits
   for the first scan to finish for Oldest only. A short library under Oldest sits at the top of the
   screen, not the bottom.
+
+### The timeline rail
+
+`gallery/TimelineRail` replaces the library's strip. While a finger is on it the month labels bend into an arc that bulges
+away from the finger (`RailBulge`, pure and tested), a bubble with the month sits level with the finger, and on release the
+rail eases straight. Setting **Timeline shows**: *Only while scrubbing* (default; nothing drawn at rest, the 44 dp edge is
+still a live touch target, no gutter, so the grid never reflows) or *Always visible* (the strip and gutter above). The touch
+target shares input with the grid and claims a touch only after slop along the rail. The system-gesture exclusion is on only
+while the rail is drawn. TalkBack gets previous/next month and "Scrub timeline" actions. The viewer's **filmstrip** does the
+same with thumbnails (lifted away from the finger, a large preview above it). Same in both flavors. TRAPS #127.
 
 ### Scroll direction
 
@@ -305,7 +341,7 @@ alone. On the map the readout reads "N located" and the density stepper is left 
 ### The map, and the time range
 
 With the map up the browser shows the **current view** on a map: the destination, route, search and
-time range, privacy-filtered. The offline build draws the stamp map embedded in the browser; the
+time range, privacy-filtered. The offline build draws the stamp map embedded in the browser, on the bundled world basemap (country borders, coasts, the 1,000 largest places; zoom 0 to 8; Settings > Data > Maps imports a raster `.mbtiles` for finer detail, PMTiles and vector files are refused); the
 Connect build draws the street map, but only once the browser has been at rest with every room
 closed and the rail not turning, and it keeps it from then on (TRAPS #71). `mapOpen` is session-only:
 a cold start lands on the grid, and Back from a photo opened on the map lands on the grid.
@@ -376,10 +412,10 @@ gallery's layout; that deviation is retired, and `handoff/DESIGN-FIDELITY-VIEWER
 - **Pulling the details room down shrinks the photo and lands it as the pin on the map** in the
   place block — a shrink-to-appear, explicitly not a tilt of the pane. While that room is pulled the
   photo's card slides flat; every other room keeps the swivel. A photo with no location lands,
-  dimmed, on a still graticule with a ghost pin and the words "No location yet" (with "Add a place"
+  dimmed, on the world map (a still graticule if the map cannot draw) with a ghost pin and the words "No location yet" (with "Add a place"
   where a place may be set by hand); a photo whose location could not be *read* never offers the
   picker. No map tile is fetched during the gesture: the connect flavour asks for one static
-  snapshot only after the room has settled open, and the offline flavour draws no map at all.
+  snapshot only after the room has settled open; the offline flavour draws the bundled world basemap (`basemap/`) and no tiles.
 - **The filmstrip is roll-level navigation.** It is shown for videos exactly as for photos, so
   scrubbing onto a video never takes it away from under the finger. It drives the photo live while
   dragged, and touching it pauses a playing video; the next video does not start until the strip has
@@ -456,6 +492,9 @@ Two rules hold this together:
 | `reel/` | Reels: the project model, motion maths, plan check, JSON codec and the deterministic auto-draft; the export (render plan, Media3 two-layer composition, place-free muxer, MediaStore writer, `ReelJob`, the sound-file picker) and the `ReelMaker` editor with its saved-reels store |
 | `board/` | Mood board: the layer/mask/canvas model, hit-testing, snapping, history, JSON codec and photo re-finding; the Canvas compositor, render plan, export job and writer; the `MoodBoard` editor with its autosaved store |
 | `chroma/` | Chroma ID: colour spaces, CIEDE2000, colour names, the flash-minus-ambient solver (pure); the Camera2 source, capture job and state machine, gyroscope, the history store and the `ChromaId` screen |
+| `basemap/` | Bundled world basemap (`assets/basemap/world.fxmap`, Natural Earth, built by `scripts/gen_basemap.py`), Web Mercator maths, label placement, the shared map view and raster MBTiles import (`MbTiles`, `MapFileStore`); no network code, both flavors |
+| `services/` | Settings > Services: the hub (AI keys, Models on this phone, Sync), `ModelCatalogue` (the one downloadable model), the Nooz catalogue consumer (`catalogue/`, `CatalogueStore`), key masking. Download and catalogue update are Connect only |
+| `sync/` | Optional cloud sync: planner, engine, manifest, providers (SAF folder, WebDAV, S3-compatible, Drive, Dropbox), OAuth with PKCE, optional encryption, the service and its screens. Network transport and the OAuth browser sit behind same-FQN seams in `src/connect` and `src/offline` |
 | `spatial/offline/` | Offline map areas: tile and budget maths, region records, suggestions from browsable photos, the download guard and engine seam (`src/main`); the map-library engine, job and pane (`src/connect`); the Offline build's stub pane (`src/offline`) |
 | `experience/` | The 3D photo wall and its renderer/orientation controller |
 | `ai/` | Optional BYOK remote providers, encrypted secret storage, local similarity |
@@ -638,7 +677,7 @@ identity), so `AdjustmentRenderer` and the export path apply it without a change
   dispose.
 - **Protected folders lock on `ON_STOP`**, and if the viewer was showing a protected asset its
   contents are cleared too — so the app cannot resume displaying something that should be locked.
-- **AI keys** live in `EncryptedSecretStore`; the OkHttp client deliberately ships **no logging
+- **AI keys and sync credentials** live in `EncryptedSecretStore` (Android Keystore; sync ids are prefixed `sync:`); the OkHttp client deliberately ships **no logging
   interceptor**.
 - **Another app cannot reach what the library hides.** `ExternalViewerActivity` is the single VIEW
   target (`content://` only; `FotoXplorrActivity` keeps only EDIT and SEND filters, and the SEND
@@ -887,3 +926,9 @@ The sizes are `main` / `test` lines. **None of it has run on a device.** The per
   tag are not detected; a person walking through the overlap can make it refuse a join. Out of the slice: 360
   degree spheres and loop closure, vertical and grid sweeps, multiband or seam-finding blends, GPano tagging,
   48 MP output, mixed lenses or portrait among landscapes. The checklist is `docs/device-test/batch-7-checklist.md`.
+- **Batch 9 has not run on a device.** Unverified: the rail's feel and its back-swipe cost, the shade and stack, face-crop
+  framing and over-splitting of real faces, map smoothness and a real MBTiles import, every sync provider against a real
+  server, Drive/Dropbox sign-in, the Connect CI APK. **The Connect build allows cleartext traffic app-wide** (Android cannot
+  limit it to private ranges; sync and AI restrict plain http to local hosts in code); the Offline build is unchanged
+  (no network permission). No downloaded model has a published checksum. No model Fotoz cannot run is offered for download.
+  The checklist is `docs/device-test/batch-9-checklist.md`; decisions are ADR-018 and ADR-019.
