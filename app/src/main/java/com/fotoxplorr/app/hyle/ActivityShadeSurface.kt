@@ -41,6 +41,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Path
+import androidx.compose.animation.core.snap
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -87,14 +91,23 @@ fun ActivityShade(
     val target = shadeHeight(state, activities.size)
     // The shell's own settle curve, respecified for Dp. SpatialMotion.settleSpec is typed to
     // Float; borrowing the FEEL means copying its duration and easing, not its instance.
+    val reduceMotion = rememberReduceMotion()
     val height by animateDpAsState(
         targetValue = target.dp,
-        animationSpec = tween(
-            durationMillis = SHADE_SETTLE_MILLIS,
-            easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f),
-        ),
+        animationSpec = if (reduceMotion) {
+            snap()
+        } else {
+            tween(
+                durationMillis = SHADE_SETTLE_MILLIS,
+                easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f),
+            )
+        },
         label = "shade-height",
     )
+    // The grid under an open shade is the sheet that slipped down: its top corners round as the
+    // shade opens (the same radius family as the parked card) and a soft shadow falls on it. The
+    // grid itself is never moved (see above); the corners are black fillets drawn over it.
+    val sheetCornerDp = SheetGeometry.shadeSheetCornerDp(height.value)
 
     Box(modifier.fillMaxSize()) {
         // Drawn FIRST and never moved. Everything above it in this Box covers it; nothing
@@ -129,7 +142,11 @@ fun ActivityShade(
                         )
                     }
                     .statusBarsPadding()
-                    .height(height),
+                    .height(height)
+                    .drawWithContent {
+                        drawContent()
+                        drawSheetEdge(sheetCornerDp.dp.toPx())
+                    },
             ) {
                 when (state) {
                     ShadeState.COLLAPSED -> CollapsedStrip(activities)
@@ -295,6 +312,37 @@ private fun HeroPanel(activity: BackgroundActivity) {
                 .height(TRACK_HEIGHT.dp),
         )
     }
+}
+
+/**
+ * Draws, just below this shade's bottom edge, what makes the grid read as a sheet that slipped
+ * down: black fillets that round its two top corners to [radiusPx], and a soft shadow across it.
+ * Nothing at radius 0, so the collapsed sliver and a shade at rest are drawn exactly as before.
+ */
+private fun DrawScope.drawSheetEdge(radiusPx: Float) {
+    if (radiusPx <= 0.5f) return
+    val y = size.height
+    val w = size.width
+    val left = Path().apply {
+        moveTo(0f, y)
+        lineTo(radiusPx, y)
+        arcTo(Rect(0f, y, 2 * radiusPx, y + 2 * radiusPx), 270f, -90f, false)
+        close()
+    }
+    val right = Path().apply {
+        moveTo(w, y)
+        lineTo(w - radiusPx, y)
+        arcTo(Rect(w - 2 * radiusPx, y, w, y + 2 * radiusPx), 270f, 90f, false)
+        close()
+    }
+    // Fixed on purpose: the shade's own ground is pure black.
+    drawRect(
+        Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent), startY = y, endY = y + 14.dp.toPx()),
+        topLeft = Offset(radiusPx, y),
+        size = Size(w - 2 * radiusPx, 14.dp.toPx()),
+    )
+    drawPath(left, Color.Black)
+    drawPath(right, Color.Black)
 }
 
 /**

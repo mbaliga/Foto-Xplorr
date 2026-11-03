@@ -61,4 +61,13 @@ class SheetGeometryTest {
         val below = SheetGeometry.contentInsets(cornerDp = 20f, depthDp = 30f, baseDp = 14f)
         assertEquals(14f, below.startDp, 0f)
     }
+
+    @Test
+    fun `the sheet under the shade is square collapsed and rounds as the shade opens`() {
+        assertEquals(0f, SheetGeometry.shadeSheetCornerDp(0f), 0f)
+        assertEquals(0f, SheetGeometry.shadeSheetCornerDp(COLLAPSED_HEIGHT.toFloat()), 0f)
+        val half = SheetGeometry.shadeSheetCornerDp(COLLAPSED_HEIGHT + NOTIFICATION_ROW / 2f)
+        assertTrue(half > 0f && half < SheetGeometry.FULL_CORNER_DP)
+        assertEquals(SheetGeometry.FULL_CORNER_DP, SheetGeometry.shadeSheetCornerDp(EXPANDED_HERO.toFloat()), 0f)
+    }
 }

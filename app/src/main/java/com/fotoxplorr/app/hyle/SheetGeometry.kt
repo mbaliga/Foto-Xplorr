@@ -22,6 +22,14 @@ object SheetGeometry {
     fun sheetCornerDp(lift: Float): Float = FULL_CORNER_DP * lift.coerceIn(0f, 1f)
 
     /**
+     * The corner of the grid sheet under the activity shade while the shade is [heightDp] tall:
+     * square at the collapsed sliver (nothing changes at rest) and the full radius once one
+     * notification row's worth of height has opened, easing in with the shade's own animation.
+     */
+    fun shadeSheetCornerDp(heightDp: Float, collapsedDp: Float = 28f, rowDp: Float = 50f): Float =
+        sheetCornerDp((heightDp - collapsedDp) / rowDp)
+
+    /**
      * How far a row whose text starts [depthDp] below the sheet's top edge must be pushed in from
      * the left or right edge to clear a corner of [cornerDp]: the circle's own horizontal bite at
      * that depth, plus [CORNER_MARGIN_DP]. Zero once the row is below the corner, and for no corner.
