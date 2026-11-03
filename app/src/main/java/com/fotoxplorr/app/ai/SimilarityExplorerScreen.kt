@@ -97,6 +97,7 @@ fun SimilarityExplorerScreen(
     var neighbours by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
     var indexJob by remember { mutableStateOf<Job?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    var showModels by remember { mutableStateOf(false) }
 
     val assetById = remember(assets) { assets.associateBy { it.id } }
     // From indexInput, not assets: images only (similarity/embeddings never cover video), but
@@ -120,6 +121,12 @@ fun SimilarityExplorerScreen(
             selectedId = null
             neighbours = emptyList()
         }
+    }
+
+    // "Model missing" opens the model catalogue right here; back returns to this screen.
+    if (showModels) {
+        com.fotoxplorr.app.services.ModelsPane(onBack = { showModels = false })
+        return
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -152,6 +159,7 @@ fun SimilarityExplorerScreen(
                     }
                 },
                 onImport = { modelPicker.launch(arrayOf("application/octet-stream", "*/*")) },
+                onOpenModels = { showModels = true },
             )
             is LocalModelState.Downloading -> {
                 LinearProgressIndicator(
@@ -172,6 +180,7 @@ fun SimilarityExplorerScreen(
                 error = model.message,
                 onInstall = { scope.launch { modelManager.installRecommendedModel() } },
                 onImport = { modelPicker.launch(arrayOf("application/octet-stream", "*/*")) },
+                onOpenModels = { showModels = true },
             )
             is LocalModelState.Ready -> {
                 SimilarityToolbar(
@@ -249,6 +258,7 @@ private fun ModelRequiredPanel(
     error: String? = null,
     onInstall: () -> Unit,
     onImport: () -> Unit,
+    onOpenModels: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(28.dp),
@@ -272,6 +282,7 @@ private fun ModelRequiredPanel(
             Button(onClick = onInstall) { Text("Install recommended model") }
         }
         OutlinedButton(onClick = onImport) { Text(HelpCopy.Hint.IMPORT_MODEL) }
+        OutlinedButton(onClick = onOpenModels) { Text(com.fotoxplorr.app.services.ServicesCopy.OPEN_MODELS) }
     }
 }
 

@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.ai
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -33,8 +34,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -48,13 +47,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
+import com.fotoxplorr.app.services.KeyMasking
+import com.fotoxplorr.app.services.ServicesCopy
 import com.fotoxplorr.app.ui.HelpCopy
 
 private val PANEL_BACKGROUND = Color.Black
@@ -88,7 +87,11 @@ private val DANGER = Color(0xFFE5564B)
  * wants it, out of the way for anyone who does not.
  */
 @Composable
-fun AiSettingsScreen(onClose: () -> Unit) {
+fun AiSettingsScreen(onClose: () -> Unit, showModels: Boolean = true) {
+    // Inside the Services hub (showModels = false) this IS the "AI keys" pane: the model catalogue
+    // lives in its own pane there. The Experimental host keeps the old two-section screen until its
+    // row is removed (see the TODO on com.fotoxplorr.app.services.ServicesHub).
+    if (!showModels) BackHandler(onBack = onClose)
     val context = LocalContext.current
     // The flavor picks the implementation: offline's bindings refuse every network call
     // with a typed failure, connect's are backed by :feature:ai-remote. No BuildConfig.
@@ -119,9 +122,9 @@ fun AiSettingsScreen(onClose: () -> Unit) {
                 Icon(Icons.Outlined.Close, contentDescription = "Close", tint = PRIMARY_TEXT)
             }
             Column(Modifier.weight(1f).padding(start = 4.dp)) {
-                Text("AI and similarity", color = PRIMARY_TEXT, style = MaterialTheme.typography.titleLarge)
+                Text(if (showModels) "AI and similarity" else ServicesCopy.KEYS_TITLE, color = PRIMARY_TEXT, style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "Everything here runs on this device unless you choose otherwise",
+                    if (showModels) "Everything here runs on this device unless you choose otherwise" else ServicesCopy.KEYS_STORED,
                     color = SECONDARY_TEXT,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -133,7 +136,7 @@ fun AiSettingsScreen(onClose: () -> Unit) {
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item {
+            if (showModels) item {
                 SimilaritySection(
                     state = modelState,
                     capability = capability,
@@ -155,7 +158,7 @@ fun AiSettingsScreen(onClose: () -> Unit) {
                         fontWeight = FontWeight.Bold,
                     )
                     Text(
-                        HelpCopy.Note.AI_SERVICE,
+                        if (showModels) HelpCopy.Note.AI_SERVICE else ServicesCopy.KEYS_PRIVACY,
                         color = SECONDARY_TEXT,
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -176,6 +179,14 @@ fun AiSettingsScreen(onClose: () -> Unit) {
                 ProviderCard(
                     provider = provider,
                     testing = testingId == provider.id,
+                    keyTail = remember(provider.id, provider.hasSecret) {
+                        // Decrypt only to read four characters, then wipe: the key is never displayed.
+                        val key = providerStore.secret(provider.id)
+                        val tail = KeyMasking.tail(key)
+                        key?.fill('\u0000')
+                        tail
+                    },
+                    canTest = bindings.remoteAi.available,
                     onEnabledChange = { providerStore.setEnabled(provider.id, it) },
                     onEdit = { editing = provider },
                     onDelete = { providerStore.remove(provider.id) },
@@ -341,6 +352,8 @@ private fun SimilaritySection(
 private fun ProviderCard(
     provider: AiProviderConfig,
     testing: Boolean,
+    keyTail: String,
+    canTest: Boolean,
     onEnabledChange: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -351,7 +364,7 @@ private fun ProviderCard(
             Column(Modifier.weight(1f)) {
                 Text(provider.label, color = PRIMARY_TEXT, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Text(
-                    if (provider.hasSecret) "Key saved" else "No key yet -- add one to turn this on",
+                    if (provider.hasSecret) KeyMasking.savedLabel(keyTail) else ServicesCopy.KEY_MISSING,
                     color = if (provider.hasSecret) SECONDARY_TEXT else DANGER,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -364,8 +377,11 @@ private fun ProviderCard(
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DarkButton(
-                label = if (testing) "Testing…" else "Test",
+            if (!canTest) {
+                // Offline build: say so instead of a button that can only fail.
+                Text(ServicesCopy.KEYS_NEEDS_CONNECT, color = MUTED_TEXT, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f).padding(vertical = 12.dp))
+            } else DarkButton(
+                label = if (testing) ServicesCopy.TESTING else ServicesCopy.TEST_KEY,
                 onClick = onTest,
                 enabled = provider.hasSecret && !testing,
                 leading = if (testing) {
@@ -447,7 +463,6 @@ private fun ProviderEditorDialog(
             { secret = it },
             if (initial.hasSecret) "Replace key (optional)" else "API key",
             HelpCopy.Hint.AI_KEY_SOURCE,
-            password = true,
         )
         DarkField(
             timeout,
@@ -463,7 +478,7 @@ private fun ProviderEditorDialog(
         )
         if (showRequestPreview) {
             Text(
-                "A test sends this, and nothing else:\n" +
+                "Test key sends this, and nothing else:\n" +
                     "POST ${initial.kind.endpointPreview(baseUrl, model)}\n" +
                     "Authorization: your encrypted key (never shown here)\n" +
                     "Body: a short line of text -- no photo is included.",
@@ -561,27 +576,15 @@ private fun DarkField(
     onValueChange: (String) -> Unit,
     label: String,
     caption: String,
-    password: Boolean = false,
 ) {
+    // The shared Hyle field. Its public signature has no password mode, so a key being typed or
+    // pasted is visible until saved; once saved it is never shown again (only its last four).
     Column {
-        OutlinedTextField(
+        Text(label, color = SECONDARY_TEXT, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp, bottom = 4.dp))
+        com.fotoxplorr.app.hyle.HyleTextField(
             value = value,
             onValueChange = onValueChange,
-            label = { Text(label) },
-            singleLine = true,
-            visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
             modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = PRIMARY_TEXT,
-                unfocusedTextColor = PRIMARY_TEXT,
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
-                focusedLabelColor = MaterialTheme.colorScheme.primary,
-                unfocusedLabelColor = SECONDARY_TEXT,
-                cursorColor = MaterialTheme.colorScheme.primary,
-                focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent,
-            ),
         )
         Text(caption, color = MUTED_TEXT, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp, top = 2.dp))
     }

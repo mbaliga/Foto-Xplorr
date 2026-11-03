@@ -4,7 +4,12 @@ import android.app.ActivityManager
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import com.fotoxplorr.app.services.ModelCatalogue
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -86,7 +91,11 @@ class LocalModelManager(context: Context, private val remoteAi: RemoteAiBridge) 
             val temporary = File(modelDirectory, "$MODEL_FILE_NAME.download")
             temporary.delete()
 
+            // Cancelling the calling coroutine stops the transfer at the next progress tick: the
+            // downloader's read loop is blocking and checks nothing else.
+            val job = currentCoroutineContext()[Job]
             remoteAi.downloadFile(RECOMMENDED_MODEL_URL, temporary) { written, total ->
+                job?.ensureActive()
                 state.value = LocalModelState.Downloading(written, total)
             }.getOrThrow()
 
@@ -105,6 +114,11 @@ class LocalModelManager(context: Context, private val remoteAi: RemoteAiBridge) 
                 state.value = it
             }
         }.onFailure { error ->
+            if (error is CancellationException) {
+                File(modelDirectory, "$MODEL_FILE_NAME.download").delete()
+                state.value = loadState()
+                return@onFailure
+            }
             state.value = LocalModelState.Failed(error.message ?: "Unable to install local model")
         }
     }
@@ -193,7 +207,7 @@ class LocalModelManager(context: Context, private val remoteAi: RemoteAiBridge) 
         const val MODEL_METADATA_FILE = "mobilenet_v3_small_image_embedder.properties"
         const val MIN_MODEL_BYTES = 1_000_000L
         const val DOWNLOAD_BUFFER_SIZE = 128 * 1024
-        const val RECOMMENDED_MODEL_URL =
-            "https://storage.googleapis.com/mediapipe-models/image_embedder/mobilenet_v3_small/float32/1/mobilenet_v3_small.tflite"
+        // The one registry of model facts is ModelCatalogue; the address lives only there.
+        val RECOMMENDED_MODEL_URL = ModelCatalogue.IMAGE_EMBEDDER.sourceUrl
     }
 }
