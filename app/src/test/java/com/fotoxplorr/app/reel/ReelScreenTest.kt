@@ -210,6 +210,9 @@ class ReelScreenTest {
         compose.setContent { Screen() }
         compose.onNodeWithText(ReelCopy.START_DRAFT).assertIsEnabled()
         compose.onNodeWithText(ReelCopy.START_BLANK).assertIsEnabled()
+        // The saved list is read off the main thread: until it arrives the first frame shows no row and
+        // no 'none yet' line, so wait for it rather than assert on the very first frame.
+        waitFor { textShown(ReelCopy.NO_REELS) }
         compose.onNodeWithText(ReelCopy.NO_REELS).assertExists()
         compose.onNodeWithText(ReelCopy.SAVES_BY_ITSELF).assertExists()
         tapText(ReelCopy.START_BLANK)
