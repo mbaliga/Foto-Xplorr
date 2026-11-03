@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -86,8 +87,8 @@ class WallScaleStepTest {
     fun `a width typed after marking is still there after a trip to hang and back`() {
         show()
         markTwoEnds()
-        compose.onNode(hasText(WallCopy.WALL_WIDTH) and hasSetTextAction()).performTextClearance()
-        compose.onNode(hasText(WallCopy.WALL_WIDTH) and hasSetTextAction()).performTextInput("321")
+        compose.onNode(hasContentDescription(WallCopy.WALL_WIDTH) and hasSetTextAction()).performTextClearance()
+        compose.onNode(hasContentDescription(WallCopy.WALL_WIDTH) and hasSetTextAction()).performTextInput("321")
         compose.waitForIdle()
         assertEquals(321f, draft.wallWidthCm, 0f)
 
@@ -112,7 +113,7 @@ class WallScaleStepTest {
         markTwoEnds()
         assertNotEquals(0f, draft.wallWidthCm)
 
-        compose.onNode(hasText(WallCopy.DISTANCE) and hasSetTextAction()).performTextInput("5")
+        compose.onNode(hasContentDescription(WallCopy.DISTANCE) and hasSetTextAction()).performTextInput("5")
         compose.waitForIdle()
 
         assertEquals(5f, draft.distanceCm, 0f)

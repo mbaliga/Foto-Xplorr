@@ -2,6 +2,7 @@ package com.fotoxplorr.app.basemap
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.util.LruCache
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -17,6 +18,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.composed
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -141,25 +144,46 @@ private fun buildPaths(s: SimplifiedBasemap.Simplified, bucket: Int): PathSet {
     return PathSet(land, lakes, borders, w)
 }
 
-/** Decoded tiles of the imported file, loaded off the draw thread; [version] changes as they arrive. */
+/**
+ * Decoded tiles of the imported file, loaded off the draw thread; [version] changes as they arrive.
+ * Bounded: a size-limited LRU (about [CACHE_BYTES] of pixels) so panning a big file cannot grow
+ * without end, and a tile whose declared size is not a plain map tile, or whose decode fails for any
+ * reason (a corrupt blob, memory), is skipped rather than decoded.
+ */
 private class TileImages(private val source: TileSource, private val scope: CoroutineScope) {
     var version by mutableIntStateOf(0)
         private set
-    private val images = ConcurrentHashMap<TileAddress, ImageBitmap>()
+    private val images = object : LruCache<TileAddress, ImageBitmap>(CACHE_BYTES) {
+        override fun sizeOf(key: TileAddress, value: ImageBitmap): Int = value.width * value.height * 4
+    }
     private val missing = ConcurrentHashMap.newKeySet<TileAddress>()
     private val inFlight = ConcurrentHashMap.newKeySet<TileAddress>()
 
     fun get(a: TileAddress): ImageBitmap? {
-        images[a]?.let { return it }
+        synchronized(images) { images.get(a) }?.let { return it }
         if (a in missing || !inFlight.add(a)) return null
         scope.launch(Dispatchers.IO) {
-            val bytes = source.tile(a.z, a.x, a.y)
-            val bmp = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
-            if (bmp != null) images[a] = bmp else missing.add(a)
+            val bmp = try {
+                source.tile(a.z, a.x, a.y)?.let(::decodeBounded)
+            } catch (_: Throwable) {
+                null
+            }
+            if (bmp != null) synchronized(images) { images.put(a, bmp) } else missing.add(a)
             inFlight.remove(a)
             if (bmp != null) version++
         }
         return null
+    }
+
+    private fun decodeBounded(bytes: ByteArray): ImageBitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (!MbTilesMath.acceptsTileImage(bounds.outWidth, bounds.outHeight)) return null
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+    }
+
+    companion object {
+        const val CACHE_BYTES = 24 * 1024 * 1024
     }
 }
 
@@ -178,13 +202,14 @@ fun BasemapCanvas(
 ) {
     val basemap = rememberBasemap()
     val colors = rememberBasemapColors()
-    val measurer = rememberTextMeasurer()
+    val measurer = rememberTextMeasurer(cacheSize = 256)
+    val layouts = remember(colors) { HashMap<String, TextLayoutResult>() }
     val paths = remember(basemap) { ConcurrentHashMap<Int, PathSet>() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val images = remember(tiles) { tiles?.let { TileImages(it, scope) } }
     LaunchedEffect(basemap) {
         if (basemap != null) withContext(Dispatchers.Default) {
-            for (b in 0..2) paths.getOrPut(b) { buildPaths(basemap.at(b), b) }
+            for (b in 0..SimplifiedBasemap.MAX_BUCKET) paths.getOrPut(b) { buildPaths(basemap.at(b), b) }
         }
     }
     val labelStyle = remember(colors) { TextStyle(color = colors.label, fontSize = 11.sp) }
@@ -210,7 +235,7 @@ fun BasemapCanvas(
             drawPath(set.borders, colors.border, style = Stroke(hair))
             drawPath(set.land, colors.coast, style = Stroke(hair * 1.1f))
         }
-        if (showCities) drawCities(basemap.basemap.cities, cam, vp, measurer, labelStyle, colors)
+        if (showCities) drawCities(basemap.basemap.cities, cam, vp, measurer, labelStyle, colors, layouts)
     }
 }
 
@@ -220,8 +245,7 @@ const val TILES_FROM_TILE_ZOOM = 6.0
 private fun DrawScope.drawTiles(src: TileSource, images: TileImages, cam: MapCamera, vp: MapViewport, wp: Double) {
     @Suppress("UNUSED_VARIABLE") val touch = images.version // re-draw as tiles arrive
     if (MapMath.tileZoom(cam.level, vp) < TILES_FROM_TILE_ZOOM) return
-    val z = MbTilesMath.zoomFor(wp, src)
-    for ((address, rect) in MbTilesMath.visibleTiles(cam, vp, z)) {
+    for ((address, rect) in MbTilesMath.tilesToDraw(cam, vp, src)) {
         val img = images.get(address) ?: continue
         val size = rect[2]
         drawImage(
@@ -241,6 +265,7 @@ private fun DrawScope.drawCities(
     measurer: TextMeasurer,
     style: TextStyle,
     colors: BasemapColors,
+    layouts: HashMap<String, TextLayoutResult>,
 ) {
     val limit = LabelPlacer.maxRankForLevel(cam.level, cities.size)
     val candidates = ArrayList<LabelCandidate>()
@@ -250,7 +275,7 @@ private fun DrawScope.drawCities(
         val c = cities[i]
         val p = MapMath.toScreen(cam, vp, c.lon, c.lat)
         if (p.x < 0 || p.y < 0 || p.x > vp.widthPx || p.y > vp.heightPx) continue
-        val layout = measurer.measure(c.name, style, maxLines = 1)
+        val layout = layouts.getOrPut(c.name) { measurer.measure(c.name, style, maxLines = 1) }
         candidates += LabelCandidate(c.rank, p.x.toFloat(), p.y.toFloat(), layout.size.width.toFloat(), layout.size.height.toFloat())
         laidOut += layout
         dots += Offset(p.x.toFloat(), p.y.toFloat())
@@ -277,7 +302,15 @@ fun Modifier.mapGestures(
     maxLevel: () -> Double = { MapMath.MAX_LEVEL },
     onePointerPans: Boolean = true,
     onTap: (Offset) -> Unit = {},
-): Modifier = pointerInput(onePointerPans) {
+): Modifier = composed {
+    // Everything the gesture reads is read through these, so a camera, viewport or zoom ceiling that
+    // changes after the first composition (bounds changed, an imported file arrived) is the one used.
+    val cameraNow by rememberUpdatedState(camera)
+    val viewportNow by rememberUpdatedState(viewport)
+    val onCameraNow by rememberUpdatedState(onCamera)
+    val maxLevelNow by rememberUpdatedState(maxLevel)
+    val onTapNow by rememberUpdatedState(onTap)
+    pointerInput(onePointerPans) {
     coroutineScope {
         var pendingTap: Job? = null
         var lastTapAt = 0L
@@ -299,14 +332,14 @@ fun Modifier.mapGestures(
                     total += pan
                     if (!movedPastSlop && (multi || total.getDistance() > viewConfiguration.touchSlop)) movedPastSlop = true
                     if (movedPastSlop) {
-                        var cam = camera()
-                        val vp = viewport()
+                        var cam = cameraNow()
+                        val vp = viewportNow()
                         val c = event.calculateCentroid()
                         if (zoom != 1f && c != Offset.Unspecified) {
-                            cam = MapMath.zoomedAt(cam, vp, cam.level + kotlin.math.log2(zoom.toDouble()), c.x.toDouble(), c.y.toDouble(), maxLevel())
+                            cam = MapMath.zoomedAt(cam, vp, cam.level + kotlin.math.log2(zoom.toDouble()), c.x.toDouble(), c.y.toDouble(), maxLevelNow())
                         }
-                        cam = MapMath.panned(cam, vp, pan.x.toDouble(), pan.y.toDouble(), maxLevel())
-                        onCamera(cam)
+                        cam = MapMath.panned(cam, vp, pan.x.toDouble(), pan.y.toDouble(), maxLevelNow())
+                        onCameraNow(cam)
                         event.changes.forEach { if (it.positionChanged()) it.consume() }
                     }
                 } else if (!movedPastSlop) {
@@ -321,7 +354,7 @@ fun Modifier.mapGestures(
                 if (isDouble) {
                     pendingTap?.cancel()
                     pendingTap = null
-                    onCamera(MapMath.zoomedAt(camera(), viewport(), camera().level + 1.0, down.position.x.toDouble(), down.position.y.toDouble(), maxLevel()))
+                    onCameraNow(MapMath.zoomedAt(cameraNow(), viewportNow(), cameraNow().level + 1.0, down.position.x.toDouble(), down.position.y.toDouble(), maxLevelNow()))
                 } else {
                     lastTapAt = now
                     lastTapPos = down.position
@@ -329,12 +362,13 @@ fun Modifier.mapGestures(
                     pendingTap = launch {
                         delay(viewConfiguration.doubleTapTimeoutMillis)
                         pendingTap = null
-                        onTap(at)
+                        onTapNow(at)
                     }
                 }
             }
         }
     }
+}
 }
 
 private fun androidx.compose.ui.input.pointer.PointerInputChange.positionChanged(): Boolean =

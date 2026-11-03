@@ -106,4 +106,11 @@ class HyleTextFieldTest {
         // Unfocused, the value is drawn by an ellipsising Text from its start; the editable keeps it too.
         assertTrue(compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty())
     }
+
+    @Test
+    fun `an error flag without words still reaches TalkBack`() {
+        compose.setContent { HyleTextField(value = "x", onValueChange = {}, error = true, fieldTag = "f") }
+        val node = compose.onNodeWithTag("f").fetchSemanticsNode()
+        assertTrue(node.config.contains(SemanticsProperties.Error))
+    }
 }

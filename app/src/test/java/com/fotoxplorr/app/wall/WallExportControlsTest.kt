@@ -9,6 +9,7 @@ import androidx.activity.OnBackPressedDispatcher
 import androidx.activity.OnBackPressedDispatcherOwner
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -125,7 +126,7 @@ class WallExportControlsTest {
     private fun hangOnePicture() {
         compose.onNodeWithContentDescription("wall.jpg").performClick()
         waitForNoText(WallCopy.LOADING)
-        compose.onNode(hasText(WallCopy.DISTANCE) and hasSetTextAction()).performTextInput("200")
+        compose.onNode(hasContentDescription(WallCopy.DISTANCE) and hasSetTextAction()).performTextInput("200")
         waitForText("The photo shows about", substring = true)
         compose.onNodeWithText(WallCopy.NEXT).performClick()
         compose.onNodeWithContentDescription("picture.jpg").performClick()

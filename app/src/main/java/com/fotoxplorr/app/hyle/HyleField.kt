@@ -36,6 +36,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -181,6 +183,11 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBang() {
  * chosen accent; [error] (or a non-null [errorText]) turns them danger-red and shows the `!`;
  * [mandatory] adds the trailing `*`. Optional [leading]/[trailing] slots ride inside the field.
  *
+ * **Focus colour, deliberately not the spec's.** The spec's table gives a violet wedge with a blue
+ * `#6E97E8` hairline; this app draws both in the chosen accent ([LocalAccentOnLight]) so the field
+ * follows the owner's accent setting like every other control. That is the documented rule in
+ * [HyleField] ("the focus state is the accent role"), kept on purpose.
+ *
  * The one field for the whole app. On top of the chrome it gives:
  * - an optional [label] above the field and an [errorText] line below it (the error is said in
  *   words too, never colour alone, and is exposed to TalkBack as the field's error);
@@ -218,6 +225,7 @@ fun HyleTextField(
     fieldTag: String? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val ownFocus = remember { FocusRequester() }
     val invalid = error || errorText != null
     val name = contentDescription ?: label ?: placeholder.takeIf { it.isNotEmpty() }
     val fontFamily = if (monospace) FontFamily.Monospace else HyleGrotesk
@@ -269,11 +277,12 @@ fun HyleTextField(
                         visualTransformation = visualTransformation,
                         modifier = Modifier
                             .fillMaxWidth()
+                            .focusRequester(ownFocus)
                             .onFocusChanged { focused = it.isFocused }
                             .then(if (fieldTag != null) Modifier.testTag(fieldTag) else Modifier)
                             .semantics {
                                 if (name != null) this.contentDescription = name
-                                if (errorText != null) semanticsError(errorText)
+                                if (invalid) semanticsError(errorText ?: "Invalid value")
                             },
                     )
                     if (value.isEmpty() && placeholder.isNotEmpty()) {
@@ -289,7 +298,11 @@ fun HyleTextField(
                 }
                 if (clearable && enabled && value.isNotEmpty()) {
                     IconButton(
-                        onClick = { onValueChange("") },
+                        onClick = {
+                            onValueChange("")
+                            // Clearing is editing: leave the caret in the field, keyboard up.
+                            runCatching { ownFocus.requestFocus() }
+                        },
                         modifier = Modifier.size(HYLE_FIELD_MIN_TARGET.dp),
                     ) {
                         Icon(

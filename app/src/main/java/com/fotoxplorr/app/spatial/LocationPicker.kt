@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,6 +51,8 @@ import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomStyle
 import com.fotoxplorr.app.basemap.BasemapCanvas
+import com.fotoxplorr.app.basemap.BasemapColors
+import com.fotoxplorr.app.basemap.rememberBasemapColors
 import com.fotoxplorr.app.basemap.MapMath
 import com.fotoxplorr.app.basemap.MapViewport
 import com.fotoxplorr.app.basemap.PinMath
@@ -57,6 +60,7 @@ import com.fotoxplorr.app.basemap.PxPoint
 import com.fotoxplorr.app.basemap.mapGestures
 import com.fotoxplorr.app.basemap.rememberImportedTiles
 import com.fotoxplorr.app.hyle.HyleTextField
+import com.fotoxplorr.app.hyle.normalizeDecimalInput
 import com.fotoxplorr.app.viewer.PLATE_ASPECT
 import com.fotoxplorr.app.viewer.PLATE_CORNER_DP
 import com.fotoxplorr.app.viewer.PLATE_GROUND
@@ -162,6 +166,7 @@ fun LocationPicker(
 
         val shape = RoundedCornerShape(PLATE_CORNER_DP.dp)
         val tiles = rememberImportedTiles()
+        val mapBorder = rememberBasemapColors().border
         val maxLevel = if (tiles != null) IMPORTED_MAX_LEVEL else MapMath.MAX_LEVEL
         BoxWithConstraints(
             Modifier
@@ -171,7 +176,7 @@ fun LocationPicker(
                 .aspectRatio(PLATE_ASPECT)
                 .clip(shape)
                 .background(PLATE_GROUND)
-                .border(1.dp, Color.White.copy(alpha = 0.10f), shape),
+                .border(1.dp, mapBorder, shape),
         ) {
             val density = LocalDensity.current
             val widthPx = with(density) { maxWidth.toPx() }
@@ -179,14 +184,24 @@ fun LocationPicker(
             val viewport = MapViewport(widthPx.toDouble(), heightPx.toDouble())
             val pinPx = with(density) { PIN_SIZE.dp.toPx() }
             val grabPx = with(density) { GRAB_RADIUS.dp.toPx() }
-            var camera by remember(viewport) {
-                mutableStateOf(
-                    if (placed) MapMath.centeredOn(longitude!!, latitude!!, PLACED_LEVEL, viewport)
-                    else MapMath.centeredOn(0.0, 0.0, 0.0, viewport),
-                )
-            }
+            fun openingCamera() =
+                if (placed) MapMath.centeredOn(longitude!!, latitude!!, PLACED_LEVEL, viewport, maxLevel)
+                else MapMath.centeredOn(0.0, 0.0, 0.0, viewport, maxLevel)
+            // One state object for the picker's life: gestures hold on to it, so it must not be
+            // re-created when the size changes; a new size just moves the camera.
+            var camera by remember { mutableStateOf(openingCamera()) }
+            LaunchedEffect(viewport) { camera = openingCamera() }
 
             fun pinScreen(): PxPoint = MapMath.toScreen(camera, viewport, pinLongitude, pinLatitude)
+
+            val colors = rememberBasemapColors()
+            // The pin handler outlives recompositions (and the pin state is re-created when the
+            // photo's place changes), so it reads the current ones through these.
+            val pinScreenNow by rememberUpdatedState { pinScreen() }
+            val hasPinNow by rememberUpdatedState(hasPin)
+            val moveNow by rememberUpdatedState<(Double, Double) -> Unit>({ lat, lon -> moveLocally(lat, lon) })
+            val commitNow by rememberUpdatedState { commit() }
+            val cameraNow by rememberUpdatedState(camera)
 
             // A typed coordinate can put the pin off the visible map; bring the map to it.
             LaunchedEffect(pinLatitude, pinLongitude, hasPin) {
@@ -218,7 +233,7 @@ fun LocationPicker(
                     .pointerInput(viewport) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
-                            val grabbed = hasPin && PinMath.grabs(pinScreen(), down.position.x.toDouble(), down.position.y.toDouble(), grabPx.toDouble())
+                            val grabbed = hasPinNow && PinMath.grabs(pinScreenNow(), down.position.x.toDouble(), down.position.y.toDouble(), grabPx.toDouble())
                             if (grabbed) {
                                 // Fine-tuning the pin that is already there. Consumed, so the
                                 // room does not scroll while it is being moved.
@@ -226,13 +241,13 @@ fun LocationPicker(
                                 drag(down.id) { change ->
                                     change.consume()
                                     moved = true
-                                    val p = PinMath.pinAt(camera, viewport, change.position.x.toDouble(), change.position.y.toDouble())
-                                    moveLocally(p.lat, p.lon)
+                                    val p = PinMath.pinAt(cameraNow, viewport, change.position.x.toDouble(), change.position.y.toDouble())
+                                    moveNow(p.lat, p.lon)
                                 }
                                 // Both endings commit: a cancelled drag (a second finger landing,
                                 // the gesture being taken over) still leaves the pin somewhere,
                                 // and that somewhere should not silently fail to save.
-                                if (moved) commit()
+                                if (moved) commitNow()
                             }
                         }
                     },
@@ -258,17 +273,17 @@ fun LocationPicker(
 
             Text(
                 text = if (hasPin) "Drag the pin to move it" else "Tap the map to place this photo",
-                color = Color.White.copy(alpha = 0.55f),
+                color = colors.label,
                 style = RoomStyle.Caption,
                 modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
             )
             // The non-drag way to move around: zoom about the pin (or the middle), one tap each.
             Column(Modifier.align(Alignment.TopEnd).padding(4.dp)) {
-                ZoomButton("+", "Zoom the map in") {
+                ZoomButton("+", "Zoom the map in", colors) {
                     val f = if (hasPin) pinScreen() else PxPoint(viewport.widthPx / 2, viewport.heightPx / 2)
                     camera = MapMath.zoomedAt(camera, viewport, camera.level + 1.0, f.x, f.y, maxLevel)
                 }
-                ZoomButton("\u2212", "Zoom the map out") {
+                ZoomButton("\u2212", "Zoom the map out", colors) {
                     val f = if (hasPin) pinScreen() else PxPoint(viewport.widthPx / 2, viewport.heightPx / 2)
                     camera = MapMath.zoomedAt(camera, viewport, camera.level - 1.0, f.x, f.y, maxLevel)
                 }
@@ -281,7 +296,7 @@ fun LocationPicker(
                 limit = 90.0,
                 value = latitudeText,
                 onValueChange = { text ->
-                    latitudeText = text
+                    latitudeText = normalizeDecimalInput(text)
                     typed()
                 },
                 // Typing "-3" is not a coordinate yet -- committing on every keystroke reported a
@@ -295,7 +310,7 @@ fun LocationPicker(
                 limit = 180.0,
                 value = longitudeText,
                 onValueChange = { text ->
-                    longitudeText = text
+                    longitudeText = normalizeDecimalInput(text)
                     typed()
                 },
                 onFocusLost = ::commit,
@@ -343,7 +358,7 @@ fun LocationPicker(
 }
 
 @Composable
-private fun ZoomButton(glyph: String, description: String, onClick: () -> Unit) {
+private fun ZoomButton(glyph: String, description: String, colors: BasemapColors, onClick: () -> Unit) {
     Box(
         Modifier
             .size(48.dp)
@@ -351,8 +366,8 @@ private fun ZoomButton(glyph: String, description: String, onClick: () -> Unit) 
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
-        Box(Modifier.size(34.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
-            Text(glyph, color = Color.White, style = RoomStyle.Caption.copy(fontSize = 18.sp))
+        Box(Modifier.size(34.dp).clip(CircleShape).background(colors.sea.copy(alpha = 0.85f)), contentAlignment = Alignment.Center) {
+            Text(glyph, color = colors.label, style = RoomStyle.Caption.copy(fontSize = 18.sp))
         }
     }
 }

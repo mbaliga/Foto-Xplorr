@@ -37,11 +37,40 @@ object MbTilesMath {
         val x1 = floor((viewport.widthPx - originX) / size).toInt().coerceIn(0, n - 1)
         val y0 = floor(-originY / size).toInt().coerceIn(0, n - 1)
         val y1 = floor((viewport.heightPx - originY) / size).toInt().coerceIn(0, n - 1)
+        if ((x1 - x0 + 1).toLong() * (y1 - y0 + 1) > MAX_VISIBLE_TILES) return emptyList()
         val out = ArrayList<Pair<TileAddress, DoubleArray>>()
         for (ty in y0..y1) for (tx in x0..x1) {
             out += TileAddress(z, tx, ty) to doubleArrayOf(originX + tx * size, originY + ty * size, size)
         }
         return out
+    }
+
+    /** Most tiles one frame may ask for; more means the zoom is wrong for this file, so none are drawn. */
+    const val MAX_VISIBLE_TILES = 64
+
+    /** Highest zoom a file may declare; beyond it `1 shl z` and the tile maths stop making sense. */
+    const val MAX_TILE_ZOOM = 22
+
+    fun isValidZoomRange(min: Int, max: Int): Boolean = min in 0..MAX_TILE_ZOOM && max in 0..MAX_TILE_ZOOM && min <= max
+
+    /** Longest edge of a tile image the app will decode; a tile is 256 px, a retina one 512. */
+    const val MAX_TILE_IMAGE_EDGE = 512
+
+    fun acceptsTileImage(width: Int, height: Int): Boolean =
+        width in 1..MAX_TILE_IMAGE_EDGE && height in 1..MAX_TILE_IMAGE_EDGE
+
+    /**
+     * The tiles worth drawing now: none when the world is shown at a zoom well below the file's
+     * first (a regional extract at minzoom 14 seen from the world would be millions of addresses),
+     * none when more than [MAX_VISIBLE_TILES] would be needed, and otherwise the visible set at the
+     * file's nearest zoom.
+     */
+    fun tilesToDraw(camera: MapCamera, viewport: MapViewport, source: TileSource): List<Pair<TileAddress, DoubleArray>> {
+        val natural = MapMath.tileZoom(camera.level, viewport)
+        if (natural < source.minZoom - 1) return emptyList()
+        val z = zoomFor(MapMath.worldPx(camera.level, viewport), source)
+        val tiles = visibleTiles(camera, viewport, z)
+        return if (tiles.size > MAX_VISIBLE_TILES) emptyList() else tiles
     }
 
     /** Whether a file's first bytes say SQLite (MBTiles), PMTiles, or neither. */

@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -249,11 +248,11 @@ private fun ColumnScope.PaneContent(
             onDismissRequest = { renaming = null },
             title = { Text(OfflineMapsCopy.RENAME) },
             text = {
-                OutlinedTextField(
+                com.fotoxplorr.app.hyle.HyleTextField(
                     value = draft,
                     onValueChange = { draft = it.take(RegionRecord.MAX_NAME_LENGTH) },
-                    label = { Text(OfflineMapsCopy.NAME_FIELD) },
-                    singleLine = true,
+                    label = OfflineMapsCopy.NAME_FIELD,
+                    clearable = true,
                 )
             },
             confirmButton = {

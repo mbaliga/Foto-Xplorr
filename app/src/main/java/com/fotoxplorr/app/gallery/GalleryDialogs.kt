@@ -247,7 +247,7 @@ fun BulkRenameDialog(
                     onValueChange = { startAtText = it.filter(Char::isDigit).take(9) },
                     modifier = Modifier.fillMaxWidth(),
                     label = "Start counting at",
-                    error = startAt == null,
+                    errorText = if (startAt == null) "Enter a whole number." else null,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
                 )
                 Text(

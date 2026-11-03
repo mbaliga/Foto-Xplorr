@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -183,11 +184,11 @@ fun StampMapScreen(
             val viewport = MapViewport(widthPx.toDouble(), heightPx.toDouble())
             // Framed to the photos' bounds as before, but as a real Web Mercator camera so the
             // basemap under the stamps lines up with them; pan and pinch move the camera.
-            var camera by remember(bounds, viewport) {
-                mutableStateOf(
-                    MapMath.fitted(bounds.minLongitude, bounds.minLatitude, bounds.maxLongitude, bounds.maxLatitude, viewport, maxLevel = maxLevel),
-                )
-            }
+            fun framing() = MapMath.fitted(bounds.minLongitude, bounds.minLatitude, bounds.maxLongitude, bounds.maxLatitude, viewport, maxLevel = maxLevel)
+            // A single state object, so the gesture layer never writes into an orphan when the
+            // bounds or the size change; the new framing is applied to it.
+            var camera by remember { mutableStateOf(framing()) }
+            LaunchedEffect(bounds, viewport) { camera = framing() }
 
             // The bundled world under everything: land, coastlines, borders and the largest city
             // names, plus the imported raster map file when there is one. Gestures sit on this

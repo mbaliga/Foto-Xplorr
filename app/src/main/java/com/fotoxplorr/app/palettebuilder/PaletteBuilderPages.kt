@@ -202,7 +202,8 @@ internal fun ColourPage(text: String, onText: (String) -> Unit, onStart: () -> U
             value = text,
             onValueChange = onText,
             label = PaletteBuilderCopy.COLOUR_LABEL,
-            modifier = Modifier.fillMaxWidth().testTag(COLOUR_TAG),
+            modifier = Modifier.fillMaxWidth(),
+            fieldTag = COLOUR_TAG,
             imeAction = ImeAction.Done,
             onDone = { if (parsed != null) onStart() },
         )
@@ -230,11 +231,13 @@ internal fun DarkField(
     modifier: Modifier = Modifier,
     imeAction: ImeAction = ImeAction.Done,
     onDone: () -> Unit = {},
+    fieldTag: String? = null,
 ) {
     com.fotoxplorr.app.hyle.HyleTextField(
         value = value,
         onValueChange = onValueChange,
         label = label,
+        fieldTag = fieldTag,
         modifier = modifier,
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, imeAction = imeAction),
         keyboardActions = KeyboardActions(onDone = { onDone() }),
@@ -279,7 +282,8 @@ internal fun EditPage(
             value = name,
             onValueChange = { name = it.take(Palette.MAX_NAME_LENGTH * 2) },
             label = PaletteBuilderCopy.NAME_LABEL,
-            modifier = Modifier.fillMaxWidth().testTag(NAME_TAG).onFocusChanged { if (!it.isFocused) commitName() },
+            modifier = Modifier.fillMaxWidth().onFocusChanged { if (!it.isFocused) commitName() },
+            fieldTag = NAME_TAG,
             onDone = ::commitName,
         )
 

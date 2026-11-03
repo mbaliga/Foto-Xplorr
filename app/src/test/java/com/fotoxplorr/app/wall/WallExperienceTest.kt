@@ -9,6 +9,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -114,7 +115,7 @@ class WallExperienceTest {
         compose.onNodeWithContentDescription("wall.jpg").performClick()
         compose.onNodeWithText(WallCopy.SCALE_HEADER).assertExists()
         waitForNoText(WallCopy.LOADING)
-        compose.onNode(hasText(WallCopy.DISTANCE) and hasSetTextAction()).performTextInput("200")
+        compose.onNode(hasContentDescription(WallCopy.DISTANCE) and hasSetTextAction()).performTextInput("200")
         waitForText("The photo shows about", substring = true)
         compose.onNodeWithText(WallCopy.NEXT).performClick()
         compose.onNodeWithContentDescription("picture.jpg").performClick()

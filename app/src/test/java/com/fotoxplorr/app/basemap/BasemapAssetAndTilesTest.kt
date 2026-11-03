@@ -90,3 +90,57 @@ class BasemapAssetAndTilesTest {
         assertTrue(!MbTilesMath.isRasterFormat(null))
     }
 }
+
+class TileSafetyTest {
+    private class Fake(override val minZoom: Int, override val maxZoom: Int) : TileSource {
+        override fun tile(z: Int, x: Int, yXyz: Int): ByteArray? = null
+        override fun close() = Unit
+    }
+
+    private val phone = MapViewport(1080.0, 2200.0)
+
+    @Test fun `a regional file at minzoom 14 draws nothing from the world view`() {
+        val src = Fake(14, 17)
+        // Level 8 on this screen is tile zoom ~11: three below the file's first zoom.
+        assertTrue(MbTilesMath.tilesToDraw(MapCamera(8.0, 10.0, 50.0), phone, src).isEmpty())
+        assertTrue(MbTilesMath.tilesToDraw(MapCamera(0.0, 0.0, 0.0), phone, src).isEmpty())
+    }
+
+    @Test fun `visibleTiles never enumerates more than the cap`() {
+        // z=14 over a whole-world view would be millions of addresses.
+        assertTrue(MbTilesMath.visibleTiles(MapCamera(0.0, 0.0, 0.0), phone, 14).isEmpty())
+    }
+
+    @Test fun `a file whose zoom range fits the view draws a bounded set`() {
+        val src = Fake(0, 14)
+        val t = MbTilesMath.tilesToDraw(MapCamera(6.0, 10.0, 50.0), phone, src)
+        assertTrue(t.isNotEmpty() && t.size <= MbTilesMath.MAX_VISIBLE_TILES)
+    }
+
+    @Test fun `zoom ranges are validated`() {
+        assertTrue(MbTilesMath.isValidZoomRange(0, 22))
+        assertTrue(!MbTilesMath.isValidZoomRange(5, 4))
+        assertTrue(!MbTilesMath.isValidZoomRange(0, 31))
+        assertTrue(!MbTilesMath.isValidZoomRange(-1, 3))
+    }
+
+    @Test fun `tile images are bounded`() {
+        assertTrue(MbTilesMath.acceptsTileImage(256, 256))
+        assertTrue(MbTilesMath.acceptsTileImage(512, 512))
+        assertTrue(!MbTilesMath.acceptsTileImage(100_000, 100_000))
+        assertTrue(!MbTilesMath.acceptsTileImage(-1, 256))
+        assertTrue(!MbTilesMath.acceptsTileImage(0, 0))
+    }
+
+    @Test fun `a truncated basemap throws IllegalArgumentException, not an index error`() {
+        val whole = java.io.File("src/main/assets/basemap/world.fxmap").readBytes()
+        for (cut in listOf(6, 100, 5000, whole.size / 2, whole.size - 3)) {
+            try {
+                BasemapCodec.decode(whole.copyOf(cut))
+            } catch (_: IllegalArgumentException) {
+                continue
+            }
+            // A cut that happens to land on a record boundary may still decode; it must not crash otherwise.
+        }
+    }
+}

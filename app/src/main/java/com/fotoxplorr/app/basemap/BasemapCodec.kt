@@ -37,11 +37,11 @@ object BasemapCodec {
         repeat(r.varint()) {
             val kind = r.byte()
             val count = r.varint()
-            require(count in 0..1_000_000) { "Bad basemap path count" }
+            require(count >= 0 && count <= r.remaining()) { "Bad basemap path count" }
             val paths = ArrayList<IntArray>(count)
             repeat(count) {
                 val points = r.varint()
-                require(points in 0..10_000_000) { "Bad basemap point count" }
+                require(points >= 0 && points.toLong() * 2 <= r.remaining()) { "Bad basemap point count" }
                 val xy = IntArray(points * 2)
                 var x = 0
                 var y = 0
@@ -56,12 +56,13 @@ object BasemapCodec {
             layers[kind] = BasemapLayer(kind, paths)
         }
         val cityCount = r.varint()
-        require(cityCount in 0..100_000) { "Bad basemap city count" }
+        require(cityCount >= 0 && cityCount <= r.remaining()) { "Bad basemap city count" }
         val cities = ArrayList<BasemapCity>(cityCount)
         for (rank in 0 until cityCount) {
             val lon = r.zigzag() / 100.0
             val lat = r.zigzag() / 100.0
             val len = r.byte()
+            require(len <= r.remaining()) { "Bad basemap city name" }
             cities += BasemapCity(String(bytes, r.pos, len, Charsets.UTF_8), lon, lat, rank)
             r.pos += len
         }
@@ -70,7 +71,11 @@ object BasemapCodec {
     }
 
     private class Reader(val b: ByteArray, var pos: Int) {
-        fun byte(): Int = b[pos++].toInt() and 0xFF
+        fun remaining(): Int = b.size - pos
+        fun byte(): Int {
+            require(pos < b.size) { "Basemap file ends early" }
+            return b[pos++].toInt() and 0xFF
+        }
         fun varint(): Int {
             var result = 0L; var shift = 0
             while (true) {

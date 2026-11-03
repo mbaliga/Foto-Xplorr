@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
@@ -146,5 +147,15 @@ class LocationPickerTest {
         assertEquals(1, cleared)
         assertEquals(1, done)
         assertTrue("those actions must not report a location", sets.isEmpty())
+    }
+
+    @Test
+    fun `a comma decimal separator places the pin like a point`() {
+        picker()
+        compose.onNodeWithContentDescription("Latitude").performTextInput("17,4435")
+        compose.onNodeWithContentDescription("Longitude").performTextInput("78,3772")
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Chosen place", useUnmergedTree = true).assertExists()
+        compose.onNodeWithText("Use digits, like 17.4435.").assertDoesNotExist()
     }
 }

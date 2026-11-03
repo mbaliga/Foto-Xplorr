@@ -113,7 +113,7 @@ internal fun NumberField(label: String, value: Float, onValue: (Float) -> Unit, 
     com.fotoxplorr.app.hyle.HyleTextField(
         value = text,
         onValueChange = { typed ->
-            val clean = typed.filter { it.isDigit() || it == '.' }.take(7)
+            val clean = com.fotoxplorr.app.hyle.normalizeDecimalInput(typed).filter { it in '0'..'9' || it == '.' }.take(7)
             val number = if (clean.isEmpty()) 0f else clean.toFloatOrNull()
             if (number != null) {
                 text = clean
