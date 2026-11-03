@@ -241,15 +241,11 @@ internal fun ReelScreen(
     val jobs by (runner?.jobs ?: NO_JOBS).collectAsState()
     val making = jobs.firstOrNull { it.title == ReelCopy.JOB_TITLE }
     // The videos this screen started: only their outcomes are shown. A job that refuses at once can finish, and its
-    // outcome be collected, while launch is still on the stack, before its id can be noted: such an outcome is
-    // taken as ours (and noted in [early]) when it is the reel job's and a launch of ours is under way.
-    val started = remember { mutableSetOf<String>() }
-    val early = remember { mutableSetOf<String>() }
-    val launching = remember { BooleanArray(1) }
+    // outcome be collected, before launch returns: its id is written down by onRegistered, before the job starts.
+    val started = remember { java.util.Collections.synchronizedSet(mutableSetOf<String>()) }
     LaunchedEffect(runner) {
         runner?.outcomes?.collect { outcome ->
-            val ours = started.remove(outcome.id) || (launching[0] && outcome.title == ReelCopy.JOB_TITLE && early.add(outcome.id))
-            if (!ours) return@collect
+            if (!started.remove(outcome.id)) return@collect
             state.result = outcome.result.fold(
                 onSuccess = { value -> (value as? ReelOutcome.Done)?.let { ReelResult.Saved(it) } },
                 onFailure = { error ->
@@ -289,13 +285,7 @@ internal fun ReelScreen(
             transitions = !state.plainCuts,
             withoutSound = withoutSound,
         )
-        launching[0] = true
-        val id = try {
-            ReelJob.launch(runner, request, latestNewHost(), latestNewEncoder(), latestNewSink()).id
-        } finally {
-            launching[0] = false
-        }
-        if (!early.remove(id)) started += id
+        ReelJob.launch(runner, request, latestNewHost(), latestNewEncoder(), latestNewSink(), onRegistered = { started += it })
     }
 
     // ---- opening, closing, leaving ----

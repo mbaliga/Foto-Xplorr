@@ -310,4 +310,14 @@ class RecolourJobTest {
         assertTrue("got $error", error is CancellationException)
         assertEquals(listOf("content://media/external/images/media/900"), sink.discarded.toList())
     }
+
+    @Test
+    fun `the caller is told the job's id before its outcome can be seen`() = runBlocking {
+        val runner = JobRunner(this)
+        val order = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val outcome = async(start = CoroutineStart.UNDISPATCHED) { withTimeout(10_000) { runner.outcomes.first() }.also { order += "outcome ${it.id}" } }
+        val handle = RecolourJob.launch(runner, request(), FakeHost({ photo() }, answers = listOf(false)), RecordingSink(), onRegistered = { order += "registered $it" })
+        outcome.await()
+        assertEquals(listOf("registered ${handle.id}", "outcome ${handle.id}"), order.toList())
+    }
 }

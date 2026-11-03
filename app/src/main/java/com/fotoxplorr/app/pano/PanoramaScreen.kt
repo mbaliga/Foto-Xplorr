@@ -199,7 +199,7 @@ internal fun PanoramaScreen(
     var previewJob by remember { mutableStateOf<Job?>(null) }
     var result by remember { mutableStateOf<SaveResult?>(null) }
     // The saves this screen started (job id -> the photos it was made for): only their outcomes are shown.
-    val started = remember { mutableMapOf<String, List<Long>>() }
+    val started = remember { java.util.concurrent.ConcurrentHashMap<String, List<Long>>() }
     var leaveHeld by remember { mutableStateOf(false) }
 
     val jobs by (runner?.jobs ?: NO_JOBS).collectAsState()
@@ -287,7 +287,8 @@ internal fun PanoramaScreen(
         if (runner == null || !latestDraft.canJoin || chosen.size != latestDraft.ids.size || saveRunning()) return
         cancelPreview()
         result = null
-        started[PanoramaJob.launch(runner, PanoramaRequest(chosen), newHost(), newSink()).id] = latestDraft.ids
+        val ids = latestDraft.ids
+        PanoramaJob.launch(runner, PanoramaRequest(chosen), newHost(), newSink(), onRegistered = { started[it] = ids })
     }
 
     // A preview or a failure belongs to the photos it was made for; after any change it is not shown.

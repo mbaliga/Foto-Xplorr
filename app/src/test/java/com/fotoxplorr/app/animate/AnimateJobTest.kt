@@ -582,4 +582,18 @@ class AnimateJobTest {
         assertFalse(AnimateJob.isOutOfSpace(null))
         assertFalse(AnimateJob.isOutOfSpace(RuntimeException("ENOSPC")))
     }
+
+    @Test
+    fun `the caller is told the job's id before its outcome can be seen`() {
+        runBlocking {
+            val scope = CoroutineScope(Dispatchers.Unconfined)
+            val runner = JobRunner(scope)
+            val order = java.util.Collections.synchronizedList(mutableListOf<String>())
+            val seen = async(start = CoroutineStart.UNDISPATCHED) { runner.outcomes.first().also { order += "outcome ${it.id}" } }
+            val handle = AnimateJob.launch(runner, request(stills(1)), FakeAnimateHost(), FakeAnimateSink(), onRegistered = { order += "registered $it" })
+            withTimeout(30_000) { seen.await() }
+            assertEquals(listOf("registered ${handle.id}", "outcome ${handle.id}"), order.toList())
+            scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+        }
+    }
 }

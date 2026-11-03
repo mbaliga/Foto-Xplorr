@@ -164,7 +164,7 @@ internal fun PaletteBuilderScreen(
     var previewJob by remember { mutableStateOf<Job?>(null) }
     var result by remember { mutableStateOf<CopyResult?>(null) }
     // The recolours this screen started: only their outcomes are shown here.
-    val started = remember { mutableSetOf<String>() }
+    val started = remember { java.util.Collections.synchronizedSet(mutableSetOf<String>()) }
     var leaveHeld by remember { mutableStateOf(false) }
 
     val jobs by (runner?.jobs ?: NO_JOBS).collectAsState()
@@ -363,7 +363,7 @@ internal fun PaletteBuilderScreen(
         cancelPreview()
         result = null
         val request = RecolourRequest(asset, palette.argbs, now.recolour)
-        started += RecolourJob.launch(runner, request, newHost(), newSink()).id
+        RecolourJob.launch(runner, request, newHost(), newSink(), onRegistered = { started += it })
     }
 
     // A preview belongs to the photo, palette and settings it was made for; after any change it is not shown.

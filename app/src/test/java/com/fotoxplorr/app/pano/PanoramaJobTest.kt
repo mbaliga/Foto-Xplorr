@@ -640,4 +640,21 @@ class PanoramaJobTest {
         assertTrue(sink.published.isEmpty())
         assertNull(runner.jobs.value.firstOrNull())
     }
+
+    @Test
+    fun `the caller is told the job's id before its outcome can be seen`() {
+        val rig = CylinderRig()
+        val host = rigHost(rig)
+        host.unreadable += 0
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        val runner = JobRunner(scope)
+        val order = Collections.synchronizedList(ArrayList<String>())
+        val handle = runBlocking {
+            val wait = scope.async(start = CoroutineStart.UNDISPATCHED) { runner.outcomes.first().also { order += "outcome ${it.id}" } }
+            val handle = PanoramaJob.launch(runner, PanoramaRequest(host.assets), host, FakeSink(), onRegistered = { order += "registered $it" })
+            withTimeout(60_000) { wait.await() }
+            handle
+        }
+        assertEquals(listOf("registered ${handle.id}", "outcome ${handle.id}"), order.toList())
+    }
 }

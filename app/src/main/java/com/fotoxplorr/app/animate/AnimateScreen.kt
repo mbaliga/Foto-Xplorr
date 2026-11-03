@@ -161,7 +161,7 @@ internal fun AnimatedImagesScreen(
     var previewKey by remember { mutableStateOf<String?>(null) }
     var previewJob by remember { mutableStateOf<Job?>(null) }
     // The saves this screen started: only their outcomes are shown here.
-    val started = remember { mutableSetOf<String>() }
+    val started = remember { java.util.Collections.synchronizedSet(mutableSetOf<String>()) }
 
     val jobs by (runner?.jobs ?: NO_JOBS).collectAsState()
     val running = jobs.firstOrNull { it.title == AnimateCopy.JOB_TITLE }
@@ -260,7 +260,7 @@ internal fun AnimatedImagesScreen(
                 notice = SaveResult.Failed(AnimateCopy.FAILED)
                 return@launch
             }
-            started += AnimateJob.launch(runner, request, newHost(), newSink(), newVideoMaker()).id
+            AnimateJob.launch(runner, request, newHost(), newSink(), newVideoMaker(), onRegistered = { started += it })
         }
     }
 

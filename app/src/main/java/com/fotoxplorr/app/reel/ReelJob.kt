@@ -180,9 +180,19 @@ object ReelJob {
      * Start [run] as a [JobRunner] job (progress, cancel, the activity shade). The outcome arrives on
      * [JobRunner.outcomes] as a [ReelOutcome.Done] result, as a [ReelFailure] carrying the sentence for the
      * person, as a [ReelNeedsAnswer] when the person must decide about the sound, or as a cancellation.
+     *
+     * [onRegistered] is told the job's id before the job starts (see [JobRunner.launch]), so a screen that
+     * keeps the ids of its own saves has written the id down before any outcome for it can exist.
      */
-    fun launch(runner: JobRunner, request: ReelRequest, host: ReelHost, encoder: ReelEncoder, sink: ReelSink): JobHandle =
-        runner.launch(ReelCopy.JOB_TITLE, ActivityKind.EXPORTING) { onProgress ->
+    fun launch(
+        runner: JobRunner,
+        request: ReelRequest,
+        host: ReelHost,
+        encoder: ReelEncoder,
+        sink: ReelSink,
+        onRegistered: (id: String) -> Unit = {},
+    ): JobHandle =
+        runner.launch(ReelCopy.JOB_TITLE, ActivityKind.EXPORTING, onRegistered) { onProgress ->
             when (val outcome = run(request, host, encoder, sink) { onProgress(it) }) {
                 is ReelOutcome.Done -> Result.success(outcome)
                 is ReelOutcome.Failed -> Result.failure(ReelFailure(outcome.message))

@@ -156,9 +156,19 @@ object AnimateJob {
      * Start [run] as a [JobRunner] job (progress, cancel, the activity shade). The outcome arrives on
      * [JobRunner.outcomes] as an [AnimateOutcome.Done] result, or as an [AnimateFailure] carrying the
      * sentence for the person, or as a cancellation.
+     *
+     * [onRegistered] is told the job's id before the job starts (see [JobRunner.launch]), so a screen that
+     * keeps the ids of its own saves has written the id down before any outcome for it can exist.
      */
-    fun launch(runner: JobRunner, request: AnimateRequest, host: AnimateHost, sink: AnimateSink, video: VideoMaker? = null): JobHandle =
-        runner.launch(AnimateCopy.JOB_TITLE, ActivityKind.EXPORTING) { onProgress ->
+    fun launch(
+        runner: JobRunner,
+        request: AnimateRequest,
+        host: AnimateHost,
+        sink: AnimateSink,
+        video: VideoMaker? = null,
+        onRegistered: (id: String) -> Unit = {},
+    ): JobHandle =
+        runner.launch(AnimateCopy.JOB_TITLE, ActivityKind.EXPORTING, onRegistered) { onProgress ->
             when (val outcome = run(request, host, sink, video, onProgress = { onProgress(it) })) {
                 is AnimateOutcome.Done -> Result.success(outcome)
                 is AnimateOutcome.Failed -> Result.failure(AnimateFailure(outcome.message))

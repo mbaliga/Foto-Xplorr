@@ -8,6 +8,7 @@ import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
@@ -737,6 +738,20 @@ class ReelJobTest {
         override suspend fun encode(plan: ReelRenderPlan, staged: ReelStaged, output: File, onProgress: (Float) -> Unit) {
             started = true
             awaitCancellation()
+        }
+    }
+
+    @Test
+    fun `the caller is told the job's id before its outcome can be seen`() {
+        val c = case(1)
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        val runner = JobRunner(scope)
+        val order = java.util.Collections.synchronizedList(mutableListOf<String>())
+        runBlocking {
+            val seen = scope.async(start = CoroutineStart.UNDISPATCHED) { runner.outcomes.first().also { order += "outcome ${it.id}" } }
+            val handle = ReelJob.launch(runner, ReelRequest(ReelProject(listOf(still(1)))), c.host, c.encoder, c.sink, onRegistered = { order += "registered $it" })
+            withTimeout(30_000) { seen.await() }
+            assertEquals(listOf("registered ${handle.id}", "outcome ${handle.id}"), order.toList())
         }
     }
 }

@@ -101,9 +101,19 @@ internal object RecolourJob {
         }
     }
 
-    /** Starts [run] as a [JobRunner] job (progress, cancel, the activity shade). Its outcome arrives on [JobRunner.outcomes]. */
-    fun launch(runner: JobRunner, request: RecolourRequest, host: PaletteHost, sink: RecolourSink): JobHandle =
-        runner.launch(PaletteBuilderCopy.JOB_TITLE, ActivityKind.EXPORTING) { onProgress ->
+    /**
+     * Starts [run] as a [JobRunner] job (progress, cancel, the activity shade). Its outcome arrives on [JobRunner.outcomes].
+     * [onRegistered] is told the job's id before the job starts, so a caller that keeps the ids of its own jobs has it
+     * written down before any outcome for it can exist.
+     */
+    fun launch(
+        runner: JobRunner,
+        request: RecolourRequest,
+        host: PaletteHost,
+        sink: RecolourSink,
+        onRegistered: (id: String) -> Unit = {},
+    ): JobHandle =
+        runner.launch(PaletteBuilderCopy.JOB_TITLE, ActivityKind.EXPORTING, onRegistered) { onProgress ->
             when (val outcome = run(request, host, sink) { onProgress(it) }) {
                 is RecolourOutcome.Done -> Result.success(outcome)
                 is RecolourOutcome.Failed -> Result.failure(RecolourFailure(outcome.message))
