@@ -1433,3 +1433,90 @@ by tool; the first group of each is what the fixers listed, the second what the 
   code too (assert the fixed level L about 52; use a patch where the old and new rules disagree); a no-card colour saved to
   a palette carries no mark that its lightness was never measured; `knownTone` is true whenever the camera merely lists the
   preset curve, so no `TONE_CURVE_UNKNOWN` caution shows on those phones.
+
+## Batch 9: owner feedback round (3 Nov 2026)
+
+Branch `claude/friendly-lovelace-06dito` (PR #18). **Nothing in this batch has run on a device.** Tests proved pure logic,
+wiring and file effects; Roborazzi is in record mode, so nothing visual is proven. Checklist:
+`docs/device-test/batch-9-checklist.md`. Traps: #126 to #133. Decisions: `docs/adr/ADR-018-cloud-sync.md`,
+`docs/adr/ADR-019-nooz-model-catalogue.md`. **No new Gradle dependency**; no Gradle file changed.
+
+### What was built (owner feedback numbers in brackets)
+
+- **Top room and shade corners (#1, #2).** Room and shade text inset from the rounded corner and the timeline gutter;
+  fillets and shadow make the grid under an open shade read as a slipped sheet (the grid does not move). The Recognising
+  shade shows a real photo stack you can ruffle (recent ids from `RecognitionIndexer.RecentIds`; a sensitive photo with
+  blur on is never loaded).
+- **Maps (#3).** A bundled Natural Earth 1:50m world basemap (`assets/basemap/world.fxmap`, about 220 KB, public domain)
+  drawn in the Place section and the Offline stamp map, and Settings > Data > Maps imports a raster `.mbtiles`. Offline
+  flavor stays network-free; the Connect build keeps its street map.
+- **Fields (#4).** One `HyleTextField` per the Hyle "Tab field" spec everywhere (focus colour stays the accent: a
+  documented deviation).
+- **Timeline (#5).** `TimelineRail` replaces the library strip: an arc that bulges away from the finger, a bubble beside
+  it, default **Only while scrubbing**, setting "Timeline shows: Only while scrubbing / Always visible" (installs that
+  had the timeline on keep Always visible). The touch target shares input with the grid. Filmstrip thumbnails lift away
+  from the finger with a larger preview above it.
+- **Settings (#6).** Icons on every tab, section and row (a test fails if a row has none), a Services tab; "AI and
+  provider keys" is gone from Experimental.
+- **People (#7).** Stable people with names, merge, hide and "not this person" (recognition DB v6, additive); a People
+  destination of face-crop cards with counts and an honest status line; a person is a removable filter chip.
+- **Services (#8).** Hub with AI keys, Models on this phone and Sync. Model catalogue from Nooz's data-only catalogue
+  (bundled snapshot, explicit "Update catalogue", Connect only, pinned to a Nooz commit).
+- **Cloud sync (#8).** Optional one-way copies to a folder (both flavors), WebDAV/Nextcloud, S3-compatible, Google Drive
+  and Dropbox (Connect only; OAuth PKCE with the owner's own client id). Never deletes or overwrites, resumable, starts
+  only on a tap, Wi-Fi only by default, optional encryption, protected photos fail closed. A foreground job `SYNCING`.
+- **CI.** `.github/workflows/android-debug.yml` also builds the Connect arm64 release APK as artifact
+  `fotoz-CONNECT-arm64` (job timeout 90 min).
+
+### What the audits found and fixed
+
+- **People:** the status said "done" before a pass finished (now `passFinished`); a person with over 48 faces fell apart
+  (split-keeping match); exclusions wrote once per photo; a stale person filter and selection stayed after leaving;
+  crops were not recycled or cleared on lock; unusable boxes were re-read every pass; unnamed numbering used raw db ids.
+- **Stack/shade:** the stack showed a window of the library, not what was recognised; sensitive photos loaded sharp
+  (blur is a no-op below API 31); pull lift recomposed rows; a thumbed deck reshuffled when photos arrived.
+- **Maps:** gestures read stale state; imported tiles were unbounded (now 64 tiles, 512 px, 24 MB cache); import was
+  not safe against bad files; comma decimals.
+- **Services:** the catalogue ref was a branch (now a commit); the cache was not atomic; Delete all had no confirm.
+- **Sync:** the passphrase key was derived from a wiped buffer; a file counted as sent without confirmation; a bad file
+  stopped every run; S3 lacked `If-None-Match`; adoption trusted name and size; Forget let a dying run write state; a
+  forged OAuth redirect was not ignored; octal-looking IPs counted as local; copy claimed a password stays on the phone.
+  Wiring fix: the library was fed only while Settings was open; now `SyncLibraryFeed` in the activity (fail closed).
+- **Rail:** a fix pass (touch target no longer steals grid taps, flings and long-presses; gesture-exclusion trade-off;
+  arc width follows rail length; filmstrip no longer jumps on lift; TalkBack actions) was still being committed when
+  this was written; the checklist describes the final intended behaviour.
+
+### What is unverified (all of it on a device)
+
+Rail feel against the reference videos and thumb clearance; the back-swipe cost of the exclusion band; shade look; stack
+feel; face-crop framing and over-splitting of real faces; map smoothness and label legibility; a real MBTiles import;
+every sync provider against a real server, multipart cancel, Keystore across an update, PBKDF2 time; Drive/Dropbox
+sign-in and token expiry; Connect APK install from CI. See the checklist.
+
+### Deferred, and why
+
+- Releasing offline map downloads (`CAP_VERIFIED_ON_DEVICE`, batch 6) still waits for a device check.
+- Running any LLM, image or TTS model: Fotoz has no runtime, so those catalogue entries have Get disabled.
+- Two-way sync, delete propagation, background sync, several destinations, OneDrive/iCloud APIs (ADR-018).
+- Vector or PMTiles map import; a vision kind in Nooz's schema; lifting the catalogue parser into Shared-Libraries-asoc.
+- The `shared-libraries` and `hyle-design-system` submodules were not edited.
+
+### Residual, for the owner (open decisions)
+
+- **Cleartext in the Connect build.** It now allows plain http app-wide (Android cannot limit it to private ranges);
+  code policy limits sync to local hosts. Keep it, or drop the plain-http option (no NAS over http, no local Ollama)?
+  The Offline build is unaffected. (ADR-018 Decision 6)
+- **GPS in plain sync copies.** Plain copies take the platform's view and may lack GPS; only encrypted ones keep it. One
+  line in `SyncAndroid.createService` changes that.
+- **Google client type and redirect.** Which OAuth client type to register and whether Google accepts
+  `com.fotoxplorr.app.oauth:/oauth2redirect`; and you must register Drive (Drive API, consent screen *In production*)
+  and Dropbox (App folder; `files.metadata.read`, `files.metadata.write`, `files.content.write`, `account_info.read`;
+  redirect `com.fotoxplorr.app.oauth:/dropbox`) yourself.
+- **Vision models in Nooz.** Add a `VISION_TFLITE` kind (task, input size, licence, sha256) so the MobileNet embedder can
+  be listed, and a published checksum for it. Decide whether the parser moves to Shared-Libraries-asoc.
+- **Store text.** `docs/store/privacy-policy.md` and `play-console.md` still say "no cloud, no sync": true of the app's
+  own network (the Offline build) but folder copies exist now; re-read before the next submission. The Connect build
+  is not the listed app.
+- **Wording to read:** `ServicesCopy`, `SyncCopy`, `PeopleCopy`, the timeline setting labels, the Settings tab names.
+- **First device pass, in this order:** the rail against the videos, then People on the real library, then a Nextcloud
+  or folder sync, then the map import.
