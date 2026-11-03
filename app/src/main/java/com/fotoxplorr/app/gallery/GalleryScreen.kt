@@ -305,6 +305,8 @@ data class GalleryActions(
     val onSetEditorSaveMode: (com.fotoxplorr.app.editor.EditorSaveMode) -> Unit = {},
     /** Kick off (or resume) the on-device recognition pass. */
     val onIndexRecognition: () -> Unit,
+    /** Rename, hide, merge and "not this person" for the People destination; see [PeopleActions]. */
+    val onPeople: PeopleActions = PeopleActions(),
     val onProtectFolder: suspend (String, CharArray) -> Result<Unit>,
     val onUnlockFolder: suspend (String, CharArray) -> Boolean,
     val onLockFolder: (String) -> Unit,
@@ -534,6 +536,11 @@ private fun GalleryBrowser(
     // would wipe a restored range. Only the person clears it.
     var timeRange by rememberSaveable(stateSaver = TimeRangeSaver) { mutableStateOf<TimeRange?>(null) }
     var timeEditorOpen by remember { mutableStateOf(false) }
+    // The person the People destination is narrowed to (a filter on the library, with a chip to
+    // remove it); null shows the people themselves. Cleared when the destination changes.
+    var personFilter by rememberSaveable { mutableStateOf<Long?>(null) }
+    val peopleOverview = destination == HyleDestination.PEOPLE && personFilter == null
+    LaunchedEffect(destination) { if (destination != HyleDestination.PEOPLE) personFilter = null }
     // Where the grid last opened at its latest end (see the anchor effect further down) and how
     // many times choosing a rail word has asked for it again. Saveable for the same reason as the
     // search: after the viewer round trip or a restore the grid's own scroll position comes back,
@@ -681,9 +688,9 @@ private fun GalleryBrowser(
     val destinationBase = remember(
         destination, query, state.assets, state.favoriteIds, state.sensitiveIds,
         state.library, state.lockedFolders, state.unlockedFolders, state.preferences,
-        state.recognition,
+        state.recognition, personFilter,
     ) {
-        destinationAssets(destination, state, query)
+        destinationAssets(destination, state, query, personFilter)
     }
     // The time range is a lens over the projection, applied AFTER it: destinationAssets() and the
     // projection fingerprints never see it. [destinationBase] and [routeBase] are the lists
@@ -965,7 +972,7 @@ private fun GalleryBrowser(
         masonry = masonryActive,
         mapOpen = mapOpen,
         paneTakenOver = paneTakenOver,
-        hasStops = scrubberStops.isNotEmpty(),
+        hasStops = scrubberStops.isNotEmpty() && !peopleOverview,
     )
     // The grid makes room (and the chrome dodges the strip) only while the rail is always drawn; in
     // the scrubbing-only mode it is an overlay, so nothing reflows when it appears.
@@ -1182,7 +1189,9 @@ private fun GalleryBrowser(
         // TOP = what this view is, pulled down over it.
         details = {
             GalleryInfoRoom(
-                title = route.title(destination),
+                title = personFilter?.let { id ->
+                    state.recognition.roster.firstOrNull { it.id == id }?.displayName?.let { "People: $it" }
+                } ?: route.title(destination),
                 assets = currentAssets,
                 state = state,
             )
@@ -1536,6 +1545,8 @@ private fun GalleryBrowser(
                                                     )
                                                 },
                                                 experimentalState = experimentalState,
+                                                personFilter = personFilter,
+                                                onPersonFilter = { personFilter = it },
                                             )
                                         }
                                     }

@@ -71,6 +71,7 @@ import com.fotoxplorr.app.editor.toRecoveryEntries
 import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.gallery.GalleryActions
+import com.fotoxplorr.app.gallery.PeopleActions
 import com.fotoxplorr.app.gallery.GalleryPreferences
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.gallery.GalleryScreen
@@ -1725,6 +1726,14 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     },
                     onSetEditorSaveMode = galleryPreferences::setEditorSaveMode,
                     onIndexRecognition = { recognitionGeneration += 1 },
+                    onPeople = PeopleActions(
+                        onRename = { id, name -> scope.launch { recognitionStore.renamePerson(id, name) } },
+                        onHide = { id, hidden -> scope.launch { recognitionStore.hidePerson(id, hidden) } },
+                        onMerge = { from, into -> scope.launch { recognitionStore.mergePeople(from, into) } },
+                        onNotThisPerson = { id, media ->
+                            scope.launch { media.forEach { recognitionStore.excludeFromPerson(id, it) } }
+                        },
+                    ),
                     onProtectFolder = privateFolderStore::protect,
                     onUnlockFolder = privateFolderStore::unlock,
                     onLockFolder = privateFolderStore::lock,

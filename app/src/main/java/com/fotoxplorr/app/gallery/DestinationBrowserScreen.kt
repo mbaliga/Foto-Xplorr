@@ -89,6 +89,7 @@ fun destinationAssets(
     destination: HyleDestination,
     state: GalleryUiState,
     query: String = "",
+    personId: Long? = null,
 ): List<MediaAsset> {
     fun smart(album: SmartAlbum) = smartAlbumAssets(
         album, state.assets, state.favoriteIds, state.sensitiveIds,
@@ -113,7 +114,17 @@ fun destinationAssets(
         HyleDestination.SCREENSHOTS -> smart(SmartAlbum.SCREENSHOTS)
         HyleDestination.FAVOURITES -> smart(SmartAlbum.FAVORITES)
         // Backed by the on-device recognition pass (com.fotoxplorr.app.recognition).
-        HyleDestination.PEOPLE -> everyday().filter { it.id in state.recognition.peopleMediaIds }
+        HyleDestination.PEOPLE -> {
+            // A person is a FILTER on the same list: the people overview and the person's own grid
+            // both start from the browsable, face-bearing photos, so a protected photo can be
+            // neither counted nor shown (TRAPS #33).
+            val personMedia = personId?.let { id ->
+                state.recognition.roster.firstOrNull { it.id == id }?.mediaIds?.toHashSet().orEmpty()
+            }
+            everyday().filter {
+                it.id in state.recognition.peopleMediaIds && (personMedia == null || it.id in personMedia)
+            }
+        }
         HyleDestination.PETS -> everyday().filter { it.id in state.recognition.petMediaIds }
         HyleDestination.IDENTITY -> everyday().filter { it.id in state.recognition.identityMediaIds }
         // Rendered by their own panes rather than a flat grid.
@@ -287,6 +298,8 @@ internal fun DestinationContent(
     onRequestUnlock: (String, String) -> Unit,
     horizontal: Boolean = false,
     experimentalState: SaveableStateHolder? = null,
+    personFilter: Long? = null,
+    onPersonFilter: (Long?) -> Unit = {},
 ) {
     when (destination) {
         HyleDestination.PLACES -> {
@@ -313,23 +326,31 @@ internal fun DestinationContent(
             onOpenFolder = { key -> onRequestUnlock(key, key) },
         )
         else -> Column(Modifier.fillMaxSize()) {
-            if (destination == HyleDestination.PEOPLE && state.recognition.people.isNotEmpty()) {
-                PeopleStrip(
-                    clusters = state.recognition.people,
-                    // The already-filtered destination list, not raw state.assets: a cluster's
-                    // cover photo must obey the same visibility rule as the grid right below it.
-                    assets = assets,
-                    onOpenPerson = { ids ->
-                        val personAssets = assets.filter { it.id in ids }
-                        personAssets.firstOrNull()?.let { actions.onOpenAsset(it, personAssets) }
-                    },
+            // People: the overview is a grid of person cards; opening one narrows the grid below
+            // to that person, with a chip to take the filter off (see PeoplePane.kt).
+            val peopleOverview = destination == HyleDestination.PEOPLE && personFilter == null
+            if (destination == HyleDestination.PEOPLE && personFilter != null) {
+                PersonFilterHeader(
+                    personId = personFilter,
+                    state = state,
+                    selection = selection,
+                    onSelectionChange = onSelectionChange,
+                    actions = actions.onPeople,
+                    onClear = { onPersonFilter(null) },
                 )
             }
             // Either the grid or the empty state, never both: the grid renders its own generic
             // message when handed an empty list, which would otherwise stack above this
             // destination's far more useful one and push it off-screen, since both fill the
             // available height.
-            if (assets.isEmpty()) {
+            if (peopleOverview) {
+                PeopleOverviewHost(
+                    state = state,
+                    assets = assets,
+                    actions = actions.onPeople,
+                    onOpenPerson = { onPersonFilter(it) },
+                )
+            } else if (assets.isEmpty()) {
                 DestinationMessage(destinationEmptyMessage(destination, state.recognitionProgress))
             } else {
                 ZoomGrid(
@@ -349,46 +370,6 @@ internal fun DestinationContent(
                     animatedIds = state.animatedIds,
                     anchor = anchor,
                     horizontal = horizontal,
-                )
-            }
-        }
-    }
-}
-
-/** The people found by clustering, as a row of round covers above the People grid. */
-@Composable
-private fun PeopleStrip(
-    clusters: List<com.fotoxplorr.app.recognition.PersonCluster>,
-    assets: List<MediaAsset>,
-    onOpenPerson: (Set<MediaId>) -> Unit,
-) {
-    LazyRow(
-        modifier = Modifier.fillMaxWidth().background(Color.Black),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        items(clusters, key = { it.id }) { cluster ->
-            val cover = assets.firstOrNull { it.id in cluster.mediaIds }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(RoundedCornerShape(28.dp))
-                        // Fixed on purpose (reference design): a neutral surface, no accent role.
-                        .background(Color(0xFF1A1A1A))
-                        .clickable { onOpenPerson(cluster.mediaIds.toSet()) },
-                ) {
-                    cover?.let {
-                        MediaImage(it, Modifier.fillMaxSize(), ContentScale.Crop)
-                    }
-                }
-                Text(
-                    // Clusters are unnamed: nothing on the device knows who these people are,
-                    // and inventing names would be fabrication. Numbering them is honest.
-                    "Person ${cluster.id + 1}",
-                    style = TextStyle(fontSize = 11.sp),
-                    color = Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(top = 4.dp),
                 )
             }
         }
