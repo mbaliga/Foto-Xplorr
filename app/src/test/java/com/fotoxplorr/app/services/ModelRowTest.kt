@@ -71,6 +71,21 @@ class ModelRowTest {
         assertEquals(listOf("get"), calls)
     }
 
+    @Test fun deleteAllAsksFirst() {
+        var deleted = 0
+        compose.setContent {
+            FotoXplorrTheme(GalleryPreferencesState()) { StorageFooter("Models use 1.0 MB.", canDeleteAll = true, onDeleteAll = { deleted++ }) }
+        }
+        compose.onNodeWithText(ServicesCopy.DELETE_ALL).performClick()
+        compose.onNodeWithText(ServicesCopy.DELETE_ALL_CONFIRM).assertIsDisplayed()
+        assertEquals(0, deleted)
+        compose.onNodeWithText(ServicesCopy.CANCEL).performClick()
+        assertEquals(0, deleted)
+        compose.onNodeWithText(ServicesCopy.DELETE_ALL).performClick()
+        compose.onNodeWithText(ServicesCopy.DELETE).performClick()
+        assertEquals(1, deleted)
+    }
+
     private fun androidx.compose.ui.test.junit4.ComposeContentTestRule.onAllNodesWithTextCount(t: String) =
         onAllNodesWithText(t).fetchSemanticsNodes().size
 }

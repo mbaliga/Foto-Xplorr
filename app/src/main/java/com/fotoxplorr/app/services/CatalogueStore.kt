@@ -39,27 +39,47 @@ class CatalogueStore(
     )
 
     fun load(): CatalogueSnapshot {
+        cleanLeftovers()
         val cached = parseBoth(File(cacheDir, MODELS).takeIf(File::isFile)?.readText(), File(cacheDir, TIERS).takeIf(File::isFile)?.readText())
         if (cached != null) return cached.copy(fromCache = true)
         return parseBoth(readBundled(MODELS), readBundled(TIERS))
             ?: CatalogueSnapshot(NoozModelsDoc(NoozCatalogueParser.SUPPORTED_SCHEMA, null, emptyList()), null, fromCache = false)
     }
 
+    /** A killed update can leave a half-written download folder or *.tmp file; they are never read, only removed. */
+    private fun cleanLeftovers() {
+        File(cacheDir, INCOMING).deleteRecursively()
+        cacheDir.listFiles { f -> f.name.endsWith(".tmp") }?.forEach(File::delete)
+    }
+
     suspend fun update(bridge: RemoteAiBridge): Result<CatalogueSnapshot> = withContext(Dispatchers.IO) {
-        runCatching {
-            if (!bridge.available) throw RemoteAiUnavailableException()
-            val incoming = File(cacheDir, "incoming").apply { deleteRecursively(); mkdirs() }
-            for (name in listOf(MODELS, TIERS)) {
-                bridge.downloadFile(BASE_URL + name, File(incoming, name)) { _, _ -> }.getOrThrow()
+        val incoming = File(cacheDir, INCOMING)
+        try {
+            runCatching {
+                if (!bridge.available) throw RemoteAiUnavailableException()
+                cleanLeftovers()
+                incoming.mkdirs()
+                for (name in listOf(MODELS, TIERS)) {
+                    val file = File(incoming, name)
+                    bridge.downloadFile(BASE_URL + name, file) { _, _ -> }.getOrThrow()
+                    check(file.length() <= MAX_BYTES) { "The downloaded catalogue is too large." }
+                }
+                val fresh = parseBoth(File(incoming, MODELS).readText(), File(incoming, TIERS).readText())
+                    ?.takeIf { it.tiers != null }
+                    ?: error("The downloaded catalogue could not be read.")
+                // Each file is copied to *.tmp then renamed, so a kill never leaves a truncated
+                // file. The free tiers go first: load() keys on models.json, so the pair is only
+                // ever "old+old", "old models + new tiers" or "new+new", all of which parse.
+                for (name in listOf(TIERS, MODELS)) {
+                    val tmp = File(cacheDir, "$name.tmp")
+                    File(incoming, name).copyTo(tmp, overwrite = true)
+                    check(tmp.renameTo(File(cacheDir, name))) { "The catalogue could not be saved." }
+                }
+                fresh.copy(fromCache = true)
             }
-            val fresh = parseBoth(File(incoming, MODELS).readText(), File(incoming, TIERS).readText())
-                ?.takeIf { it.tiers != null }
-                ?: error("The downloaded catalogue could not be read.")
-            for (name in listOf(MODELS, TIERS)) {
-                File(incoming, name).copyTo(File(cacheDir, name), overwrite = true)
-            }
+        } finally {
             incoming.deleteRecursively()
-            fresh.copy(fromCache = true)
+            cacheDir.listFiles { f -> f.name.endsWith(".tmp") }?.forEach(File::delete)
         }
     }
 
@@ -79,8 +99,19 @@ class CatalogueStore(
         const val CACHE_DIR = "ai-catalogue-cache"
         const val MODELS = "models.json"
         const val TIERS = "free-tiers.json"
+        private const val INCOMING = "incoming"
 
-        /** Nooz's default branch. Raw files are fetched only on an explicit tap. */
-        const val BASE_URL = "https://raw.githubusercontent.com/mbaliga/nooz/claude/app-build-d1f9s6/ai-catalogue/"
+        /** Largest catalogue file accepted (the real ones are under 20 KB). */
+        const val MAX_BYTES = 2L * 1024L * 1024L
+
+        /**
+         * The one place the fetch address is set. It is pinned to a COMMIT of the Nooz repo, not a
+         * branch: Nooz currently has a single branch (claude/app-build-d1f9s6, also its default),
+         * no main and no tags, so a branch name could be deleted or force-pushed and silently serve
+         * unreviewed content. A commit address is immutable. Consequence: "Update catalogue"
+         * returns exactly this reviewed commit until the constant is bumped (scripts/refresh-ai-catalogue.sh
+         * and this ref move together); once Nooz has a main or a release tag, point the ref at that.
+         */
+        const val BASE_URL = "https://raw.githubusercontent.com/mbaliga/nooz/c396e9a2d022ac28e7ce0a238c33ffc602afc7cf/ai-catalogue/"
     }
 }

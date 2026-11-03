@@ -112,6 +112,7 @@ fun AiSettingsScreen(onClose: () -> Unit, showModels: Boolean = true) {
     var testResult by remember { mutableStateOf<String?>(null) }
     var testingId by remember { mutableStateOf<String?>(null) }
     var showModelDetails by remember { mutableStateOf(false) }
+    var keyVersion by remember { mutableStateOf(0) }
     // Free-tier facts come from the shared catalogue (bundled or last updated by tap); read once.
     val snapshot = remember(context) { CatalogueStore(context.applicationContext).load() }
 
@@ -185,13 +186,17 @@ fun AiSettingsScreen(onClose: () -> Unit, showModels: Boolean = true) {
                 ProviderCard(
                     provider = provider,
                     testing = testingId == provider.id,
-                    keyTail = remember(provider.id, provider.hasSecret) {
-                        // Decrypt only to read four characters, then wipe: the key is never displayed.
-                        val key = providerStore.secret(provider.id)
-                        val tail = KeyMasking.tail(key)
-                        key?.fill('\u0000')
-                        tail
-                    },
+                    keyTail = androidx.compose.runtime.produceState("", provider.id, provider.hasSecret, keyVersion) {
+                        // Decrypt off the main thread, only to read four characters, then wipe: the
+                        // key is never displayed. keyVersion changes on every save so a replaced key
+                        // shows its new tail at once.
+                        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            val key = providerStore.secret(provider.id)
+                            val tail = KeyMasking.tail(key)
+                            key?.fill('\u0000')
+                            tail
+                        }
+                    }.value,
                     canTest = bindings.remoteAi.available,
                     freeTier = CataloguePolicy.freeTierFor(
                         snapshot.tiers?.tiers.orEmpty(),
@@ -246,6 +251,7 @@ fun AiSettingsScreen(onClose: () -> Unit, showModels: Boolean = true) {
             onSave = { updated, secret ->
                 runCatching { providerStore.upsert(updated, secret) }
                     .onFailure { testResult = it.message }
+                keyVersion++
                 editing = null
             },
         )
@@ -602,6 +608,7 @@ private fun DarkField(
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier.fillMaxWidth(),
+            contentDescription = label,
             visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
             keyboardOptions = if (password) {
                 androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password)

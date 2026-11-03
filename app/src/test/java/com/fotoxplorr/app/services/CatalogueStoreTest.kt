@@ -89,4 +89,34 @@ class CatalogueStoreTest {
         assertFalse(s.fromCache)
         assertEquals("2026-07-22", s.models.lastUpdated)
     }
+
+    @Test fun baseUrlIsPinnedToAnImmutableCommit() {
+        val ref = CatalogueStore.BASE_URL.substringAfter("/mbaliga/nooz/").substringBefore("/")
+        assertTrue(ref.matches(Regex("[0-9a-f]{40}")))
+    }
+
+    @Test fun oversizedDownloadIsRejectedAndLeavesNoLeftovers() = runBlocking {
+        val dir = tmp.newFolder()
+        val st = store(dir)
+        val big = "x".repeat(CatalogueStore.MAX_BYTES.toInt() + 1)
+        assertTrue(st.update(FakeBridge(true, mapOf(CatalogueStore.MODELS to big, CatalogueStore.TIERS to big))).isFailure)
+        assertFalse(File(dir, "incoming").exists())
+        assertTrue(dir.listFiles().orEmpty().none { it.name.endsWith(".tmp") })
+        assertFalse(st.load().fromCache)
+    }
+
+    @Test fun leftoverIncomingFolderIsRemovedOnLoad() {
+        val dir = tmp.newFolder()
+        File(dir, "incoming").apply { mkdirs(); File(this, "models.json").writeText("{") }
+        File(dir, "models.json.tmp").writeText("{")
+        store(dir).load()
+        assertFalse(File(dir, "incoming").exists())
+        assertFalse(File(dir, "models.json.tmp").exists())
+    }
+
+    @Test fun successfulUpdateLeavesNoTempFiles() = runBlocking {
+        val dir = tmp.newFolder()
+        store(dir).update(FakeBridge(true, fresh)).getOrThrow()
+        assertEquals(setOf("models.json", "free-tiers.json"), dir.list().orEmpty().toSet())
+    }
 }

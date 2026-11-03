@@ -125,10 +125,25 @@ fun ModelsPane(onBack: () -> Unit, modifier: Modifier = Modifier) {
 
 @Composable
 internal fun StorageFooter(line: String, canDeleteAll: Boolean, onDeleteAll: () -> Unit) {
+    var asking by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
         Text(line, color = SERVICES_SECONDARY, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         if (canDeleteAll) {
-            ServicesButton(ServicesCopy.DELETE_ALL, danger = true, icon = Icons.Outlined.Delete, onClick = onDeleteAll)
+            ServicesButton(ServicesCopy.DELETE_ALL, danger = true, icon = Icons.Outlined.Delete, onClick = { asking = true })
+        }
+    }
+    if (asking) {
+        Dialog(onDismissRequest = { asking = false }) {
+            Column(
+                Modifier.background(SERVICES_CARD, RoundedCornerShape(20.dp)).padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(ServicesCopy.DELETE_ALL_CONFIRM, color = SERVICES_PRIMARY, style = MaterialTheme.typography.bodyLarge)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, androidx.compose.ui.Alignment.End)) {
+                    ServicesButton(ServicesCopy.CANCEL, onClick = { asking = false })
+                    ServicesButton(ServicesCopy.DELETE, danger = true, onClick = { asking = false; onDeleteAll() })
+                }
+            }
         }
     }
 }

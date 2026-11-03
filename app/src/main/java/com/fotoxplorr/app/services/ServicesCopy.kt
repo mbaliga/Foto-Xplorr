@@ -47,6 +47,7 @@ internal object ServicesCopy {
     const val CONFIRM_GO = "Download"
     const val OPEN_MODELS = "Open Models on this phone"
 
+    const val DELETE_ALL_CONFIRM = "Delete every model on this phone?"
     const val CATALOGUE_TITLE = "Shared catalogue"
     const val BUILT_IN_GROUP = "Built into Fotoz"
     const val MORE_GROUP = "More models (no Fotoz feature uses these yet)"
