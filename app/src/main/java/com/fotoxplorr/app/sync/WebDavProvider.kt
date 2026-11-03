@@ -153,7 +153,7 @@ class WebDavProvider(
                 else -> throw HttpStatus.failureFor(response.code, SyncCopy.WEBDAV_FAILED)
             }
         }
-        if (counted.count != length) throw SyncException(SyncFailure.TRANSIENT, "The file changed while it was being sent")
+        if (counted.count != length) throw SyncLocalChanged("The file changed while it was being sent")
         return stat(path)
     }
 

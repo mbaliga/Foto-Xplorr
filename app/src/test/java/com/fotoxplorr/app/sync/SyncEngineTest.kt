@@ -279,17 +279,59 @@ class SyncEngineTest {
     // ---- adoption, names, twins ----
 
     @Test
-    fun `a file already at the destination with the right size is adopted, not sent again`() {
+    fun `a file already at the destination is adopted only when its modified time agrees`() {
         val filesystem = fs()
         val provider = SafFolderProvider(filesystem)
         val a = library.add(1, "a.jpg", randomBytes(700))
         run(engine(provider))
+        // The destination keeps the photo's own modified time (as WebDAV with X-OC-Mtime or Drive's modifiedTime can).
+        File(root, RemoteLayout.pathFor(a)).setLastModified(a.dateModifiedSeconds * 1000L)
         store.text = "" // the manifest is lost (reinstall)
         val state = run(engine(provider)) as SyncRunState.Finished
         assertEquals(0, state.tally.uploaded)
         assertEquals(1, state.tally.adopted)
         assertEquals(1, remoteFiles().size)
         assertEquals(RemoteLayout.pathFor(a), store.load().doneFor(a.key)!!.remotePath)
+    }
+
+    @Test
+    fun `same name and same size but nothing else that agrees is another photo, not ours`() {
+        val filesystem = fs()
+        val provider = SafFolderProvider(filesystem)
+        val a = library.add(1, "a.jpg", randomBytes(700, 1))
+        run(engine(provider))
+        // Lost manifest; the file at that name was last modified at some other time: do not take it for ours.
+        File(root, RemoteLayout.pathFor(a)).setLastModified(a.dateModifiedSeconds * 1000L + 86_400_000L)
+        store.text = ""
+        val state = run(engine(provider)) as SyncRunState.Finished
+        assertEquals(1, state.tally.uploaded)
+        assertEquals(0, state.tally.adopted)
+        assertEquals(2, remoteFiles().size)
+        assertTrue(store.load().doneFor(a.key)!!.remotePath.endsWith("a (2).jpg"))
+    }
+
+    private class StatProvider(private val inner: SyncProvider, val onStat: (String) -> RemoteEntry?) : SyncProvider by inner {
+        override fun stat(path: String): RemoteEntry? = onStat(path)
+    }
+
+    @Test
+    fun `a matching content hash adopts and a different one does not`() {
+        val data = randomBytes(300, 4)
+        val md5 = java.security.MessageDigest.getInstance("MD5").digest(data).joinToString("") { "%02x".format(it) }
+        for ((reported, expectAdopt) in listOf(md5 to true, "0".repeat(32) to false)) {
+            library.candidates.clear()
+            store.text = ""
+            val a = library.add(1, "h.jpg", data)
+            val inner = SafFolderProvider(fs())
+            var first = true
+            val provider = StatProvider(inner) { path ->
+                if (first) { first = false; RemoteEntry(path, data.size.toLong(), false, null, reported) } else inner.stat(path)
+            }
+            val state = run(engine(provider)) as SyncRunState.Finished
+            assertEquals("hash $reported", if (expectAdopt) 1 else 0, state.tally.adopted)
+            assertEquals(if (expectAdopt) 0 else 1, state.tally.uploaded)
+            assertNotNull(store.load().doneFor(a.key))
+        }
     }
 
     @Test
@@ -404,5 +446,75 @@ class SyncEngineTest {
         run(engine(provider, encryption = SyncEncryption(keys())))
         assertFalse(store.text.contains("correct horse"))
         assertTrue(store.text.lines().all { it.isEmpty() || it.split('\t').first() in setOf("fotoz-sync-manifest", "B", "D") })
+    }
+
+    // ---- confirmation and poison pills ----
+
+    private class LyingProvider(private val inner: SyncProvider, val putReturns: (Long) -> RemoteEntry?, val statAfter: RemoteEntry? = null, override val sizeReportReliable: Boolean = true) : SyncProvider by inner {
+        private val putPaths = HashSet<String>()
+        override fun put(path: String, input: InputStream, length: Long, overwrite: Boolean, cancel: Cancellation, onBytes: (Long) -> Unit): RemoteEntry? {
+            inner.put(path, input, length, overwrite, cancel, onBytes)
+            putPaths += path
+            return putReturns(length)
+        }
+        // Nothing is there before the put; the look the engine takes after the put shows [statAfter].
+        override fun stat(path: String): RemoteEntry? = if (path in putPaths) statAfter else null
+    }
+
+    @Test
+    fun `a destination that cannot confirm a file does not get it recorded as done`() {
+        for (answer in listOf<RemoteEntry?>(null, RemoteEntry("x", -1, false), RemoteEntry("x", 3, false))) {
+            library.candidates.clear()
+            store.text = ""
+            val a = library.add(1, "a.jpg", randomBytes(100))
+            library.add(2, "b.jpg", randomBytes(100), takenMillis = 1L)
+            val provider = LyingProvider(SafFolderProvider(fs()), { answer }, statAfter = answer)
+            val state = run(engine(provider)) as SyncRunState.Finished
+            assertEquals("$answer: both files counted as not sent", 2, state.tally.failed)
+            assertEquals(0, state.tally.uploaded)
+            assertNull(store.load().doneFor(a.key))
+            assertNotNull("the begun line stays so the next run sends it again", store.load().begunFor(a.key))
+        }
+    }
+
+    @Test
+    fun `a confirmation that arrives on the second look is accepted`() {
+        val a = library.add(1, "a.jpg", randomBytes(100))
+        val provider = LyingProvider(SafFolderProvider(fs()), { null }, statAfter = RemoteEntry("x", 100, false))
+        val state = run(engine(provider)) as SyncRunState.Finished
+        assertEquals(1, state.tally.uploaded)
+        assertNotNull(store.load().doneFor(a.key))
+    }
+
+    @Test
+    fun `a provider whose size report cannot be trusted is recorded when every byte was handed over`() {
+        val a = library.add(1, "a.jpg", randomBytes(100))
+        val provider = LyingProvider(SafFolderProvider(fs()), { RemoteEntry("x", 0, false) }, statAfter = RemoteEntry("x", 0, false), sizeReportReliable = false)
+        val state = run(engine(provider)) as SyncRunState.Finished
+        assertEquals(1, state.tally.uploaded)
+        assertNotNull(store.load().doneFor(a.key))
+    }
+
+    private class ChangedProvider(private val inner: SyncProvider, val badName: String) : SyncProvider by inner {
+        var badPuts = 0
+        override fun put(path: String, input: InputStream, length: Long, overwrite: Boolean, cancel: Cancellation, onBytes: (Long) -> Unit): RemoteEntry? {
+            if (path.endsWith(badName)) {
+                badPuts++
+                throw SyncLocalChanged("shorter than MediaStore said")
+            }
+            return inner.put(path, input, length, overwrite, cancel, onBytes)
+        }
+    }
+
+    @Test
+    fun `a file whose size never matches is tried twice and then left out, and the files behind it still go`() {
+        library.add(1, "stale.jpg", randomBytes(100), takenMillis = 9_000_000_000_000L) // newest: first in every run
+        library.add(2, "fine.jpg", randomBytes(100), takenMillis = 1L)
+        val provider = ChangedProvider(SafFolderProvider(fs()), "stale.jpg")
+        val state = run(engine(provider)) as SyncRunState.Finished
+        assertEquals(2, provider.badPuts)
+        assertEquals(1, state.tally.failed)
+        assertEquals(1, state.tally.uploaded)
+        assertEquals(1, remoteFiles().size)
     }
 }

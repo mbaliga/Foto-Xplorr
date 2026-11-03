@@ -30,7 +30,7 @@ object OAuthPlatform {
  */
 internal class AndroidOAuthBrowser(private val context: Context) : OAuthBrowser {
     override suspend fun authorize(url: String): String? {
-        val waiting = OAuthRendezvous.begin()
+        val waiting = OAuthRendezvous.begin(OAuthRendezvous.stateOf(url))
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
             .addCategory(Intent.CATEGORY_BROWSABLE)
             .putExtras(Bundle().apply { putBinder(CUSTOM_TAB_SESSION, null as IBinder?) })

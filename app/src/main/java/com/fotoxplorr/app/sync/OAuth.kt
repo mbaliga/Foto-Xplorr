@@ -338,25 +338,46 @@ fun interface OAuthBrowser {
  */
 object OAuthRendezvous {
     private var pending: CompletableDeferred<String>? = null
+    private var expectedState: String? = null
 
+    /** [state] is the `state` of the request just sent; a delivery that carries another one is not ours and is ignored. */
     @Synchronized
-    fun begin(): CompletableDeferred<String> {
+    fun begin(state: String? = null): CompletableDeferred<String> {
         pending?.cancel()
+        expectedState = state
         return CompletableDeferred<String>().also { pending = it }
     }
 
-    /** True when a sign-in was waiting for [redirect]. */
+    /**
+     * True when a sign-in was waiting for [redirect]. The redirect activity is exported (the browser must reach
+     * it), so any app can send it a forged address: one whose `state` is not the pending request's is dropped
+     * and the real sign-in keeps waiting for its own answer.
+     */
     @Synchronized
     fun deliver(redirect: String): Boolean {
         val waiting = pending ?: return false
+        val wanted = expectedState
+        if (wanted != null && stateOf(redirect) != wanted) return false
         pending = null
+        expectedState = null
         return waiting.complete(redirect)
+    }
+
+    /** The `state` query value of [url], decoded, or null. */
+    fun stateOf(url: String): String? = try {
+        (URI(url).rawQuery ?: "").split('&').firstOrNull { it.substringBefore('=') == "state" }
+            ?.substringAfter('=', "")?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+    } catch (e: Exception) {
+        null
     }
 
     /** Drops [waiting] if it is still the pending one (the sign-in that owned it ended without an answer). */
     @Synchronized
     fun abandon(waiting: CompletableDeferred<String>) {
-        if (pending === waiting) pending = null
+        if (pending === waiting) {
+            pending = null
+            expectedState = null
+        }
         waiting.cancel()
     }
 
@@ -364,6 +385,7 @@ object OAuthRendezvous {
     fun cancel() {
         pending?.cancel()
         pending = null
+        expectedState = null
     }
 }
 

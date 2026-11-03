@@ -145,7 +145,7 @@ class DriveProvider(
     ): DriveFile {
         val content = readExactly(input, length.toInt(), cancel)
         onBytes(content.size.toLong())
-        if (input.read() != -1) throw SyncException(SyncFailure.TRANSIENT, "The file changed while it was being sent")
+        if (input.read() != -1) throw SyncLocalChanged("The file changed while it was being sent")
         val metadata = if (existing == null) """{"name":${MiniJson.quote(name)},"parents":[${MiniJson.quote(parent)}]}""" else "{}"
         val boundary = "fotoz-" + java.util.UUID.randomUUID().toString().replace("-", "")
         val head = "--$boundary\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n$metadata\r\n--$boundary\r\nContent-Type: application/octet-stream\r\n\r\n"
@@ -349,7 +349,7 @@ class DriveProvider(
         )
     }
 
-    private fun entryOf(path: String, f: DriveFile) = RemoteEntry(path, f.size, f.isFolder, f.modifiedMillis)
+    private fun entryOf(path: String, f: DriveFile) = RemoteEntry(path, f.size, f.isFolder, f.modifiedMillis, f.md5?.lowercase(Locale.ROOT))
 
     private fun split(path: String): Pair<String, String> {
         val clean = path.trim('/')
@@ -368,7 +368,7 @@ class DriveProvider(
         while (read < count) {
             cancel.throwIfCancelled()
             val n = input.read(buffer, read, count - read)
-            if (n < 0) throw SyncException(SyncFailure.TRANSIENT, "The file changed while it was being sent")
+            if (n < 0) throw SyncLocalChanged("The file changed while it was being sent")
             read += n
         }
         return buffer
@@ -380,7 +380,7 @@ class DriveProvider(
         while (left > 0) {
             cancel.throwIfCancelled()
             val n = input.read(scratch, 0, minOf(scratch.size.toLong(), left).toInt())
-            if (n < 0) throw SyncException(SyncFailure.TRANSIENT, "The file changed while it was being sent")
+            if (n < 0) throw SyncLocalChanged("The file changed while it was being sent")
             left -= n
         }
     }

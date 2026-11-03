@@ -51,6 +51,10 @@ class DefaultSyncService(
     private val _state = MutableStateFlow<SyncRunState>(SyncRunState.Idle)
     override val state: StateFlow<SyncRunState> = _state.asStateFlow()
     private var handle: JobHandle? = null
+    private val stateLock = Any()
+
+    /** Names the current run; [forgetDestination] moves it on, so a run that outlives it can no longer write the state or the settings. */
+    @Volatile private var generation = 0
 
     override fun newDestinationId(): String = UUID.randomUUID().toString().replace("-", "").take(16)
 
@@ -66,6 +70,10 @@ class DefaultSyncService(
         Result.failure(e)
     } catch (e: java.io.IOException) {
         Result.failure(SyncException(SyncFailure.REJECTED, e.message ?: "The settings could not be saved", e))
+    } catch (e: java.security.GeneralSecurityException) {
+        Result.failure(SyncException(SyncFailure.REJECTED, SyncCopy.SECRET_STORE_FAILED, e))
+    } catch (e: java.security.ProviderException) {
+        Result.failure(SyncException(SyncFailure.REJECTED, SyncCopy.SECRET_STORE_FAILED, e))
     } finally {
         secret?.fill('\u0000')
     }
@@ -95,29 +103,39 @@ class DefaultSyncService(
     }
 
     override fun start(passphrase: CharArray?, allowMobileData: Boolean): SyncStartResult {
+        // The job runs later, on another thread, and the caller wipes its buffer as soon as this returns:
+        // keep our own copy for the job and wipe the caller's now.
+        val owned = passphrase?.copyOf()
+        passphrase?.fill('\u0000')
         fun refuse(reason: SyncStartRefusal): SyncStartResult {
-            passphrase?.fill('\u0000')
+            owned?.fill('\u0000')
             return SyncStartResult.Refused(reason)
         }
         val config = _config.value ?: return refuse(SyncStartRefusal.NO_DESTINATION)
         if (isRunning()) return refuse(SyncStartRefusal.ALREADY_RUNNING)
         if (config.kind !in supportedKinds) return refuse(SyncStartRefusal.NEEDS_CONNECT_BUILD)
         if (config.selection.isEmpty) return refuse(SyncStartRefusal.NOTHING_CHOSEN)
-        if (config.encryptEnabled && (passphrase == null || passphrase.isEmpty())) return refuse(SyncStartRefusal.PASSPHRASE_NEEDED)
+        if (config.encryptEnabled && !usablePassphrase(owned)) return refuse(SyncStartRefusal.PASSPHRASE_NEEDED)
         SyncGuard.check(config.kind.needsNetwork, config.wifiOnly, allowMobileData, network())?.let { return refuse(it) }
         val jobs = runner() ?: return refuse(SyncStartRefusal.NO_JOB_RUNNER)
 
-        _state.value = SyncRunMachine.reduce(SyncRunState.Idle, SyncRunEvent.Start)
+        val gen = synchronized(stateLock) {
+            _state.value = SyncRunMachine.reduce(SyncRunState.Idle, SyncRunEvent.Start)
+            ++generation
+        }
         handle = jobs.launch(SyncCopy.JOB_TITLE, ActivityKind.SYNCING) { onProgress ->
             try {
-                val finalState = withContext(io) { execute(config, passphrase, allowMobileData, onProgress) }
+                val finalState = withContext(io) { execute(gen, config, owned, allowMobileData, onProgress) }
                 Result.success(finalState)
             } finally {
-                passphrase?.fill('\u0000')
+                owned?.fill('\u0000')
             }
         }
         return SyncStartResult.Started
     }
+
+    /** Empty, or only NULs (a buffer already wiped), is not a passphrase: a key made from it would be one anyone can guess. */
+    private fun usablePassphrase(p: CharArray?): Boolean = p != null && p.isNotEmpty() && p.any { it != '\u0000' }
 
     override suspend fun signOut(unsavedToken: CharArray?, kind: SyncDestinationKind?, clientId: String?): Result<Unit> = withContext(io) {
         val config = _config.value
@@ -149,16 +167,22 @@ class DefaultSyncService(
     }
 
     override fun forgetDestination() {
-        handle?.cancel()
-        _config.value?.let { secrets.remove(it.id) }
-        configStore.clear()
-        _config.value = null
-        _state.value = SyncRunState.Idle
+        // Move the generation on first: the run being cancelled may still be on its way out on another
+        // thread, and from here on whatever it does to the state or the settings is ignored.
+        synchronized(stateLock) {
+            generation++
+            handle?.cancel()
+            _config.value?.let { secrets.remove(it.id) }
+            configStore.clear()
+            _config.value = null
+            _state.value = SyncRunState.Idle
+        }
     }
 
     private fun isRunning(): Boolean = _state.value.let { it is SyncRunState.Preparing || it is SyncRunState.Running }
 
     private suspend fun execute(
+        gen: Int,
         config: SyncDestinationConfig,
         passphrase: CharArray?,
         allowMobileData: Boolean,
@@ -168,9 +192,9 @@ class DefaultSyncService(
         try {
             val encryption = if (config.encryptEnabled) {
                 val opened = try {
-                    openKeys(config, passphrase ?: CharArray(0))
+                    openKeys(gen, config, passphrase ?: CharArray(0))
                 } catch (e: SyncException) {
-                    return fail(e.failure, e.message.orEmpty())
+                    return fail(gen, e.failure, e.message.orEmpty())
                 }
                 keys = opened
                 SyncEncryption(opened)
@@ -181,7 +205,7 @@ class DefaultSyncService(
             val provider = try {
                 providers.create(config, secrets.get(config.id))
             } catch (e: SyncException) {
-                return fail(e.failure, e.message.orEmpty())
+                return fail(gen, e.failure, e.message.orEmpty())
             }
             provider.use {
                 val gate = BrowsableGate(library, config.selection)
@@ -203,37 +227,47 @@ class DefaultSyncService(
                 )
                 val candidates = SyncCandidates.from(snapshot, config.selection)
                 val result = engine.run(candidates, config.byteCapPerRun) { event ->
-                    _state.value = SyncRunMachine.reduce(_state.value, event)
-                    (_state.value as? SyncRunState.Running)?.let { onProgress(it.progress) }
+                    val now = update(gen) { SyncRunMachine.reduce(it, event) }
+                    (now as? SyncRunState.Running)?.let { onProgress(it.progress) }
                 }
-                _state.value = result.state
+                update(gen) { result.state }
                 return result.state
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
-            _state.value = SyncRunMachine.reduce(_state.value, SyncRunEvent.Cancelled)
+            update(gen) { SyncRunMachine.reduce(it, SyncRunEvent.Cancelled) }
             throw e
         } catch (e: Exception) {
-            return fail(SyncFailure.REJECTED, e.message ?: "Sync stopped unexpectedly")
+            return fail(gen, SyncFailure.REJECTED, e.message ?: "Sync stopped unexpectedly")
         } finally {
             keys?.close()
         }
     }
 
-    private fun fail(failure: SyncFailure, message: String): SyncRunState {
-        val failed = SyncRunMachine.reduce(_state.value, SyncRunEvent.Aborted(failure, message))
-        _state.value = failed
-        return failed
+    /** Changes the state only while [gen] is still the current run; returns the state after. */
+    private fun update(gen: Int, change: (SyncRunState) -> SyncRunState): SyncRunState = synchronized(stateLock) {
+        if (gen == generation) _state.value = change(_state.value)
+        _state.value
     }
 
+    private fun fail(gen: Int, failure: SyncFailure, message: String): SyncRunState =
+        update(gen) { SyncRunMachine.reduce(it, SyncRunEvent.Aborted(failure, message)) }
+
     /** Derives the keys (slow); on the first run of a set, starts it and saves salt and check value; later, proves the passphrase. */
-    private fun openKeys(config: SyncDestinationConfig, passphrase: CharArray): BackupKeys {
+    private fun openKeys(gen: Int, config: SyncDestinationConfig, passphrase: CharArray): BackupKeys {
+        if (!usablePassphrase(passphrase)) throw SyncException(SyncFailure.REJECTED, SyncCopy.ENCRYPT_PASSPHRASE_NEEDED)
         val known = config.encryption
         if (known == null) {
             val keys = BackupKeys.newSet(passphrase)
             val settings = SyncEncryptionSettings(SyncEncryption.hex(keys.setSalt), keys.iterations, SyncEncryption.keyCheck(keys))
             val updated = config.copy(encryption = settings)
-            configStore.save(updated)
-            _config.value = updated
+            synchronized(stateLock) {
+                if (gen != generation) {
+                    keys.close()
+                    throw kotlinx.coroutines.CancellationException("The destination was forgotten")
+                }
+                configStore.save(updated)
+                _config.value = updated
+            }
             return keys
         }
         val keys = BackupKeys.derive(passphrase, SyncEncryption.unhex(known.saltHex), known.iterations)

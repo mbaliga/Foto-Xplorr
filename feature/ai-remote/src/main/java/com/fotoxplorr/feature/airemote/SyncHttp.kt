@@ -72,18 +72,30 @@ class SyncHttp(
         val builder = Request.Builder().url(request.url).method(request.method.uppercase(Locale.ROOT), body)
         builder.header("Accept-Encoding", "identity")
         for ((name, value) in request.headers) builder.header(name, value)
+        val call = client.newCall(builder.build())
+        // A body that is a byte array (an S3 part) or a wait for the server's answer cannot see a cancel by
+        // itself, so while the call is in flight a watcher asks every 200 ms and cancels the call.
+        val watcher = WATCHERS.scheduleWithFixedDelay({ if (isCancelled()) call.cancel() }, 200, 200, TimeUnit.MILLISECONDS)
         val response = try {
-            client.newCall(builder.build()).execute()
+            call.execute()
         } catch (e: IOException) {
             throw SyncHttpException(e.message ?: "The connection failed", e)
         } catch (e: IllegalArgumentException) {
             throw SyncHttpException("The request was not valid", e)
+        } finally {
+            watcher.cancel(false)
         }
         val headers = LinkedHashMap<String, String>()
         for (name in response.headers.names()) {
             headers[name.lowercase(Locale.ROOT)] = response.headers.values(name).joinToString(",")
         }
         return SyncHttpReply(response.code, headers, response.body.byteStream(), response)
+    }
+
+    private companion object {
+        val WATCHERS: java.util.concurrent.ScheduledExecutorService = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "sync-http-cancel").apply { isDaemon = true }
+        }
     }
 
     private class StreamBody(

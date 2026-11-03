@@ -55,6 +55,7 @@ class S3CompatibleProvider(
     private val secret = String(secretKey)
     private val endpointUri: URI = parseEndpoint(settings)
     private val caller = HttpCaller(transport, settings.allowPlainHttpOnLocal, followSameHostRedirects = false)
+    @Volatile private var conditionalWrites = true
     private val keyPrefix: String = settings.prefix.trim('/').let { if (it.isEmpty()) "" else "$it/" }
 
     init {
@@ -79,8 +80,17 @@ class S3CompatibleProvider(
     override fun stat(path: String): RemoteEntry? {
         send("HEAD", keyPrefix + path, emptyList(), emptyBody(), Cancellation.NEVER).use { response ->
             return when (response.code) {
-                200 -> RemoteEntry(path, response.header("content-length")?.toLongOrNull() ?: -1L, false)
+                200 -> RemoteEntry(
+                    path,
+                    response.header("content-length")?.toLongOrNull() ?: -1L,
+                    false,
+                    md5Hex = response.header("etag")?.trim('"')?.lowercase(Locale.ROOT)?.takeIf { SINGLE_PART_ETAG.matches(it) },
+                )
                 404 -> null
+                // Without s3:ListBucket, S3 answers 403 (not 404) for a key that does not exist, so a write-only
+                // key cannot tell "missing" from "refused" here. Treat it as missing: the conditional PUT below
+                // (If-None-Match) still refuses to replace anything, and wrong credentials fail on the PUT itself.
+                403 -> null
                 else -> throw failureOf(response.code, "", SyncCopy.S3_FAILED)
             }
         }
@@ -121,22 +131,35 @@ class S3CompatibleProvider(
         val key = keyPrefix + path
         if (length <= tuning.multipartThresholdBytes) {
             val data = readExactly(input, length, cancel)
-            putObject(key, data, cancel)
+            putObject(key, data, !overwrite, cancel)
             onBytes(length)
         } else {
-            multipart(key, input, length, cancel, onBytes)
+            multipart(key, input, length, !overwrite, cancel, onBytes)
         }
         return stat(path)
     }
 
-    private fun putObject(key: String, data: ByteArray, cancel: Cancellation) {
-        send("PUT", key, emptyList(), Body(data, sha256(data), md5(data)), cancel).use { response ->
+    /**
+     * A write that must not replace an existing object sends `If-None-Match: *` (S3, R2, MinIO; 412 means it
+     * exists). A service that does not know the header (501) is asked again without it, once, and the
+     * provider remembers: for those the pre-upload check is the only guard, and it needs s3:ListBucket.
+     */
+    private fun sendWrite(method: String, key: String, query: List<Pair<String, String>>, body: Body, conditional: Boolean, cancel: Cancellation): HttpResponse {
+        val first = send(method, key, query, body, cancel, conditional && conditionalWrites)
+        if (!(conditional && conditionalWrites) || first.code != 501) return first
+        first.close()
+        conditionalWrites = false
+        return send(method, key, query, body, cancel, false)
+    }
+
+    private fun putObject(key: String, data: ByteArray, conditional: Boolean, cancel: Cancellation) {
+        sendWrite("PUT", key, emptyList(), Body(data, sha256(data), md5(data)), conditional, cancel).use { response ->
             val text = response.bodyText()
             if (response.code != 200) throw failureOf(response.code, text, SyncCopy.S3_FAILED)
         }
     }
 
-    private fun multipart(key: String, input: InputStream, length: Long, cancel: Cancellation, onBytes: (Long) -> Unit) {
+    private fun multipart(key: String, input: InputStream, length: Long, conditional: Boolean, cancel: Cancellation, onBytes: (Long) -> Unit) {
         val uploadId = send("POST", key, listOf("uploads" to ""), emptyBody(), cancel).use { response ->
             val text = response.bodyText()
             if (response.code != 200) throw failureOf(response.code, text, SyncCopy.S3_FAILED)
@@ -157,7 +180,7 @@ class S3CompatibleProvider(
                 number++
             }
             val xml = S3Xml.completeBody(parts).toByteArray(Charsets.UTF_8)
-            send("POST", key, listOf("uploadId" to uploadId), Body(xml, sha256(xml), md5(xml)), cancel).use { response ->
+            sendWrite("POST", key, listOf("uploadId" to uploadId), Body(xml, sha256(xml), md5(xml)), conditional, cancel).use { response ->
                 val text = response.bodyText()
                 // S3 may answer 200 with an error document when the assembly fails after the headers went out.
                 if (response.code != 200 || S3Xml.errorCode(text) != null) {
@@ -213,7 +236,7 @@ class S3CompatibleProvider(
         while (filled < data.size) {
             cancel.throwIfCancelled()
             val n = input.read(data, filled, data.size - filled)
-            if (n < 0) throw SyncException(SyncFailure.TRANSIENT, "The file ended early (${filled} of $size bytes)")
+            if (n < 0) throw SyncLocalChanged("The file ended early ($filled of $size bytes)")
             filled += n
         }
         return data
@@ -225,7 +248,7 @@ class S3CompatibleProvider(
 
     private fun emptyBody() = Body(ByteArray(0), SigV4.EMPTY_SHA256, null)
 
-    private fun send(method: String, key: String, query: List<Pair<String, String>>, body: Body, cancel: Cancellation): HttpResponse {
+    private fun send(method: String, key: String, query: List<Pair<String, String>>, body: Body, cancel: Cancellation, conditional: Boolean = false): HttpResponse {
         val host = hostHeader()
         val canonicalPath = canonicalPath(key)
         val amzDate = SigV4.amzDate(clock())
@@ -234,6 +257,7 @@ class S3CompatibleProvider(
         signedHeaders["x-amz-content-sha256"] = body.sha256
         signedHeaders["x-amz-date"] = amzDate
         body.md5Base64?.let { signedHeaders["content-md5"] = it }
+        if (conditional) signedHeaders["if-none-match"] = "*"
         val signed = SigV4.sign(method, canonicalPath, query, signedHeaders, body.sha256, settings.accessKeyId, secret, settings.region, "s3", amzDate)
         val headers = ArrayList<Pair<String, String>>()
         signedHeaders.filterKeys { it != "host" }.forEach { (k, v) -> headers += k to v }
@@ -290,6 +314,7 @@ class S3CompatibleProvider(
     private companion object {
         const val MAX_PARTS = 10_000L
         val S3_BUCKET = Regex("[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
+        val SINGLE_PART_ETAG = Regex("[0-9a-f]{32}")
         val VALUELESS = setOf("uploads")
         val QUOTA_CODES = setOf("QuotaExceeded", "StorageLimitExceeded", "InsufficientStorage", "cap_exceeded", "AccountProblem", "MaxMessageLengthExceeded")
 

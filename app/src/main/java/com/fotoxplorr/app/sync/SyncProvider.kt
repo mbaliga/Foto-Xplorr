@@ -19,6 +19,13 @@ interface SyncProvider : Closeable {
     /** What the person sees as the destination's name. */
     val label: String
 
+    /**
+     * False when the size this provider reports right after a write cannot be trusted (a cloud app's
+     * folder may show a stale size or 0 for a moment). The engine then records a file whose bytes were
+     * all handed over, instead of treating a size mismatch as a failure.
+     */
+    val sizeReportReliable: Boolean get() = true
+
     /** True for providers that talk over a network (the engine then applies the Wi-Fi-only guard). */
     val needsNetwork: Boolean
 
@@ -96,7 +103,15 @@ fun interface HttpTransport {
     fun execute(request: HttpRequest, cancel: Cancellation): HttpResponse
 }
 
-/** What counts as a local address, for the "plain http only on my own network" option. */
+/**
+ * What counts as a local address, for the "plain http only on my own network" option.
+ *
+ * Literal addresses are judged by their numbers (private ranges, loopback, link-local; an octet written
+ * with a leading zero is refused outright, because some resolvers read it as octal, so `010.0.0.1` is not
+ * `10.0.0.1`). Names are a TRUST decision, not a proof: `nas`, `box.local` and `*.lan` could resolve to a
+ * public address on a hostile network. They are accepted only because plain http is off by default and the
+ * person turned it on for this destination.
+ */
 object HostRules {
     fun isLocalHost(host: String): Boolean {
         val h = host.lowercase(Locale.ROOT).removePrefix("[").removeSuffix("]")
@@ -105,6 +120,9 @@ object HostRules {
         if (h == "::1") return true
         if (h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80:")) return h.contains(':')
         val parts = h.split('.')
+        if (parts.size == 4 && parts.all { p -> p.all { it in '0'..'9' } && p.isNotEmpty() }) {
+            if (parts.any { it.length > 1 && it.startsWith("0") }) return false
+        }
         if (parts.size == 4 && parts.all { p -> p.toIntOrNull()?.let { it in 0..255 } == true }) {
             val a = parts[0].toInt()
             val b = parts[1].toInt()
@@ -155,9 +173,16 @@ class HttpCaller(
             if (current.bodyStream != null) {
                 throw SyncException(SyncFailure.UNSAFE, "The server redirected an upload; use the address it redirects to")
             }
-            val next = resolve(current.url, target)
             val from = URI.create(current.url)
-            val to = URI.create(next)
+            val to: URI
+            val next: String
+            try {
+                next = resolve(current.url, target)
+                to = URI.create(next)
+            } catch (e: IllegalArgumentException) {
+                throw SyncException(SyncFailure.REJECTED, "The server redirected to an address that is not valid", e)
+            }
+            if (to.host == null) throw SyncException(SyncFailure.REJECTED, "The server redirected to an address that is not valid")
             if (!from.host.equals(to.host, ignoreCase = true) || portOf(from) != portOf(to) ||
                 (from.scheme == "https" && to.scheme != "https")
             ) {

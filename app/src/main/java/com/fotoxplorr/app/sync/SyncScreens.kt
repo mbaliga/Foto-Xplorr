@@ -436,6 +436,7 @@ internal fun SyncOptions(
             }
         }
         SyncSwitchRow(SyncCopy.ENCRYPT_LABEL, form.encrypt, "sync-encrypt") { onForm(form.copy(encrypt = it)) }
+        if (!form.encrypt) Text(SyncCopy.LOCATION_NOTE, style = MaterialTheme.typography.bodySmall)
         if (form.encrypt) {
             Text(SyncCopy.ENCRYPT_NAMES_VISIBLE, style = MaterialTheme.typography.bodySmall)
             Text(SyncCopy.ENCRYPT_NO_RECOVERY, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 6.dp))

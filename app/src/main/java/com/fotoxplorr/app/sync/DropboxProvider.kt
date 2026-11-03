@@ -191,7 +191,7 @@ class DropboxProvider(
                 }
                 throw failure(response, SyncCopy.DROPBOX_FAILED, text)
             }
-            if (input.count != length) throw SyncException(SyncFailure.TRANSIENT, "The file changed while it was being sent")
+            if (input.count != length) throw SyncLocalChanged("The file changed while it was being sent")
             return metaOf(MiniJson.parseObject(response.bodyText())) ?: throw SyncException(SyncFailure.REJECTED, SyncCopy.DROPBOX_FAILED)
         }
     }
@@ -364,7 +364,7 @@ class DropboxProvider(
         while (read < count) {
             cancel.throwIfCancelled()
             val n = input.read(buffer, read, count - read)
-            if (n < 0) throw SyncException(SyncFailure.TRANSIENT, "The file changed while it was being sent")
+            if (n < 0) throw SyncLocalChanged("The file changed while it was being sent")
             read += n
         }
         return buffer
@@ -376,7 +376,7 @@ class DropboxProvider(
         while (left > 0) {
             cancel.throwIfCancelled()
             val n = input.read(scratch, 0, minOf(scratch.size.toLong(), left).toInt())
-            if (n < 0) throw SyncException(SyncFailure.TRANSIENT, "The file changed while it was being sent")
+            if (n < 0) throw SyncLocalChanged("The file changed while it was being sent")
             left -= n
         }
     }

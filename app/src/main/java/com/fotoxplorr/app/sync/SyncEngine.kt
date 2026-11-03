@@ -55,13 +55,14 @@ class SyncEngine(
         var tally = SyncTally(upToDate = plan.upToDate, deferredByCap = plan.deferredByCap, tooBigForCap = plan.tooBigForCap)
         emit(SyncRunEvent.Planned(plan.uploads.size, plan.totalBytes, tally))
         val ensured = HashSet<String>()
+        val taken = HashSet(manifest.remotePathsLower())
         try {
             for (item in plan.uploads) {
                 currentCoroutineContext().ensureActive()
                 betweenFiles()
                 val size = item.candidate.sizeBytes
                 val outcome = try {
-                    sendOne(item, manifest, ensured) { emit(SyncRunEvent.Bytes(it)) }
+                    sendOne(item, manifest, ensured, taken) { emit(SyncRunEvent.Bytes(it)) }
                 } catch (e: SyncException) {
                     // One file the server will not take is that file's problem; every other failure ends the run.
                     if (e.failure != SyncFailure.REJECTED) throw e
@@ -92,6 +93,7 @@ class SyncEngine(
         item: PlannedUpload,
         manifest: SyncManifest,
         ensured: MutableSet<String>,
+        taken: MutableSet<String>,
         onBytes: (Long) -> Unit,
     ): Outcome {
         val candidate = item.candidate
@@ -113,15 +115,17 @@ class SyncEngine(
             var attempts = 0
             while (true) {
                 val existing = withRetry { provider.stat(path) } ?: break
-                if (!existing.isDirectory && existing.sizeBytes == expectedRemote) {
+                if (!existing.isDirectory && existing.sizeBytes == expectedRemote && sameFile(existing, candidate)) {
                     record(manifest, doneOf(candidate, path, expectedRemote, null))
                     return Outcome.ADOPTED
                 }
-                val taken = path.lowercase(Locale.ROOT)
-                path = RemoteLayout.unique(path) { it.lowercase(Locale.ROOT) == taken || manifest.remotePathsLower().contains(it.lowercase(Locale.ROOT)) }
+                // Same name, and nothing says it is the same photo: the name is someone else's. Take another.
+                val current = path
+                path = RemoteLayout.unique(path) { it.lowercase(Locale.ROOT) == current.lowercase(Locale.ROOT) || it.lowercase(Locale.ROOT) in taken }
                 check(++attempts < MAX_NAME_PROBES) { "No free name at the destination" }
             }
         }
+        taken += path.lowercase(Locale.ROOT)
 
         withRetry {
             for (folder in RemoteLayout.foldersOf(path)) if (ensured.add(folder)) provider.ensureFolder(folder)
@@ -130,6 +134,7 @@ class SyncEngine(
         store.append(SyncManifestCodec.begunLine(manifest.begunFor(candidate.key)!!))
 
         val cancel = cancellationFromJob()
+        var localMismatches = 0
         val sent = withRetry {
             val opened = files.open(candidate) ?: return@withRetry Put.Gone
             opened.use {
@@ -137,15 +142,25 @@ class SyncEngine(
                 val digest = MessageDigest.getInstance("SHA-256")
                 val plain: InputStream = DigestInputStream(opened.input, digest)
                 val body = if (encryption != null) encryption.wrap(plain) else plain
-                val entry = provider.put(path, body, expectedRemote, overwrite, cancel, onBytes)
+                val entry = try {
+                    provider.put(path, body, expectedRemote, overwrite, cancel, onBytes)
+                } catch (e: SyncLocalChanged) {
+                    // MediaStore's size can be stale or the file may be growing: look once more, then leave this
+                    // file out. Retrying it for ever would put it first (newest first) in every later run too.
+                    if (++localMismatches >= 2) throw SyncException(SyncFailure.REJECTED, e.message.orEmpty(), e)
+                    throw e
+                }
                 Put.Sent(entry, digest.digest().toHex())
             }
         }
         if (sent !is Put.Sent) return Outcome.SKIPPED
-        val entry = sent.entry
-        if (entry != null && entry.sizeBytes >= 0 && entry.sizeBytes != expectedRemote) {
-            // The server holds something other than what we sent: not done. The B line stays; next run sends it again.
-            throw SyncException(SyncFailure.TRANSIENT, "The destination kept a different size than was sent")
+        // Done only when the destination confirms the file: a missing answer (a proxy's 200 with junk, a
+        // listing that does not show it yet) is looked at once more, and if it is still not confirmed the
+        // file is NOT recorded. The B line stays, so a later run sends it again.
+        var entry = sent.entry
+        if (!confirms(entry, expectedRemote)) entry = withRetry { provider.stat(path) }
+        if (!confirms(entry, expectedRemote) && provider.sizeReportReliable) {
+            throw SyncException(SyncFailure.REJECTED, SyncCopy.UNCONFIRMED)
         }
         record(manifest, doneOf(candidate, path, expectedRemote, sent.sha256))
         return Outcome.SENT
@@ -154,6 +169,35 @@ class SyncEngine(
     private sealed interface Put {
         data object Gone : Put
         class Sent(val entry: RemoteEntry?, val sha256: String) : Put
+    }
+
+    private fun confirms(entry: RemoteEntry?, expected: Long) = entry != null && !entry.isDirectory && entry.sizeBytes == expected
+
+    /**
+     * Whether an existing remote file of the right size is this photo: a content hash that matches the
+     * local bytes (only for unencrypted copies), or a modified time equal to the local one. Size and name
+     * alone are not enough: two different photos can share both.
+     */
+    private fun sameFile(remote: RemoteEntry, candidate: SyncCandidate): Boolean {
+        if (encryption == null && remote.md5Hex != null) {
+            return hashLocalMd5(candidate) == remote.md5Hex
+        }
+        val modified = remote.modifiedMillis ?: return false
+        return kotlin.math.abs(modified - candidate.dateModifiedSeconds * 1000L) <= MTIME_TOLERANCE_MILLIS
+    }
+
+    private fun hashLocalMd5(candidate: SyncCandidate): String? {
+        val opened = files.open(candidate) ?: return null
+        return opened.use {
+            val digest = MessageDigest.getInstance("MD5")
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val n = it.input.read(buffer)
+                if (n < 0) break
+                digest.update(buffer, 0, n)
+            }
+            digest.digest().toHex()
+        }
     }
 
     private fun record(manifest: SyncManifest, done: SyncDone) {
@@ -210,6 +254,7 @@ class SyncEngine(
 
     private companion object {
         const val MAX_NAME_PROBES = 50
+        const val MTIME_TOLERANCE_MILLIS = 2_000L
         const val MAX_RETRY_AFTER_MILLIS = 120_000L
     }
 }

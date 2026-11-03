@@ -144,6 +144,8 @@ data class RemoteEntry(
     val sizeBytes: Long,
     val isDirectory: Boolean,
     val modifiedMillis: Long? = null,
+    /** MD5 of the content in lower-case hex when the service reports one (Drive md5Checksum, a single-part S3 ETag); lets a lost manifest adopt a file safely. */
+    val md5Hex: String? = null,
 )
 
 /** Checked between chunks of a blocking transfer. Throws a cancellation when the run was stopped. */
@@ -178,6 +180,9 @@ enum class SyncFailure(val retryable: Boolean) {
     /** The folder is gone or its permission was revoked. */
     DESTINATION_GONE(false),
 }
+
+/** The local file was not the length it was announced as (it changed or MediaStore's size is stale). The engine retries once, then skips that file instead of stopping the run. */
+class SyncLocalChanged(message: String) : SyncException(SyncFailure.TRANSIENT, message)
 
 open class SyncException(val failure: SyncFailure, message: String, cause: Throwable? = null) : IOException(message, cause)
 

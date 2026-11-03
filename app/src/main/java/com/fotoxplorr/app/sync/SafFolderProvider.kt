@@ -40,6 +40,9 @@ class SafFolderProvider(private val fs: SafFileSystem) : SyncProvider {
     override val label: String get() = fs.rootLabel
     override val needsNetwork: Boolean = false
 
+    // Written byte counts are checked in put(); what the folder says afterwards is the provider's business.
+    override val sizeReportReliable: Boolean = false
+
     override fun testConnection(cancel: Cancellation): String {
         if (!fs.isRootUsable()) throw SyncException(SyncFailure.DESTINATION_GONE, SyncCopy.FOLDER_GONE)
         return SyncCopy.FOLDER_OK
@@ -79,7 +82,7 @@ class SafFolderProvider(private val fs: SafFileSystem) : SyncProvider {
             }
         }
         if (written != length) {
-            throw SyncException(SyncFailure.TRANSIENT, "The file changed while it was being copied ($written of $length bytes)")
+            throw SyncLocalChanged("The file changed while it was being copied ($written of $length bytes)")
         }
         return io { fs.stat(path) }
     }

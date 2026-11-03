@@ -137,4 +137,14 @@ class SyncHttpTest {
         provider.put("Fotoz/2023/a.jpg", "hello".byteInputStream(), 5, false, Cancellation.NEVER) {}
         assertArrayEquals("hello".toByteArray(), files["/dav/Fotoz/2023/a.jpg"])
     }
+
+    @Test
+    fun `cancelling while waiting for the server's answer ends the call promptly`() {
+        val server = serve { _, _, _ -> Thread.sleep(15_000) } // never answers
+        val started = System.currentTimeMillis()
+        val cancel = Cancellation { if (System.currentTimeMillis() - started > 400) throw kotlinx.coroutines.CancellationException("stop") }
+        val error = runCatching { transport().execute(HttpRequest("PUT", server.base + "/x", bodyBytes = ByteArray(1000)), cancel) }.exceptionOrNull()
+        assertTrue(error.toString(), error is kotlinx.coroutines.CancellationException)
+        assertTrue("took ${System.currentTimeMillis() - started} ms", System.currentTimeMillis() - started < 5_000)
+    }
 }

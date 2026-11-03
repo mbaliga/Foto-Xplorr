@@ -51,7 +51,15 @@ class SyncManifest private constructor(
 
     /** Another key recorded with this size and modified time: a probable rename or move. */
     fun lookalikesOf(key: String, sizeBytes: Long, modifiedSeconds: Long): List<SyncDone> =
-        doneByKey.values.filter { it.key != key && it.sizeBytes == sizeBytes && it.modifiedSeconds == modifiedSeconds }
+        signatureIndex()[sizeBytes to modifiedSeconds].orEmpty().filter { it.key != key }
+
+    // Built on first use (the planner asks once per candidate; scanning every entry each time was quadratic).
+    private var bySignature: HashMap<Pair<Long, Long>, MutableList<SyncDone>>? = null
+
+    private fun signatureIndex(): Map<Pair<Long, Long>, List<SyncDone>> = bySignature ?: HashMap<Pair<Long, Long>, MutableList<SyncDone>>().also { index ->
+        doneByKey.values.forEach { index.getOrPut(it.sizeBytes to it.modifiedSeconds) { ArrayList() } += it }
+        bySignature = index
+    }
 
     /** Every remote path we know of, lower-cased, for collision checks. */
     fun remotePathsLower(): Set<String> {
@@ -68,6 +76,7 @@ class SyncManifest private constructor(
 
     /** Remembers a confirmed upload and closes the key's open `B`. */
     fun recordDone(entry: SyncDone) {
+        bySignature = null
         doneByKey[entry.key] = entry
         begunByKey.remove(entry.key)
     }

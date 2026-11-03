@@ -14,11 +14,16 @@ import java.util.Locale
  * resolved one segment at a time and cached for the life of the object. Not thread-safe; one run.
  * Never run on a device or against a real provider yet.
  */
-class SafTreeFileSystem(context: Context, private val treeUri: Uri) : SafFileSystem {
+class SafTreeFileSystem(
+    context: Context,
+    private val treeUri: Uri,
+    private val clock: () -> Long = System::currentTimeMillis,
+) : SafFileSystem {
     private val resolver = context.applicationContext.contentResolver
     private val rootId: String = DocumentsContract.getTreeDocumentId(treeUri)
     private val ids = HashMap<String, String>().apply { put("", rootId) }
-    private val listed = HashSet<String>()
+    /** When each folder was last listed; a name missing from an old listing is looked for again, once. */
+    private val listedAt = HashMap<String, Long>()
 
     override val rootLabel: String by lazy {
         query(documentUri(rootId), arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) { it.getString(0) }
@@ -50,7 +55,7 @@ class SafTreeFileSystem(context: Context, private val treeUri: Uri) : SafFileSys
 
     override fun list(folder: String): List<RemoteEntry> {
         val id = resolve(folder) ?: return emptyList()
-        listed += folder
+        listedAt[folder] = clock()
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, id)
         val cursor = resolver.query(children, CHILD_COLUMNS, null, null, null) ?: throw IOException("The folder could not be read")
         return cursor.use { c ->
@@ -100,7 +105,12 @@ class SafTreeFileSystem(context: Context, private val treeUri: Uri) : SafFileSys
         val id = DocumentsContract.getDocumentId(created)
         // A provider that renames (adds an extension, appends a number) would break the manifest's idea of the path.
         val actual = query(documentUri(id), arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) { it.getString(0) }
-        if (actual != null && actual != name) throw IOException("The folder renamed the file, so it was not written")
+        if (actual != null && actual != name) {
+            // FAT and exFAT providers may rename (illegal characters, case). The empty document we just made
+            // would be left behind on every retry, so remove it: it is ours and holds nothing.
+            runCatching { DocumentsContract.deleteDocument(resolver, documentUri(id)) }
+            throw IOException("The folder renamed the file, so it was not written")
+        }
         ids[path] = id
         return resolver.openOutputStream(documentUri(id), "w") ?: throw IOException("The file could not be opened")
     }
@@ -116,8 +126,10 @@ class SafTreeFileSystem(context: Context, private val treeUri: Uri) : SafFileSys
             if (known != null) {
                 currentId = known
             } else {
-                // One listing per folder per run fills the cache for every child; a name missing after that is not there.
-                if (!listed.add(current)) return null
+                // A listing fills the cache for every child. A name missing from a RECENT listing is not there; from an
+                // old one (a cloud-backed folder that has caught up since) it is looked for again.
+                val last = listedAt[current]
+                if (last != null && clock() - last < RELIST_AFTER_MILLIS) return null
                 list(current)
                 currentId = ids[next] ?: return null
             }
@@ -137,6 +149,7 @@ class SafTreeFileSystem(context: Context, private val treeUri: Uri) : SafFileSys
     }
 
     private companion object {
+        const val RELIST_AFTER_MILLIS = 30_000L
         const val OCTET_STREAM = "application/octet-stream"
         val CHILD_COLUMNS = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,

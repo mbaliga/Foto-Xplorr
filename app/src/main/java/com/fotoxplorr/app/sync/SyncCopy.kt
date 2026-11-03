@@ -22,6 +22,9 @@ object SyncCopy {
     const val ENCRYPT_NO_RECOVERY = "If you forget the passphrase, the encrypted copies cannot be opened."
     const val ENCRYPT_PASSPHRASE_NEEDED = "Enter your passphrase to start."
     const val WRONG_PASSPHRASE = "That is not the passphrase this destination was started with."
+    const val LOCATION_NOTE = "Copies that are not encrypted may leave out where a photo was taken."
+    const val SECRET_STORE_FAILED = "This phone could not store the password safely."
+    const val UNCONFIRMED = "The destination did not confirm this file, so it was left for the next run."
     const val NOTHING_CHOSEN = "Choose what to send first."
     const val NO_DESTINATION = "Choose where to send copies first."
     const val ALREADY_RUNNING = "A sync is already running."
@@ -49,7 +52,7 @@ object SyncCopy {
     // The settings screen (SyncSettingsContent). One short sentence each.
     const val STATUS_OFF = "Sync is off"
     const val OFF_EXPLAINED = "Sends copies of your photos to a place you choose. Nothing is deleted. Starts only when you tap."
-    const val PRIVACY = "Only your photo files go to the place you choose. Passwords stay on this phone, locked by Android."
+    const val PRIVACY = "Only your photo files go to the place you choose. Your password goes only to your server."
     const val STEP_WHERE = "Where to?"
     const val STEP_FORM = "Details"
     const val STEP_WHAT = "What to send"
