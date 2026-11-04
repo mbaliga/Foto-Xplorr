@@ -49,4 +49,11 @@ object SidecarNaming {
      */
     fun candidateSidecarFileNames(originalFileName: String): List<String> =
         SidecarStyle.entries.map { sidecarFileName(originalFileName, it) }.distinct()
+
+    /**
+     * [candidateSidecarFileNames] with [preferred]'s name first: when BOTH styles exist beside one
+     * photo, the configured (written) style is the one this app keeps current, so it must win a read.
+     */
+    fun candidateSidecarFileNames(originalFileName: String, preferred: SidecarStyle): List<String> =
+        (listOf(sidecarFileName(originalFileName, preferred)) + candidateSidecarFileNames(originalFileName)).distinct()
 }

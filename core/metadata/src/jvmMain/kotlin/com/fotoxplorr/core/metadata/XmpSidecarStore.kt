@@ -35,13 +35,17 @@ object XmpSidecarStore {
      * as if nothing were there. See [XmpPacket.parse]'s own doc for why those two states must stay
      * distinguishable.
      */
-    fun read(originalFile: File): XmpPacket? {
-        val directory = originalFile.parentFile ?: return XmpPacket.empty()
-        val sidecar = SidecarNaming.candidateSidecarFileNames(originalFile.name)
-            .map { File(directory, it) }
-            .firstOrNull { it.isFile }
+    fun read(originalFile: File, preferred: SidecarStyle? = null): XmpPacket? {
+        val sidecar = existingSidecar(originalFile, preferred)
             ?: return XmpPacket.empty()
-        return XmpPacket.parse(sidecar.readText(Charsets.UTF_8))
+        return XmpPacket.parse(sidecar.readText(Charsets.UTF_8).removePrefix("\uFEFF"))
+    }
+
+    private fun existingSidecar(originalFile: File, preferred: SidecarStyle?): File? {
+        val directory = originalFile.parentFile ?: return null
+        val names = if (preferred == null) SidecarNaming.candidateSidecarFileNames(originalFile.name)
+        else SidecarNaming.candidateSidecarFileNames(originalFile.name, preferred)
+        return names.map { File(directory, it) }.firstOrNull { it.isFile }
     }
 
     /**
@@ -56,5 +60,34 @@ object XmpSidecarStore {
             ?: error("${originalFile.path} has no parent directory to write a sidecar into")
         val sidecar = File(directory, SidecarNaming.sidecarFileName(originalFile.name, style))
         sidecar.writeText(packet.serialize(), Charsets.UTF_8)
+    }
+
+    /**
+     * Applies [annotations] to the sidecar for [originalFile] and writes it under [style]: the
+     * WP3.8 write-through. The base is the [style] file if it exists, else the other style's file
+     * (its foreign content is carried into the new name; the old file is left alone), else a blank
+     * packet. Returns false and writes NOTHING when the base exists but is not parseable XML.
+     * Written via a temp file and a rename, so a crash never leaves a half-written sidecar.
+     */
+    fun update(
+        originalFile: File,
+        annotations: SidecarAnnotations,
+        style: SidecarStyle,
+        stamp: String,
+        removedKeywords: Set<String> = emptySet(),
+        removedPaths: Set<String> = emptySet(),
+    ): Boolean {
+        val directory = originalFile.parentFile ?: return false
+        val base = existingSidecar(originalFile, style)
+        val bytes = XmpAnnotationCodec.update(base?.readBytes(), annotations, stamp, removedKeywords, removedPaths)
+            ?: return false
+        val target = File(directory, SidecarNaming.sidecarFileName(originalFile.name, style))
+        val temp = File(directory, target.name + ".tmp")
+        temp.writeBytes(bytes)
+        if (!temp.renameTo(target)) {
+            target.delete()
+            if (!temp.renameTo(target)) { temp.delete(); return false }
+        }
+        return true
     }
 }

@@ -168,6 +168,54 @@ class XmpPacket private constructor(private val document: Document) {
         target.setAttributeNS(namespaceUri, "$prefix:$localName", value.toString())
     }
 
+    /** A plain-text scalar (`xmp:Label`, `xmp:MetadataDate`), in attribute or element form like [intValue]. */
+    fun stringValue(namespaceUri: String, localName: String): String? {
+        attributeEverywhere(namespaceUri, localName)?.let { return it }
+        return findProperty(namespaceUri, localName)?.textContent?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    /** Writes the attribute-shorthand form and removes any element-form copy. Null or blank clears both. */
+    fun setStringValue(namespaceUri: String, prefix: String, localName: String, value: String?) {
+        removeProperty(namespaceUri, localName)
+        removeAttributeEverywhere(null, namespaceUri, localName)
+        if (value.isNullOrBlank()) return
+        val target = firstDescriptionOrNull() ?: createDescription()
+        declareNamespace(target, prefix, namespaceUri)
+        target.setAttributeNS(namespaceUri, "$prefix:$localName", value)
+    }
+
+    /**
+     * Like [setLangAlt] but touches ONLY the "x-default" entry: a sidecar another tool wrote with
+     * a German and an English title keeps the entries this app does not own. Blank/null removes
+     * the default entry (and the whole property when nothing else is left). A property that is not
+     * an `rdf:Alt` at all (plain element text, attribute form) is replaced the [setLangAlt] way,
+     * since there is no other-language content in it to keep.
+     */
+    fun setLangAltDefault(namespaceUri: String, prefix: String, localName: String, value: String?) {
+        val property = findProperty(namespaceUri, localName)
+        val alt = property?.let { firstChildElementNs(it, RDF_NS, "Alt") }
+        if (property == null || alt == null) {
+            setLangAlt(namespaceUri, prefix, localName, value)
+            return
+        }
+        val items = childElementsNs(alt, RDF_NS, "li")
+        val existing = items.firstOrNull { it.getAttributeNS(XML_NS, "lang").ifEmpty { DEFAULT_LANG } == DEFAULT_LANG }
+        if (value.isNullOrBlank()) {
+            existing?.let { alt.removeChild(it) }
+            if (childElementsNs(alt, RDF_NS, "li").isEmpty()) removeProperty(namespaceUri, localName)
+            return
+        }
+        if (existing != null) {
+            existing.textContent = value
+            if (!existing.hasAttributeNS(XML_NS, "lang")) existing.setAttributeNS(XML_NS, "xml:lang", DEFAULT_LANG)
+        } else {
+            val li = document.createElementNS(RDF_NS, "rdf:li")
+            li.setAttributeNS(XML_NS, "xml:lang", DEFAULT_LANG)
+            li.textContent = value
+            alt.insertBefore(li, alt.firstChild)
+        }
+    }
+
     /**
      * Removes (namespaceUri, localName) in either shape it might exist in -- an element-form
      * property or an attribute-shorthand one ([intValue]'s own note on why a property can be
