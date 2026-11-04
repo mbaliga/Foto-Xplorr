@@ -43,6 +43,13 @@ internal object DecodeRoutes {
     /** The steps our per-request Coil decoder tries; an empty list means "Coil's own decoders only". */
     fun forTile(format: MediaFormat): List<DecodeStep> = forUpright(format).filter { it != DecodeStep.Platform }
 
+    /**
+     * [forTile] once the header has been looked at: a TIFF whose IFD0 says RAW ([TiffRawHint]) tries the preview
+     * before the baseline decode, which would read the whole file only to refuse that IFD0.
+     */
+    fun forTile(format: MediaFormat, rawLike: Boolean): List<DecodeStep> =
+        if (format == MediaFormat.Tiff && rawLike) listOf(DecodeStep.RawPreview, DecodeStep.SimpleFormat) else forTile(format)
+
     /** Whether a preview of [kind] may stand in for the picture of a file resolved as [format]. */
     fun acceptsPreview(format: MediaFormat, kind: RawPreviewKind): Boolean =
         format is MediaFormat.Raw || (kind != RawPreviewKind.IFD_THUMBNAIL && kind != RawPreviewKind.STRIP_JPEG)

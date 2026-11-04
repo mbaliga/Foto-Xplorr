@@ -52,4 +52,12 @@ class DecodeRoutesTest {
         assertTrue(DecodeRoutes.acceptsPreview(MediaFormat.Raw(RawVariant.CR2), RawPreviewKind.STRIP_JPEG))
         assertTrue(DecodeRoutes.acceptsPreview(MediaFormat.Raw(RawVariant.NEF), RawPreviewKind.IFD_THUMBNAIL))
     }
+
+    @Test
+    fun `a tiff whose header says raw tries the preview before the whole-file decode`() {
+        assertEquals(listOf(DecodeStep.RawPreview, DecodeStep.SimpleFormat), DecodeRoutes.forTile(MediaFormat.Tiff, rawLike = true))
+        assertEquals(DecodeRoutes.forTile(MediaFormat.Tiff), DecodeRoutes.forTile(MediaFormat.Tiff, rawLike = false))
+        // The hint only reorders a TIFF.
+        assertEquals(DecodeRoutes.forTile(MediaFormat.Tga), DecodeRoutes.forTile(MediaFormat.Tga, rawLike = true))
+    }
 }

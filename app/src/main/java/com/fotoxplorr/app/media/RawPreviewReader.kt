@@ -44,16 +44,32 @@ internal object RawPreviewReader {
         uri: Uri,
         limits: DecodeLimits,
         accept: (RawPreviewKind) -> Boolean = { true },
-    ): DecodedBitmap? = runCatching { decodeOrNull(context, uri, limits, accept) }.getOrNull()
+    ): DecodedBitmap? = decode(context, uri, { _, _ -> limits }, accept)
 
-    private fun decodeOrNull(context: Context, uri: Uri, limits: DecodeLimits, accept: (RawPreviewKind) -> Boolean): DecodedBitmap? =
+    /**
+     * As above, with the limits chosen once the upright preview's size is known ([limitsFor] gets its width and
+     * height): how [RouteCoilDecoder] makes a Crop tile's short edge cover the tile.
+     */
+    fun decode(
+        context: Context,
+        uri: Uri,
+        limitsFor: (Int, Int) -> DecodeLimits,
+        accept: (RawPreviewKind) -> Boolean = { true },
+    ): DecodedBitmap? = runCatching { decodeOrNull(context, uri, limitsFor, accept) }.getOrNull()
+
+    private fun decodeOrNull(
+        context: Context,
+        uri: Uri,
+        limitsFor: (Int, Int) -> DecodeLimits,
+        accept: (RawPreviewKind) -> Boolean,
+    ): DecodedBitmap? =
         withChannel(context, uri) { channel, start ->
             val preview = RawPreviewExtractor.extract(ChannelByteSource(channel, start)) ?: return@withChannel null
             if (preview.length > MAX_PREVIEW_BYTES || !accept(preview.kind)) return@withChannel null
             val ops = orientationTransform(preview.orientation)
             val uprightW = if (ops.swapsDimensions) preview.height else preview.width
             val uprightH = if (ops.swapsDimensions) preview.width else preview.height
-            val (tw, th) = targetSize(uprightW, uprightH, limits)
+            val (tw, th) = targetSize(uprightW, uprightH, limitsFor(uprightW, uprightH))
             val rawTw = if (ops.swapsDimensions) th else tw
             val rawTh = if (ops.swapsDimensions) tw else th
             val options = BitmapFactory.Options().apply {
