@@ -20,13 +20,15 @@ class DecodedImage(val width: Int, val height: Int, val argb: IntArray) {
  * @property maxSide longest allowed side; a 1 x 200000000 image passes a pixel cap but not this one.
  * @property maxInputBytes largest file the provider and the Android seam will read into memory.
  * @property maxInflated most bytes a deflate stream (TIFF, PNG inside ORA/KRA/ICNS, ZIP) may expand
- *   to; this is what stops a decompression bomb.
+ *   to; this is what stops a decompression bomb. 128 MB covers the raw rows of a 24 MP 8-bit RGBA
+ *   PNG (96 MB) with room to spare while raw + pixels (about 224 MB) stays inside a 256 MB app heap;
+ *   24 MP at 16 bits per sample is refused (a 16-bit TIFF keeps only the high bytes, so it fits).
  */
 data class SimpleLimits(
     val maxPixels: Long = 24_000_000L,
     val maxSide: Int = 32_768,
     val maxInputBytes: Long = 192L shl 20,
-    val maxInflated: Long = 256L shl 20,
+    val maxInflated: Long = 128L shl 20,
 ) {
     /** Throws [InvalidImageException] unless [width] x [height] is positive and inside the caps. */
     fun checkSize(width: Long, height: Long) {

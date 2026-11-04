@@ -21,9 +21,11 @@ internal object PngLite {
         var interlace = 0
         var palette = ByteArray(0)
         var trns = ByteArray(0)
-        val idat = ArrayList<ByteArray>()
         var idatSize = 0L
+        var idatCount = 0
+        var firstIdat = 0
         var sawHeader = false
+        // Walks the chunks; IDAT data is only located here (no copies), see [joinIdat].
         while (pos + 8 <= end) {
             val len = b.be32(pos)
             val type = b.be32(pos + 4).toInt()
@@ -42,16 +44,16 @@ internal object PngLite {
                 }
                 0x504C5445 -> palette = b.copyOfRange(data, data + n) // PLTE
                 0x74524E53 -> trns = b.copyOfRange(data, data + n) // tRNS
-                0x49444154 -> { // IDAT
+                0x49444154 -> if (n > 0) { // IDAT
                     idatSize += n
                     if (idatSize > limits.maxInflated) bad("PNG too large")
-                    idat.add(b.copyOfRange(data, data + n))
+                    if (idatCount++ == 0) firstIdat = data
                 }
                 0x49454E44 -> break // IEND
             }
             pos = data + n + 4
         }
-        if (!sawHeader || idat.isEmpty()) bad("PNG has no image data")
+        if (!sawHeader || idatCount == 0) bad("PNG has no image data")
         limits.checkSize(width.toLong(), height.toLong())
         val channels = when (colorType) { 0 -> 1; 2 -> 3; 3 -> 1; 4 -> 2; 6 -> 4; else -> bad("bad PNG colour type") }
         val okDepth = when (colorType) {
@@ -62,9 +64,6 @@ internal object PngLite {
         if (!okDepth || interlace !in 0..1) bad("bad PNG header")
         if (colorType == 3 && palette.isEmpty()) bad("PNG palette missing")
 
-        val joined = ByteArray(idatSize.toInt())
-        var at = 0
-        for (c in idat) { c.copyInto(joined, at); at += c.size }
         val bpp = maxOf(1, channels * depth / 8)
         val bitsPerPixel = channels * depth
         // Pass layout: Adam7 or a single full pass.
@@ -78,7 +77,14 @@ internal object PngLite {
             val ph = (height - p[1] + p[3] - 1) / p[3]
             if (pw > 0 && ph > 0) expected += ph.toLong() * (1 + (pw.toLong() * bitsPerPixel + 7) / 8)
         }
-        val raw = Inflate.zlib(joined, 0, joined.size, minOf(limits.maxInflated, expected + 64))
+        if (expected > limits.maxInflated) bad("PNG too large")
+        // One IDAT (the usual case for embedded PNGs) is inflated in place; several are joined once.
+        val raw = if (idatCount == 1) {
+            Inflate.zlib(b, firstIdat, idatSize.toInt(), expected + 64, expected)
+        } else {
+            val joined = joinIdat(b, offset + 8, end, idatSize.toInt())
+            Inflate.zlib(joined, 0, joined.size, expected + 64, expected)
+        }
         if (raw.size < expected) bad("PNG data truncated")
 
         val out = allocate(limits, width, height)
@@ -103,6 +109,24 @@ internal object PngLite {
             }
         }
         return DecodedImage(width, height, out)
+    }
+
+    /** Copies the IDAT payloads between [start] and [end] into one buffer of [total] bytes. */
+    private fun joinIdat(b: ByteArray, start: Int, end: Int, total: Int): ByteArray {
+        val joined = ByteArray(total)
+        var at = 0
+        var pos = start
+        while (pos + 8 <= end && at < total) {
+            val len = b.be32(pos)
+            val data = pos + 8
+            if (len < 0 || data + len > end) break
+            val n = len.toInt()
+            val type = b.be32(pos + 4).toInt()
+            if (type == 0x49454E44) break // IEND, as in the first walk
+            if (type == 0x49444154 && at + n <= total) { b.copyInto(joined, at, data, data + n); at += n }
+            pos = data + n + 4
+        }
+        return joined
     }
 
     private fun unfilter(filter: Int, cur: ByteArray, prev: ByteArray, bpp: Int) {

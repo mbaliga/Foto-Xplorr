@@ -3,14 +3,29 @@ package com.fotoxplorr.core.formats.simple
 /**
  * Baseline TIFF, first image only, stripped (not tiled), chunky or planar:
  *  - photometric: min-is-white/black grey 1/2/4/8/16 bits, RGB 8/16 bits, palette 1..8 bits;
- *    1 extra sample (RGBA, grey+alpha) is read as straight alpha;
+ *    an extra sample (RGBA, grey+alpha) is alpha only when ExtraSamples says so: 2 is straight,
+ *    1 is premultiplied (un-premultiplied here), 0 or a missing tag is other data and the pixel is
+ *    opaque;
  *  - compression: none, LZW, Deflate (8 and 32946), PackBits; horizontal predictor for 8-bit data;
  *  - either byte order, the orientation tag is applied.
  * JPEG-in-TIFF, tiles, CMYK/Lab, floating-point and 32-bit samples are refused (the tile then shows
  * the placeholder). An IFD0 marked reduced-resolution (NewSubfileType bit 0) or carrying DNGVersion
  * is refused too: that is a RAW's thumbnail, and the RAW preview route handles the file.
+ * Only the tags read below are kept, each with a value cap, so a crafted directory cannot make the
+ * parser allocate more than a few MB; 16-bit samples keep their high byte only (all a tile shows).
  */
 internal object TiffDecoder {
+
+    /** The tags [decode] reads and the most values each may carry; anything else is skipped unread. */
+    private val TAG_CAPS: Map<Int, Int> = buildMap {
+        for (t in intArrayOf(254, 256, 257, 258, 259, 262, 274, 277, 278, 284, 317, 322, 324, 338, 339, 0xC612)) put(t, 16)
+        put(273, 1 shl 18) // StripOffsets: one per row and plane at most (32768 rows x 5 planes fits)
+        put(279, 1 shl 18) // StripByteCounts
+        put(320, 3 shl 16) // ColorMap
+    }
+
+    /** Most values all kept tags together may hold (8 MB of longs). */
+    private const val MAX_TOTAL_VALUES = 1L shl 20
 
     private class Ifd(val b: ByteArray, val le: Boolean, val offset: Int) {
         val tags = HashMap<Int, LongArray>()
@@ -19,13 +34,18 @@ internal object TiffDecoder {
             if (offset < 8 || offset.toLong() + 2 > b.size) bad("bad TIFF directory")
             val n = b.u16(offset)
             if (offset.toLong() + 2 + n * 12L > b.size) bad("bad TIFF directory")
+            var total = 0L
             for (i in 0 until n) {
                 val e = offset + 2 + i * 12
                 val tag = b.u16(e)
+                val cap = TAG_CAPS[tag] ?: continue
                 val type = b.u16(e + 2)
                 val count = b.u32(e + 4)
                 val size = when (type) { 1, 2, 6, 7 -> 1; 3, 8 -> 2; 4, 9, 11 -> 4; 5, 10, 12 -> 8; else -> 0 }
-                if (size == 0 || count > 1_000_000 || tag in tags) continue
+                if (size == 0 || tag in tags) continue
+                if (count > cap) bad("TIFF tag too large")
+                total += count
+                if (total > MAX_TOTAL_VALUES) bad("TIFF directory too large")
                 val bytes = size.toLong() * count
                 if (bytes > 4 && b.u32(e + 8) + bytes > b.size) continue
                 val at = if (bytes <= 4) e + 8 else b.u32(e + 8).toInt()
@@ -80,7 +100,9 @@ internal object TiffDecoder {
             else -> bad("TIFF colour model not supported")
         }
         if (spp < colour) bad("TIFF sample layout not supported")
-        val alpha = spp > colour
+        // ExtraSamples: 1 = associated (premultiplied) alpha, 2 = straight alpha, 0 or none = other data.
+        val extra = if (spp > colour) ifd.one(338, 0).toInt() else 0
+        val alpha = extra == 1 || extra == 2
         val okBits = if (photo == 2) bits == 8 || bits == 16 else bits in intArrayOf(1, 2, 4, 8, 16)
         if (!okBits || (photo == 3 && bits > 8) || (bits < 8 && (spp != 1 || planar != 1))) bad("TIFF depth not supported")
         if (predictor != 1 && (predictor != 2 || bits != 8)) bad("TIFF predictor not supported")
@@ -93,62 +115,84 @@ internal object TiffDecoder {
         if (offsets.size < stripsPerPlane * planes) bad("bad TIFF strips")
         val samplesPerPixelInPlane = if (planar == 2) 1 else spp
         val bytesPerRow = ((width.toLong() * samplesPerPixelInPlane * bits + 7) / 8).toInt()
-        if (bytesPerRow.toLong() * height * planes > limits.maxInflated) bad("TIFF too large")
-
-        // Gather the decoded sample bytes, plane by plane, into one buffer of rows.
-        val data = ByteArray(bytesPerRow * height * planes)
+        // 16-bit samples are kept as their high byte, so the rows buffer is 8 bits per sample then.
+        val keptBits = if (bits == 16) 8 else bits
+        val dataRow = ((width.toLong() * samplesPerPixelInPlane * keptBits + 7) / 8).toInt()
+        if (dataRow.toLong() * height * planes > limits.maxInflated) bad("TIFF too large")
+        if (bytesPerRow.toLong() * rowsPerStrip > limits.maxInflated) bad("TIFF strip too large")
+        val palette = ifd.many(320)
+        if (photo == 3 && (palette == null || palette.size < 3 * (1 shl bits))) bad("TIFF palette missing")
+        if (compression !in intArrayOf(1, 5, 8, 32946, 32773)) bad("TIFF compression not supported")
+        // Every strip must lie inside the file (and raw strips must be whole) before anything is allocated.
         for (plane in 0 until planes) for (s in 0 until stripsPerPlane) {
             val idx = plane * stripsPerPlane + s
             val off = offsets[idx]
             val cnt = counts[idx]
             if (off < 0 || cnt < 0 || off + cnt > b.size) bad("TIFF strip out of range")
+            if (compression == 1 && cnt < bytesPerRow.toLong() * minOf(rowsPerStrip, height - s * rowsPerStrip)) bad("TIFF strip truncated")
+        }
+
+        // Gather the decoded sample bytes, plane by plane, into one buffer of rows.
+        val data = ByteArray(dataRow * height * planes)
+        for (plane in 0 until planes) for (s in 0 until stripsPerPlane) {
+            val idx = plane * stripsPerPlane + s
+            val off = offsets[idx].toInt()
+            val cnt = counts[idx].toInt()
             val rows = minOf(rowsPerStrip, height - s * rowsPerStrip)
             val want = bytesPerRow * rows
+            // A raw strip is read in place unless the predictor has to rewrite it.
+            val inPlace = compression == 1 && predictor == 1
             val strip = when (compression) {
-                1 -> b.copyOfRange(off.toInt(), (off + minOf(cnt, want.toLong())).toInt())
-                5 -> lzw(b, off.toInt(), cnt.toInt(), want)
-                8, 32946 -> Inflate.zlib(b, off.toInt(), cnt.toInt(), want.toLong())
-                32773 -> ByteArray(want).also { unpackBitsLenient(b, off.toInt(), cnt.toInt(), it) }
-                else -> bad("TIFF compression not supported")
+                1 -> if (inPlace) b else b.copyOfRange(off, off + want)
+                5 -> lzw(b, off, cnt, want)
+                // The last strip may be padded to the full RowsPerStrip; only its first rows are used.
+                8, 32946 -> Inflate.zlib(b, off, cnt, bytesPerRow.toLong() * rowsPerStrip, want.toLong())
+                else -> ByteArray(want).also { unpackBitsLenient(b, off, cnt, it) }
             }
-            if (strip.size < want) bad("TIFF strip truncated")
+            val base = if (inPlace) off else 0
+            if (strip.size - base < want) bad("TIFF strip truncated")
             if (predictor == 2) for (r in 0 until rows) {
                 val rowStart = r * bytesPerRow
                 for (i in samplesPerPixelInPlane until bytesPerRow) strip[rowStart + i] = (strip[rowStart + i] + strip[rowStart + i - samplesPerPixelInPlane]).toByte()
             }
-            strip.copyInto(data, plane * bytesPerRow * height + s * rowsPerStrip * bytesPerRow, 0, want)
+            val dst = plane * dataRow * height + s * rowsPerStrip * dataRow
+            if (bits == 16) {
+                val hi = if (le) 1 else 0
+                for (i in 0 until dataRow * rows) data[dst + i] = strip[base + i * 2 + hi]
+            } else {
+                strip.copyInto(data, dst, base, base + want)
+            }
         }
 
-        val palette = ifd.many(320)
-        if (photo == 3 && (palette == null || palette.size < 3 * (1 shl bits))) bad("TIFF palette missing")
         val out = allocate(limits, width, height)
-        val max = (1 shl minOf(bits, 16)) - 1
+        val max = (1 shl keptBits) - 1
         fun sample(plane: Int, y: Int, x: Int, ch: Int): Int {
             // The sample's value in [0, max], read from the rows buffer.
-            val rowBase = plane * bytesPerRow * height + y * bytesPerRow
+            val rowBase = plane * dataRow * height + y * dataRow
             val index = if (planar == 2) x else x * spp + ch
-            return when (bits) {
+            return when (keptBits) {
                 8 -> data[rowBase + index].toInt() and 0xFF
-                16 -> { val o = rowBase + index * 2; if (le) (data[o].toInt() and 0xFF) or ((data[o + 1].toInt() and 0xFF) shl 8) else ((data[o].toInt() and 0xFF) shl 8) or (data[o + 1].toInt() and 0xFF) }
                 else -> {
-                    val bitPos = index * bits
-                    ((data[rowBase + bitPos / 8].toInt() and 0xFF) shr (8 - bits - bitPos % 8)) and max
+                    val bitPos = index * keptBits
+                    ((data[rowBase + bitPos / 8].toInt() and 0xFF) shr (8 - keptBits - bitPos % 8)) and max
                 }
             }
         }
-        fun to8(v: Int): Int = if (bits == 16) v shr 8 else if (bits == 8) v else v * 255 / max
+        fun to8(v: Int): Int = if (keptBits == 8) v else v * 255 / max
+        // Associated alpha: colour was multiplied by alpha, so divide it back out (rounded, clamped).
+        fun straight(c: Int, a: Int): Int = if (extra != 1 || a == 255) c else if (a == 0) 0 else minOf(255, (c * 255 + a / 2) / a)
         for (y in 0 until height) for (x in 0 until width) {
             fun s(ch: Int) = sample(if (planar == 2) ch else 0, y, x, ch)
             val a = if (alpha) to8(s(colour)) else 255
             out[y * width + x] = when (photo) {
-                2 -> argb(a, to8(s(0)), to8(s(1)), to8(s(2)))
+                2 -> argb(a, straight(to8(s(0)), a), straight(to8(s(1)), a), straight(to8(s(2)), a))
                 3 -> {
                     val i = s(0)
                     val n = 1 shl bits
                     argb(255, ((palette!![i] shr 8).toInt()) and 0xFF, ((palette[n + i] shr 8).toInt()) and 0xFF, ((palette[2 * n + i] shr 8).toInt()) and 0xFF)
                 }
                 else -> {
-                    val g = to8(s(0)).let { if (photo == 0) 255 - it else it }
+                    val g = straight(to8(s(0)), a).let { if (photo == 0) 255 - it else it }
                     argb(a, g, g, g)
                 }
             }

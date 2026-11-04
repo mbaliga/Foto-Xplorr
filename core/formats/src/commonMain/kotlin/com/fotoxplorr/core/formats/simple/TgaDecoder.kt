@@ -42,7 +42,9 @@ internal object TgaDecoder {
             if (cmBits !in intArrayOf(15, 16, 24, 32) || cmLen > 65_535) bad("bad TGA colour map")
             val entryBytes = (cmBits + 7) / 8
             palette = IntArray(cmFirst + cmLen)
-            for (i in 0 until cmLen) palette[cmFirst + i] = colour(b, pos + i * entryBytes, cmBits, true)
+            // Map entries carry alpha only when the descriptor declares attribute bits, as for pixels.
+            val mapAlpha = desc and 0x0F > 0
+            for (i in 0 until cmLen) palette[cmFirst + i] = colour(b, pos + i * entryBytes, cmBits, mapAlpha)
             pos += cmLen * entryBytes
         } else if (kind == 1) bad("colour-mapped TGA without a map")
         if (kind == 1 && bpp != 8) bad("unsupported TGA depth")

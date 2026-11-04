@@ -8,6 +8,9 @@ package com.fotoxplorr.core.formats.simple
 internal object IcnsDecoder {
     private class Element(val type: String, val start: Int, val length: Int)
 
+    /** PNG elements tried before falling back to the legacy ones; a real icon needs one. */
+    private const val MAX_PNG_TRIES = 3
+
     fun decode(b: ByteArray, limits: SimpleLimits): DecodedImage {
         if (b.size < 16 || !b.startsWithAt(0, ascii("icns"))) bad("not an ICNS")
         val total = minOf(b.be32(4), b.size.toLong()).toInt()
@@ -20,14 +23,12 @@ internal object IcnsDecoder {
             elements.add(Element(type, p + 8, len.toInt() - 8))
             p += len.toInt()
         }
-        // Largest PNG first.
-        var best: DecodedImage? = null
-        for (e in elements) {
-            if (e.length < 33 || !PngLite.isPng(b, e.start)) continue
-            val img = runCatching { PngLite.decode(b, e.start, e.length, limits) }.getOrNull() ?: continue
-            if (best == null || img.width * img.height > best.width * best.height) best = img
+        // Largest PNG first, ranked by the IHDR sizes so only one is decoded (the next on failure).
+        val pngs = elements.filter { it.length >= 33 && PngLite.isPng(b, it.start) && b.startsWithAt(it.start + 12, ascii("IHDR")) }
+            .sortedByDescending { minOf(b.be32(it.start + 16), 1L shl 20) * minOf(b.be32(it.start + 20), 1L shl 20) }
+        for (e in pngs.take(MAX_PNG_TRIES)) {
+            runCatching { PngLite.decode(b, e.start, e.length, limits) }.getOrNull()?.let { return it }
         }
-        if (best != null) return best
         for ((colour, mask, size) in listOf(Triple("it32", "t8mk", 128), Triple("ih32", "h8mk", 48), Triple("il32", "l8mk", 32), Triple("is32", "s8mk", 16))) {
             val c = elements.firstOrNull { it.type == colour } ?: continue
             val m = elements.firstOrNull { it.type == mask }

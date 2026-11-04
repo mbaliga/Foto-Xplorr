@@ -52,7 +52,7 @@ internal object ZipReader {
         if (start + entry.compressedSize > b.size) bad("ZIP entry truncated")
         return when (entry.method) {
             0 -> b.copyOfRange(start.toInt(), (start + entry.compressedSize).toInt())
-            8 -> Inflate.raw(b, start.toInt(), entry.compressedSize.toInt(), minOf(maxSize, entry.size))
+            8 -> Inflate.raw(b, start.toInt(), entry.compressedSize.toInt(), minOf(maxSize, entry.size), entry.size)
             else -> bad("ZIP method not supported")
         }
     }

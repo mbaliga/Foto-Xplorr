@@ -40,31 +40,40 @@ internal object PsdDecoder {
         val needed = when (mode) { 1, 2 -> 1; 3 -> 3; 4 -> 4; else -> bad("unsupported PSD colour mode") }
         if (channels < needed) bad("PSD channel count")
         val used = if ((mode == 3 && channels >= 4) || (mode == 1 && channels >= 2)) needed + 1 else needed
-        val out = allocate(limits, width, height)
+        if (mode == 2 && modeLen < 768) bad("PSD palette missing")
         val bytesPerSample = depth / 8
         val rowBytes = width * bytesPerSample
-        val planes = Array(used) { ByteArray(rowBytes * height) }
-        var p = pos.toInt()
+        val planeBytes = rowBytes.toLong() * height
+        val p = pos.toInt()
+        // The file must hold the composite before anything is allocated.
         when (compression) {
-            0 -> {
-                // Raw planar data runs through every channel, used or not; only the first `used` are read.
-                if (p.toLong() + rowBytes.toLong() * height * used > b.size) bad("PSD data truncated")
-                for (c in 0 until used) { b.copyInto(planes[c], 0, p, p + rowBytes * height); p += rowBytes * height }
-            }
+            0 -> if (p + planeBytes * used > b.size) bad("PSD data truncated")
             1 -> {
-                val counts = IntArray(channels * height)
-                if (p.toLong() + counts.size * 2L > b.size) bad("PSD data truncated")
-                for (i in counts.indices) counts[i] = b.be16(p + i * 2)
-                var dp = p + counts.size * 2
-                for (c in 0 until channels) for (y in 0 until height) {
-                    val len = counts[c * height + y]
-                    if (c < used) unpackBits(b, dp, len, planes[c], y * rowBytes, rowBytes)
-                    dp += len
-                }
+                val table = channels.toLong() * height * 2
+                if (p + table > b.size) bad("PSD data truncated")
+                var sum = 0L
+                for (i in 0 until used * height) sum += b.be16(p + i * 2)
+                if (p + table + sum > b.size) bad("PSD data truncated")
             }
             else -> bad("PSD composite compression not supported")
         }
-        fun at(c: Int, i: Int): Int = planes[c][i * bytesPerSample].toInt() and 0xFF // high byte of a 16-bit sample
+        val out = allocate(limits, width, height)
+        // Raw data is read in place; RLE rows are unpacked into one byte (the high byte) per sample.
+        val planes: Array<ByteArray>? = if (compression == 0) null else {
+            val kept = Array(used) { ByteArray(width * height) }
+            val row = ByteArray(rowBytes)
+            var dp = p + channels * height * 2
+            for (c in 0 until used) for (y in 0 until height) {
+                val len = b.be16(p + (c * height + y) * 2)
+                unpackBits(b, dp, len, row, 0, rowBytes)
+                val dst = kept[c]
+                for (x in 0 until width) dst[y * width + x] = row[x * bytesPerSample]
+                dp += len
+            }
+            kept
+        }
+        fun at(c: Int, i: Int): Int = // the high byte of a 16-bit sample
+            if (planes != null) planes[c][i].toInt() and 0xFF else b[(p + c * planeBytes + i.toLong() * bytesPerSample).toInt()].toInt() and 0xFF
         val palette = if (mode == 2 && modeLen >= 768) ByteArray(768) { b[modeStart + it] } else null
         if (mode == 2 && palette == null) bad("PSD palette missing")
         for (i in 0 until width * height) {

@@ -13,7 +13,8 @@ import com.fotoxplorr.core.formats.SizeHint
  *
  * Hostile input: nothing is allocated before [SimpleLimits] has approved the declared size, every
  * read is bounds-checked, deflate output is capped, and any failure ends as [SimpleResult.Failure]
- * (never an uncaught exception).
+ * (never an uncaught exception). An OutOfMemoryError is turned into a Failure too, as a last resort
+ * only: the caps above are what keep a decode inside the heap.
  */
 object SimpleFormatDecoders {
 
@@ -51,6 +52,10 @@ object SimpleFormatDecoders {
             SimpleResult.Failure("corrupt file")
         } catch (e: ArithmeticException) {
             SimpleResult.Failure("corrupt file")
+        } catch (e: Error) {
+            // Common code has no OutOfMemoryError type; match it by name and rethrow anything else.
+            if (e::class.simpleName != "OutOfMemoryError") throw e
+            SimpleResult.Failure("out of memory")
         }
     }
 }

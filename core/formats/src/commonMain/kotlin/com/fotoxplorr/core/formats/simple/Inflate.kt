@@ -3,7 +3,10 @@ package com.fotoxplorr.core.formats.simple
 /**
  * RFC 1951 inflate in plain Kotlin (the module has no java.util.zip; it is common code). Used for
  * TIFF Deflate, the PNG inside ORA/KRA/ICNS and ZIP entries. Output is capped at [maxOut] so a
- * decompression bomb ends in an [InvalidImageException], never an OutOfMemoryError.
+ * decompression bomb ends in an [InvalidImageException], never an OutOfMemoryError. The cap is also
+ * held to what the input can possibly expand to (deflate tops out near 1032:1), the buffer starts
+ * at the caller's expected size when it knows one, and an exactly full buffer is returned as is, so
+ * the peak is the output itself rather than up to three times the cap (growth plus the final copy).
  */
 internal object Inflate {
 
@@ -43,8 +46,11 @@ internal object Inflate {
         }
     }
 
-    private class Out(val max: Int) {
-        var data = ByteArray(minOf(max, 1 shl 16))
+    /** Most bytes one input byte can become: a 258-byte match costs at least 2 bits (zlib's 1032:1). */
+    private const val MAX_RATIO = 1032L
+
+    private class Out(val max: Int, expected: Long) {
+        var data = ByteArray(minOf(max.toLong(), if (expected > 0) expected else 1L shl 16).toInt())
         var size = 0
 
         fun put(b: Int) {
@@ -54,19 +60,26 @@ internal object Inflate {
         }
     }
 
-    /** Inflates a zlib stream (2-byte header, adler ignored) from [src] starting at [offset]. */
-    fun zlib(src: ByteArray, offset: Int, length: Int, maxOut: Long): ByteArray {
+    /**
+     * Inflates a zlib stream (2-byte header, adler ignored) from [src] starting at [offset]. The
+     * result may be shorter than its backing buffer only when [expected] was not met exactly.
+     */
+    fun zlib(src: ByteArray, offset: Int, length: Int, maxOut: Long, expected: Long = 0): ByteArray {
         if (length < 2) bad("truncated zlib stream")
         val cmf = src.u8(offset)
         val flg = src.u8(offset + 1)
         if (cmf and 0x0F != 8 || ((cmf shl 8) or flg) % 31 != 0 || flg and 0x20 != 0) bad("not a zlib stream")
-        return raw(src, offset + 2, length - 2, maxOut)
+        return raw(src, offset + 2, length - 2, maxOut, expected)
     }
 
-    /** Inflates a raw deflate stream. */
-    fun raw(src: ByteArray, offset: Int, length: Int, maxOut: Long): ByteArray {
+    /**
+     * Inflates a raw deflate stream into at most [maxOut] bytes; [expected] (when positive) is the
+     * size the caller knows the output should have, used to size the buffer once.
+     */
+    fun raw(src: ByteArray, offset: Int, length: Int, maxOut: Long, expected: Long = 0): ByteArray {
         if (offset < 0 || length < 0 || offset.toLong() + length > src.size) bad("truncated")
-        val out = Out(minOf(maxOut, Int.MAX_VALUE.toLong() - 8).toInt())
+        val cap = minOf(maxOut, length * MAX_RATIO + 64, Int.MAX_VALUE.toLong() - 8)
+        val out = Out(cap.toInt(), expected)
         val bits = Bits(src, offset, offset + length)
         do {
             val last = bits.need(1)
@@ -77,7 +90,7 @@ internal object Inflate {
                 else -> bad("bad deflate block")
             }
         } while (last == 0)
-        return out.data.copyOf(out.size)
+        return if (out.size == out.data.size) out.data else out.data.copyOf(out.size)
     }
 
     private val FIXED_LIT: Huffman = Huffman(IntArray(288) { if (it < 144) 8 else if (it < 256) 9 else if (it < 280) 7 else 8 }, 288)

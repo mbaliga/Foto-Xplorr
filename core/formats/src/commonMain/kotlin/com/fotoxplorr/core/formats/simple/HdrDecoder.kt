@@ -93,7 +93,7 @@ internal object HdrDecoder {
             if (b.u8(p) == 1 && b.u8(p + 1) == 1 && b.u8(p + 2) == 1 && x > 0) {
                 val count = b.u8(p + 3) shl shift
                 if (x + count > w) bad("Radiance run overflow")
-                repeat(count) { b.copyInto(scan, x * 4, (x - 1) * 4, x * 4); x++ }
+                repeat(count) { scan.copyInto(scan, x * 4, (x - 1) * 4, x * 4); x++ }
                 shift += 8
             } else {
                 b.copyInto(scan, x * 4, p, p + 4)
