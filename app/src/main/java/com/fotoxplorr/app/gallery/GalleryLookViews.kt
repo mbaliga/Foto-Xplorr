@@ -317,8 +317,17 @@ internal fun CullingScreen(
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
         if (tree != null && keepFolderGrant(context.contentResolver, tree)) {
             session.onFolderGranted()
-            needsFolder = false
             grants++
+            // The ratings made before the grant were kept in memory only: write them now, so the
+            // HUD only says saved once they all are.
+            scope.launch {
+                mutex.withLock {
+                    val left = withContext(Dispatchers.IO) { store.flushUnsaved() }
+                    lastSaved = left == 0
+                    needsFolder = left > 0 && session.needsFolderGrant()
+                    version++
+                }
+            }
         }
     }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
@@ -351,7 +360,9 @@ internal fun CullingScreen(
                 // Against the LATEST state: an Auto/Stay toggle made during the write is kept.
                 cull = cull.afterWrite(next)
                 if (action !is CullAction.Next && action !is CullAction.Previous) {
-                    lastSaved = store.lastPutDurable
+                    // Saved means every rating so far, not only this one: an earlier refused write
+                    // keeps the HUD on NOT_SAVED until it is written too.
+                    lastSaved = store.lastPutDurable && store.unsavedCount == 0
                     needsFolder = !lastSaved && session.needsFolderGrant()
                 }
                 version++

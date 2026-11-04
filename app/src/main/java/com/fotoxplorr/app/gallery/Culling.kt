@@ -89,12 +89,18 @@ class WriteThroughAnnotationStore(private val durable: AnnotationStore) : Annota
     /** Ids whose durable value has been read (or replaced by a put): never read again. */
     private val settled = HashSet<Long>()
     private val kept = HashSet<Long>()
+
+    /** Ids whose value a key put but the durable store refused: held in memory only, still owed. */
+    private val unsaved = HashSet<Long>()
     private var picks = 0
     private var rejects = 0
     val durableCount: Int get() = synchronized(lock) { kept.size }
 
     /** How many ids have their durable value in memory (read, or known to have none). */
     val settledCount: Int get() = synchronized(lock) { settled.size }
+
+    /** How many put values live in memory only (the durable store refused them). */
+    val unsavedCount: Int get() = synchronized(lock) { unsaved.size }
 
     /** Whether the most recent [put] reached the durable store (true before any put). */
     @Volatile
@@ -116,9 +122,44 @@ class WriteThroughAnnotationStore(private val durable: AnnotationStore) : Annota
             remember(id, annotations)
         }
         val ok = durable.put(id, annotations)
-        synchronized(lock) { if (ok) kept.add(id) else kept.remove(id) }
+        synchronized(lock) {
+            if (ok) {
+                kept.add(id)
+                unsaved.remove(id)
+            } else {
+                kept.remove(id)
+                unsaved.add(id)
+            }
+        }
         lastPutDurable = ok
         return ok
+    }
+
+    /**
+     * Writes again every value the durable store refused (a cull rated before its folder was
+     * granted) and returns how many are still not durable. Without this the ratings made before
+     * a grant would stay in memory only while the next good write showed the cull as saved. Runs
+     * the durable IO on the caller's thread; a value replaced by a key meanwhile is left to that
+     * key's own write.
+     */
+    fun flushUnsaved(): Int {
+        val owed = synchronized(lock) { unsaved.mapNotNull { id -> memory[id]?.let { id to it } } }
+        var allOk = true
+        for ((id, value) in owed) {
+            val ok = durable.put(id, value)
+            synchronized(lock) {
+                if (memory[id] === value) {
+                    if (ok) {
+                        kept.add(id)
+                        unsaved.remove(id)
+                    } else {
+                        allOk = false
+                    }
+                }
+            }
+        }
+        if (owed.isNotEmpty()) lastPutDurable = allOk
+        return unsavedCount
     }
 
     /** Picks, rejects and the rest of [total] ids, from memory only (O(1)). */

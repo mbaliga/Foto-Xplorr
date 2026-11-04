@@ -90,6 +90,54 @@ class CullStoreTest {
         assertEquals(2, store.get(4)?.rating)
     }
 
+    /** A durable store that refuses every write until its folder is granted. */
+    private class GrantedLater : AnnotationStore {
+        var granted = false
+        val map = HashMap<Long, SidecarAnnotations>()
+        override fun get(id: Long): SidecarAnnotations? = if (granted) map[id] else null
+        override fun put(id: Long, annotations: SidecarAnnotations): Boolean {
+            if (!granted) return false
+            map[id] = annotations
+            return true
+        }
+    }
+
+    @Test
+    fun `ratings made before a folder grant are written once it is granted`() {
+        val durable = GrantedLater()
+        val store = WriteThroughAnnotationStore(durable)
+        (1L..30L).forEach { store.put(it, SidecarAnnotations(rating = 3)) }
+        assertEquals(30, store.unsavedCount)
+        durable.granted = true
+        store.rereadMisses()
+        assertEquals(0, store.flushUnsaved())
+        store.put(31, SidecarAnnotations(rating = 4))
+        assertEquals(31, store.durableCount)
+        assertEquals(31, durable.map.size)
+        assertEquals(3, durable.map[1]?.rating)
+        assertTrue(store.lastPutDurable)
+    }
+
+    @Test
+    fun `a good write after refused ones still leaves them owed`() {
+        val durable = GrantedLater()
+        val store = WriteThroughAnnotationStore(durable)
+        store.put(1, SidecarAnnotations(rating = 2))
+        durable.granted = true
+        store.put(2, SidecarAnnotations(rating = 5))
+        assertTrue(store.lastPutDurable)
+        assertEquals("the first rating is still in memory only", 1, store.unsavedCount)
+    }
+
+    @Test
+    fun `a flush with the folder still out of reach keeps the values owed`() {
+        val store = WriteThroughAnnotationStore(GrantedLater())
+        store.put(1, SidecarAnnotations(rating = 2))
+        assertEquals(1, store.flushUnsaved())
+        assertFalse(store.lastPutDurable)
+        assertEquals(2, store.get(1)?.rating)
+    }
+
     @Test
     fun `an Auto or Stay toggle made during a write survives it`() {
         var latest = CullState(ids)
