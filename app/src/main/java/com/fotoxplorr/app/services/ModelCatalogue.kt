@@ -63,7 +63,7 @@ object ModelCatalogue {
         id = "image-embedder-mobilenet-v3-small",
         title = "Look-alike photos",
         enables = "Finds photos that look alike and lays them out by similarity.",
-        approxBytes = 10L * 1024L * 1024L,
+        approxBytes = 4_117_670L,
         licence = "Apache 2.0",
         host = "storage.googleapis.com",
         sourceUrl = "https://storage.googleapis.com/mediapipe-models/image_embedder/" +
