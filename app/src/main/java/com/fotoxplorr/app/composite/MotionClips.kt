@@ -9,7 +9,12 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.core.formats.composite.EmbeddedRange
 import com.fotoxplorr.core.formats.composite.MotionPhoto
 import com.fotoxplorr.core.formats.composite.MotionPhotoStill
+import androidx.annotation.VisibleForTesting
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
@@ -19,35 +24,69 @@ import java.io.IOException
  * this app's cache (`cacheDir/motion-clips`), never next to the photo. The newest [KEEP] clips are
  * kept so paging back and forth does not copy again; a clip over [MAX_CLIP_BYTES] is refused.
  *
- * The copies are a convenience of one viewer session, never a record: the viewer [clear]s them when
- * it closes, and the first copy of each process clears what an earlier process left behind (it may
- * have been killed with the viewer open). A photo locked, hidden or trashed later therefore leaves
- * no readable clip behind once the viewer is gone.
+ * The copies are a convenience of one viewer session, never a record: the viewer [clearInBackground]s
+ * them when it closes and when the photo on screen is marked sensitive or trashed, and the first
+ * use of [CompositeProbe] in each process ([sweepOnce]) clears what an earlier process left behind
+ * (it may have been killed with the viewer open). A photo locked, hidden or trashed later therefore
+ * leaves no readable clip behind once the viewer is gone. A copy still running when a clear comes is
+ * thrown away when it ends instead of being kept ([generation]).
  */
 internal object MotionClipCache {
     const val KEEP = 6
     const val MAX_CLIP_BYTES = 256L shl 20
     private const val DIRECTORY = "motion-clips"
 
-    @Volatile
-    private var sweptThisProcess = false
+    /**
+     * Outlives every screen: a clear asked for by a viewer that is being disposed still runs. Never
+     * cancelled; a failed delete is not an error anyone could act on.
+     */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val lock = Any()
 
-    /** Deletes every cached clip. Cheap (at most [KEEP] files and a partial one); safe on any thread. */
+    @Volatile
+    @VisibleForTesting
+    internal var sweptThisProcess = false
+
+    /** Bumped by every [clear]: a copy that started under an older value is deleted, not committed. */
+    private var generation = 0L
+
+    /** Deletes every cached clip. Blocking file IO: from the main thread use [clearInBackground]. */
     fun clear(context: Context) {
-        sweptThisProcess = true
-        File(context.cacheDir, DIRECTORY).listFiles()?.forEach { it.delete() }
+        synchronized(lock) {
+            sweptThisProcess = true
+            generation++
+            File(context.cacheDir, DIRECTORY).listFiles()?.forEach { it.delete() }
+        }
     }
 
-    /** The clip's cache file, copied on first use; null when it cannot be read in full. Blocking IO. */
-    fun clipFile(context: Context, asset: MediaAsset, motion: MotionPhoto): File? {
+    /** [clear] on Dispatchers.IO, in a scope that survives the caller (safe from onDispose). */
+    fun clearInBackground(context: Context): Job {
+        val app = context.applicationContext ?: context
+        return scope.launch { clear(app) }
+    }
+
+    /** Clears what an earlier process left, once per process; free after the first call. Blocking IO. */
+    fun sweepOnce(context: Context) {
+        if (sweptThisProcess) return
+        synchronized(lock) { if (!sweptThisProcess) clear(context) }
+    }
+
+    /**
+     * The clip's cache file, copied on first use; null when it cannot be read in full or a [clear]
+     * came while it was copied. Blocking IO. [afterCopy] lets a test clear mid-copy.
+     */
+    fun clipFile(context: Context, asset: MediaAsset, motion: MotionPhoto, afterCopy: () -> Unit = {}): File? {
         if (motion.video.length > MAX_CLIP_BYTES) return null
-        if (!sweptThisProcess) clear(context)
+        sweepOnce(context)
         val directory = File(context.cacheDir, DIRECTORY).apply { mkdirs() }
         val name = clipName(asset.contentUriString, asset.dateModifiedSeconds, motion.video)
         val target = File(directory, name)
-        if (target.isFile && target.length() == motion.video.length) {
-            target.setLastModified(System.currentTimeMillis())
-            return target
+        val started = synchronized(lock) {
+            if (target.isFile && target.length() == motion.video.length) {
+                target.setLastModified(System.currentTimeMillis())
+                return target
+            }
+            generation
         }
         val partial = File(directory, "$name.part")
         val ok = runCatching {
@@ -55,13 +94,19 @@ internal object MotionClipCache {
                 CompositeProbe.copyRange(context, asset.contentUri, motion.video.offset, motion.video.length) { b, n -> out.write(b, 0, n) }
             }
         }.getOrDefault(false)
-        if (!ok || !partial.renameTo(target)) {
-            partial.delete()
-            return null
+        afterCopy()
+        synchronized(lock) {
+            if (!ok || generation != started || !partial.renameTo(target)) {
+                partial.delete()
+                return null
+            }
+            prune(directory)
         }
-        prune(directory)
         return target
     }
+
+    /** True when the photo on screen has just become one whose clip must not stay readable. */
+    fun becameProtected(before: Boolean, now: Boolean): Boolean = now && !before
 
     /** A stable file name for one clip of one version of one file. */
     internal fun clipName(uri: String, modified: Long, range: EmbeddedRange): String =

@@ -36,7 +36,8 @@ internal data class CompositeFacts(
  *
  * Results are cached in memory only, by uri and modification time (a re-saved file is read again),
  * and nothing is written anywhere: composite media is a presentation, never a library change.
- * Every call does blocking IO: call it off the main thread.
+ * Every call does blocking IO: call it off the main thread. The first file opened in a process
+ * also clears the motion clips an earlier process left in the cache ([MotionClipCache.sweepOnce]).
  */
 internal object CompositeProbe {
     private val facts = LruCache<String, CompositeFacts>(256)
@@ -98,6 +99,7 @@ internal object CompositeProbe {
 
     /** Opens [uri] as a [ByteSource] for [block]; null for a pipe, an unreadable URI or a failed read. */
     fun <T> withSource(context: Context, uri: Uri, block: (ByteSource) -> T?): T? {
+        MotionClipCache.sweepOnce(context)
         val afd = runCatching { context.contentResolver.openAssetFileDescriptor(uri, "r") }.getOrNull() ?: return null
         return afd.use {
             val channel = FileInputStream(it.fileDescriptor).channel
@@ -124,6 +126,7 @@ internal object CompositeProbe {
 
     /** [block] reads [length] bytes of [uri] from [offset] as a stream; null when the file cannot be opened or [block] throws. */
     fun <T> withRange(context: Context, uri: Uri, offset: Long, length: Long, block: (InputStream) -> T?): T? {
+        MotionClipCache.sweepOnce(context)
         val afd = runCatching { context.contentResolver.openAssetFileDescriptor(uri, "r") }.getOrNull() ?: return null
         return afd.use {
             val channel = FileInputStream(it.fileDescriptor).channel

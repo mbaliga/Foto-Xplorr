@@ -482,8 +482,17 @@ fun ViewerScreen(
     // the same read, which is why it is above the flight's rectangle.
     val context = LocalContext.current
     // Motion clips copied for playback live only while the viewer is open: closing it deletes
-    // them, so a photo locked, hidden or trashed afterwards leaves no clip in the cache.
-    DisposableEffect(Unit) { onDispose { MotionClipCache.clear(context) } }
+    // them (on Dispatchers.IO, in a scope that outlives this screen), so a photo locked, hidden or
+    // trashed afterwards leaves no clip in the cache. The photo on screen being marked sensitive or
+    // trashed while the viewer stays open clears them at once too. A folder being locked is not
+    // observable here (only the mayCopy predicate is): that case is cleared on close.
+    DisposableEffect(Unit) { onDispose { MotionClipCache.clearInBackground(context) } }
+    val clipProtected = isSensitive || asset.isTrashed
+    val wasClipProtected = remember(asset.id) { booleanArrayOf(clipProtected) }
+    LaunchedEffect(asset.id, clipProtected) {
+        if (MotionClipCache.becameProtected(wasClipProtected[0], clipProtected)) MotionClipCache.clearInBackground(context)
+        wasClipProtected[0] = clipProtected
+    }
     var exif by remember(asset.id) { mutableStateOf(ImageExifDetails.PENDING) }
     // HDR / wide colour and the pro overlays (U7). The decision is pure (ColourModePolicy) and the
     // window is only asked for what this screen can show; the overlays are off until chosen in the
@@ -845,7 +854,7 @@ fun ViewerScreen(
                 onEdit = { shell.closeAll(); onEdit() },
                 onOpenWith = { shell.closeAll(); onOpenWith() },
                 onRename = onRename?.let { rename -> { shell.closeAll(); rename() } },
-                onMoveToTrash = { shell.closeAll(); onMoveToTrash() },
+                onMoveToTrash = { shell.closeAll(); MotionClipCache.clearInBackground(context); onMoveToTrash() },
                 isVideo = asset.isVideo,
                 isConvertingToMp4 = isConvertingToMp4,
                 onConvertToMp4 = onConvertToMp4?.let { convert -> { shell.closeAll(); convert() } },

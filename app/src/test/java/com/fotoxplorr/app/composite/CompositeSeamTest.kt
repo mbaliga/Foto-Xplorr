@@ -198,6 +198,51 @@ class CompositeSeamTest {
     }
 
     @Test
+    fun `the viewer's clear runs off the calling thread and outlives it`() {
+        val (bytes, _) = CompositeTestFiles.microVideo()
+        val photo = fileAsset(9, "PXL_9.MP.jpg", bytes)
+        val clip = MotionClipCache.clipFile(context, photo, CompositeProbe.facts(context, photo).motion!!)!!
+        val caller = Thread.currentThread()
+        var clearedOn: Thread? = null
+        val watching = object : android.content.ContextWrapper(context) {
+            override fun getApplicationContext(): Context = this
+            override fun getCacheDir(): File = super.getCacheDir().also { clearedOn = Thread.currentThread() }
+        }
+        val job = MotionClipCache.clearInBackground(watching)
+        kotlinx.coroutines.runBlocking { job.join() }
+        assertTrue(!clip.exists())
+        assertNotNull(clearedOn)
+        assertTrue(clearedOn !== caller)
+    }
+
+    @Test
+    fun `the first probe of a process clears clips an earlier process left`() {
+        val stale = File(context.cacheDir, "motion-clips").apply { mkdirs() }.resolve("clip-stale.mp4").apply { writeBytes(ByteArray(10)) }
+        MotionClipCache.sweptThisProcess = false
+        CompositeProbe.facts(context, fileAsset(10, "plain10.jpg", CompositeTestFiles.jpeg(-1)))
+        assertTrue(!stale.exists())
+        // Only once: a clip copied afterwards is not swept by the next probe.
+        val (bytes, _) = CompositeTestFiles.microVideo()
+        val photo = fileAsset(11, "PXL_11.MP.jpg", bytes)
+        val clip = MotionClipCache.clipFile(context, photo, CompositeProbe.facts(context, photo).motion!!)!!
+        CompositeProbe.facts(context, fileAsset(12, "plain12.jpg", CompositeTestFiles.jpeg(-1)))
+        assertTrue(clip.isFile)
+    }
+
+    @Test
+    fun `a clip still copying when the cache is cleared is thrown away`() {
+        val (bytes, _) = CompositeTestFiles.microVideo()
+        val photo = fileAsset(13, "PXL_13.MP.jpg", bytes)
+        val motion = CompositeProbe.facts(context, photo).motion!!
+        MotionClipCache.clear(context)
+        assertEquals(null, MotionClipCache.clipFile(context, photo, motion, afterCopy = { MotionClipCache.clear(context) }))
+        assertEquals(0, File(context.cacheDir, "motion-clips").listFiles()?.size ?: 0)
+        assertTrue(MotionClipCache.becameProtected(before = false, now = true))
+        assertTrue(!MotionClipCache.becameProtected(before = true, now = true))
+        assertTrue(!MotionClipCache.becameProtected(before = false, now = false))
+    }
+
+    @Test
     fun `the play button takes keyboard focus and Enter or Space toggles it`() {
         var taps = 0
         compose.setContent {
