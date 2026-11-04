@@ -71,6 +71,37 @@ object DeepZoomPolicy {
         regionDecodable(mimeType) && !animated && !colourFiltered && oneToOne >= MIN_DEEP_RATIO
 
     /**
+     * Whether tiles are LIVE: wanted ([tilesWorthRunning]) AND the region decoder really opened and
+     * its tiles may be drawn ([tileDrawable]). The pinch ceiling and the 1:1 double-tap follow this,
+     * not the wish, so a file the platform will not region-read (a HEIC on API 26/27, a JPEG it
+     * rejects) or a translucent one keeps the old ceiling instead of magnifying the soft picture.
+     */
+    fun tilesLive(tilesWanted: Boolean, decoderOpen: Boolean): Boolean = tilesWanted && decoderOpen
+
+    /** Formats whose region decode is always opaque, so a tile can be laid over the base picture as is. */
+    private val OPAQUE_MIME = setOf("image/jpeg", "image/jpg")
+
+    /**
+     * Whether a decoded tile may be drawn OVER the base picture of the same photo. The base keeps
+     * drawing beneath, so a translucent pixel would be composited twice (alpha 0.5 shows as 0.75)
+     * and a seam would show between tiled and untiled areas. JPEG is always opaque; any other
+     * format is drawn only while its tiles decode without alpha.
+     */
+    fun tileDrawable(mimeType: String?, tileHasAlpha: Boolean): Boolean =
+        mimeType?.lowercase() in OPAQUE_MIME || !tileHasAlpha
+
+    /**
+     * When the ceiling drops under the current zoom (tiles turned off by a rotation or a colour
+     * filter, or found unusable), the zoom and its pan are pulled down to [maxScale] together, so
+     * the same point stays at the centre. Unchanged when already within it.
+     */
+    fun clampToCeiling(scale: Float, offsetX: Float, offsetY: Float, maxScale: Float): Triple<Float, Float, Float> {
+        if (scale <= maxScale || scale <= 0f) return Triple(scale, offsetX, offsetY)
+        val k = maxScale / scale
+        return Triple(maxScale, offsetX * k, offsetY * k)
+    }
+
+    /**
      * The pixels per source pixel at layout [scale]: `scale / oneToOne`. This is the [TilePyramid.sampleFor] input.
      */
     fun pixelsPerSourcePx(scale: Float, oneToOne: Float): Float = if (oneToOne > 0f) scale / oneToOne else scale

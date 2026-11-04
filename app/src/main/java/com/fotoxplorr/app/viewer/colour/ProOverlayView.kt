@@ -72,20 +72,31 @@ internal fun rememberProAnalysis(asset: MediaAsset, wanted: Boolean): ProAnalysi
         analysis = withContext(Dispatchers.Default) {
             val decoded = decodeUpright(context, asset.contentUri, DecodeLimits(ANALYSIS_EDGE, ANALYSIS_EDGE.toLong() * ANALYSIS_EDGE))
                 ?: return@withContext null
-            val bmp = decoded.bitmap
-            val w = bmp.width
-            val h = bmp.height
-            val px = IntArray(w * h).also { bmp.getPixels(it, 0, w, 0, 0, w, h) }
-            ProAnalysis(
-                width = w, height = h,
-                histogram = ToneHistogram.of(px),
-                clipping = PixelAnalysis.clipping(px),
-                clippingMask = maskBitmap(PixelAnalysis.clippingMask(px), w, h),
-                peakingMask = maskBitmap(PixelAnalysis.peakingMask(px, w, h), w, h),
-            )
+            analyseAndRecycle(decoded.bitmap)
         }
     }
     return analysis
+}
+
+/**
+ * Measures [bmp] and recycles it once its pixels are copied out (a private decode: the masks are
+ * separate bitmaps), so swiping through photos with an overlay on does not pile up analysis copies.
+ */
+internal fun analyseAndRecycle(bmp: Bitmap): ProAnalysis {
+    val w = bmp.width
+    val h = bmp.height
+    val px = try {
+        IntArray(w * h).also { bmp.getPixels(it, 0, w, 0, 0, w, h) }
+    } finally {
+        bmp.recycle()
+    }
+    return ProAnalysis(
+        width = w, height = h,
+        histogram = ToneHistogram.of(px),
+        clipping = PixelAnalysis.clipping(px),
+        clippingMask = maskBitmap(PixelAnalysis.clippingMask(px), w, h),
+        peakingMask = maskBitmap(PixelAnalysis.peakingMask(px, w, h), w, h),
+    )
 }
 
 /**
@@ -138,7 +149,7 @@ internal fun ProOverlayCard(
             HistogramStrip(analysis.histogram)
             if (choice.clipping && analysis.clipping.any) {
                 Text(
-                    text = "Highlights ${percent(analysis.clipping.highlights)}  Shadows ${percent(analysis.clipping.shadows)}",
+                    text = ProOverlayCopy.clippingLine(analysis.clipping.highlights, analysis.clipping.shadows),
                     color = Color.White, fontSize = 12.sp,
                 )
             }
@@ -166,7 +177,7 @@ private fun HistogramStrip(h: ToneHistogram) {
     Canvas(
         modifier = Modifier
             .width(HIST_W_DP.dp).height(HIST_H_DP.dp)
-            .semantics { contentDescription = "Histogram of the photo's tones" },
+            .semantics { contentDescription = ProOverlayCopy.HISTOGRAM_DESCRIPTION },
     ) {
         val barW = size.width / luma.size
         for (i in luma.indices) {

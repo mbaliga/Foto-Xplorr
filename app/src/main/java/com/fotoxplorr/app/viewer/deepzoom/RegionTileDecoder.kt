@@ -13,6 +13,9 @@ import com.fotoxplorr.app.media.OrientationOps
 import com.fotoxplorr.app.media.applyOrientation
 import com.fotoxplorr.app.media.orientationTransform
 import java.io.Closeable
+import java.util.concurrent.Executor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asExecutor
 
 /**
  * The one Android seam of deep zoom: reads a TILE of the full-resolution file with
@@ -58,6 +61,13 @@ internal class RegionTileDecoder private constructor(
         runCatching { pfd?.close() }
     }
 
+    /**
+     * [close] on a background thread. `recycle()` waits on the same native lock as a `decodeRegion`
+     * still running on IO (a sample-64 read of a 100 MP JPEG can take 100+ ms), so closing from the
+     * main thread -- a page swipe, the viewer closing -- would drop frames for that long.
+     */
+    fun closeInBackground() = closeOffMain(this)
+
     companion object {
         /** Opens [uri] for region reads, or null (unreadable, unsupported format, zero size). Blocking: call off the main thread. */
         fun open(context: Context, uri: Uri): RegionTileDecoder? = runCatching {
@@ -66,11 +76,15 @@ internal class RegionTileDecoder private constructor(
                 ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
             } ?: ExifInterface.ORIENTATION_NORMAL
             val pfd = runCatching { resolver.openFileDescriptor(uri, "r") }.getOrNull()
-            val decoder = openDecoder(context, uri, pfd) ?: run { pfd?.close(); return@runCatching null }
-            if (decoder.width <= 0 || decoder.height <= 0) {
-                decoder.recycle(); pfd?.close(); return@runCatching null
+            // The descriptor is closed on EVERY way out that does not hand it to a decoder, a throw
+            // from the stream fallback included (a HEIC on API 26/27, a JPEG the platform rejects).
+            closingOnFailure(pfd) {
+                val decoder = openDecoder(context, uri, pfd) ?: return@closingOnFailure null
+                if (decoder.width <= 0 || decoder.height <= 0) {
+                    decoder.recycle(); return@closingOnFailure null
+                }
+                RegionTileDecoder(decoder, pfd, orientationTransform(orientation), decoder.width, decoder.height)
             }
-            RegionTileDecoder(decoder, pfd, orientationTransform(orientation), decoder.width, decoder.height)
         }.getOrNull()
 
         @Suppress("DEPRECATION")
@@ -85,14 +99,35 @@ internal class RegionTileDecoder private constructor(
                 }.getOrNull()
                 if (fromFd != null) return fromFd
             }
-            val stream = context.contentResolver.openInputStream(uri) ?: return null
-            return stream.use {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    BitmapRegionDecoder.newInstance(it)
-                } else {
-                    BitmapRegionDecoder.newInstance(it, false)
+            return runCatching {
+                context.contentResolver.openInputStream(uri)?.use {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        BitmapRegionDecoder.newInstance(it)
+                    } else {
+                        BitmapRegionDecoder.newInstance(it, false)
+                    }
                 }
-            }
+            }.getOrNull()
         }
     }
+}
+
+/**
+ * Runs [block], which takes ownership of [resource] by returning non-null. On null or a throw the
+ * resource is closed here (and a throw is rethrown), so a half-open never leaks a descriptor.
+ */
+internal inline fun <T : Any> closingOnFailure(resource: Closeable?, block: () -> T?): T? {
+    val result = try {
+        block()
+    } catch (t: Throwable) {
+        runCatching { resource?.close() }
+        throw t
+    }
+    if (result == null) runCatching { resource?.close() }
+    return result
+}
+
+/** Closes [closeable] on [executor] (IO by default), never on the caller's thread. */
+internal fun closeOffMain(closeable: Closeable, executor: Executor = Dispatchers.IO.asExecutor()) {
+    executor.execute { runCatching { closeable.close() } }
 }

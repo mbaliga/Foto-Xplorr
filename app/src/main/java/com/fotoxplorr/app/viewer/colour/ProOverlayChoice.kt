@@ -37,6 +37,15 @@ enum class ProOverlay(val label: String, val caption: String) {
     PEAKING("Focus peaking", "Marks the sharpest edges in yellow."),
 }
 
+/** The pro card's and histogram's own words, beside the overlays' labels and captions. */
+object ProOverlayCopy {
+    const val HISTOGRAM_DESCRIPTION = "Histogram of the photo's tones"
+
+    /** The clipping line under the histogram, e.g. "Highlights 2.0%  Shadows <0.1%". */
+    fun clippingLine(highlights: Float, shadows: Float): String =
+        "Highlights ${percent(highlights)}  Shadows ${percent(shadows)}"
+}
+
 /**
  * The choice, remembered between photos and launches in the app's own preferences (a viewer-local
  * convenience: it is a way of looking, not part of the library). Every write is a single key.

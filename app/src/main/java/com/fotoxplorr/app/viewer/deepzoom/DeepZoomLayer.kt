@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
@@ -35,7 +36,9 @@ import kotlinx.coroutines.withContext
  * coordinates -- the fitted image rectangle -- and the layer's own scale/pan carries it, with no
  * second transform to keep in step. The picture beneath keeps drawing, so an unloaded tile
  * shows the soft version instead of a hole, and a decode that fails shows exactly what the viewer
- * showed before this existed.
+ * showed before this existed. Because the base still draws under a tile, a tile with alpha would be
+ * composited twice; such a file stops tiling ([DeepZoomPolicy.tileDrawable]). [onLiveChanged] says
+ * whether tiles really run (decoder open, drawable), which is what the viewer's ceiling follows.
  *
  * What is tested on the JVM is every decision (level, window, cache, orientation); that this
  * composable composes, that tiles land on the right pixels and that panning a 100 MP photo holds
@@ -51,6 +54,7 @@ internal fun DeepZoomLayer(
     offsetX: () -> Float,
     offsetY: () -> Float,
     modifier: Modifier = Modifier,
+    onLiveChanged: (Boolean) -> Unit = {},
 ) {
     if (containerSize.width <= 0 || containerSize.height <= 0) return
     val context = LocalContext.current
@@ -59,11 +63,19 @@ internal fun DeepZoomLayer(
         TileCache<ImageBitmap>(CACHE_BYTES) { (it.width.toLong() * it.height * 4L) }
     }
     var version by remember(cache) { mutableIntStateOf(0) }
+    // Set once a tile comes back with alpha in a format that may carry it: from then on nothing is
+    // drawn over the base picture (DeepZoomPolicy.tileDrawable), and the viewer's ceiling falls back.
+    var translucent by remember(asset.contentUriString, asset.dateModifiedSeconds) { mutableStateOf(false) }
+    val live = decoder != null && !translucent
+    val reportLive by rememberUpdatedState(onLiveChanged)
+    LaunchedEffect(live) { reportLive(live) }
 
     DisposableEffect(asset.contentUriString, asset.dateModifiedSeconds) {
         onDispose {
-            decoder?.close()
+            // Off the main thread: recycle() waits for a region decode still running on IO.
+            decoder?.closeInBackground()
             cache.clear()
+            reportLive(false)
         }
     }
     // Once the layer has been wanted it keeps its decoder and tiles while merely disabled (a pinch's
@@ -77,11 +89,11 @@ internal fun DeepZoomLayer(
         val opened = withContext(NonCancellable + Dispatchers.IO) {
             RegionTileDecoder.open(context, android.net.Uri.parse(asset.contentUriString))
         }
-        if (isActive) decoder = opened else opened?.close()
+        if (isActive) decoder = opened else opened?.closeInBackground()
     }
 
     val d = decoder
-    if (d != null && enabled) {
+    if (d != null && enabled && !translucent) {
         val oneToOne = DeepZoomPolicy.oneToOneScale(
             d.width, d.height, containerSize.width.toFloat(), containerSize.height.toFloat(),
         )
@@ -101,6 +113,12 @@ internal fun DeepZoomLayer(
                         if (!isActive) return@collectLatest
                         if (cache.contains(key)) continue
                         val bmp: Bitmap = withContext(Dispatchers.IO) { d.decode(key) } ?: continue
+                        if (!DeepZoomPolicy.tileDrawable(asset.mimeType, bmp.hasAlpha())) {
+                            bmp.recycle()
+                            cache.clear()
+                            translucent = true
+                            return@collectLatest
+                        }
                         cache.put(key, bmp.asImageBitmap())
                         version++
                     }
