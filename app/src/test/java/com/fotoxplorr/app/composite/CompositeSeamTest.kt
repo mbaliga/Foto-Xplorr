@@ -39,7 +39,9 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
+import android.os.Looper
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
@@ -148,7 +150,7 @@ class CompositeSeamTest {
         val pair = CompositeProbe.facts(context, photo).stereo!!
         var closed = false
         compose.setContent { StereoScreen(asset = photo, pair = pair, onClose = { closed = true }) }
-        compose.waitUntil(10_000) {
+        waitFor(10_000) {
             compose.onAllNodesWithText(CompositeCopy.STEREO_LOADING).fetchSemanticsNodes().isEmpty()
         }
         for (mode in StereoMode.entries) {
@@ -182,7 +184,7 @@ class CompositeSeamTest {
                 CompositeViewerLayer(asset = photo, chromeShown = true, mayExport = { true }, onOpenStereo = {}, bottomPaddingDp = 0)
             }
         }
-        compose.waitUntil(10_000) {
+        waitFor(10_000) {
             compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.TestTag, CompositeTags.PLAY)).fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag(CompositeTags.PLAY).assertWidthIsAtLeast(48.dp)
@@ -199,7 +201,7 @@ class CompositeSeamTest {
                 CompositeViewerLayer(asset = photo, chromeShown = true, mayExport = { false }, onOpenStereo = {}, bottomPaddingDp = 0)
             }
         }
-        compose.waitUntil(10_000) {
+        waitFor(10_000) {
             compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.TestTag, CompositeTags.PLAY)).fetchSemanticsNodes().isNotEmpty()
         }
         assertEquals(0, compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.TestTag, CompositeTags.EXPORT_STILL)).fetchSemanticsNodes().size)
@@ -274,7 +276,7 @@ class CompositeSeamTest {
                 androidx.compose.runtime.SideEffect { views += view }
             }
         }
-        compose.waitUntil(5_000) { views.lastOrNull()?.visible?.size == 2 }
+        waitFor(5_000) { views.lastOrNull()?.visible?.size == 2 }
 
         shown = false
         compose.waitForIdle()
@@ -300,4 +302,10 @@ class CompositeSeamTest {
         compose.waitForIdle()
         assertEquals(2, taps)
     }
+
+    // Robolectric's main looper is paused: drain it while waiting, or work posted from a background
+    // thread (the composite probe, the clip copy) lands at an arbitrary point and can touch views from
+    // the wrong thread. Same helper as the other screen tests.
+    private fun waitFor(timeoutMillis: Long, condition: () -> Boolean) =
+        compose.waitUntil(timeoutMillis) { shadowOf(Looper.getMainLooper()).idle(); condition() }
 }
