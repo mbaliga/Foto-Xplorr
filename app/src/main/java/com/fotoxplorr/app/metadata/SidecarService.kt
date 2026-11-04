@@ -3,7 +3,6 @@ package com.fotoxplorr.app.metadata
 import com.fotoxplorr.core.metadata.SidecarAnnotations
 import com.fotoxplorr.core.metadata.SidecarNaming
 import com.fotoxplorr.core.metadata.SidecarPolicy
-import com.fotoxplorr.core.metadata.SidecarStyle
 import com.fotoxplorr.core.metadata.XmpAnnotationCodec
 import java.time.Instant
 
@@ -77,10 +76,10 @@ class DefaultSidecarService(
 
     override fun read(asset: SidecarAsset): SidecarReadResult {
         val style = policy().style
-        val location = SidecarLocator.locate(asset.fileName, asset.parent, style)
+        val location = SidecarLocator.locate(asset.fileName, asset.parent, style, asset.source.isRaw)
         val dir = (asset.parent as? SidecarParent.Directory)?.directory
             ?: return SidecarReadResult.NoAccess(location)
-        val entry = findExisting(asset.fileName, dir, style) ?: return SidecarReadResult.NotFound(location)
+        val entry = SidecarLocator.findExisting(asset.fileName, dir, style, asset.source.isRaw) ?: return SidecarReadResult.NotFound(location)
         val bytes = dir.read(entry) ?: return SidecarReadResult.NoAccess(location)
         val annotations = SidecarIndexReader.annotationsFrom(bytes)
             ?: return SidecarReadResult.Unparseable(location)
@@ -101,7 +100,7 @@ class DefaultSidecarService(
             is SidecarPolicy.Decision.WriteSidecar -> Unit
         }
         val style = current.style
-        val location = SidecarLocator.locate(asset.fileName, asset.parent, style)
+        val location = SidecarLocator.locate(asset.fileName, asset.parent, style, asset.source.isRaw)
         val target = when (location) {
             SidecarLocation.NeedsFolderGrant -> return SidecarWriteResult.NeedsFolderGrant
             is SidecarLocation.Unsupported -> return SidecarWriteResult.Unsupported(location.reason)
@@ -111,20 +110,20 @@ class DefaultSidecarService(
         val dir = (asset.parent as SidecarParent.Directory).directory
         // The base is the sidecar the locator found (which may be the other style's: its foreign
         // content is carried into the configured-style name, the old file is left alone).
-        val base = findExisting(asset.fileName, dir, style)
+        val base = SidecarLocator.findExisting(asset.fileName, dir, style, asset.source.isRaw)
         val baseBytes = if (base == null) null else dir.read(base) ?: return SidecarWriteResult.Failed("Could not read the existing sidecar.")
         val bytes = XmpAnnotationCodec.update(baseBytes, annotations, now(), removedKeywords, removedPaths)
             ?: return SidecarWriteResult.ExistingSidecarUnparseable
         val targetName = SidecarNaming.sidecarFileName(asset.fileName, style)
+        // find() ignores case: an existing IMG.CR3.XMP is overwritten under its own name.
         val sameNameEntry = dir.find(targetName)
         return if (dir.write(targetName, sameNameEntry, bytes)) {
-            SidecarWriteResult.Written(target.copy(fileName = targetName))
+            SidecarWriteResult.Written(
+                if (sameNameEntry != null) SidecarLocation.Writable(sameNameEntry.uri, sameNameEntry.fileName, true)
+                else target.copy(fileName = targetName),
+            )
         } else {
             SidecarWriteResult.Failed("The sidecar could not be written.")
         }
     }
-
-    private fun findExisting(name: String, dir: SidecarDirectory, style: SidecarStyle) =
-        SidecarNaming.candidateSidecarFileNames(name, style)
-            .firstNotNullOfOrNull { dir.find(it) }
 }

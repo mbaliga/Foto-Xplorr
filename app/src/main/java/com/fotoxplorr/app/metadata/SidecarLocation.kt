@@ -40,7 +40,11 @@ interface SidecarDirectory {
     /** We may create a new file in this folder. */
     val canCreate: Boolean
 
+    /** The file named [fileName], matched ignoring case (a SAF/exFAT folder is case-insensitive). */
     fun find(fileName: String): SidecarEntry?
+
+    /** Every file name in the folder; null when it cannot be listed. */
+    fun listNames(): List<String>?
 
     fun read(entry: SidecarEntry): ByteArray?
 
@@ -61,13 +65,17 @@ sealed interface SidecarParent {
 object SidecarLocator {
 
     /** Pure and total: every input maps to exactly one honest [SidecarLocation]. */
-    fun locate(originalFileName: String, parent: SidecarParent, style: SidecarStyle): SidecarLocation = when (parent) {
+    fun locate(
+        originalFileName: String,
+        parent: SidecarParent,
+        style: SidecarStyle,
+        isRaw: Boolean = !SidecarNaming.isRenderedFormat(originalFileName),
+    ): SidecarLocation = when (parent) {
         SidecarParent.NoGrant -> SidecarLocation.NeedsFolderGrant
         is SidecarParent.Unsupported -> SidecarLocation.Unsupported(parent.reason)
         is SidecarParent.Directory -> {
             val dir = parent.directory
-            val existing = SidecarNaming.candidateSidecarFileNames(originalFileName, style)
-                .firstNotNullOfOrNull { dir.find(it) }
+            val existing = findExisting(originalFileName, dir, style, isRaw)
             when {
                 existing != null && existing.writable -> SidecarLocation.Writable(existing.uri, existing.fileName, true)
                 existing != null -> SidecarLocation.ReadOnly(existing.uri, existing.fileName)
@@ -78,5 +86,26 @@ object SidecarLocator {
                 else -> SidecarLocation.NeedsFolderGrant
             }
         }
+    }
+
+    /**
+     * The sidecar already beside [originalFileName], configured style first. For a non-RAW,
+     * Lightroom's extension-less name is only a candidate when no other original shares the base
+     * name ([SidecarNaming.hasBaseNamePartner]): a JPEG never reads or inherits its RAW's sidecar.
+     * A folder that cannot be listed gets only the configured style's own name (the safe side).
+     */
+    fun findExisting(
+        originalFileName: String,
+        dir: SidecarDirectory,
+        style: SidecarStyle,
+        isRaw: Boolean = !SidecarNaming.isRenderedFormat(originalFileName),
+    ): SidecarEntry? {
+        val siblings = dir.listNames()
+        val names = if (siblings != null) {
+            SidecarNaming.candidateSidecarFileNames(originalFileName, style, siblings, isRaw)
+        } else {
+            listOf(SidecarNaming.sidecarFileName(originalFileName, style))
+        }
+        return names.firstNotNullOfOrNull { dir.find(it) }
     }
 }
