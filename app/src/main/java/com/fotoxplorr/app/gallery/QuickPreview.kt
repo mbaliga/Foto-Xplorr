@@ -120,6 +120,9 @@ internal fun QuickLook.clampedTo(count: Int): QuickLook = when {
 internal fun previewPaneShown(widthDp: Int, userToggle: Boolean): Boolean =
     userToggle && widthDp >= PREVIEW_PANE_MIN_WIDTH_DP
 
+/** The pane's width beside the grid: a third of the window, kept readable and never greedy. */
+internal fun previewPaneWidthDp(windowWidthDp: Int): Int = (windowWidthDp * 0.35f).toInt().coerceIn(280, 480)
+
 /** Whether the toggle (the pill button and the `P` key) is offered at all. */
 internal fun previewPaneOffered(widthDp: Int): Boolean = widthDp >= PREVIEW_PANE_MIN_WIDTH_DP
 
@@ -136,4 +139,7 @@ internal object QuickPreviewCopy {
     const val HIDE_PANE = "Hide the preview pane."
     const val PANE_EMPTY = "Pick a photo to preview it."
     const val QUICK_LOOK_CLOSE = "Close the preview."
+    const val PREVIOUS = "Previous photo."
+    const val NEXT = "Next photo."
+    const val OPEN = "Open"
 }

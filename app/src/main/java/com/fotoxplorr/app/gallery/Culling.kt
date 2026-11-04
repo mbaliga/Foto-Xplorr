@@ -63,11 +63,17 @@ class WriteThroughAnnotationStore(private val durable: AnnotationStore) : Annota
     private val memory = InMemoryAnnotationStore()
     private val kept = HashSet<Long>()
     val durableCount: Int get() = kept.size
+
+    /** Whether the most recent [put] reached the durable store (true before any put). */
+    @Volatile
+    var lastPutDurable: Boolean = true
+        private set
     override fun get(id: Long): SidecarAnnotations? = memory.get(id) ?: durable.get(id)
     override fun put(id: Long, annotations: SidecarAnnotations): Boolean {
         memory.put(id, annotations)
         val ok = durable.put(id, annotations)
         if (ok) kept.add(id) else kept.remove(id)
+        lastPutDurable = ok
         return ok
     }
 }
@@ -176,4 +182,17 @@ internal object CullingCopy {
     const val HINT = "P picks, X rejects, 0 to 5 rate, 6 to 9 label."
     const val DONE = "That was the last photo."
     const val NOT_SAVED = "Ratings are kept for now but could not be saved beside the photos."
+    const val MEMORY_ONLY = "Ratings stay in memory and are gone when the app closes."
+    const val CLOSE = "Leave culling."
+    const val PREVIOUS = "Previous photo."
+    const val NEXT = "Next photo."
+    const val PICK = "Pick this photo."
+    const val REJECT = "Reject this photo."
+    const val UNFLAG = "Clear the flag."
+    const val UNDO = "Undo the last change."
+    const val RATE = "Rate"
+    const val LABEL = "Label"
+    const val AUTO_ADVANCE = "Move on after each change."
+    const val CULL_SELECTION = "Rate and flag these photos one by one."
+    const val CULL_VIEW = "Rate and flag every photo in this view."
 }

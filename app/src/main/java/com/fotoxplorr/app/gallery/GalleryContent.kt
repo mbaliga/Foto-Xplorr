@@ -513,6 +513,18 @@ internal fun Modifier.tileGestures(
     val longClick = LongPressResolver.longClickSemantics(chromeBridge.gridLongPress, selectionActive)
 
     return this
+        // A mouse resting on the tile for 400 ms asks the screen for the hover preview; leaving,
+        // pressing or scrolling takes it away. Touch never hovers (see hoverPreview).
+        .hoverPreview(
+            id = asset.id.value,
+            onShown = { shownId ->
+                if (shownId != null) {
+                    chromeBridge.hovered = currentAsset
+                } else if (chromeBridge.hovered?.id == currentAsset.id) {
+                    chromeBridge.hovered = null
+                }
+            },
+        )
         // Click and long-click for a screen reader, whose double-tap and double-tap-and-hold
         // never reach the pointer handler below as a hold. A long press cannot be performed
         // as a held preview there, so LongPressResolver.longClickSemantics turns the preview

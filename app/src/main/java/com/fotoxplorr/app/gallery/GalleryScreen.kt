@@ -129,6 +129,7 @@ import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.SpatialShell
 import dev.aarso.cellshell.rememberSpatialController
 import com.fotoxplorr.app.media.MediaAsset
+import androidx.activity.compose.BackHandler
 import com.fotoxplorr.app.organize.LibraryState
 import com.fotoxplorr.app.recognition.RecognitionIndex
 import com.fotoxplorr.app.recognition.RecognitionProgress
@@ -993,6 +994,54 @@ private fun GalleryBrowser(
     val indexSpace = remember(gridIndexMap, justifiedSnapshot, renderedAssets) {
         gridIndexSpace(gridIndexMap, justifiedSnapshot, renderedAssets)
     }
+
+    // ---- look without opening (hover, Quick Look, the preview pane), compare and culling ----
+    //
+    // Every one of them takes its photos from renderedAssets, the browsable list the grid draws
+    // (TRAPS #33), and blurs a sensitive photo exactly as the grid does.
+    var quickLook by remember { mutableStateOf(QuickLook()) }
+    var previewPaneOn by rememberSaveable { mutableStateOf(false) }
+    var surveyAssets by remember { mutableStateOf<List<MediaAsset>?>(null) }
+    var cullAssets by remember { mutableStateOf<List<MediaAsset>?>(null) }
+    val lookBlurredIds = if (state.preferences.blurSensitive) state.sensitiveIds else emptySet()
+    val previewPaneAvailable = previewPaneOffered(configuration.screenWidthDp)
+    LaunchedEffect(renderedAssets.size) { quickLook = quickLook.clampedTo(renderedAssets.size) }
+    // The photo Quick Look opens on and the pane shows: the keyboard's cursor, else the first chosen.
+    fun lookFocusIndex(): Int? = previewPaneItem(
+        focused = renderedAssets.indexOfFirst { it.id == chromeBridge.keyboardFocusedId }.takeIf { it >= 0 },
+        firstSelected = if (selection.isActive) {
+            renderedAssets.indexOfFirst { it.id in selection.selectedIds }.takeIf { it >= 0 }
+        } else {
+            null
+        },
+        count = renderedAssets.size,
+    )
+    fun closeLook() {
+        surveyAssets = null
+        cullAssets = null
+        runCatching { galleryFocusRequester.requestFocus() }
+    }
+    // Space, the arrows, Enter and Escape for Quick Look, and P for the pane. Not over a pane, the
+    // map or a room (the grid is out of reach there), and never with Ctrl held.
+    fun handleLookKey(key: Key, ctrl: Boolean): Boolean {
+        if (ctrl || gridOutOfReach || !shell.atHome || surveyAssets != null || cullAssets != null) return false
+        if (key == Key.P && previewPaneAvailable) {
+            previewPaneOn = !previewPaneOn
+            return true
+        }
+        val lookKey = quickLookKeyFor(key) ?: return false
+        val before = quickLook.index
+        val result = quickLook.onKey(lookKey, lookFocusIndex(), renderedAssets.size, chromeBridge.columnsAcross)
+        if (!result.consumed) return false
+        quickLook = result.state
+        result.state.index?.let { chromeBridge.keyboardFocusedId = renderedAssets[it].id }
+        if (result.openViewer && before != null) actions.onOpenAsset(renderedAssets[before], renderedAssets)
+        return true
+    }
+    // Back leaves these before anything else; registered after the screen's own handler, so first.
+    BackHandler(enabled = quickLook.isOpen || surveyAssets != null || cullAssets != null) {
+        if (quickLook.isOpen) quickLook = QuickLook() else closeLook()
+    }
     // The scrubber's stops, in the GRID's index space (its own contract: it does not know or
     // care what an index means, only that stops/itemCount/currentIndex/onScrubTo all agree on
     // one space). timelineStops itself still reasons in asset-index space over renderedAssets --
@@ -1290,6 +1339,22 @@ private fun GalleryBrowser(
                 },
                 onCloseRoom = { shell.closeAll() },
                 hasBottomPeek = shell.hasBottomPeek,
+                // In the grid's own order, from the browsable list it draws (TRAPS #33).
+                onCompare = { surveyAssets = renderedAssets.filter { it.id in selection.selectedIds } },
+                onCull = {
+                    val photos = if (selection.isActive) {
+                        renderedAssets.filter { it.id in selection.selectedIds }
+                    } else {
+                        renderedAssets
+                    }
+                    if (photos.isNotEmpty()) cullAssets = photos
+                },
+                onTogglePreviewPane = if (previewPaneAvailable) {
+                    { previewPaneOn = !previewPaneOn }
+                } else {
+                    null
+                },
+                previewPaneOn = previewPaneOn,
                 onNewCollection = {
                     shell.closeAll()
                     createCollectionVisible = true
@@ -1391,6 +1456,7 @@ private fun GalleryBrowser(
                         // comment above for the rest of this reasoning.
                         .onKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                            if (handleLookKey(event.key, event.isCtrlPressed)) return@onKeyEvent true
                             val shortcutKey = when (event.key) {
                                 Key.DirectionUp -> GalleryShortcutKey.ARROW_UP
                                 Key.DirectionDown -> GalleryShortcutKey.ARROW_DOWN
@@ -1689,6 +1755,62 @@ private fun GalleryBrowser(
                             }
                         }
                     }
+                    // The always-open preview pane (P, or the actions room) on a window wide
+                    // enough for it: the hovered photo, else the keyboard's cursor or the first chosen.
+                    if (previewPaneShown(configuration.screenWidthDp, previewPaneOn) && !gridOutOfReach) {
+                        val paneAsset = chromeBridge.hovered?.takeIf { h -> renderedAssets.any { it.id == h.id } }
+                            ?: lookFocusIndex()?.let { renderedAssets[it] }
+                        PreviewPane(
+                            asset = paneAsset,
+                            blurred = paneAsset != null && paneAsset.id in lookBlurredIds,
+                            onOpen = { paneAsset?.let { actions.onOpenAsset(it, renderedAssets) } },
+                            modifier = Modifier.width(previewPaneWidthDp(configuration.screenWidthDp).dp),
+                        )
+                    }
+                    }
+
+                    // The hover preview, in a corner, when the pane is not already showing the photo.
+                    val hoveredAsset = chromeBridge.hovered
+                    if (hoveredAsset != null && !gridOutOfReach && shell.atHome && !quickLook.isOpen &&
+                        !previewPaneShown(configuration.screenWidthDp, previewPaneOn) &&
+                        renderedAssets.any { it.id == hoveredAsset.id }
+                    ) {
+                        HoverPreviewOverlay(
+                            asset = hoveredAsset,
+                            blurred = hoveredAsset.id in lookBlurredIds,
+                            modifier = Modifier.align(Alignment.BottomEnd),
+                        )
+                    }
+                    quickLook.index?.let { i ->
+                        renderedAssets.getOrNull(i)?.let { lookAsset ->
+                            QuickLookOverlay(
+                                asset = lookAsset,
+                                position = i,
+                                count = renderedAssets.size,
+                                blurred = lookAsset.id in lookBlurredIds,
+                                onPrevious = { quickLook = quickLook.onKey(QuickLookKey.LEFT, i, renderedAssets.size, 1).state },
+                                onNext = { quickLook = quickLook.onKey(QuickLookKey.RIGHT, i, renderedAssets.size, 1).state },
+                                onOpen = {
+                                    quickLook = QuickLook()
+                                    actions.onOpenAsset(lookAsset, renderedAssets)
+                                },
+                                onClose = { quickLook = QuickLook() },
+                            )
+                        }
+                    }
+                    surveyAssets?.let { photos ->
+                        SurveyScreen(assets = photos, blurredIds = lookBlurredIds, onClose = ::closeLook)
+                    }
+                    cullAssets?.let { photos ->
+                        val sidecars = state.preferences.cullSidecars
+                        val cullStore = remember(photos, sidecars) { cullingStore(photos, sidecars) }
+                        CullingScreen(
+                            assets = photos,
+                            store = cullStore,
+                            sidecars = sidecars,
+                            blurredIds = lookBlurredIds,
+                            onClose = ::closeLook,
+                        )
                     }
 
                     if (selection.isActive && !paneTakenOver) {

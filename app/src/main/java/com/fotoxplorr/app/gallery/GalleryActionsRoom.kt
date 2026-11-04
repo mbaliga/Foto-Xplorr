@@ -98,6 +98,13 @@ fun GalleryActionsRoom(
     /** [dev.aarso.cellshell.SpatialController.hasBottomPeek]: false on a window too short for the
      *  peek, where the room is single-stage and the strip would only repeat the rows below it. */
     hasBottomPeek: Boolean = true,
+    /** Compare / survey the chosen photos; null hides the row (see [SurveySet]). */
+    onCompare: (() -> Unit)? = null,
+    /** Cull the chosen photos, or the whole view when nothing is chosen; null hides the row. */
+    onCull: (() -> Unit)? = null,
+    /** Show or hide the preview pane; null where the window is too narrow to offer it. */
+    onTogglePreviewPane: (() -> Unit)? = null,
+    previewPaneOn: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val selectionActive = selection.isActive
@@ -260,6 +267,8 @@ fun GalleryActionsRoom(
                 onSelectionChange = onSelectionChange,
                 onRenameAsset = onRenameAsset,
                 onBulkRename = { renameTarget = it },
+                onCompare = onCompare,
+                onCull = onCull,
                 onAddToCollection = onAddToCollection,
                 onAddTag = onAddTag,
                 onCloseRoom = onCloseRoom,
@@ -286,6 +295,21 @@ fun GalleryActionsRoom(
             caption = HelpCopy.Caption.NEW_COLLECTION,
             onClick = onNewCollection,
         )
+
+        if (!selectionActive && onCull != null) {
+            RoomRow(
+                label = "Cull this view",
+                caption = CullingCopy.CULL_VIEW,
+                onClick = { onCloseRoom(); onCull() },
+            )
+        }
+        if (onTogglePreviewPane != null) {
+            RoomRow(
+                label = if (previewPaneOn) "Hide preview pane" else "Preview pane",
+                caption = if (previewPaneOn) QuickPreviewCopy.HIDE_PANE else QuickPreviewCopy.TOGGLE_PANE,
+                onClick = { onCloseRoom(); onTogglePreviewPane() },
+            )
+        }
 
         RoomRow(
             label = "Rescan the library",
@@ -367,6 +391,8 @@ private fun SelectionActions(
     onAddToCollection: (Set<MediaId>) -> Unit,
     onAddTag: (Set<MediaId>) -> Unit,
     onCloseRoom: () -> Unit,
+    onCompare: (() -> Unit)? = null,
+    onCull: (() -> Unit)? = null,
 ) {
     // Every action that finishes the job clears the selection and closes the room, because the
     // result of an action landing behind the panel that triggered it is the classic way to make a
@@ -405,6 +431,23 @@ private fun SelectionActions(
         caption = HelpCopy.Caption.SHARE_OPTIONS,
         onClick = { finish { actions.onShareClean(selectedAssets) } },
     )
+    // Compare keeps the selection: the photos come back chosen, ready for the next step.
+    if (onCompare != null) {
+        RoomRow(
+            label = "Compare",
+            caption = if (selection.count in 2..SURVEY_MAX) SurveyCopy.ACTION else SurveyCopy.NEED_TWO,
+            enabled = selection.count in 2..SURVEY_MAX,
+            onClick = { onCloseRoom(); onCompare() },
+        )
+    }
+    if (onCull != null) {
+        RoomRow(
+            label = "Cull",
+            caption = CullingCopy.CULL_SELECTION,
+            enabled = selection.count > 0,
+            onClick = { onCloseRoom(); onCull() },
+        )
+    }
     RoomRow(
         label = if (bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK) {
             "Add to favourites"

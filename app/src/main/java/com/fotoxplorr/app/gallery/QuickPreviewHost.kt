@@ -9,10 +9,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerType
@@ -65,26 +61,14 @@ internal fun Modifier.hoverPreview(
     }
 }
 
-/** Space / arrows / Enter / Escape to [QuickLook]; returns true when the key was used. */
-internal fun Modifier.quickLookKeys(
-    state: () -> QuickLook,
-    focused: () -> Int?,
-    count: () -> Int,
-    columns: () -> Int,
-    onChange: (QuickLook, openViewer: Boolean) -> Unit,
-): Modifier = onPreviewKeyEvent { e ->
-    if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-    val k = when (e.key) {
-        Key.Spacebar -> QuickLookKey.SPACE
-        Key.Escape -> QuickLookKey.ESCAPE
-        Key.DirectionLeft -> QuickLookKey.LEFT
-        Key.DirectionRight -> QuickLookKey.RIGHT
-        Key.DirectionUp -> QuickLookKey.UP
-        Key.DirectionDown -> QuickLookKey.DOWN
-        Key.Enter -> QuickLookKey.ENTER
-        else -> return@onPreviewKeyEvent false
-    }
-    val r = state().onKey(k, focused(), count(), columns())
-    if (r.consumed) onChange(r.state, r.openViewer)
-    r.consumed
+/** The Compose key Quick Look answers to, or null for one it leaves alone. */
+internal fun quickLookKeyFor(key: Key): QuickLookKey? = when (key) {
+    Key.Spacebar -> QuickLookKey.SPACE
+    Key.Escape -> QuickLookKey.ESCAPE
+    Key.DirectionLeft -> QuickLookKey.LEFT
+    Key.DirectionRight -> QuickLookKey.RIGHT
+    Key.DirectionUp -> QuickLookKey.UP
+    Key.DirectionDown -> QuickLookKey.DOWN
+    Key.Enter -> QuickLookKey.ENTER
+    else -> null
 }

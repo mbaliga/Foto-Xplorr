@@ -104,4 +104,6 @@ internal object SurveyCopy {
     const val ZOOM_IN = "Zoom in on all photos."
     const val ZOOM_OUT = "Zoom out on all photos."
     const val DROP = "Remove this photo from the comparison."
+    const val CLOSE = "Leave the comparison."
+    const val ACTION = "See these photos side by side."
 }
