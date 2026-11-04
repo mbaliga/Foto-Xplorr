@@ -35,6 +35,8 @@ import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Repeat
+import androidx.compose.material.icons.outlined.SkipNext
+import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.VolumeOff
 import androidx.compose.material.icons.outlined.VolumeUp
@@ -83,6 +85,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.ui.PlayerView
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
@@ -614,6 +617,19 @@ private fun ArmedVideoPlayer(
         runCatching { player.seekTo(clamped) }
     }
 
+    // Frame stepping (plan 2.9): pause, then seek EXACTLY to the neighbouring frame's time. The frame
+    // grid comes from the declared rate (FrameStep); seek-exact is dropped again when play resumes
+    // so ordinary scrubbing keeps its cheap sync-frame seeks.
+    fun stepFrames(frames: Int) {
+        if (player.currentTimeline.isEmpty) return
+        if (player.playWhenReady) player.pause()
+        runCatching { player.setSeekParameters(SeekParameters.EXACT) }
+        val base = runCatching { player.currentPosition }.getOrDefault(positionMs).coerceAtLeast(0L)
+        val clock = FrameStep.clockFor(trackInfo.frameRate)
+        seekTo(FrameStep.targetMs(base, frames, durationMs, clock))
+        if (clock.estimated) seekFeedback = FrameStep.Copy.ESTIMATED
+    }
+
     fun togglePlay() {
         resumeChipMs?.let { resumeChipMs = null }
         playbackFailure = null
@@ -624,6 +640,7 @@ private fun ArmedVideoPlayer(
             player.playWhenReady = !player.playWhenReady
         } else {
             // Pause while buffering, re-prepare from idle, replay from the end: the library knows.
+            runCatching { player.setSeekParameters(SeekParameters.DEFAULT) }
             Util.handlePlayPauseButtonAction(player)
         }
     }
@@ -956,6 +973,21 @@ private fun ArmedVideoPlayer(
                                     }
                                 }
                             }
+                            val stepClock = FrameStep.clockFor(trackInfo.frameRate)
+                            FrameStepButton(
+                                icon = Icons.Outlined.SkipPrevious,
+                                description = FrameStep.Copy.STEP_BACK,
+                                enabled = FrameStep.canStepBack(positionMs),
+                                onStep = { stepFrames(-1) },
+                                tag = FRAME_BACK_TAG,
+                            )
+                            FrameStepButton(
+                                icon = Icons.Outlined.SkipNext,
+                                description = FrameStep.Copy.STEP_FORWARD,
+                                enabled = FrameStep.canStepForward(positionMs, durationMs, stepClock),
+                                onStep = { stepFrames(1) },
+                                tag = FRAME_FORWARD_TAG,
+                            )
                             RoundIconButton(
                                 icon = Icons.Outlined.Repeat,
                                 contentDescription = "Set A-B loop point",
