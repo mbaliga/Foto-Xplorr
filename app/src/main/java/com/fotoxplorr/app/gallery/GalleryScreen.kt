@@ -1038,8 +1038,10 @@ private fun GalleryBrowser(
         if (result.openViewer && before != null) actions.onOpenAsset(renderedAssets[before], renderedAssets)
         return true
     }
+    // Quick Look, compare or culling is over the grid: it owns the keyboard (lookOverlaySwallows).
+    fun lookOpen(): Boolean = quickLook.isOpen || surveyAssets != null || cullAssets != null
     // Back leaves these before anything else; registered after the screen's own handler, so first.
-    BackHandler(enabled = quickLook.isOpen || surveyAssets != null || cullAssets != null) {
+    BackHandler(enabled = lookOpen()) {
         if (quickLook.isOpen) quickLook = QuickLook() else closeLook()
     }
     // The scrubber's stops, in the GRID's index space (its own contract: it does not know or
@@ -1187,7 +1189,7 @@ private fun GalleryBrowser(
         // The grid is still composed under a pane but nobody can see it: Ctrl+A, Delete, Enter and
         // the arrows would select, trash and open photos on a screen that is not showing them.
         // The same goes for a room over it: Delete, Ctrl+A and Enter would act on the grid behind.
-        if (!shortcutActsOverPane(shortcut, gridOutOfReach, roomOpen = !shell.atHome)) return
+        if (!shortcutActsOverPane(shortcut, gridOutOfReach, roomOpen = !shell.atHome, lookOpen = lookOpen())) return
         when (shortcut) {
             is GalleryShortcut.MoveSelection -> {
                 // renderedAssets, not scrubberAssets: this is asset-index-space arithmetic (a
@@ -1457,6 +1459,10 @@ private fun GalleryBrowser(
                         .onKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                             if (handleLookKey(event.key, event.isCtrlPressed)) return@onKeyEvent true
+                            // A key Quick Look, compare or culling did not use stops at the overlay:
+                            // it must never reach the grid's table behind it (Backspace would trash
+                            // the selection nobody can see, Enter open the viewer over the cull).
+                            if (lookOverlaySwallows(event.key, lookOpen())) return@onKeyEvent true
                             val shortcutKey = when (event.key) {
                                 Key.DirectionUp -> GalleryShortcutKey.ARROW_UP
                                 Key.DirectionDown -> GalleryShortcutKey.ARROW_DOWN

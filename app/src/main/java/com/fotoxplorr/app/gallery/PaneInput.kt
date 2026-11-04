@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.gallery
 
+import androidx.compose.ui.input.key.Key
 import com.fotoxplorr.app.adaptive.GalleryShortcut
 
 /**
@@ -38,7 +39,26 @@ internal fun shortcutActsOverPane(
     shortcut: GalleryShortcut,
     paneTakenOver: Boolean,
     roomOpen: Boolean = false,
-): Boolean = !(paneTakenOver || roomOpen) || shortcut == GalleryShortcut.CloseOrClear
+    lookOpen: Boolean = false,
+): Boolean = !lookOpen && (!(paneTakenOver || roomOpen) || shortcut == GalleryShortcut.CloseOrClear)
+
+/**
+ * Keys the system or focus traversal own, which an open look overlay lets pass: Back (its own
+ * BackHandler closes the overlay), Tab between the overlay's buttons, volume, media and the like.
+ */
+private val SYSTEM_KEYS: Set<Key> = setOf(
+    Key.Back, Key.SystemHome, Key.Tab, Key.Power, Key.AppSwitch, Key.Menu,
+    Key.VolumeUp, Key.VolumeDown, Key.VolumeMute, Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause,
+    Key.MediaNext, Key.MediaPrevious, Key.MediaStop, Key.Sleep, Key.WakeUp, Key.Notification,
+)
+
+/**
+ * Whether the grid's key handler must swallow [key] because a full-screen look (Quick Look,
+ * compare/survey, culling) is open over the grid. The overlay owns the keyboard: a key it did not
+ * use stops here, so Delete, Enter, the arrows and Ctrl+A never reach the photos behind it. Only
+ * system keys pass on.
+ */
+internal fun lookOverlaySwallows(key: Key, lookOpen: Boolean): Boolean = lookOpen && key !in SYSTEM_KEYS
 
 /**
  * Whether Escape hands its work to the Back order ([paneBackTarget]) instead of undoing the grid's
