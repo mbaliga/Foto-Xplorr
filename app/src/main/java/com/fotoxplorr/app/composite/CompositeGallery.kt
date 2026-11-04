@@ -18,9 +18,6 @@ import com.fotoxplorr.core.formats.composite.LivePhotoPairing
 import com.fotoxplorr.core.formats.composite.PairCandidate
 import com.fotoxplorr.core.formats.composite.StackBadge
 import com.fotoxplorr.core.model.MediaId
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withContext
 
 /** Library-wide composite groups: computed from the whole library, applied per view. */
 internal data class CompositeGroups(
@@ -134,7 +131,11 @@ internal object CompositeGrouping {
             name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".heic")
     }
 
-    const val SCAN_CAP = 4_000
+    /**
+     * Files opened per pass at most: a whole large iPhone library in one background pass (headers
+     * only), so later passes find it all in [AppleIdentifierMemory] (whose capacity is twice this).
+     */
+    const val SCAN_CAP = 50_000
 }
 
 /**
@@ -167,9 +168,11 @@ internal object CompositeGroupsMemory {
  * The grid's composite view of [items] (one view of [library]): groups are computed off the main
  * thread whenever the library or a switch changes. Until then the last groups stay on screen
  * ([CompositeGroupsMemory]), so a search keystroke or a refresh does not unstack and restack the
- * grid. Apple identifiers already read ([CompositeProbe]'s memory cache) are used from the first
- * pass; only files not yet read are opened, in the background, at most [CompositeGrouping.SCAN_CAP]
- * per library change and only while [pairLive] or [groupBursts] is on.
+ * grid. Apple identifiers already read ([CompositeProbe.appleMemory]) are used from the first
+ * pass; only files never read in this process are opened, in the background, at most
+ * [CompositeGrouping.SCAN_CAP] per library change and only while [pairLive] or [groupBursts] is on
+ * ([AppleIdentifierPass]). A search or a time range narrows [library] to files already read, so it
+ * regroups without opening anything.
  */
 @Composable
 internal fun rememberCompositeView(
@@ -187,33 +190,11 @@ internal fun rememberCompositeView(
             CompositeGroupsMemory.last = null
             return@LaunchedEffect
         }
-        fun publish(next: CompositeGroups) {
-            groups = next
-            CompositeGroupsMemory.last = Triple(pairLive, groupBursts, next)
-        }
-        val apple = HashMap<MediaId, AppleIdentifiers>()
-        val known = HashSet<MediaId>()
-        withContext(Dispatchers.Default) {
-            for (asset in library) {
-                val cached = CompositeProbe.cachedAppleIdentifiers(asset) ?: continue
-                known += asset.id
-                cached.value?.let { apple[asset.id] = it }
+        AppleIdentifierPass(CompositeProbe.appleMemory) { CompositeProbe.readAppleIdentifiers(context, it) }
+            .run(library, pairLive, groupBursts) { next ->
+                groups = next
+                CompositeGroupsMemory.last = Triple(pairLive, groupBursts, next)
             }
-        }
-        publish(withContext(Dispatchers.Default) { CompositeGrouping.groups(library, apple, pairLive, groupBursts) })
-        val toScan = withContext(Dispatchers.Default) { CompositeGrouping.scanCandidates(library, known) }
-        if (toScan.isEmpty()) return@LaunchedEffect
-        var found = false
-        withContext(Dispatchers.IO) {
-            for (asset in toScan) {
-                ensureActive()
-                CompositeProbe.appleIdentifiers(context, asset)?.let {
-                    apple[asset.id] = it
-                    found = true
-                }
-            }
-        }
-        if (found) publish(withContext(Dispatchers.Default) { CompositeGrouping.groups(library, apple, pairLive, groupBursts) })
     }
     val view = remember(items, groups, expanded) { CompositeGrouping.present(items, groups, expanded) }
     LaunchedEffect(view.liveMovies) { LivePhotoMovies.current = view.liveMovies }

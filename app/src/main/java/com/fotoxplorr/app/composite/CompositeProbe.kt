@@ -40,7 +40,9 @@ internal data class CompositeFacts(
  */
 internal object CompositeProbe {
     private val facts = LruCache<String, CompositeFacts>(256)
-    private val apple = LruCache<String, Optional>(4096)
+
+    /** Every Apple-identifier read of this process, sized well above one scan (see [AppleIdentifierMemory]). */
+    val appleMemory = AppleIdentifierMemory()
 
     /** An identifier read that has been done: [value] is null when the file had none. */
     class Optional(val value: AppleIdentifiers?)
@@ -62,19 +64,19 @@ internal object CompositeProbe {
     }
 
     /** Apple's content identifier / burst id, for pairing and stacking. Null when the file has none. */
-    fun appleIdentifiers(context: Context, asset: MediaAsset): AppleIdentifiers? {
-        val k = key(asset)
-        apple.get(k)?.let { return it.value }
+    fun appleIdentifiers(context: Context, asset: MediaAsset): AppleIdentifiers? =
+        appleMemory.getOrRead(asset) { readAppleIdentifiers(context, it) }
+
+    /** Opens [asset] and reads its Apple identifiers, bypassing [appleMemory]. */
+    fun readAppleIdentifiers(context: Context, asset: MediaAsset): AppleIdentifiers? {
         val movie = asset.isVideo
-        val value = withSource(context, asset.contentUri) { source ->
+        return withSource(context, asset.contentUri) { source ->
             if (movie) AppleIdentifierReader.fromMovie(source) else AppleIdentifierReader.fromStill(source)
         }
-        apple.put(k, Optional(value))
-        return value
     }
 
     /** What [appleIdentifiers] already read for this version of [asset], without opening it; null when not read yet. */
-    fun cachedAppleIdentifiers(asset: MediaAsset): Optional? = apple.get(key(asset))
+    fun cachedAppleIdentifiers(asset: MediaAsset): Optional? = appleMemory.get(asset)
 
     /** Only JPEG and HEIF stills carry a motion clip, an MP index or a stereo group. */
     internal fun mayCarry(asset: MediaAsset): Boolean {
