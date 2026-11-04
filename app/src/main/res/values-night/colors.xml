@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launcher icon, dark version: see values/colors.xml. -->
+    <color name="ic_launcher_background">#000000</color>
+    <color name="ic_launcher_panel">#FFFFFF</color>
+</resources>
