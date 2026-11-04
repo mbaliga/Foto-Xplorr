@@ -284,6 +284,8 @@ class ReelScreenTest {
     fun `a reel that cannot be opened says so and stays in the list`() {
         val id = library.put(stills(1).copy(name = "Beach"))
         compose.setContent { Screen() }
+        // The list is read off the main thread: let the row arrive before the file goes away, or the list never shows it.
+        waitFor { textShown("Beach") }
         library.entries.remove(id)
         tapText("Beach")
         waitFor { textShown(ReelCopy.COULD_NOT_OPEN) }
