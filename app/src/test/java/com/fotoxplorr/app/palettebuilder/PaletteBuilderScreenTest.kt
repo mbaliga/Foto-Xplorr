@@ -21,6 +21,7 @@ import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -149,9 +150,17 @@ class PaletteBuilderScreenTest {
 
     private fun exists(text: String) = compose.onAllNodes(hasText(text)).fetchSemanticsNodes().isNotEmpty()
 
-    private fun click(text: String) = compose.onNodeWithText(text).performClick()
+    // Wait for the node before pressing it (as ReelScreenTest.tapText does): under a loaded full suite a page or a
+    // photo tile can arrive a moment after the click that leads to it, and a press then finds nothing there yet.
+    private fun click(text: String): SemanticsNodeInteraction {
+        waitFor { exists(text) }
+        return compose.onNodeWithText(text).performClick()
+    }
 
-    private fun clickDescription(description: String) = compose.onNodeWithContentDescription(description).performClick()
+    private fun clickDescription(description: String): SemanticsNodeInteraction {
+        waitFor { compose.onAllNodes(hasContentDescription(description)).fetchSemanticsNodes().isNotEmpty() }
+        return compose.onNodeWithContentDescription(description).performClick()
+    }
 
     private fun pressBack() {
         compose.runOnUiThread { owner.onBackPressedDispatcher.onBackPressed() }
@@ -185,6 +194,8 @@ class PaletteBuilderScreenTest {
     private fun startFromPhotos(vararg names: String) {
         click(PaletteBuilderCopy.FROM_PHOTOS)
         names.forEach { clickDescription(it) }
+        // Make palette is disabled until the ticks have landed; a press before that does nothing at all.
+        waitFor { compose.onAllNodes(hasText(PaletteBuilderCopy.MAKE_PALETTE) and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         click(PaletteBuilderCopy.MAKE_PALETTE)
         waitFor { compose.onAllNodesWithText(PaletteBuilderCopy.SAVE).fetchSemanticsNodes().isNotEmpty() || exists(PaletteBuilderCopy.PHOTO_PROTECTED) }
     }
