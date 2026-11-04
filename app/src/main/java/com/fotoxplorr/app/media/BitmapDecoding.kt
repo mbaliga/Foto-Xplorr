@@ -63,8 +63,18 @@ suspend fun decodeUpright(context: Context, uri: Uri, limits: DecodeLimits): Dec
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             runCatching { decodeWithImageDecoder(context, uri, limits) }.getOrNull()?.let { return@withContext it }
         }
-        decodeWithBitmapFactory(context, uri, limits, orientation)
+        decodeRawEmbeddedPreview(context, uri, limits)
+            ?: decodeWithBitmapFactory(context, uri, limits, orientation)
     }
+
+/**
+ * RAW hook: the platform decoders just failed, so if [uri] is a RAW container (TIFF-based, RAF or
+ * CR3) show its embedded JPEG preview (core/formats/raw, orientation baked in). Null for anything
+ * else -- the extractor sniffs the header and validates the JPEG, so a plain photo costs one tiny
+ * read -- and the BitmapFactory path below runs as before.
+ */
+private fun decodeRawEmbeddedPreview(context: Context, uri: Uri, limits: DecodeLimits): DecodedBitmap? =
+    RawPreviewReader.decode(context, uri, limits)
 
 private fun readOrientation(context: Context, uri: Uri): Int =
     context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -140,7 +150,7 @@ private fun decodeWithBitmapFactory(
     )
 }
 
-private fun applyOrientation(bitmap: Bitmap, ops: OrientationOps): Bitmap {
+internal fun applyOrientation(bitmap: Bitmap, ops: OrientationOps): Bitmap {
     if (ops.rotationDegrees == 0 && !ops.flipHorizontal) return bitmap
     val matrix = Matrix()
     if (ops.rotationDegrees != 0) matrix.setRotate(ops.rotationDegrees.toFloat())
