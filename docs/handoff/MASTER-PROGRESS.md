@@ -1520,3 +1520,226 @@ sign-in and token expiry; Connect APK install from CI. See the checklist.
 - **Wording to read:** `ServicesCopy`, `SyncCopy`, `PeopleCopy`, the timeline setting labels, the Settings tab names.
 - **First device pass, in this order:** the rail against the videos, then People on the real library, then a Nextcloud
   or folder sync, then the map import.
+
+## Batch 10: plan Phases 1-2 in safe order (4 Nov 2026)
+
+Branch `claude/friendly-lovelace-06dito` (PR #18), 54 commits on top of `2435b1a`. **Nothing in this batch has run on a
+device.** Tests prove pure logic, wiring and file effects on the JVM (about 470 new tests, counted by `@Test`, plus shell
+self-tests); Roborazzi is in record mode, so nothing visual is proven. Checklist: `docs/device-test/batch-10-checklist.md`.
+Traps: #134 to #149. **No new Gradle dependency and no native code**: the plan's piex, LibRaw, jxl-coder, avif-coder and
+stb packs were replaced by pure Kotlin where that was safe, and left as later decisions otherwise. The one Gradle file
+change is in `app/build.gradle.kts`: the format corpus as androidTest assets and the `reportRuntimeLicences` task.
+
+**Safe order.** The owner asked for the plan in order, but nothing that rewrites or migrates the stored library before a
+device test. So these were **not touched**: the WP1.3 catalogue v2 cut-over, moving Favorite/Sensitive/Library/PrivateFolder
+off SharedPreferences, the WP1.5 SQL paging UI cut-over, and the WP1.6 shred/audit log. No new persistent store either:
+ratings and flags stay in memory, or go to XMP sidecars only when the user switches that on.
+
+### What was built, per work package (tests by `@Test`)
+
+- **WP1.7 Format registry, rest (U2)** (8a59464, 1eaf1a6, e2758d6; 44 tests). An exhaustive capability matrix
+  (`FormatCapabilities.of`, 8 capabilities). A `DecoderProvider` SPI with a deterministic `DecoderRegistry`. 17 more
+  magic-byte signatures: APNG, PSB, ORA, KRA, BigTIFF, CR3, CR2, RAF, ORF, RW2, X3F, MRW, CRW and the common video
+  containers; the sniffer now reads 64 bytes. `classify()` no longer sends TIFF/JXL/PSD and others to `Other`, which
+  counted as decodable and drew blank. Every tile and the viewer draw a labelled `FormatPlaceholder` instead of an
+  empty area. `PlatformDecoderProvider` works from an API-level table plus an AVIF device probe (API 29+).
+- **WP1.8 Test infrastructure, rest** (8bcca15, 4d776bf, d6bdecc; 11 tests). `testdata/formats`: 66 synthetic,
+  licence-clean files (21 KB) from `scripts/gen-format-corpus.py`, with `manifest.txt` and `SOURCES.md`.
+  `FormatCorpusSniffTest` runs on the JVM. `FormatCorpusDecodeTest` is an androidTest marked [DEVICE]; the corpus ships to it as
+  androidTest assets only, so the APK is unchanged. `scripts/verify.sh` now compiles both androidTest variants.
+- **WP1.9 Governance checks** (fa2a832, 189c186, c137d2e, c1ec583, 2e56e2f, 6a2cdb7; shell self-tests).
+  - `verify-governance-docs.sh` checks that every Gradle coordinate has a row in `docs/DEPENDENCIES.md`, and every model,
+    data file, font or sound has a row in the new `docs/MODEL_LICENSES.md`.
+  - `:app:reportRuntimeLicences` and `verify-licences.sh` scan the POM licences of both flavors' release classpaths.
+    GPL/AGPL fails, and so does an unknown licence unless an exact allowlist entry names it. Today's result: 228 Offline
+    and 236 Connect components, 0 failures.
+  - The MobileNet embedder now shows its real size, 4.1 MB, not the 10 MB the app used to state.
+- **WP1.10 Metadata core, rest, plus WP3.8 read side** (39054a0, 01b6d8c, 19f1bbe, a787c85; 49 tests).
+  - `XmpAnnotationCodec` round-trips rating (-1 = reject), label, `fotoz:Flag`, `dc:subject` plus
+    `lr:hierarchicalSubject`, and title, caption, creator and copyright. Foreign Lightroom, darktable and digiKam
+    content is kept.
+  - `SidecarPolicy`: off by default, explicit action only, never into a RAW.
+  - App side: an honest `SidecarLocation` (Writable, ReadOnly, NeedsFolderGrant, Unsupported), file and SAF
+    directories, and the `SidecarService` facade.
+- **WP2.1 Platform formats, partial.** The HEIC (API 28) and AVIF (API 31, device probe from 29) rules in
+  `PlatformDecoderProvider`. Gain-map and HEIF-sequence work is not done.
+- **WP2.2 RAW tier 1, without piex (U3)** (1f0f7de, 344288b, 3e4cbe1, e5d6086, 2914ddf; 40 tests).
+  - A pure-Kotlin extractor finds the largest valid embedded JPEG. It walks TIFF/IFD, MakerNote previews, RAF and CR3
+    PRVW through a bounded `ByteSource`, and reports the container orientation.
+  - `RawPreviewProvider` and `RouteCoilDecoder` bring RAW previews to grid tiles and the viewer.
+  - `DecodeRoutes` gives each format one decode route; for a RAW, our preview runs before the platform's piex, which
+    drops the orientation.
+  - CRW, X3F, MRW and IIQ are still refused.
+- **WP2.3 Decoder packs, pure-Kotlin subset (U5)** (0037e3b, 15a8e12, 3c75ad7, e60dca8, d320ed2, abee16d, eb05ce7;
+  76 tests).
+  - Formats: TGA, PNM, QOI, Radiance HDR (tone-mapped to SDR), PCX, ICNS, PSD composite, uncompressed DDS, baseline TIFF
+    (none, LZW, Deflate and PackBits compression; either byte order; orientation), and ORA/KRA via `mergedimage.png`.
+  - Our own inflate, PNG reader and ZIP reader keep `commonMain` free of `java.util.zip`.
+  - Hostile-input caps are checked before allocating, and every decode ends as a result, never an exception.
+  - Grid tiles decode under 32 MB / 12 MP caps. A bigger file is decoded alone under the defaults (192 MB / 24 MP),
+    not refused.
+- **WP2.6 Tiled deep zoom (U6)** (2d31dee, 4702b0f, 3a4f1a9, aa05c29; 46 tests). In-house, not Telephoto, so
+  no new dependency and no ADR.
+  - Pure core: `TilePyramid`, a byte-budgeted `TileCache`, `DeepZoomPolicy`, and `RegionRects` for all 8 EXIF
+    orientations. The Android seam is `RegionTileDecoder` over `BitmapRegionDecoder`, drawn inside the zoom layer.
+  - Max zoom is at least 2x 1:1, capped at 64x. Double-tap goes fit, then 1:1, then fit.
+  - The ceiling follows whether tiles are really live. A file with alpha does not tile.
+- **WP2.7 HDR, wide colour and pro overlay (U7)** (8a2bc53, part of 3a4f1a9; 27 tests).
+  - `ColourModePolicy` never asks a screen for HDR or wide colour it cannot show (Ultra HDR needs Android 14 and an HDR
+    panel), and the window colour mode is restored on leaving.
+  - Pro overlay: an info card, a histogram, clipping marks and focus peaking (Sobel, with an absolute floor), in a
+    "Pro overlays" group in the view-options room.
+- **WP2.9 Video frame step** (eff8a15, ebf7067; 18 tests). Previous and next frame with 48 dp buttons; hold to scan,
+  which speeds up the longer it is held. Steps count frames on the declared rate's grid, so there is no drift at
+  29.97/59.94 fps and no stall at 240 fps. With no declared rate it uses 30 fps and says it is estimated. Sliding off
+  the button cancels the hold.
+- **WP2.10 Quick preview (U8)** (19cda22, 58e8a4b, 83ed31c, e658f9d; 20 tests).
+  - Mouse hover shows a preview after 400 ms.
+  - Space opens Quick Look: arrows step, Enter opens the viewer, Escape/Space/Back close, with 48 dp buttons as the
+    non-keyboard path.
+  - P, or an actions-room row, toggles a preview pane on windows of 600 dp or more.
+  - While a look overlay is open, no key reaches the grid behind it.
+- **WP2.11 Justified layout (U13)** (1450906, c6060a4, 67435f0, 3117a57; 27 tests). A pure layout engine with
+  binary-search row lookups; 500,000 items lay out in 45 ms on the JVM.
+  - Settings > Media > "Justified rows", off by default. The scrubber, pill, arrow keys and open-at-end anchor all map
+    through the rows.
+  - The photo at the top is kept across rung and layout changes, and across list refreshes.
+- **WP2.12 Compare, survey, culling (U9)** (e892594, 83ed31c, 3b8de41, 769e9e1; 48 tests).
+  - Compare: 2 to 9 photos with shared zoom and pan; pan arrows and arrow keys as the non-drag path.
+  - Culling HUD keys: P/X/U flags, 0-5 stars, 6-9 colour labels, undo and auto-advance. 48 dp key-caps give a touch
+    path.
+  - Ratings stay in memory unless Settings > Media > "Save ratings beside photos" (off by default) is on. Then they
+    are written to XMP sidecars through a persisted SAF folder grant; ratings made before the grant are written once it
+    is given. The HUD says which.
+  - Everything reads the browsable list (TRAPS #33).
+- **WP2.13 360 photo sphere (U14), without audio** (bfd76b8, cc0d80d, f91dabb; 52 tests).
+  - GPano parsing, look limits (a partial sphere never shows past its edge) and CPU equirectangular projection.
+  - Drag and pinch, a 48 dp button pad, and optional gyro look-around.
+  - It opens over everything and owns the screen. The decode is guarded and capped by memory. "View in 360" is offered
+    only on equirectangular photos.
+- **WP2.15 Slideshow v2, without music** (fa35bfe; 13 tests).
+  - Transitions: cut, fade, slide and zoom fade.
+  - Optional Ken Burns pan-and-zoom on a deterministic path that never leaves the photo; with system animations off,
+    the show cuts and stays still.
+  - A "Slideshow look" group in the view-options room.
+- **Launcher icon** (00f893f). The owner's new Fotoz artwork, redrawn as a vector adaptive icon. It is one drawing, with
+  light colours in `values/` and dark in `values-night/` (picked by the system dark theme), plus a monochrome layer for
+  Android 13+ themed icons. `scripts/gen_launcher_icon.py` generates the drawables and the preview SVGs in `docs/brand/`.
+- **CI fixes** (3e4cbe1, 3c75ad7, e2758d6, 5d6c9bd, 7433ee3, 0d86115). Two Kotlin/Native rejections, one lint NewApi, one
+  stale count assertion and two timing-sensitive screen tests. See TRAPS #134 to #136.
+
+### What the audits found and fixed
+
+Two adversarial review rounds ran, each followed by a re-review of every fix.
+
+- **Round 1: 24 confirmed findings, all fixed.**
+  - RAW extractor (2): Olympus type-7 CameraSettings; CR3 over 2 GiB.
+  - Registry (1): an unlabelled TIFF-based RAW got a TIFF placeholder.
+  - Media seam (4): RAW previews never reached tiles or the viewer; the platform's piex lost the orientation; previews
+    were reported as full size; the RAW hook ran for every failed file.
+  - Sidecars (6): the user's edit lost to a future `MetadataDate`; a JPEG read its RAW's Lightroom sidecar; the SAF
+    overwrite had no backup; SAF find was case-sensitive; XML-invalid text; a rating-only write rewrote foreign
+    keywords.
+  - Governance and corpus (6): an API 33 call in the device test; an unknown licence passed; prefix-match docs checks; a
+    narrow configuration regex; a silent abort; false claims in `MODEL_LICENSES.md`.
+  - Quick preview and deep zoom (5): pinch rotation noise tore down the decoder; a late open leaked; visible tiles were
+    dropped; the ceiling ignored whether tiles ran; the hover wait used the wall clock.
+  - The re-review found 6 more problems in the fixes, all fixed: the sidecar Written uri, a null folder listing, keyword
+    removal after sanitising, a licence glob clearing an unknown, and two stale comments on the allowlist and gate.
+- **Round 2: 32 confirmed findings, all fixed** (one with a changed premise, below).
+  - Simple decoders (8), including a HIGH: a 2 MB TIFF could ask for about 524 GB. Also an inflate bomb, PSD allocation
+    before checks, HDR RLE, TIFF ExtraSamples, TGA palette alpha, a padded deflate strip, and ICNS decoding every element.
+  - Decode routes (2): Crop tiles were upscaled; the whole file was buffered twice.
+  - Gallery wiring (6), including a HIGH: keys behind a look overlay reached the grid (Backspace trashed the hidden
+    selection). Also the justified anchor; per-key file IO in culling; a raw `Environment` sidecar path; survey pan was
+    drag-only; a lost Auto/Stay toggle.
+  - Viewer, deep zoom and colour (7): a pfd leak; masks under the tiles; the ceiling not following live tiles; close on
+    the main thread; alpha composited twice; the analysis bitmap was never recycled; hard-coded strings.
+  - Video, slideshow and sphere (9), including a HIGH: an unguarded sphere decode could crash. Also the sphere under the
+    chrome; gyro left on in the background; FullPano read in decoded pixels; no bitmap recycle; first-look clamp;
+    cylindrical panoramas offered 360; frame-step slide-off; the seek mode not reset.
+  - The SeekParameters finding's premise was wrong: in media3 `DEFAULT` is `EXACT`. The reset is wired on every resume
+    anyway and the mechanism is tested (TRAPS #146).
+  - The re-review found 6 more problems in the fixes, all fixed: the TIFF strip cap refused single-strip 16-bit files;
+    the tile caps dropped thumbnails of good files; ratings made before the grant were never written; a refresh snapped
+    justified rows; Final-pass consumption cancelled the sphere's taps; a PNG zoomed in and snapped back.
+- **Left as they are, with reasons:**
+  - Removing a hierarchical keyword path leaves its components in `dc:subject`, because they may be another tool's flat
+    keywords.
+  - With Lightroom naming chosen, a RAW+JPEG pair shares one sidecar. That is the naming the user picked.
+  - A `.bak` may be left beside a sidecar if both the write and the restore fail. This is on purpose: the old bytes stay.
+  - A too-new API in test code is still not caught, because lint does not check test sources.
+  - `reportRuntimeLicences` writes `-` for both "no licence" and "parse error"; both fail, but cannot be told apart.
+  - When photos arrive above the top row, justified rows still snap to the new row's top.
+  - The 360 view leaves old frame bitmaps of a different size to the GC.
+  - An RGBA PNG that is fully opaque keeps the soft base at deep zoom (a conservative choice).
+
+### What is unverified (all of it on a device)
+
+Everything in the checklist. Above all:
+
+- real RAW files of every brand: every layout comes from public documents;
+- simple formats from real apps;
+- a 100 MP pan at 60 fps and a sharp 1:1;
+- Ultra HDR on an HDR panel;
+- frame step on real codecs;
+- slideshow smoothness;
+- sphere render rate, gyro feel and touch;
+- hover, Quick Look and the preview pane with a real mouse, keyboard, DeX or foldable;
+- a 500-photo keyboard cull;
+- SAF sidecar writes on real providers;
+- the corpus decode test on API 26 and 33+;
+- the new launcher icon on real launchers and themed icons.
+
+### Deferred, and why
+
+- **Library-rewriting work, until the owner has device-tested:** the WP1.3 catalogue cut-over; moving
+  Favorite/Sensitive/Library/PrivateFolder; the WP1.5 SQL paging UI cut-over; the WP1.6 shred/audit log.
+- **Persistent rating and flag storage:** an owner data decision (memory, or sidecars by opt-in, until then).
+- **WP2.8 composite media (U11):** motion photos, Live Photo pairing, bursts, stereo. Not started this batch.
+- **Struck by the owner:** sphere ambient audio and slideshow music.
+- **Native packs and new dependencies:** piex, LibRaw (WP2.4), JXL, AVIF backport, multi-page TIFF, EXR, JP2, JXR,
+  DXT/BC, KTX and APNG playback.
+- **Simple decoders:** 16-bit TIFF predictor, CMYK/Lab/tiled TIFF, PSD layers, PSB, ZIP-compressed PSD, ICNS JPEG 2000,
+  a sampled or streaming decode (a tile decodes at full size, then averages down), and real HDR display.
+- **Viewer:** `setDesiredHdrHeadroom` (the XMP reader does not expose `hdrgm:GainMapMax`); a GLES sphere and 360 video
+  (the CPU renderer was chosen because only it could be checked); `CLOSEST_SYNC` for ordinary scrubbing (an owner
+  decision).
+- **Gallery:** hover-scrub of video (needs a cached keyframe strip); headers in justified mode; persisting the
+  preview-pane toggle; cull sidecars on API 26 to 28 (no `RELATIVE_PATH`).
+- **Registry:** a per-file "has a preview" verdict (the probe sees no bytes). The orientation of a platform decode of a
+  RAW without an extractable preview is unknown and needs a device to check.
+- **Housekeeping:** the WP1.7 row above and its "Deferred" decisions still say Capability and DecoderProvider are
+  deferred. Update the WP1.7, 1.8, 1.9 and 1.10 rows when this entry lands.
+
+### Residual, for the owner (open decisions)
+
+- **Where ratings and flags live.** Memory, opt-in XMP sidecars, or a column in the catalogue once WP1.3 lands? No store
+  was built.
+- **Sidecar default and naming.** Sidecars are off by default and use darktable naming (`IMG_1.CR3.xmp`). Should
+  "Save ratings beside photos" stay off? Is darktable naming right for you, or should it be Lightroom's `IMG_1.xmp`
+  (which a RAW+JPEG pair then shares)?
+- **`SimpleLimits.maxInflated` = 128 MB.** A 24 MP 8-bit RGBA layer fits; a 24 MP 16-bit PNG inside ORA/KRA/ICNS is
+  refused, to keep peak memory down. Raise it, and accept more memory per decode?
+- **CRW, X3F, MRW and IIQ.** These show a placeholder. Previews for them need format work or LibRaw (WP2.4, a native and
+  licence decision).
+- **`hyle_tab_tick.wav`** in `res/raw`: unreferenced, licence unverified. Keep it (and verify the licence) or remove it?
+  It must not ship in a public release until this is settled.
+- **The launcher icon.** It is a redraw of your artwork. Send the exact SVG and `scripts/gen_launcher_icon.py` will use
+  it.
+- **Ordinary video seeks.** They are exact today (media3's default). Should scrubbing and ±10 s use faster sync-frame
+  seeks?
+- **Still open from batch 9:**
+  - cleartext in the Connect build (ADR-018 Decision 6);
+  - GPS in plain sync copies;
+  - the Google OAuth client type and redirect, and registering Drive and Dropbox;
+  - a vision-model kind in Nooz, and where the catalogue parser lives;
+  - the store text after folder sync;
+  - the wording in `ServicesCopy`, `SyncCopy`, `PeopleCopy`, the timeline labels and the Settings tab names;
+  - the order of the first device pass.
+- **First device pass for batch 10, suggested order:**
+  1. RAW and simple-format files in the grid and viewer.
+  2. Deep zoom on a 100 MP photo.
+  3. A keyboard cull with sidecars on and a folder grant.
+  4. The 360 view.
+  5. The corpus decode test on API 26 and 33+.

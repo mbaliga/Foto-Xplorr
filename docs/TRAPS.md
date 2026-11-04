@@ -1869,3 +1869,269 @@ New Settings rows must use `SettingsRow` / `SettingsSection` (a test fails if a 
 `leadingIcon` in a fixed parameter position, so name it. `verifyOfflineSourceReferences` scans `src/main` and
 `src/offline` line by line **including comments**: never write `okhttp3.`, `java.net.Socket`, `.openConnection(` etc.
 there, even in KDoc. Network code lives in `src/connect` (or `feature:ai-remote`) with a same-FQN stub in `src/offline`.
+
+## 134. Kotlin/Native compiles `commonMain` and `commonTest` more strictly than the JVM does
+
+CI `core-native` failed twice in batch 10 on code that passed every JVM run. (1) `String(CharArray)` is deprecated in
+common Kotlin, and Kotlin/Native treats that deprecation as an error (`RawPreviewExtractor.kt:209`, fixed in 3e4cbe1; the
+simple decoders had it in four more places). Use `concatToString()`, `lowercase()`, never `toLowerCase`/`capitalize` or
+any other deprecated common API. (2) A backtick test name in `commonTest` must not contain `, . : ; / \ < > [`: the
+native test runner rejects it (`SimpleDecodersTest`, fixed in 3c75ad7). Keep JVM-only things (files, clocks,
+`java.*`) in `jvmTest`. The Kotlin/Native toolchain is not on the agents' machines (`~/.konan` absent,
+`scripts/verify-native.sh` cannot run), so CI `core-native` is the only check: say so in the report, never "native-safe".
+
+## 135. Lint sees what the compiler does not, and sees none of the test code
+
+- **NewApi follows the lambda, not the call site.** `AndroidMimeProbe.invoke()` checked `SDK_INT >= Q`, but
+  `ImageDecoder.isMimeTypeSupported` (API 29) sat inside a lambda stored in a property; lint analyses that lambda on its
+  own and failed `lintOfflineDebug` (minSdk 26). The SDK check must sit in the same lambda or function as the call
+  (`media/PlatformDecoderProvider.kt`, e2758d6).
+- **media3 `SeekParameters`** is `@UnstableApi`: lint fails with `UnsafeOptInUsageError` until the use carries
+  `@androidx.annotation.OptIn(UnstableApi::class)` (`viewer/ViewerPlayerFactory.kt`).
+- **Test sources are compiled, not linted.** compileSdk's `android.jar` has APIs newer than minSdk 26
+  (`InputStream.readNBytes(int)` is API 33), so `FormatCorpusDecodeTest` compiled and would have thrown
+  `NoSuchMethodError` on API 26 to 32. `scripts/verify.sh` now compiles both androidTest variants (d6bdecc), which still
+  cannot catch a too-new call: keep test code to API 26 calls by hand (a bounded read loop, `readHead`).
+- A lint run can crash on another agent's half-written file (`Cannot find a KaModule` on a brand-new test); wait and
+  retry (TRAPS #119), it is not your finding.
+
+## 136. CI test hygiene: what failed in CI and not on the agent's machine
+
+Each agent ran only its own package's tests; CI runs everything.
+- **Stale counts in other packages.** The gallery wiring added two Settings > Media switches; `PaneRenderTest`
+  (`render/`, not `gallery/`) still asserted two switches (fixed in 5d6c9bd). A new Settings row, room row or tab means:
+  grep the whole `app/src/test` for count assertions on that pane before committing.
+- **Removing data before an off-main-thread read.** `ReelScreenTest` "a reel that cannot be opened says so" removed the
+  saved reel's file right after `setContent`; the list is read off the main thread, so the removal could win and the row
+  never appeared (60 s timeout). Wait for the row first, then remove the file (7433ee3).
+- **Pressing before the button is enabled.** Under full-suite load `PaletteBuilderScreenTest` pressed Make palette
+  before the tick enabled it, and the press did nothing. Helpers wait for their node, and for `isEnabled`, before
+  `performClick` (0d86115, like `ReelScreenTest.tapText`).
+- Robolectric's `performClick` sends no move between down and up, so it cannot catch a tap cancelled by finger jitter
+  (TRAPS #144). Robolectric's `BitmapRegionDecoder.newInstance` returns null, and API 33's Robolectric jar cannot be
+  fetched offline (tests use 34).
+
+## 137. The format registry: what "decodable" means now
+
+`core/formats` `Capability.kt`, `DecoderProvider.kt`, `TileState.kt`; app `media/PlatformDecoderProvider.kt`,
+`DecoderRegistries.kt`, `MediaImage.kt`, `FormatPlaceholder.kt`.
+- `MediaFormat.classify` returning `Other` used to mean "likely decodable": TIFF, JXL, AVIF, PSD and others landed there
+  and were drawn blank by Coil. They now classify by extension or mime, and the registry decides. No tile may be empty:
+  `tileState()` returns Show or a labelled Placeholder.
+- A new `MediaFormat` case needs a row in `FormatCapabilities.of`, `FormatLabels.badge` and `.kind`, a `formatId`, an
+  entry in `MediaFormat.all` and a `PlatformDecoderProvider` branch. The `when`s are exhaustive; only `all` is not, and
+  `CapabilityMatrixTest`'s size check catches that.
+- `DecoderRegistry` orders by (priority, id), never registration order; a provider with the same id replaces the earlier
+  one (`DecoderRegistries.install`). Ids in use: `platform` (10), `simple-pure` (20), `raw-preview` (30).
+- Sniffing (64 bytes, off the main thread, LRU-cached by uri@modified) runs only when classify returns `Other`. Do not
+  widen it, or a grid starts opening every file. TGA, PIC, WBMP, SVGZ, MPEG-TS and Ogg have no magic at the start; NEF,
+  ARW and DNG look like TIFF and stay on the extension rule.
+- While a decodable file's load fails, the tile's content description stays the file name and the type sentence goes in
+  `stateDescription`; only a registry refusal makes the description the type sentence. Tests find tiles by name.
+- Robolectric's `ImageDecoder.isMimeTypeSupported` denies HEIC. Never let a device probe veto a format the fixtures use:
+  HEIC is table-only (API 28); AVIF asks the device from API 29 and a "no" wins. `trustedMimeProbe` ignores an answerer
+  that denies `image/jpeg`.
+- `tileState(..., isProtected)` handles a protected item, but `MediaImage` takes no protected flag: callers compose only
+  browsable items (TRAPS #33). A new caller must not bypass the browsable list.
+
+## 138. One decode route per format, and a Coil decoder that may decline only peeks
+
+`media/DecodeRoutes.kt` (pure), `RouteCoilDecoder.kt`, `BitmapDecoding.kt`, `TileSizing.kt`, `TileInput.kt`, `SimpleDecodeGate.kt`.
+- Routes: RAW -> our embedded preview, then the platform; TIFF -> full simple decode, then RAW preview (never an IFD1
+  thumbnail or a single JPEG strip: `DecodeRoutes.acceptsPreview`), then the platform; simple formats -> ours; everything
+  else -> platform only. The RAW hook must not run for arbitrary failed files.
+- **Android's raw codec must never go first for a RAW.** On API 28+ Skia (piex) returns the embedded preview without
+  the container's orientation, so `decodeUpright` runs our preview before `ImageDecoder`.
+- A TIFF whose IFD0 has DNGVersion or NewSubfileType bit 0 is a RAW (extension-less DNG/NEF/ARW). `TiffDecoder` refuses
+  it, and the tile route (`TiffRawHint`, `DecodeRoutes.forTile(format, rawLike)`) tries the preview first, before reading
+  the whole file for a refusal. An unlabelled file is sniffed in `decodeUpright` only after the platform failed.
+- `RawPreviewProvider` answers per container type (TIFF-based, RAF, CR3), because the registry probe has no bytes. A RAW
+  with no usable preview ends "This file couldn't be read." after the loader tried. CRW, X3F, MRW and IIQ keep the
+  refusal. `RawPreviewReader` marks results `downscaled` and `fromPreview` so reduced-size notes fire.
+- In a Coil `Decoder` that may return null, never read or peek a whole file from `result.source`: the peek buffer stays
+  held while Coil's later decoders run. Peek headers only (64 KB at most), ask the length first, read the bytes once
+  through the content uri (`BoundedBytes`). A provider with no length (a pipe) declines on the tile path.
+- Size from `options.scale`: a Crop tile (`Scale.FILL`) needs its SHORT edge at least the tile size
+  (`TileSizing.target`). Fitting into a `max(w, h)` square makes Crop upscale it.
+- Tiles try `TileSizing.TILE_INPUT` (32 MB, 12 MP) beside at most one other light decode, averaging down into an
+  `IntArray` before any Bitmap. A file over those caps is decoded again under the defaults (192 MB, 24 MP) **alone**
+  (`SimpleDecodeGate.alone` holds every slot; the viewer's simple decodes run alone too). Never let a grid memory cap drop
+  the thumbnail of a file the viewer opens fine: Coil cannot read TIFF/PSD/TGA either. `TileSizing.retryAlone` matches
+  the decoders' "image too large" string (`SimpleLimits.checkSize`); `TileSizingTest` pins it.
+- Not fixed: the simple decoders have no sampled entry point (a tile decodes at full size, then averages down);
+  `SimpleFormatReader.decode` (the upright path) still copies up to 192 MB twice through a `ByteArrayOutputStream`.
+
+## 139. The pure-Kotlin RAW preview extractor reads layouts from public documents
+
+`core/formats/.../raw/RawPreviewExtractor.kt`. Every layout was written from public docs and tested on constructed
+fixtures only; none has met a real RAW file.
+- Olympus 0x2020 (CameraSettings) is stored as UNDEFINED (type 7) on E-1/E-300-era files: the sub-IFD offset is the
+  value field. `uint()` read the IFD's first byte, so only the 160x120 makernote thumbnail was found.
+- Box and IFD walks clamp in `Long` before `toInt()`: `(end - pos).toInt()` wrapped negative for a CR3 of 2 GiB or more.
+- Previews are validated (FFD8, baseline/progressive SOF, plausible size, EOI) and all reads go through a bounded
+  `ByteSource`. Keep that: a malformed makernote must end as "no preview", never a throw.
+
+## 140. The simple decoders take hostile files: check before you allocate
+
+`core/formats/.../simple/` (`TiffDecoder`, `PsdDecoder`, `Inflate`, `PngLite`, `IcnsDecoder`, `SimpleImage.kt`).
+- A header of a few hundred bytes must never cost hundreds of MB. Check the file can hold the declared data before any
+  plane or rows buffer: for PSD the raw length or the RLE table and its row sums; for TIFF every strip range.
+  `SimpleHostileHeaderTest` holds the crafted cases (12 of 17 failed on the first version).
+- TIFF IFD parsing keeps only the tags in `TAG_CAPS`, each with a value cap and a total cap (2^20). A tag the decoder
+  newly needs must be added there, or it reads as missing.
+- The per-strip cap applies only to strips that get their own buffer (compressed or predicted). Raw strips with
+  predictor 1 are read in place; capping them refused ordinary single-strip 16-bit TIFFs (d320ed2).
+- `Inflate`: always pass the expected output size when known (PNG rows, ZIP `entry.size`, TIFF strip); its cap is also
+  1032 x input length, and a full buffer is returned without a copy. Do not add a final `copyOf` or a chunk list.
+- `SimpleLimits.maxInflated` is 128 MB: a 24 MP 16-bit PNG inside ORA/KRA/ICNS is refused on purpose (owner trade-off).
+- `SimpleFormatDecoders.decode` catches `OutOfMemoryError` by `simpleName` (common code has no such type). It is a last
+  resort, not a cap.
+- Semantics that are easy to get wrong: TIFF ExtraSamples 0 or absent = opaque, 1 = associated (un-premultiply), 2 =
+  straight alpha; HDR old-style RLE repeats the previous pixel of the scanline; TGA colour maps honour the descriptor's
+  attribute bits; ICNS ranks PNG elements by IHDR and decodes only the largest (next on failure, at most three).
+- TGA has no magic: only the extension or mime makes it `MediaFormat.Tga`; `SimpleFormatReader` resolves sniff first,
+  then name, and never overrides a sniffed format that is not one of ours. A PSD saved without "Maximize Compatibility"
+  has a blank composite and decodes "successfully" as blank.
+
+## 141. XMP sidecars: the user's edit wins, the RAW's sidecar stays the RAW's, and SAF has no atomic replace
+
+`core/metadata` `SidecarAnnotations.kt`, `XmpPacket.kt`, `SidecarNaming.kt`, `XmpSidecarStore.kt`; app `metadata/`
+`SidecarDirectories.kt`, `SidecarLocation.kt`, `SidecarService.kt`.
+- An explicit user write must never be ordered by `xmp:MetadataDate`: an offset-less date read as UTC, or a desktop clock
+  ahead, made the remote value win and silently dropped the tap while the write said Written. `update` applies the user's
+  non-null fields over the packet; `merge()` is for index-time reconciliation only. Only paths the user adds in this call
+  are expanded into `dc:subject`, so a rating-only write leaves a foreign flat keyword list alone. Removing a path leaves
+  its components in `dc:subject` (they may be another tool's flat keywords); only `removedKeywords` deletes one.
+- Lightroom's extension-less `IMG_1.xmp` belongs to the RAW of a RAW+JPEG pair. A non-RAW reads it or uses it as a
+  write base only with no same-base-name sibling (`SidecarNaming.hasBaseNamePartner`) or when the user picked LIGHTROOM
+  naming (then the pair shares one file, by the user's choice). A folder that cannot be listed (null) is the safe case:
+  offer only the configured style's own name, in core `XmpSidecarStore` and app `SidecarLocator` alike.
+- Every `XmpPacket` text setter strips XML-1.0-invalid code points (`XmpPacket.xmlSafe`); a serialised `&#1;` makes the
+  whole packet unparseable and every later write fails. Removal compares through the same `xmlSafe` + trim.
+- SAF: overwrite a foreign sidecar only via `SafeDocumentWrite.overwrite` (verified `.bak` first, write, read back and
+  compare, restore on mismatch, delete the backup only when the original is good; no backup, no write; false is never
+  Written). If both write and restore fail, the `.bak` stays on purpose. Names are case-insensitive and providers rename
+  on clash (`x (1).xmp`): match ignoring case (exact first), and delete a created document whose display name is not the
+  one asked for.
+- A write result names the file actually written: re-find the created name; never reuse the locator's `target.uri`,
+  which can be the other style's file.
+
+## 142. Culling writes through a granted folder; "saved" means nothing is owed
+
+`gallery/Culling.kt`, `GalleryLookViews.kt`, `CullSidecarRoute.kt`, `SafParentResolver` (metadata/SidecarDirectories.kt), `WriteThroughAnnotationStore`.
+- Never build a sidecar path from `Environment.getExternalStorageDirectory()` + `RELATIVE_PATH`: not writable under
+  scoped storage, and the wrong volume for an SD-card photo. Route through a persisted SAF tree grant chosen by MediaStore
+  `VOLUME_NAME` + `RELATIVE_PATH`; an unknown volume is NoGrant, never "primary". API 26 to 28 have neither column, so the
+  cull asks for a grant and a write still fails (NOT_SAVED, nothing lost).
+- A write-through store whose durable side can refuse keeps the refused ids as owed (`unsavedCount`) and writes them after
+  the grant (`flushUnsaved()`). The HUD says saved only when nothing is owed, not when the last put worked.
+- A per-key summary must never walk the file store: read saved ratings once on open (cancellable, one listing per
+  folder), keep pick/reject counts in memory. A sidecar another app adds during a cull is not seen until it is reopened.
+- A state update after an off-main-thread write folds into the latest state (`CullState.afterWrite`); assigning a snapshot
+  taken before the write lost an Auto/Stay toggle.
+- Clearing is by explicit "none" values (rating 0, empty label, `SidecarFlag.NONE`), not null. `SidecarAnnotationStore`
+  does blocking IO: never on the main thread.
+- Where ratings and flags live long term is the owner's data decision: no new persistent store until then.
+
+## 143. Deep zoom: raw grid, snapped rotation, decide alpha at open, close off the main thread
+
+`viewer/deepzoom/` (`TilePyramid`, `TileCache`, `DeepZoomPolicy`, `RegionRects`, `RegionTileDecoder`, `DeepZoomLayer`).
+- `BitmapRegionDecoder` works in the file's raw grid and ignores EXIF orientation: map upright rects with
+  `RegionRects.toRaw` (inverse of rotate then flip, the pair `orientationTransform` uses) (TRAPS #34 family).
+- Never gate a heavy per-photo layer on `rotation == 0f`: a pinch adds fractions of a degree until `onGestureEnd` snaps.
+  Gate on `snapRotation(rotation)`, and keep the decoder and cache composed while the layer is merely disabled.
+- The open runs `NonCancellable`; a decoder that finishes after its effect is gone is closed. The descriptor is closed on
+  every way out that does not hand it to a decoder (`closingOnFailure`), or a HEIC on API 26/27 leaks a pfd per zoom.
+- `recycle()` waits on the native lock of a running `decodeRegion`: close on an IO executor (`closeInBackground`).
+- A tile drawn over the same picture's base composites partial alpha twice. Tileability is decided **when the decoder
+  opens**, from a 16 px probe (`DeepZoomPolicy.needsAlphaProbe`: every format but JPEG), never from the first real tile,
+  or the deep ceiling and 1:1 double-tap are offered and taken back 70 ms later. Any RGBA decode, even fully opaque,
+  stops tiling (conservative).
+- The pinch ceiling and the 1:1 double-tap follow `DeepZoomPolicy.tilesLive`; a ceiling that drops under the current
+  zoom pulls zoom and pan down together (`clampToCeiling`). Clipping and peaking masks are drawn above the tiles.
+- `tilesCovering` keeps every visible tile (nearest the centre first) and caps only the margin ring.
+- Under Robolectric `BitmapRegionDecoder.newInstance` returns null: keep decisions in pure or Bitmap-only functions.
+
+## 144. Compose pointer passes: Final runs ancestor first, and a timeout looks like a cancel
+
+- `PointerEventPass.Final` is dispatched from ancestor to descendant, like Initial. An ancestor that consumes on Final
+  consumes before its children's Final handlers, so every clickable using `waitForUpOrCancellation` cancels on any move
+  between down and up (ordinary finger jitter). To stop touches reaching a lower sibling, use a pointer target that
+  consumes nothing: hit testing already stops at the topmost sibling (`sphereTouchTarget`, f91dabb). Test with down, a
+  small move, then up.
+- `withTimeoutOrNull { waitForUpOrCancellation() }` returns null for BOTH a timeout and a cancellation (slide-off, a
+  parent took the move). Tell them apart with an enum (`FrameStep.HoldWait`: RELEASED / CANCELLED / TIMED_OUT); only a
+  timeout repeats, or a slide-off becomes a runaway frame scan.
+- A hover overlay must have no pointer input of its own, or it steals the mouse, the tile gets Exit and the preview
+  flickers. Hover is mouse-only (`PointerType.Mouse`); a finger keeps the long-press peek.
+
+## 145. The 360 view: original pixels, guarded decode, owns the screen
+
+`viewer/sphere/` (`SphereMeta`, `SphereLook`, `SphereProjection`, `GyroLook`, `SphereScreen`).
+- GPano `FullPano*` and `CroppedArea*` are in ORIGINAL pixels: pass `DecodedBitmap.sourceWidth/sourceHeight` to
+  `SphereMeta.parse`, never the decoded size, or a downscaled full sphere maps onto half of one.
+- The decode is guarded (`SphereLoading.guarded`): an exception from the decode seam (TRAPS #49) or an OutOfMemoryError
+  is a one-line message; cancellation propagates. The edge is capped by free heap (`decodeEdge`), the decoded Bitmap is
+  recycled after `getPixels`, frames reuse two bitmaps.
+- The gyro listener registers through a `StartedGate` (off at ON_STOP, on at ON_START), not composition.
+- `SphereScreen` is composed last, outside the photo's gesture box; `ViewerChromePolicy.screenOwned` counts it, so the
+  slideshow stops counting and the strip, pro card, colour chip and rooms stand down. A new viewer overlay that owns the
+  screen goes in `screenOwned` too.
+- "View in 360" is offered on `ImageExifDetails.isSphere` (equirectangular, sane sizes), never `isPanorama` (a
+  cylindrical panorama sets that too). The first look is re-clamped when the real aspect arrives.
+- `Icons.Outlined.ThreeSixty` does not exist in this material-icons-extended; the button uses `Public`.
+
+## 146. Video frame step and media3 seek modes
+
+- Step on a frame index (`round(pos / frameMs)` converted back), never `position + rounded duration`: that drifts at
+  29.97/59.94 fps and stalls at 120/240 fps. No declared rate: 30 fps with an "estimated" notice (`viewer/FrameStep.kt`).
+- media3 `SeekParameters.DEFAULT` **is** `EXACT` (1.9.0, checked by javap). "Reset to DEFAULT" does not mean cheap
+  sync-frame seeks; `ORDINARY_SEEK` in `ViewerPlayerFactory.kt` names it, and `SeekResetOnResume` restores it on every
+  play request. Making ordinary scrubbing `CLOSEST_SYNC` changes where seeks land: owner decision.
+
+## 147. Gallery look overlays and justified rows
+
+`gallery/QuickPreview*.kt`, `Survey*.kt`, `GalleryLookViews.kt`, `JustifiedLayout.kt`, `JustifiedGrid.kt`,
+`ZoomAnchor.kt`, `GalleryScreen.kt`.
+- Quick Look, Compare/Survey and Culling are composed inside the grid's focused key box: a key they do not consume
+  bubbles to the grid's shortcut table (Backspace trashed the hidden selection, Enter opened the viewer, Ctrl+A selected
+  the library). While one is open `lookOverlaySwallows` stops every non-system key, and `shortcutActsOverPane(lookOpen =
+  true)` refuses every shortcut, Escape included. A new overlay in that box must be added to `lookOpen()`.
+- The justified grid is one lazy item per ROW. Its index space is rows plus the footer: anything that scrolls `gridState`
+  goes through `indexSpace` in `GalleryScreen`, not `gridIndexMap` (still used for the square grid's own anchor).
+  `GridChromeBridge.justified` is trusted only when its asset list is the very same object as `renderedAssets`.
+- Never let a `LazyGridState` index cross between justified and square layouts or between two justified rungs: carry the
+  top photo by id (`LayoutAnchor.settle` / `settleJustified`). But do not `requestScrollToItem` when the row key
+  (`jrow:<first id>`) already keeps the top row at the same height: it resets the pixel offset and snaps mid-fling.
+- Justified rows close at the first prefix at or below the target height, taking the nearer of the two candidates, so a
+  row can be up to about 1.4x the target. Headers are off in justified mode, as in masonry.
+- Hover state and its wait use one monotonic clock (`awaitShown` loops on an injected `SystemClock.uptimeMillis`); never
+  mix it with the wall clock.
+- Quick Look keys live in a local `QuickLookKey` enum on purpose: adding Space and P to `GalleryShortcutKey` changes
+  `galleryShortcutFor` for every caller.
+- A new `ViewerSettingsRoom` group goes in through a `@Composable ColumnScope` slot (`slideshowStyleSection`,
+  `proOverlaySection`, like `colourVisionSection`), not new data parameters.
+
+## 148. Governance scripts fail closed, and say why
+
+`scripts/verify-governance-docs.sh`, `scripts/verify-licences.sh`, `scripts/licence-allowlist.txt`.
+- Under `set -euo pipefail` a grep with no match exits 1 and ends the script with no message. Wrap greps that may
+  legitimately find nothing (`g()`), name every real absence, and keep the ERR trap that prints the line.
+- Doc coverage must match exactly: `grep -F "\`needle"` is a prefix match (`g:ui-test-junit4` would cover `g:ui`). A
+  coordinate or model id must be followed by a backtick, or `:` for a coordinate.
+- An unknown licence (`?` POM not fetched, `-` none declared or POM did not parse) is a FAIL. Only an exact
+  `group:name[:version]` entry clears it (`allowed_exact()`); a trailing-`*` glob, reviewed for a vendor licence name,
+  silences warnings only. `reportRuntimeLicences` (app/build.gradle.kts) still writes `-` for both "none declared" and
+  "parse error"; both fail, so the two cannot be told apart.
+- `docs/MODEL_LICENSES.md` must describe what ships: `res/raw` holds `license_hyle_grotesk.txt` and the unreferenced
+  `hyle_tab_tick.wav` (licence unverified, must not ship publicly until the owner decides).
+
+## 149. The launcher icon is generated: edit the script, not the drawables
+
+`scripts/gen_launcher_icon.py` writes `drawable/ic_launcher_foreground.xml`, `ic_launcher_monochrome.xml` and the
+preview SVGs in `docs/brand/` from one shape list (the owner's artwork redrawn as polygons and lines in its 1100 x 1100
+artboard; it is a redraw, not the owner's own SVG). Light and dark are one drawing: `ic_launcher_background` and `ic_launcher_panel` in
+`values/colors.xml` (white ground, black panel) and `values-night/colors.xml` (black ground, white panel), picked by the
+system dark theme. The monochrome layer is the Android 13+ themed icon; the art is scaled by 0.66 about the centre so
+it stays inside the 66 dp safe circle every launcher mask keeps.
+minSdk 26 means no PNG fallback. When the owner sends the exact SVG, replace the shape list and re-run the script.
