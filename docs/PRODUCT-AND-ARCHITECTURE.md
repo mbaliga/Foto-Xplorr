@@ -92,6 +92,14 @@ separate and stays on-device.
 Local metadata export/import as JSON — collections, tags, favourites and sensitivity flags. It is
 the app's own organisational layer, not the photos.
 
+### Home-screen widgets
+
+Six standard App Widgets that any launcher can host, each in a small, medium and large layout: A
+favourite (one per day), On this day, Recent photos, Library at a glance, Collections and Indexing.
+They read the same stores as the app, in their own process, and are redrawn when those stores
+change, through JobScheduler. What they may show is narrower than the app (see §4, "Privacy
+boundaries"). Full description and the device checks still owed: `docs/widgets.md`.
+
 ---
 
 ## 2. Interaction patterns
@@ -273,6 +281,19 @@ so a recomposition never restarts a pass that already finished.
   contents are cleared too — so the app cannot resume displaying something that should be locked.
 - **AI keys** live in `EncryptedSecretStore`; the OkHttp client deliberately ships **no logging
   interceptor**.
+- **The home screen is a public surface.** Every photo a widget counts passes `browsableAssets(...)`
+  with `unlockedFolders = emptySet()` and `hideSensitive = true`, forced in `WidgetPrivacy` and
+  computed in the widget path, never from the Activity's state (`WidgetPrivacyTest` pins both
+  arguments). Pictures are narrower still: no screenshots and no photo recognition has read as an
+  identity document (`RecognitionStore.identityDocumentIds`). No file names and no typed collection
+  names are shown. A widget tap carries ids only, and `FotoXplorrActivity` re-checks them against
+  the stores through the same rule (`resolveWidgetOpen`) before opening anything. A change to
+  `browsableAssets`, the privacy stores or the identity verdict changes what the home screen shows.
+- **Widget components.** Six exported App Widget providers (the platform requires it) and one
+  non-exported `WidgetJobService` running two JobScheduler jobs: `WidgetRefreshJob` (id 20 932,
+  every pushed redraw) and `WidgetDayJob` (id 20 931, just after local midnight). Both ids are
+  distinct from `BackgroundScheduler`'s 20 918. Nothing is cached on disk for the widgets except
+  the time of the last completed library scan (`LibraryReadStamp`, under `noBackupFilesDir`).
 
 ### Testing
 

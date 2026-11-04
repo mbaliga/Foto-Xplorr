@@ -404,3 +404,112 @@ colour, and for APK links for both.
 Gate: `./scripts/verify.sh` is green on both flavours (1017 unit tests each, lint, both debug
 assemblies, the offline enforcement gates). Nothing under `core/` changed, so
 `scripts/verify-native.sh` was not needed.
+
+## Home-screen widgets (4 Nov 2026)
+
+**Owner request.** "Develop the widgets across multiple sizes for each and every app … at least 5
+widgets each", "usable by Android launchers". Built now, on today's stores, ahead of WP 7.5 (whose
+"memories, a random favourite" are two of them). Full description: `docs/widgets.md`.
+
+### What was built
+
+- **Six standard App Widgets** (`app/.../widget/`), each with a small, medium and large layout:
+  A favourite (`media`, one per day), On this day (`media` strip: date taken in earlier years),
+  Recent photos (`media` strip/grid), Library at a glance (`stat`), Collections (`list`) and Indexing
+  (`progress`: recognition and key-moment progress, plus the background status when this process
+  knows it). API 31+ gets one sized `RemoteViews` map; API 26 to 30 gets landscape/portrait layouts
+  picked from the reported options and is redrawn on resize.
+- **Privacy, forced in the widget path.** Everything drawn goes through `browsableAssets(...)` with
+  `unlockedFolders = emptySet()` and `hideSensitive = true` (`WidgetPrivacy`), never through Activity
+  state; `WidgetPrivacyTest` pins both arguments. A widget tap carries ids only and the Activity
+  re-checks them against the stores at that moment (`resolveWidgetOpen`), so a photo hidden since the
+  last redraw opens nothing. "Everything is hidden" reads exactly like "nothing here". No file names.
+  Pictures are narrower than counts: no screenshot and no photo recognition has read as an identity
+  document is ever drawn or opened (`WidgetPrivacy.picturedAssets`). No typed collection names.
+- **Pictures** are bitmaps decoded through `decodeUpright` (videos: one `MediaMetadataRetriever` frame),
+  bounded to a third of AppWidgetManager's bitmap limit and shared across the three layouts.
+- **Pushed updates.** `FotozWidgets.requestRefresh` hands every redraw to a one-off **JobScheduler**
+  job (`WidgetRefreshJob`, id 20 932), so it survives the process being frozen or killed right after
+  the write; changes that take a photo off the home screen are drawn at once, others share one redraw
+  1.5 s after the first. Called from `FavoriteStore`, `SensitiveStore`, `LibraryStore` collection and
+  archive writes, `PrivateFolderStore` protect/unprotect, `LibraryRuntime` scan completion and the
+  in-app recognition pass; `BackgroundWorkJobService` draws before `jobFinished`. Midnight: one
+  one-off job (`WidgetDayJob`, id 20 931) while a date widget is placed. Both run in the
+  non-exported `WidgetJobService`; no WorkManager, no alarms, `updatePeriodMillis = 0`. Clock,
+  time-zone and language changes redraw too.
+- **Small supporting changes.** `mediaReadPermissions()` is `internal` (was `private`) so the widgets
+  test the same grant. The manifest's P0-09 note on `configChanges` now records the one new
+  `values-night` directory, which holds widget colours only and is never read by the Activity.
+  No new dependency, permission or network path; the offline gates are untouched.
+- **Tests.** 41 new JVM tests in `app/src/test/.../widget/` (privacy, content and dates, sizing and
+  bitmap budget, and Robolectric renders of every layout at every size in day, night and 1.3x font
+  scale, the tap intents and the API 26 orientation path).
+
+### What deviated and why
+
+- Taps that are not on a photo open the app as its launcher icon does: there is no way to navigate
+  to a destination (Favourites, Protected, Settings › Background) from outside the app yet.
+- There is still no in-app "On this day" (WP 6.11); the widget opens the viewer on that day's items.
+- The widgets use the default Violet preset in day and night, not the in-app accent or a custom theme.
+- Recent, Library and Indexing can be out of date while the app is not running (it learns about new
+  photos only while running), so they print "As of" the time Fotoz last finished reading the library
+  (`LibraryReadStamp`, under `noBackupFilesDir`), with the date when it was not today.
+
+### Residual, for the owner
+
+- Collection names never appear on the home screen: rows show a cover, the months the collection's
+  pictures span and a count. Showing names would be an owner decision and would need a per-widget
+  setting, which the widgets do not have.
+- Screenshots and identity documents are kept off the picture widgets by default (still counted).
+  Recognition runs after a photo arrives, so a document photographed a moment ago can show until
+  its text has been read; the end of each recognition pass redraws at once.
+- A widget update in a process that is not yet running constructs `LibraryRuntime`, which runs its
+  once-per-process migration check and MediaStore sync, exactly as when the background job wakes it.
+- Device checks: the owner-verify list at the end of `docs/widgets.md` (launchers, resizing, rotation,
+  TalkBack, midnight change, battery managers). None of it has been seen on a device.
+
+Gate: `scripts/verify-core-purity.sh`, then `scripts/verify.sh`'s exact Gradle task list (run through
+this session's Gradle wrapper rather than the script itself, which calls `./gradlew` directly). Before
+the change: green, 1212 unit tests per flavour, 0 failures (connect: 1 skipped), lint 0 errors.
+After: green, 1253 per flavour (the 41 new widget tests), 0 failures (connect: the same 1 skipped),
+lint 0 errors, both debug APKs assembled, `verifyOfflineManifest`, `verifyOfflineRuntimeClasspath` and
+`verifyOfflineSourceReferences` green. Lint issues (the XML reports, warnings plus the 19
+informational `AutoboxingStateCreation`) went from 153 to 154 (offline: one more `GradleDependency`,
+"newer Robolectric available", from refreshed metadata; no dependency changed) and from 160 to 168
+(connect: eight `LogNotTimber` suggestions for the widgets' `android.util.Log` calls, the app's own
+logging convention; connect's `GradleDependency` count was 51 before and after). An earlier version
+of this note said 154 to 155 and 161 to 169 and put the Robolectric notice in connect too; both were
+wrong. Nothing under `core/` changed, so `scripts/verify-native.sh` was not needed.
+
+### Review follow-up (4 Nov 2026)
+
+Two reviews of the widget change; what was fixed:
+
+- **Redraws survive the process.** The in-memory 1.5 s timer is gone: every redraw is a JobScheduler
+  job (above), and one that takes something off the home screen runs with no delay. The background
+  pass draws before `jobFinished` instead of queueing a redraw it could lose.
+- **Launcher updates finish on time.** The 8 s budget runs beside the work, so a decoder or
+  `MediaMetadataRetriever` stuck in a blocking call cannot hold the broadcast open; "Couldn't load"
+  is drawn only on widgets nothing has drawn since the request arrived, a retry is queued in the
+  job, and the midnight job is armed before anything is read.
+- **Honest "As of".** It printed the drawing time, so a widget redrawn at midnight said "As of 00:01"
+  over a catalogue read days ago. It now prints the last completed scan, with its date.
+- **Layouts fit where they are used.** Each widget has its own size table, measured from the layouts
+  at every font step from 1x to 2x; `WidgetRenderTest` draws every layout at exactly its minimum at
+  each step and fails on anything clipped or cut. That caught Indexing's two sections clipped at a
+  4x1, Library's large layout cut at 4x2 at 1.3x, list rows cutting their second line at large
+  fonts, and a five-digit count wrapping in the small layouts (now number above words, shrinking
+  to fit).
+- **Privacy.** Identity documents and screenshots off the picture widgets; no collection names;
+  Library's collection count follows the Collections widget's rule, so the two never disagree.
+- **Docs.** `docs/PRODUCT-AND-ARCHITECTURE.md` now lists the widgets and their privacy rule.
+
+Gate after the follow-up, same commands (`scripts/verify-core-purity.sh`, then `scripts/verify.sh`'s
+Gradle task list through the session wrapper): "core-purity OK", BUILD SUCCESSFUL, 1269 unit tests
+per flavour (the 1212 from before the widgets plus 57 widget tests), 0 failures (connect: the same 1
+skipped), lint 0 errors, both debug APKs assembled, the three offline gates green. Lint issues against
+the pre-widget baseline: offline 153 to 157 (four more `GradleDependency` "newer version available"
+notices from refreshed metadata: Robolectric, kotlinx-serialization, and newer Kotlin and KSP
+versions now listed; no build file changed), connect 160 to 175 (three such `GradleDependency`
+notices and twelve `LogNotTimber` suggestions for the widgets' `android.util.Log` calls, the app's
+own logging convention). Nothing under `core/` changed.

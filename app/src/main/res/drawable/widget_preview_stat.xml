@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Picker preview below API 31 (API 31+ uses the matching widget_preview_* layout). A drawing of
+     the layout, not a photograph or real data. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="88dp"
+    android:viewportWidth="250"
+    android:viewportHeight="110">
+    <path android:fillColor="@color/widget_surface" android:pathData="M16,0h218a16,16 0,0 1,16 16v78a16,16 0,0 1,-16 16h-218a16,16 0,0 1,-16 -16v-78a16,16 0,0 1,16 -16z" />
+    <path android:fillColor="@color/widget_on_surface" android:pathData="M12,12h90v8h-90z" />
+    <path android:fillColor="@color/widget_on_surface" android:pathData="M12,40h50v18h-50z" />
+    <path android:fillColor="@color/widget_on_surface" android:pathData="M92,40h50v18h-50z" />
+    <path android:fillColor="@color/widget_on_surface" android:pathData="M172,40h50v18h-50z" />
+    <path android:fillColor="@color/widget_on_surface_muted" android:pathData="M12,66h40v6h-40z" />
+    <path android:fillColor="@color/widget_on_surface_muted" android:pathData="M92,66h40v6h-40z" />
+    <path android:fillColor="@color/widget_on_surface_muted" android:pathData="M172,66h40v6h-40z" />
+</vector>

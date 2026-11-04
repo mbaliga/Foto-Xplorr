@@ -27,6 +27,8 @@ import com.fotoxplorr.app.migration.AndroidProjectionParityCheck
 import com.fotoxplorr.app.migration.MigrationStateStore
 import com.fotoxplorr.app.organize.LegacyCatalogMigration
 import com.fotoxplorr.app.organize.LibraryStore
+import com.fotoxplorr.app.widget.FotozWidgets
+import com.fotoxplorr.app.widget.LibraryReadStamp
 import com.fotoxplorr.core.db.FotozDatabase
 import com.fotoxplorr.core.db.FotozVectorsDatabase
 import com.fotoxplorr.core.db.migration.MigrationToV2
@@ -235,6 +237,11 @@ class LibraryRuntime private constructor(context: Context) {
                         // sniffPending's own staleness check makes a duplicate pass a no-op once
                         // the first one's upserts have landed.
                         if (event is ScanEvent.Completed) {
+                            // New, trashed, restored or renamed items reach the home-screen
+                            // widgets through this one point (docs/widgets.md), which also say
+                            // when the library was last read, since only a scan refreshes it.
+                            LibraryReadStamp.record(appContext, System.currentTimeMillis())
+                            FotozWidgets.requestRefresh(appContext)
                             val current = repository.awaitLoaded()
                             scope.launch {
                                 animationIndex.sniffPending(current)

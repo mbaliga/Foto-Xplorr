@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Home-screen widget colours, night: the Violet preset's dark mode. Only the widgets read this
+  directory; FotoXplorrActivity never does (see the note on its configChanges in the manifest).
+-->
+<resources>
+    <color name="widget_surface">#121216</color>
+    <color name="widget_surface_variant">#25242B</color>
+    <color name="widget_on_surface">#F4F1F7</color>
+    <color name="widget_on_surface_muted">#C2BFC4</color>
+    <color name="widget_accent">#CBB4FF</color>
+</resources>

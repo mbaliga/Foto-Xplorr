@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Indexing widget (docs/widgets.md). No periodic updates: the app pushes a redraw when its data changes.
+  minWidth and minHeight are the default size below API 31; targetCell sizes are the default from 31.
+  previewLayout and targetCell sizes are read from API 31 (lint UnusedAttribute is expected);
+  previewImage is the picker preview before that.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:description="@string/widget_indexing_description"
+    android:initialLayout="@layout/widget_loading"
+    android:minWidth="250dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="83dp"
+    android:previewImage="@drawable/widget_preview_progress"
+    android:previewLayout="@layout/widget_preview_indexing"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen"
+    tools:ignore="UnusedAttribute" />

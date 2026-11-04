@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  progress, small: the percentage in digits above it in words, with a bar that only repeats it. The
+  words and the bar keep their room; the number fills the height left and shrinks to fit it and the
+  width (autoSize, never below 12sp), so at a large font size it is never wrapped or pushed out.
+-->
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:orientation="vertical"
+    android:padding="@dimen/widget_padding">
+    <TextView
+        android:id="@+id/widget_value"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:autoSizeMaxTextSize="40sp"
+        android:autoSizeMinTextSize="12sp"
+        android:autoSizeStepGranularity="1sp"
+        android:autoSizeTextType="uniform"
+        android:gravity="start|bottom"
+        android:maxLines="1"
+        android:textColor="@color/widget_on_surface"
+        android:textSize="24sp"
+        android:textStyle="bold" />
+    <TextView
+        android:id="@+id/widget_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:textColor="@color/widget_on_surface_muted"
+        android:textSize="12sp" />
+    <ProgressBar
+        android:id="@+id/widget_bar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="6dp"
+        android:layout_marginTop="4dp"
+        android:importantForAccessibility="no"
+        android:indeterminate="false"
+        android:max="100"
+        android:maxHeight="6dp"
+        android:minHeight="6dp"
+        android:progressBackgroundTint="@color/widget_on_surface_muted"
+        android:progressTint="@color/widget_accent" />
+</LinearLayout>

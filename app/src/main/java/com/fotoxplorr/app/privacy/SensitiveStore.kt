@@ -1,12 +1,14 @@
 package com.fotoxplorr.app.privacy
 
 import android.content.Context
+import com.fotoxplorr.app.widget.FotozWidgets
 import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class SensitiveStore(context: Context) {
+    private val appContext = context.applicationContext
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val state = MutableStateFlow(load())
 
@@ -33,10 +35,14 @@ class SensitiveStore(context: Context) {
 
     private fun persist(ids: Set<MediaId>) {
         val immutable = ids.toSet()
+        val newlyFlagged = !state.value.containsAll(immutable)
         state.value = immutable
         preferences.edit()
             .putStringSet(KEY_SENSITIVE_IDS, SensitiveIdCodec.encode(immutable))
             .apply()
+        // A newly flagged item must leave every home-screen widget (docs/widgets.md): urgent, so it
+        // is redrawn at once rather than after the short wait that batches ordinary changes.
+        FotozWidgets.requestRefresh(appContext, urgent = newlyFlagged)
     }
 
     private fun load(): Set<MediaId> = SensitiveIdCodec.decode(

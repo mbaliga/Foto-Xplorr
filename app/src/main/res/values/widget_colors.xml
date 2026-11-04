@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Home-screen widget colours, day. The app's default Violet preset (ui/ThemeJson.kt), light mode.
+  values-night holds the dark pair; the launcher resolves them in its own process, following the
+  system's day or night setting. No colour here carries meaning on its own: every state a widget
+  draws also has a shape and a word (TRAPS #14), and nothing is red or green.
+-->
+<resources>
+    <color name="widget_surface">#FFFBFF</color>
+    <color name="widget_surface_variant">#F0EBF2</color>
+    <color name="widget_on_surface">#1D1A20</color>
+    <!-- About 9:1 on widget_surface, so secondary text stays readable at 12sp. -->
+    <color name="widget_on_surface_muted">#4A474D</color>
+    <color name="widget_accent">#6E49B8</color>
+    <!-- Text drawn over a photo always sits on widget_scrim, in both modes. -->
+    <color name="widget_on_photo">#FFFFFF</color>
+    <color name="widget_scrim_start">#C0000000</color>
+    <color name="widget_scrim_end">#00000000</color>
+    <color name="widget_badge">#99000000</color>
+</resources>

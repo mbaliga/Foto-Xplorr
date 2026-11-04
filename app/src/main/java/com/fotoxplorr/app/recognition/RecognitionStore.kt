@@ -83,6 +83,16 @@ class RecognitionStore(context: Context) {
     }
 
     /**
+     * Every photo the on-device text check has read as an identity document (the in-app Identity
+     * destination), straight from disk. A one-shot reader's answer, independent of [observe]'s
+     * index, whose first value in a fresh instance is empty (TRAPS #21) and whose rebuild
+     * re-clusters every face in the library. The home-screen widgets never draw these.
+     */
+    suspend fun identityDocumentIds(): Set<MediaId> = withContext(Dispatchers.IO) {
+        helper.identityDocumentIds()
+    }
+
+    /**
      * Assets already recognised at their current revision whose palette has never been sampled --
      * in practice, every photo indexed before palettes were stored (v5). They need one cheap
      * decode each, not a second run of the three detectors, which is why this is a separate
@@ -325,6 +335,15 @@ private class RecognitionOpenHelper(context: Context) :
             null, null, null, null, null,
         ).use { cursor ->
             while (cursor.moveToNext()) put(MediaId(cursor.getLong(0)), cursor.getLong(1))
+        }
+    }
+
+    fun identityDocumentIds(): Set<MediaId> = buildSet {
+        readableDatabase.query(
+            TABLE_ASSETS, arrayOf("media_id"),
+            "identity_verdict != ?", arrayOf(IdentityVerdict.NONE.name), null, null, null,
+        ).use { cursor ->
+            while (cursor.moveToNext()) add(MediaId(cursor.getLong(0)))
         }
     }
 

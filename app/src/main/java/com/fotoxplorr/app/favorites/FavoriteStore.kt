@@ -1,12 +1,14 @@
 package com.fotoxplorr.app.favorites
 
 import android.content.Context
+import com.fotoxplorr.app.widget.FotozWidgets
 import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class FavoriteStore(context: Context) {
+    private val appContext = context.applicationContext
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val state = MutableStateFlow(load())
 
@@ -33,6 +35,8 @@ class FavoriteStore(context: Context) {
         preferences.edit()
             .putStringSet(KEY_FAVORITES, FavoriteIdCodec.encode(immutable))
             .apply()
+        // "A favourite", "Library at a glance": the home-screen widgets redraw from the new set.
+        FotozWidgets.requestRefresh(appContext)
     }
 
     private fun load(): Set<MediaId> = FavoriteIdCodec.decode(

@@ -3,6 +3,7 @@ package com.fotoxplorr.app.privacy
 import android.content.Context
 import android.os.SystemClock
 import android.util.Base64
+import com.fotoxplorr.app.widget.FotozWidgets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,6 +15,7 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 
 class PrivateFolderStore(context: Context) {
+    private val appContext = context.applicationContext
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val lockedFoldersState = MutableStateFlow(loadFolderNames())
     private val unlockedFoldersState = MutableStateFlow<Set<String>>(emptySet())
@@ -45,6 +47,10 @@ class PrivateFolderStore(context: Context) {
                 lockedFoldersState.value = lockedFoldersState.value + folderKey
                 unlockedFoldersState.value = unlockedFoldersState.value + folderKey
                 attempts.remove(folderKey)
+                // The folder's photos must leave the home-screen widgets now (urgent: no batching
+                // wait). Unlocking never needs a redraw: widgets treat every protected folder as
+                // locked (WidgetPrivacy).
+                FotozWidgets.requestRefresh(appContext, urgent = true)
                 Unit
             } finally {
                 salt.fill(0)
@@ -110,6 +116,7 @@ class PrivateFolderStore(context: Context) {
             attempts.remove(folderKey)
             lockedFoldersState.value = lockedFoldersState.value - folderKey
             unlockedFoldersState.value = unlockedFoldersState.value - folderKey
+            FotozWidgets.requestRefresh(appContext)
             true
         }
     }

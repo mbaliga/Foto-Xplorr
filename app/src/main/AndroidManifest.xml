@@ -183,7 +183,9 @@
                  needing the Activity recreated: confirmed no values-night/values-land/locale-
                  qualified resource directories exist in res/ (only density-qualified mipmaps,
                  resolved per request regardless of recreation) and onCreate() itself reads no
-                 resource directly outside setContent {}. This covers rotation, folding, external
+                 resource directly outside setContent {}. The one exception since the home-screen
+                 widgets: values-night/widget_colors.xml, read only by the widget layouts, which
+                 the launcher inflates in its own process. This Activity never reads it. This covers rotation, folding, external
                  keyboards/hubs and desktop mode; it does NOT cover process death, which
                  FotoXplorrActivity.kt's own rememberSaveable viewer/editor state (P0-09 item 6)
                  handles separately. singleTop + supportsPictureInPicture come from the media3
@@ -268,5 +270,93 @@
                 <data android:mimeType="video/*" />
             </intent-filter>
         </activity>
+
+        <!--
+          Home-screen widgets (docs/widgets.md), usable by any launcher. Each provider is exported
+          because a launcher must be able to bind it; that is the platform's requirement for every
+          App Widget, and the only thing exported here. Taps open FotoXplorrActivity through
+          explicit, immutable PendingIntents. No permission is added for any of this.
+        -->
+        <receiver
+            android:name="com.fotoxplorr.app.widget.FavouriteWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_favourite_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_favourite" />
+        </receiver>
+        <!-- Also hears the clock, time zone and language change (protected system broadcasts),
+             because "today" and every printed date depend on them; it redraws every widget. -->
+        <receiver
+            android:name="com.fotoxplorr.app.widget.OnThisDayWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_on_this_day_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.LOCALE_CHANGED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_on_this_day" />
+        </receiver>
+        <receiver
+            android:name="com.fotoxplorr.app.widget.RecentWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_recent_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_recent" />
+        </receiver>
+        <receiver
+            android:name="com.fotoxplorr.app.widget.LibraryWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_library_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_library" />
+        </receiver>
+        <receiver
+            android:name="com.fotoxplorr.app.widget.CollectionsWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_collections_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_collections" />
+        </receiver>
+        <receiver
+            android:name="com.fotoxplorr.app.widget.IndexingWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_indexing_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_indexing" />
+        </receiver>
+
+        <!-- The widgets' JobScheduler jobs (not a library): every pushed redraw, so it survives the
+             process being frozen or killed, and the one-off redraw just after local midnight.
+             BIND_JOB_SERVICE restricts binding to the system, as for BackgroundWorkJobService. -->
+        <service
+            android:name="com.fotoxplorr.app.widget.WidgetJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
     </application>
 </manifest>
