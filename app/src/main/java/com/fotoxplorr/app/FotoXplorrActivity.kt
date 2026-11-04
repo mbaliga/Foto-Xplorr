@@ -102,6 +102,10 @@ import com.fotoxplorr.app.video.VideoConversionWriter
 import com.fotoxplorr.app.videoeditor.VideoEditorScreen
 import com.fotoxplorr.app.viewer.ExternalViewerActivity
 import com.fotoxplorr.app.viewer.ViewerScreen
+import com.fotoxplorr.app.widget.FotozWidgets
+import com.fotoxplorr.app.widget.WidgetLaunch
+import com.fotoxplorr.app.widget.WidgetOpenRequest
+import com.fotoxplorr.app.widget.resolveWidgetOpen
 import com.fotoxplorr.core.model.MediaId
 import dev.aarso.crashrecovery.CrashRecovery
 import kotlinx.coroutines.Dispatchers
@@ -311,6 +315,41 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         setViewerAssets(listOf(match))
         selectedAssetId = match.id
         consumedOpenMediaIdExtra = true
+    }
+
+    // A tap on a photo in a home-screen widget (docs/widgets.md). Same one-shot shape as the
+    // Open-with redirect above, with one difference that matters: a widget can be out of date, so
+    // the ids it carries are re-checked against the stores as they stand NOW, through the same
+    // home-screen rule the widget was drawn with (resolveWidgetOpen). A photo that has since been
+    // archived, flagged sensitive, moved into a protected folder or read as an identity document
+    // opens nothing; the app's home shows instead. The stores are read directly, not through the
+    // collected state above, whose first-frame values are the empty initial ones and would let such
+    // a photo through.
+    var consumedWidgetOpen by rememberSaveable { mutableStateOf(false) }
+    var widgetArmedForGeneration by remember { mutableIntStateOf(0) }
+    LaunchedEffect(incomingIntentGeneration) {
+        if (incomingIntentGeneration > widgetArmedForGeneration) {
+            widgetArmedForGeneration = incomingIntentGeneration
+            consumedWidgetOpen = false
+        }
+        if (consumedWidgetOpen) return@LaunchedEffect
+        consumedWidgetOpen = true
+        if (intent.action != WidgetLaunch.ACTION_OPEN_FROM_WIDGET) return@LaunchedEffect
+        val request = WidgetOpenRequest(
+            mediaId = intent.getLongExtra(WidgetLaunch.EXTRA_MEDIA_ID, WidgetLaunch.NO_MEDIA_ID),
+            runIds = intent.getLongArrayExtra(WidgetLaunch.EXTRA_RUN_IDS)?.toList().orEmpty(),
+        )
+        val open = resolveWidgetOpen(
+            request = request,
+            assets = repository.awaitLoaded(),
+            archivedIds = libraryStore.observe().value.archivedIds,
+            sensitiveIds = sensitiveStore.observe().value,
+            lockedFolders = privateFolderStore.observeLockedFolders().value,
+            identityIds = recognitionStore.identityDocumentIds(),
+        ) ?: return@LaunchedEffect
+        setViewerAssets(open.run)
+        selectedAssetId = open.selected.id
+        slideshowActive = false
     }
 
     // Which video (if any) is mid-conversion, so the actions room can disable a second tap and
@@ -1183,6 +1222,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // opens a photo expects to see what it found, not to see it tomorrow morning. The
             // pass is idempotent, so the background run doing this again costs nothing.
             AutoCurationPass(libraryStore).run(assets, recognitionStore.observe().value, lockedFolders)
+            // The Indexing widget's counts just moved, and any photo this pass read as an identity
+            // document must leave the picture widgets now, not after the usual short wait.
+            FotozWidgets.requestRefresh(applicationContext, urgent = true)
         }
     }
 
@@ -1666,7 +1708,9 @@ private fun requiredWriteStoragePermission(): Array<String> =
         emptyArray()
     }
 
-private fun mediaReadPermissions(): Array<String> = when {
+/** internal, not private: the home-screen widgets check the same grant before reading anything
+ * (`widget.hasMediaReadAccess`), so the two can never disagree about what "access" means. */
+internal fun mediaReadPermissions(): Array<String> = when {
     Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
         Manifest.permission.READ_MEDIA_IMAGES,
         Manifest.permission.READ_MEDIA_VIDEO,

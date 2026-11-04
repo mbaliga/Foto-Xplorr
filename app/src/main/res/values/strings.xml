@@ -2,4 +2,132 @@
 <resources>
     <!-- The launcher label, recents title, Settings > Apps entry and "Open with" chooser entry. -->
     <string name="app_name">Fotoz</string>
+
+    <!--
+      Home-screen widgets (docs/widgets.md). A home screen is a public surface: no file names, no
+      typed text (collection names), no screenshots or ID documents as pictures, and nothing
+      archived, sensitive or in a protected folder. Copy rules (docs/TRAPS.md): never the
+      bare word for replication, never "vault"; every state has a shape or a word, never colour alone.
+    -->
+    <string name="widget_open_app_action">Open Fotoz ›</string>
+    <string name="widget_loading">Loading…</string>
+    <string name="widget_as_of">As of %1$s</string>
+    <string name="widget_as_of_unknown">As of: unknown</string>
+    <string name="widget_two_lines" translatable="false">%1$s\n%2$s</string>
+    <string name="widget_video_badge">▶</string>
+    <string name="widget_cd_picture">Picture</string>
+    <string name="widget_cd_photo">Photo taken %1$s</string>
+    <string name="widget_cd_video">Video taken %1$s</string>
+    <string name="widget_cd_photo_undated">Photo, date unknown</string>
+    <string name="widget_cd_video_undated">Video, date unknown</string>
+    <string name="widget_date_unknown">Date unknown</string>
+    <plurals name="widget_item_count">
+        <item quantity="one">%1$s item</item>
+        <item quantity="other">%1$s items</item>
+    </plurals>
+
+    <string name="widget_no_access_title">Photos not available</string>
+    <string name="widget_no_access_message">Open Fotoz and allow access to your photos and videos.</string>
+    <string name="widget_error_title">Couldn\'t load</string>
+    <string name="widget_error_message">Fotoz couldn\'t read your library just now. Tap to open the app.</string>
+
+    <string name="widget_favourite_label">A favourite</string>
+    <string name="widget_favourite_description">One of your favourite photos, a different one each day.</string>
+    <string name="widget_favourite_tag">★ A favourite</string>
+    <plurals name="widget_favourite_count">
+        <item quantity="one">%1$s favourite</item>
+        <item quantity="other">%1$s favourites</item>
+    </plurals>
+    <string name="widget_favourite_empty_title">No favourites to show</string>
+    <string name="widget_favourite_empty_message">Star photos in Fotoz and one appears here each day. Screenshots, ID documents, and archived, sensitive or protected photos stay off the home screen.</string>
+
+    <string name="widget_on_this_day_label">On this day</string>
+    <string name="widget_on_this_day_description">Photos and videos taken on today\'s date in earlier years.</string>
+    <string name="widget_on_this_day_title">On this day</string>
+    <string name="widget_on_this_day_meta">%1$s · %2$s</string>
+    <string name="widget_on_this_day_small">On this day · %1$d</string>
+    <string name="widget_on_this_day_hero">%1$d · %2$s</string>
+    <plurals name="widget_years_ago">
+        <item quantity="one">%1$s year ago</item>
+        <item quantity="other">%1$s years ago</item>
+    </plurals>
+    <string name="widget_on_this_day_empty_title">Nothing from this day</string>
+    <string name="widget_on_this_day_empty_message">No photos to show from %1$s in earlier years. Screenshots, ID documents, and archived, sensitive or protected items stay off the home screen.</string>
+
+    <string name="widget_recent_label">Recent photos</string>
+    <string name="widget_recent_description">Your newest photos and videos.</string>
+    <string name="widget_recent_title">Recent</string>
+    <string name="widget_recent_small">Latest · %1$s</string>
+    <string name="widget_recent_empty_title">No photos to show</string>
+    <string name="widget_recent_empty_message">Your newest photos appear here once Fotoz has read your library. Screenshots, ID documents, and archived, sensitive or protected items stay off the home screen.</string>
+
+    <string name="widget_library_label">Library at a glance</string>
+    <string name="widget_library_description">How many photos, videos and favourites you have.</string>
+    <string name="widget_library_title">Your library</string>
+    <string name="widget_library_total_one">photo or video</string>
+    <string name="widget_library_total_other">photos and videos</string>
+    <string name="widget_library_photos">Photos</string>
+    <string name="widget_library_videos">Videos</string>
+    <string name="widget_library_favourites">Favourites</string>
+    <string name="widget_library_screenshots">Screenshots</string>
+    <string name="widget_library_albums">Albums</string>
+    <string name="widget_library_collections">Collections</string>
+    <string name="widget_library_footer">%1$s · Archived, sensitive and protected items aren\'t counted.</string>
+    <string name="widget_library_empty_title">No photos or videos to count</string>
+    <string name="widget_library_empty_message">Counts appear here once Fotoz has read your library. Archived, sensitive and protected items are never counted.</string>
+
+    <string name="widget_collections_label">Collections</string>
+    <string name="widget_collections_description">Your collections, each with a cover photo, the months it spans and its size. Names stay off the home screen.</string>
+    <string name="widget_collections_title">Collections</string>
+    <plurals name="widget_collection_count">
+        <item quantity="one">%1$s collection</item>
+        <item quantity="other">%1$s collections</item>
+    </plurals>
+    <string name="widget_collection_small">%1$s · %2$s</string>
+    <string name="widget_collection_undated">Collection</string>
+    <string name="widget_cd_collection">Collection of photos from %1$s, %2$s</string>
+    <string name="widget_cd_collection_undated">Collection, %1$s</string>
+    <string name="widget_collections_empty_title">No collections to show</string>
+    <string name="widget_collections_empty_message">Make a collection in Fotoz to see it here. Only photos that may appear on the home screen are used, so a collection with none stays off it.</string>
+
+    <string name="widget_indexing_label">Indexing</string>
+    <string name="widget_indexing_description">How much of your library is indexed on this phone, for People, Pets and text search and for video key moments.</string>
+    <string name="widget_indexing_title">Indexed on this phone</string>
+    <string name="widget_indexing_percent">%1$d%%</string>
+    <string name="widget_indexing_small_photos">of photos indexed</string>
+    <string name="widget_indexing_small_photos_done">✓ every photo indexed</string>
+    <string name="widget_indexing_small_videos">of videos scanned</string>
+    <string name="widget_indexing_small_videos_done">✓ every video scanned</string>
+    <string name="widget_indexing_photos">Photos · People, Pets, text</string>
+    <string name="widget_indexing_videos">Videos · key moments</string>
+    <string name="widget_indexing_of">%1$s of %2$s</string>
+    <string name="widget_indexing_complete">✓ %1$s</string>
+    <string name="widget_indexing_running">● Indexing now</string>
+    <string name="widget_indexing_reading">● Reading your library: %1$s of %2$s</string>
+    <string name="widget_indexing_waiting">◐ Held back, as of %2$s: %1$s</string>
+    <string name="widget_indexing_scheduled">○ Scheduled, waiting for Android to give it a turn</string>
+    <string name="widget_indexing_footer">Counts leave out archived, sensitive and protected items.</string>
+    <string name="widget_indexing_empty_title">Nothing to index yet</string>
+    <string name="widget_indexing_empty_message">Progress appears here once Fotoz has read your library. Archived, sensitive and protected items are never counted.</string>
+
+    <!-- Sample content for the widget picker's previews only; never drawn on a placed widget. -->
+    <string name="widget_sample_day" translatable="false">4 November · 12 items</string>
+    <string name="widget_sample_year1" translatable="false">2025</string>
+    <string name="widget_sample_year2" translatable="false">2023</string>
+    <string name="widget_sample_year3" translatable="false">2021</string>
+    <string name="widget_sample_year4" translatable="false">2019</string>
+    <string name="widget_sample_as_of" translatable="false">As of 09:41</string>
+    <string name="widget_sample_total" translatable="false">21,486 items</string>
+    <string name="widget_sample_photos" translatable="false">19,872</string>
+    <string name="widget_sample_videos" translatable="false">1,614</string>
+    <string name="widget_sample_favourites" translatable="false">214</string>
+    <string name="widget_sample_collections" translatable="false">7 collections</string>
+    <string name="widget_sample_collection1" translatable="false">Sep – Oct 2026</string>
+    <string name="widget_sample_collection1_count" translatable="false">48 items</string>
+    <string name="widget_sample_collection2" translatable="false">2024 – 2026</string>
+    <string name="widget_sample_collection2_count" translatable="false">126 items</string>
+    <string name="widget_sample_collection3" translatable="false">Aug 2025</string>
+    <string name="widget_sample_collection3_count" translatable="false">31 items</string>
+    <string name="widget_sample_photos_progress" translatable="false">18,200 of 21,000</string>
+    <string name="widget_sample_videos_progress" translatable="false">340 of 1,100</string>
 </resources>

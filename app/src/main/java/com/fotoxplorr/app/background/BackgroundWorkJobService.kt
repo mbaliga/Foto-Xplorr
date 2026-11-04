@@ -2,6 +2,8 @@ package com.fotoxplorr.app.background
 
 import android.app.job.JobParameters
 import android.app.job.JobService
+import android.util.Log
+import com.fotoxplorr.app.widget.FotozWidgets
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -9,6 +11,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The platform wakes THIS every time [BackgroundScheduler]'s coarse `JobInfo` constraints hold.
@@ -81,6 +84,19 @@ class BackgroundWorkJobService : JobService() {
                 }
             }
 
+            // The Indexing widget shows this pass's progress and its status. Drawn here, before
+            // jobFinished, while this job still keeps the process alive: once the job lets go the
+            // process may be frozen or killed, and with it anything queued in memory. Bounded so
+            // a slow draw never holds the job; if it runs out, a redraw job takes over.
+            try {
+                withTimeoutOrNull(WIDGET_REDRAW_BUDGET_MS) { FotozWidgets.updateAll(applicationContext) }
+                    ?: FotozWidgets.requestRefresh(applicationContext)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                Log.w("BackgroundWorkJobService", "could not redraw the home-screen widgets", t)
+            }
+
             // Not reached after onStopJob: the rethrow above ends this coroutine first, and the
             // platform has already been told (onStopJob's `true`) to reschedule this occurrence.
             ensureActive()
@@ -107,6 +123,10 @@ class BackgroundWorkJobService : JobService() {
             ),
         )
         return true // let the platform reschedule this occurrence.
+    }
+
+    private companion object {
+        const val WIDGET_REDRAW_BUDGET_MS = 30_000L
     }
 }
 

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Below API 31 a fixed radius; values-v31 uses the system's own widget radii. -->
+    <dimen name="widget_corner_radius">16dp</dimen>
+    <dimen name="widget_inner_radius">8dp</dimen>
+    <dimen name="widget_padding">12dp</dimen>
+    <dimen name="widget_tile_gap">2dp</dimen>
+</resources>

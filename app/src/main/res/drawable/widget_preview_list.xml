@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Picker preview below API 31 (API 31+ uses the matching widget_preview_* layout). A drawing of
+     the layout, not a photograph or real data. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="160dp"
+    android:viewportWidth="250"
+    android:viewportHeight="200">
+    <path android:fillColor="@color/widget_surface" android:pathData="M16,0h218a16,16 0,0 1,16 16v168a16,16 0,0 1,-16 16h-218a16,16 0,0 1,-16 -16v-168a16,16 0,0 1,16 -16z" />
+    <path android:fillColor="@color/widget_on_surface" android:pathData="M12,12h80v8h-80z" />
+    <path android:fillColor="@color/widget_surface_variant" android:pathData="M12,34h44v44h-44z" />
+    <path android:fillColor="@color/widget_on_surface" android:pathData="M66,44h110v8h-110z" />
+    <path android:fillColor="@color/widget_on_surface_muted" android:pathData="M66,60h60v6h-60z" />
+    <path android:fillColor="@color/widget_surface_variant" android:pathData="M12,86h44v44h-44z" />
+    <path android:fillColor="@color/widget_on_surface" android:pathData="M66,96h90v8h-90z" />
+    <path android:fillColor="@color/widget_on_surface_muted" android:pathData="M66,112h50v6h-50z" />
+    <path android:fillColor="@color/widget_surface_variant" android:pathData="M12,138h44v44h-44z" />
+    <path android:fillColor="@color/widget_on_surface" android:pathData="M66,148h120v8h-120z" />
+    <path android:fillColor="@color/widget_on_surface_muted" android:pathData="M66,164h56v6h-56z" />
+</vector>

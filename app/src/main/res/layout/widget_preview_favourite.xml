@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Picker preview (API 31+): sample content drawn without data. Nothing here is read from the library.
+  Lint: clipToOutline rounds picture corners from API 31 and is ignored below it, as intended;
+  where nested weights are allowed, they are the grid itself.
+-->
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@android:id/background"
+    tools:ignore="UnusedAttribute"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:clipToOutline="true">
+    <ImageView
+        android:id="@+id/widget_preview_img0"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@string/widget_cd_picture"
+        android:scaleType="centerCrop"
+        android:src="@drawable/widget_tile_placeholder" />
+    <TextView
+        android:id="@+id/widget_preview_cap0"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="@drawable/widget_scrim"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:paddingStart="8dp"
+        android:paddingTop="16dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="6dp"
+        android:textColor="@color/widget_on_photo"
+        android:textSize="12sp"
+        android:text="@string/widget_favourite_tag" />
+</FrameLayout>

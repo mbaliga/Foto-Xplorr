@@ -3,6 +3,7 @@ package com.fotoxplorr.app.organize
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Base64
+import com.fotoxplorr.app.widget.FotozWidgets
 import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -116,6 +117,7 @@ data class LibraryState(
  * code must go through [get] -- there are two call sites today, and both do.
  */
 class LibraryStore internal constructor(context: Context) {
+    private val appContext = context.applicationContext
     private val preferences = context.applicationContext
         .getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val state = MutableStateFlow(load())
@@ -138,6 +140,7 @@ class LibraryStore internal constructor(context: Context) {
             .putLong(collectionCreatedKey(collection.id), collection.createdAtMillis)
             .apply()
         refresh()
+        widgetsChanged()
         return collection
     }
 
@@ -147,6 +150,8 @@ class LibraryStore internal constructor(context: Context) {
         if (collectionId !in collectionIds()) return false
         preferences.edit().putString(collectionNameKey(collectionId), cleanName).apply()
         refresh()
+        // Names never reach the home screen, but the Collections widget keeps the app's order (by name).
+        widgetsChanged()
         return true
     }
 
@@ -159,6 +164,7 @@ class LibraryStore internal constructor(context: Context) {
             .remove(collectionCreatedKey(collectionId))
             .apply()
         refresh()
+        widgetsChanged()
     }
 
     @Synchronized
@@ -169,6 +175,7 @@ class LibraryStore internal constructor(context: Context) {
             .putStringSet(collectionMediaKey(collectionId), encodeIds(updated))
             .apply()
         refresh()
+        widgetsChanged()
     }
 
     @Synchronized
@@ -178,6 +185,7 @@ class LibraryStore internal constructor(context: Context) {
             .putStringSet(collectionMediaKey(collectionId), encodeIds(collectionMedia(collectionId) - ids))
             .apply()
         refresh()
+        widgetsChanged()
     }
 
     @Synchronized
@@ -204,6 +212,8 @@ class LibraryStore internal constructor(context: Context) {
         }
         editor.apply()
         refresh()
+        // Archiving takes photos off the home screen: urgent. Restoring them can wait its turn.
+        widgetsChanged(urgent = archived)
     }
 
     /**
@@ -738,10 +748,21 @@ class LibraryStore internal constructor(context: Context) {
         )
         editor.apply()
         refresh()
+        // A restored backup can archive photos and replace every collection at once.
+        widgetsChanged(urgent = true)
     }
 
     private fun refresh() {
         state.value = load()
+    }
+
+    /**
+     * Collections and archive state feed the home-screen widgets (docs/widgets.md); tags, captions
+     * and curation do not, so a bulk tag pass never redraws them. [urgent] for a write that takes a
+     * photo off the home screen (archiving it, restoring a backup).
+     */
+    private fun widgetsChanged(urgent: Boolean = false) {
+        FotozWidgets.requestRefresh(appContext, urgent)
     }
 
     private fun load(): LibraryState {
