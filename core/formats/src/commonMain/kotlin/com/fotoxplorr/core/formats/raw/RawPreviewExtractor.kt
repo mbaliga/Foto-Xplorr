@@ -206,7 +206,7 @@ object RawPreviewExtractor {
                     size = end - pos
                 }
                 if (size < header || size > end - pos) return
-                val type = String(CharArray(4) { h.u8(4 + it).toChar() })
+                val type = CharArray(4) { h.u8(4 + it).toChar() }.concatToString()
                 if (type.any { it.code < 0x20 || it.code > 0x7E }) return
                 val body = pos + header
                 val boxEnd = pos + size
