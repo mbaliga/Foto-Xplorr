@@ -45,13 +45,15 @@ done
 
 # The post-WP1 matrix: both flavors build, test and lint, and the offline flavor passes
 # its three enforcement gates — merged manifest, resolved runtime classpath, and the
-# targeted source scan. The gates are the offline claim; the rest is the build.
+# targeted source scan. The gates are the offline claim; the rest is the build. The device tests
+# (app/src/androidTest) cannot RUN here, but they are compiled, so a break in them shows up in CI.
 GRADLE_ARGS=(
   --no-daemon
   :app:testOfflineDebugUnitTest :app:lintOfflineDebug :app:assembleOfflineDebug
   :app:testConnectDebugUnitTest :app:lintConnectDebug :app:assembleConnectDebug
   :app:verifyOfflineManifest :app:verifyOfflineRuntimeClasspath :app:verifyOfflineSourceReferences
   :app:reportRuntimeLicences
+  :app:compileOfflineDebugAndroidTestKotlin :app:compileConnectDebugAndroidTestKotlin
 )
 
 ./gradlew "${GRADLE_ARGS[@]}"

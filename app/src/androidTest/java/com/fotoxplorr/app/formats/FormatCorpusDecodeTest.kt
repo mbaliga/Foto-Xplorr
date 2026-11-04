@@ -32,7 +32,7 @@ import org.junit.runner.RunWith
  *    for. Nothing is asserted about the outcome (some OEM builds decode a few); the result is only
  *    logged, so a surprise shows up in the test report without making the run fail.
  *
- * Not run anywhere yet: it compiles in the build (`:app:compileOfflineDebugAndroidTestKotlin`);
+ * Not run anywhere yet: it compiles in scripts/verify.sh (`:app:compileOfflineDebugAndroidTestKotlin`);
  * running it needs a device or emulator (`:app:connectedOfflineDebugAndroidTest`).
  */
 @RunWith(AndroidJUnit4::class)
@@ -68,7 +68,7 @@ class FormatCorpusDecodeTest {
     @Test
     fun snifferAgreesWithTheManifestOnDevice() {
         val wrong = rows.mapNotNull { r ->
-            val head = assets.open(r.file).use { it.readNBytes(FormatSniffer.REQUIRED_HEADER_BYTES) }
+            val head = assets.open(r.file).use { readHead(it, FormatSniffer.REQUIRED_HEADER_BYTES) }
             val got = FormatSniffer.sniff(head)?.formatId?.value ?: "none"
             if (got == r.sniff) null else "${r.file}: expected ${r.sniff}, got $got"
         }
@@ -109,6 +109,21 @@ class FormatCorpusDecodeTest {
             android.util.Log.i("FormatCorpus", "${r.file}: ${if (decoded.isFailure) "threw ${decoded.exceptionOrNull()}" else if (decoded.getOrNull() == null) "not decoded" else "decoded by this device"}")
         }
         assertNotNull(rows)
+    }
+
+    /**
+     * Up to [max] leading bytes. Not InputStream.readNBytes: Android only has it from API 33 and
+     * minSdk is 26, so on most supported devices it would throw NoSuchMethodError.
+     */
+    private fun readHead(input: java.io.InputStream, max: Int): ByteArray {
+        val buf = ByteArray(max)
+        var n = 0
+        while (n < max) {
+            val r = input.read(buf, n, max - n)
+            if (r < 0) break
+            n += r
+        }
+        return buf.copyOf(n)
     }
 
     private fun quadrantProblems(file: String, tl: Int, tr: Int, bl: Int, br: Int): List<String> {
