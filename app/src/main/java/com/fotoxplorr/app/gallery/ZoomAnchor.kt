@@ -118,12 +118,31 @@ internal class LayoutAnchor {
             previousMap != null -> MapIndexSpace(previousMap)
             else -> null
         }
-        val target = old?.let { carried(it, JustifiedIndexSpace(layout), firstVisible, assets) }
+        var target = old?.let { carried(it, JustifiedIndexSpace(layout), firstVisible, assets) }
+        if (target != null && previousRows != null && keptByKey(previousRows, layout, firstVisible, target, assets)) {
+            target = null
+        }
         justified = layout
         map = null
         sideways = false
         this.assets = assets
         return target
+    }
+
+    /**
+     * Whether the lazy grid already keeps the top row by itself: the row [target] of [new] is headed
+     * by the same photo as row [firstVisible] of [old] (so its `jrow:<id>` key is found) and is as
+     * tall, so the pixel offset into it still means the same place. A list refresh (MediaStore, a
+     * favourite, a photo arriving further down) rebuilds the rows but leaves the top one as it was;
+     * jumping there with requestScrollToItem would drop that offset and snap the row's top edge to
+     * the viewport top, mid-fling. A rung change alters the height and still jumps.
+     */
+    private fun keptByKey(old: JustifiedLayout, new: JustifiedLayout, firstVisible: Int, target: Int, newAssets: List<MediaAsset>): Boolean {
+        val oldAssets = assets ?: return false
+        if (old.rows == 0 || new.rows == 0 || firstVisible !in 0 until old.rows || target !in 0 until new.rows) return false
+        val oldHead = oldAssets.getOrNull(old.rowItems(firstVisible).first)?.id ?: return false
+        val newHead = newAssets.getOrNull(new.rowItems(target).first)?.id ?: return false
+        return oldHead == newHead && kotlin.math.abs(old.rowHeight(firstVisible) - new.rowHeight(target)) < 0.5f
     }
 
     /** The item of [new] showing the photo that item [firstVisible] of [old] showed. */

@@ -86,6 +86,26 @@ class JustifiedAnchorTest {
     }
 
     @Test
+    fun `the same rows rebuilt for an equal new list need no anchor`() {
+        val anchor = LayoutAnchor()
+        anchor.settleJustified(rows(3), assets, firstVisible = 0)
+        val refreshed = assets.toList()
+        val rebuilt = JustifiedLayout.build(refreshed.size, { refreshed[it].aspectRatio }, width, width / 3, 2f)
+        // The jrow key of the top row is found again at the same height: the lazy grid keeps the
+        // pixel offset into it, and a jump would snap the row's top edge to the viewport.
+        assertNull(anchor.settleJustified(rebuilt, refreshed, firstVisible = 1500))
+    }
+
+    @Test
+    fun `a change below the top row leaves the scroll to the lazy grid`() {
+        val anchor = LayoutAnchor()
+        anchor.settleJustified(rows(3), assets, firstVisible = 0)
+        val trimmed = assets.filterIndexed { i, _ -> i != 8000 }
+        val rebuilt = JustifiedLayout.build(trimmed.size, { trimmed[it].aspectRatio }, width, width / 3, 2f)
+        assertNull(anchor.settleJustified(rebuilt, trimmed, firstVisible = 1500))
+    }
+
+    @Test
     fun `a forgotten anchor does not carry rows`() {
         val anchor = LayoutAnchor()
         anchor.settleJustified(rows(3), assets, firstVisible = 0)
