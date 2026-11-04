@@ -5,6 +5,8 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -257,6 +259,31 @@ class CompositeSeamTest {
         assertTrue(MotionClipCache.becameProtected(before = false, now = true))
         assertTrue(!MotionClipCache.becameProtected(before = true, now = true))
         assertTrue(!MotionClipCache.becameProtected(before = false, now = false))
+    }
+
+    @Test
+    fun `coming back to the grid draws the last groups in its very first composition`() {
+        CompositeGroupsMemory.last = null
+        val burst = (1L..3L).map { asset(100 + it, "0000${it}IMG_0000${it}_BURST20240101101010123${if (it == 1L) "_COVER" else ""}.jpg", taken = 1_000L + it) }
+        val list = burst + asset(110, "IMG_1.jpg", taken = 90_000L)
+        val views = mutableListOf<CompositeView>()
+        var shown by androidx.compose.runtime.mutableStateOf(true)
+        compose.setContent {
+            if (shown) {
+                val view = rememberCompositeView(list, list, pairLive = true, groupBursts = true, expanded = emptySet())
+                androidx.compose.runtime.SideEffect { views += view }
+            }
+        }
+        compose.waitUntil(5_000) { views.lastOrNull()?.visible?.size == 2 }
+
+        shown = false
+        compose.waitForIdle()
+        views.clear()
+        shown = true
+        compose.waitForIdle()
+        // Not the ungrouped list first and the stack a pass later: the grid's scroll index counts
+        // the stacked list, so a first frame of four would land the restored position elsewhere.
+        assertEquals(listOf(MediaId(101), MediaId(110)), views.first().visible.map { it.id })
     }
 
     @Test
