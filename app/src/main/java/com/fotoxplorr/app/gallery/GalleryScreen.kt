@@ -1809,10 +1809,13 @@ private fun GalleryBrowser(
                     }
                     cullAssets?.let { photos ->
                         val sidecars = state.preferences.cullSidecars
-                        val cullStore = remember(photos, sidecars) { cullingStore(photos, sidecars) }
+                        val cullContext = LocalContext.current
+                        val cullSession = remember(photos, sidecars) {
+                            cullSession(photos, sidecars) { cullContext.contentResolver }
+                        }
                         CullingScreen(
                             assets = photos,
-                            store = cullStore,
+                            session = cullSession,
                             sidecars = sidecars,
                             blurredIds = lookBlurredIds,
                             onClose = ::closeLook,

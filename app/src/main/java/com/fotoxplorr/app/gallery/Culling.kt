@@ -42,39 +42,109 @@ class InMemoryAnnotationStore : AnnotationStore {
  */
 class SidecarAnnotationStore(
     private val service: SidecarService,
+    /**
+     * True when [id] certainly has no sidecar, known from a folder listing already held (no file
+     * read): the cull's first pass over thousands of photos then reads only the ones that have one.
+     */
+    private val absent: (Long) -> Boolean = { false },
     private val resolve: (Long) -> SidecarAsset?,
 ) : AnnotationStore {
+    /** What the most recent [put] got back from the service; null before any, or for an unknown id. */
+    @Volatile
+    var lastWrite: SidecarWriteResult? = null
+        private set
+
     override fun get(id: Long): SidecarAnnotations? {
+        if (absent(id)) return null
         val asset = resolve(id) ?: return null
         return (service.read(asset) as? SidecarReadResult.Found)?.annotations
     }
 
     override fun put(id: Long, annotations: SidecarAnnotations): Boolean {
-        val asset = resolve(id) ?: return false
-        return service.write(asset, annotations, explicitUserAction = true) is SidecarWriteResult.Written
+        val asset = resolve(id)
+        if (asset == null) {
+            lastWrite = null
+            return false
+        }
+        val result = service.write(asset, annotations, explicitUserAction = true)
+        lastWrite = result
+        return result is SidecarWriteResult.Written
     }
 }
 
 /**
  * In-memory first, durable second: keeps every value in memory so the cull keeps working even when
  * the sidecar refuses, and passes the write on. [durableCount] is what stuck, for an honest summary.
+ *
+ * The durable side is read at most once per id ([get] remembers a miss too), so walking the cull
+ * and counting it never goes back to the files. The pick and reject counts are kept as values
+ * change, so [summary] costs nothing per key press. Thread-safe: the first pass reads on one IO
+ * thread while key presses write on another; a value put by a key is never overwritten by a
+ * durable read that finished after it.
  */
 class WriteThroughAnnotationStore(private val durable: AnnotationStore) : AnnotationStore {
-    private val memory = InMemoryAnnotationStore()
+    private val lock = Any()
+    private val memory = HashMap<Long, SidecarAnnotations>()
+
+    /** Ids whose durable value has been read (or replaced by a put): never read again. */
+    private val settled = HashSet<Long>()
     private val kept = HashSet<Long>()
-    val durableCount: Int get() = kept.size
+    private var picks = 0
+    private var rejects = 0
+    val durableCount: Int get() = synchronized(lock) { kept.size }
+
+    /** How many ids have their durable value in memory (read, or known to have none). */
+    val settledCount: Int get() = synchronized(lock) { settled.size }
 
     /** Whether the most recent [put] reached the durable store (true before any put). */
     @Volatile
     var lastPutDurable: Boolean = true
         private set
-    override fun get(id: Long): SidecarAnnotations? = memory.get(id) ?: durable.get(id)
+
+    override fun get(id: Long): SidecarAnnotations? {
+        synchronized(lock) { if (id in settled) return memory[id] }
+        val read = durable.get(id)
+        synchronized(lock) {
+            if (settled.add(id) && read != null) remember(id, read)
+            return memory[id]
+        }
+    }
+
     override fun put(id: Long, annotations: SidecarAnnotations): Boolean {
-        memory.put(id, annotations)
+        synchronized(lock) {
+            settled.add(id)
+            remember(id, annotations)
+        }
         val ok = durable.put(id, annotations)
-        if (ok) kept.add(id) else kept.remove(id)
+        synchronized(lock) { if (ok) kept.add(id) else kept.remove(id) }
         lastPutDurable = ok
         return ok
+    }
+
+    /** Picks, rejects and the rest of [total] ids, from memory only (O(1)). */
+    internal fun summary(total: Int): CullSummary = synchronized(lock) {
+        CullSummary(picks, rejects, (total - picks - rejects).coerceAtLeast(0))
+    }
+
+    /**
+     * Forgets the durable reads that found nothing, so they are read again: after a folder grant
+     * the sidecars that were out of reach can now be seen. Values put by a key are kept.
+     */
+    fun rereadMisses() {
+        synchronized(lock) { settled.retainAll(memory.keys) }
+    }
+
+    private fun remember(id: Long, value: SidecarAnnotations) {
+        when (memory.put(id, value)?.flag) {
+            SidecarFlag.PICK -> picks--
+            SidecarFlag.REJECT -> rejects--
+            else -> Unit
+        }
+        when (value.flag) {
+            SidecarFlag.PICK -> picks++
+            SidecarFlag.REJECT -> rejects++
+            else -> Unit
+        }
     }
 }
 
@@ -118,6 +188,13 @@ internal data class CullState(
 
     val currentId: Long? get() = ids.getOrNull(index)
     val finished: Boolean get() = ids.isNotEmpty() && index >= ids.size
+
+    /**
+     * Folds [result] -- computed off the main thread from an EARLIER state -- into this, the
+     * latest one. What the user changed meanwhile without a write (the Auto/Stay toggle) is kept;
+     * the position and undo come from the write.
+     */
+    fun afterWrite(result: CullState): CullState = result.copy(autoAdvance = autoAdvance)
 }
 
 private fun CullState.move(delta: Int): CullState =
@@ -180,6 +257,9 @@ internal fun cullSummary(ids: List<Long>, store: AnnotationStore): CullSummary {
 
 internal object CullingCopy {
     const val HINT = "P picks, X rejects, 0 to 5 rate, 6 to 9 label."
+    const val NEEDS_FOLDER = "Choose the photos' folder to save ratings beside them."
+    const val CHOOSE_FOLDER = "Choose folder"
+    const val READING = "Reading saved ratings."
     const val DONE = "That was the last photo."
     const val NOT_SAVED = "Ratings are kept for now but could not be saved beside the photos."
     const val MEMORY_ONLY = "Ratings stay in memory and are gone when the app closes."

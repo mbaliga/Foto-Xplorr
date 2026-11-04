@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.gallery
 
-import android.os.Environment
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -52,6 +54,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -61,21 +64,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
-import com.fotoxplorr.app.metadata.DefaultSidecarService
-import com.fotoxplorr.app.metadata.FileSidecarDirectory
-import com.fotoxplorr.app.metadata.SidecarAsset
-import com.fotoxplorr.app.metadata.SidecarParent
-import com.fotoxplorr.core.formats.MediaFormat
 import com.fotoxplorr.core.metadata.SidecarAnnotations
 import com.fotoxplorr.core.metadata.SidecarFlag
-import com.fotoxplorr.core.metadata.SidecarPolicy
 import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /*
  * The Compose views of the look-without-opening family (hover, Quick Look, the preview pane) and
@@ -218,7 +215,10 @@ internal fun previewFacts(asset: MediaAsset): String {
     return listOfNotNull(dims, mb).joinToString("  ·  ")
 }
 
-/** Compare / survey over the chosen photos, full screen; Escape or the close button leaves. */
+/**
+ * Compare / survey over the chosen photos, full screen; Escape or the close button leaves. The
+ * arrow keys pan and + / - zoom the shared view, the keyboard's way to what a drag and a pinch do.
+ */
 @Composable
 internal fun SurveyScreen(
     assets: List<MediaAsset>,
@@ -227,6 +227,8 @@ internal fun SurveyScreen(
 ) {
     val byId = remember(assets) { assets.associateBy { it.id.value } }
     var set by remember(assets) { mutableStateOf(surveyFromSelection(assets.map { it.id.value })) }
+    var view by remember { mutableStateOf(SyncedView()) }
+    var cell by remember { mutableStateOf(1f to 1f) }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     Box(
@@ -238,7 +240,19 @@ internal fun SurveyScreen(
             .focusRequester(focus)
             .focusable()
             .onKeyEvent { e ->
-                if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) { onClose(); true } else false
+                if (e.type != KeyEventType.KeyDown) return@onKeyEvent false
+                val (w, h) = cell
+                view = when (e.key) {
+                    Key.Escape -> { onClose(); return@onKeyEvent true }
+                    Key.DirectionLeft -> view.stepPan(PanDirection.LEFT, w, h)
+                    Key.DirectionRight -> view.stepPan(PanDirection.RIGHT, w, h)
+                    Key.DirectionUp -> view.stepPan(PanDirection.UP, w, h)
+                    Key.DirectionDown -> view.stepPan(PanDirection.DOWN, w, h)
+                    Key.Equals, Key.Plus, Key.NumPadAdd -> view.stepZoom(true, w, h)
+                    Key.Minus, Key.NumPadSubtract -> view.stepZoom(false, w, h)
+                    else -> return@onKeyEvent false
+                }
+                true
             }
             .statusBarsPadding()
             .navigationBarsPadding(),
@@ -246,42 +260,13 @@ internal fun SurveyScreen(
         SurveyView(
             set = set,
             onDrop = { id -> set = set.remove(id) },
+            view = view,
+            onViewChange = { view = it },
+            onCellSize = { w, h -> if (cell != w to h) cell = w to h },
             tile = { id, mod -> byId[id]?.let { LookImage(it, it.id in blurredIds, mod) } },
         )
         LookButton(SurveyCopy.CLOSE, onClose) { Icon(Icons.Outlined.Close, null, tint = Color.White) }
     }
-}
-
-/** A durable side that keeps nothing: culling with sidecars off is memory only, and says so. */
-private object NoDurableStore : AnnotationStore {
-    override fun get(id: Long): SidecarAnnotations? = null
-    override fun put(id: Long, annotations: SidecarAnnotations): Boolean = false
-}
-
-/**
- * The store a cull writes to: memory always, plus the XMP sidecar beside the photo only when the
- * user turned that on in Settings. A sidecar is placed in the photo's own folder on the primary
- * volume; if the app may not write there (scoped storage, no grant) the write fails honestly and
- * the value stays in memory.
- */
-internal fun cullingStore(assets: List<MediaAsset>, sidecars: Boolean): WriteThroughAnnotationStore {
-    if (!sidecars) return WriteThroughAnnotationStore(NoDurableStore)
-    val byId = assets.associateBy { it.id.value }
-    val service = DefaultSidecarService(policy = { SidecarPolicy(writeEnabled = true) })
-    return WriteThroughAnnotationStore(
-        SidecarAnnotationStore(service) { id ->
-            val asset = byId[id] ?: return@SidecarAnnotationStore null
-            val parent = asset.relativePath?.let { rel ->
-                runCatching { SidecarParent.Directory(FileSidecarDirectory(File(Environment.getExternalStorageDirectory(), rel))) }
-                    .getOrNull()
-            } ?: SidecarParent.NoGrant
-            SidecarAsset(
-                fileName = asset.displayName,
-                source = SidecarPolicy.Source(isRaw = asset.format is MediaFormat.Raw, embedWritable = false),
-                parent = parent,
-            )
-        },
-    )
 }
 
 /** "★★★☆☆" -- stars as text so the rating is read, not only coloured. */
@@ -309,34 +294,66 @@ internal fun cullStatusText(a: SidecarAnnotations?): String {
 @Composable
 internal fun CullingScreen(
     assets: List<MediaAsset>,
-    store: WriteThroughAnnotationStore,
+    session: CullSession,
     sidecars: Boolean,
     blurredIds: Set<MediaId>,
     onClose: () -> Unit,
 ) {
+    val store = session.store
     val byId = remember(assets) { assets.associateBy { it.id.value } }
     var cull by remember(assets) { mutableStateOf(CullState(assets.map { it.id.value })) }
     var current by remember { mutableStateOf<SidecarAnnotations?>(null) }
     var version by remember { mutableIntStateOf(0) }
     var lastSaved by remember { mutableStateOf(true) }
-    var summary by remember { mutableStateOf(CullSummary(0, 0, assets.size)) }
+    var needsFolder by remember { mutableStateOf(false) }
+    // Bumped as the first pass reads the saved ratings in, and after a folder grant to read again.
+    var loadTick by remember { mutableIntStateOf(0) }
+    var reading by remember { mutableStateOf(sidecars) }
+    var grants by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     val mutex = remember { Mutex() }
     val focus = remember { FocusRequester() }
+    val context = LocalContext.current
+    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
+        if (tree != null && keepFolderGrant(context.contentResolver, tree)) {
+            session.onFolderGranted()
+            needsFolder = false
+            grants++
+        }
+    }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
-    LaunchedEffect(cull.currentId, version) {
+    // The saved ratings, read ONCE, off the main thread, a folder listing per folder; the HUD's
+    // counts then come from memory (store.summary), never from the files per key press.
+    LaunchedEffect(store, grants) {
+        if (!sidecars) return@LaunchedEffect
+        reading = true
+        withContext(Dispatchers.IO) {
+            cull.ids.forEachIndexed { i, id ->
+                ensureActive()
+                store.get(id)
+                if (i % 256 == 255) loadTick++
+            }
+        }
+        reading = false
+        loadTick++
+    }
+    LaunchedEffect(cull.currentId, version, loadTick) {
         val id = cull.currentId ?: return@LaunchedEffect
         current = withContext(Dispatchers.IO) { store.get(id) }
-        summary = withContext(Dispatchers.IO) { cullSummary(cull.ids, store) }
     }
+    val summary = remember(version, loadTick, cull.ids.size) { store.summary(cull.ids.size) }
 
     fun act(action: CullAction) {
         scope.launch {
             mutex.withLock {
                 val before = cull
                 val next = withContext(Dispatchers.IO) { before.apply(action, store) }
-                cull = next
-                if (action !is CullAction.Next && action !is CullAction.Previous) lastSaved = store.lastPutDurable
+                // Against the LATEST state: an Auto/Stay toggle made during the write is kept.
+                cull = cull.afterWrite(next)
+                if (action !is CullAction.Next && action !is CullAction.Previous) {
+                    lastSaved = store.lastPutDurable
+                    needsFolder = !lastSaved && session.needsFolderGrant()
+                }
                 version++
             }
         }
@@ -379,12 +396,20 @@ internal fun CullingScreen(
         Text(
             when {
                 !sidecars -> CullingCopy.MEMORY_ONLY
+                needsFolder -> CullingCopy.NEEDS_FOLDER
                 !lastSaved -> CullingCopy.NOT_SAVED
+                reading -> CullingCopy.READING
                 else -> CullingCopy.HINT
             },
             color = Color.White.copy(alpha = 0.6f),
             style = MaterialTheme.typography.labelSmall,
         )
+        if (needsFolder) {
+            TextButton(
+                onClick = { runCatching { folderPicker.launch(null) } },
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) { Text(CullingCopy.CHOOSE_FOLDER, color = Color.White) }
+        }
         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
             if (asset != null) LookImage(asset, asset.id in blurredIds, Modifier.fillMaxSize())
         }

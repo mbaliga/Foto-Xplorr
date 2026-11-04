@@ -86,6 +86,28 @@ internal fun SyncedView.transformed(
 internal fun SyncedView.stepZoom(zoomIn: Boolean, cellWidth: Float, cellHeight: Float): SyncedView =
     transformed(if (zoomIn) 1.5f else 1f / 1.5f, 0f, 0f, 0f, 0f, cellWidth, cellHeight)
 
+/** Which way a pan button or arrow key looks: LEFT shows more of the photos' left side. */
+internal enum class PanDirection { LEFT, RIGHT, UP, DOWN }
+
+/** The share of a cell one pan step moves the view. */
+internal const val PAN_STEP_OF_CELL = 0.25f
+
+/**
+ * The non-drag pan: one step of [PAN_STEP_OF_CELL] of the cell towards [direction], clamped like a
+ * drag. Looking left moves the photo right, so its left edge comes into the cell. Nothing moves at
+ * zoom 1.
+ */
+internal fun SyncedView.stepPan(direction: PanDirection, cellWidth: Float, cellHeight: Float): SyncedView {
+    val dx = cellWidth * PAN_STEP_OF_CELL
+    val dy = cellHeight * PAN_STEP_OF_CELL
+    return when (direction) {
+        PanDirection.LEFT -> transformed(1f, dx, 0f, 0f, 0f, cellWidth, cellHeight)
+        PanDirection.RIGHT -> transformed(1f, -dx, 0f, 0f, 0f, cellWidth, cellHeight)
+        PanDirection.UP -> transformed(1f, 0f, dy, 0f, 0f, cellWidth, cellHeight)
+        PanDirection.DOWN -> transformed(1f, 0f, -dy, 0f, 0f, cellWidth, cellHeight)
+    }
+}
+
 /** The photos in a survey, in order, capped at [SURVEY_MAX]. */
 internal data class SurveySet(val ids: List<Long> = emptyList()) {
     fun add(id: Long): SurveySet = if (id in ids || ids.size >= SURVEY_MAX) this else SurveySet(ids + id)
@@ -105,5 +127,9 @@ internal object SurveyCopy {
     const val ZOOM_OUT = "Zoom out on all photos."
     const val DROP = "Remove this photo from the comparison."
     const val CLOSE = "Leave the comparison."
+    const val PAN_LEFT = "Look further left in all photos."
+    const val PAN_RIGHT = "Look further right in all photos."
+    const val PAN_UP = "Look further up in all photos."
+    const val PAN_DOWN = "Look further down in all photos."
     const val ACTION = "See these photos side by side."
 }

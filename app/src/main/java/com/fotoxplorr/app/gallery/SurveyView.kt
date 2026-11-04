@@ -9,13 +9,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -28,20 +28,25 @@ import androidx.compose.foundation.layout.absoluteOffset
 /**
  * The compare / survey view: the photos of [set] in a shared-zoom grid. The photo itself is drawn
  * by [tile] (the caller's existing image slot), so this file has no image loading. Pinch and drag
- * move every cell together; the two buttons are the non-gesture path. Unverified on a device.
+ * move every cell together; the zoom buttons and the four 48 dp pan arrows are the non-gesture
+ * path (and the arrow keys, through [SurveyScreen]). [view] is hoisted so the keys reach it;
+ * [onCellSize] reports the cell for their steps. Unverified on a device.
  */
 @Composable
 internal fun SurveyView(
     set: SurveySet,
     onDrop: (Long) -> Unit,
+    view: SyncedView,
+    onViewChange: (SyncedView) -> Unit,
     modifier: Modifier = Modifier,
+    onCellSize: (width: Float, height: Float) -> Unit = { _, _ -> },
     tile: @Composable (id: Long, modifier: Modifier) -> Unit,
 ) {
     if (set.mode == SurveyMode.NONE) {
         Box(modifier.fillMaxSize(), Alignment.Center) { Text(SurveyCopy.NEED_TWO) }
         return
     }
-    var view by remember { mutableStateOf(SyncedView()) }
+    val latestView by rememberUpdatedState(view)
     BoxWithConstraints(modifier.fillMaxSize().clipToBounds()) {
         val density = LocalDensity.current
         val wPx = with(density) { maxWidth.toPx() }
@@ -49,14 +54,15 @@ internal fun SurveyView(
         val grid = surveyGrid(set.ids.size, wPx, hPx)
         val cellW = wPx / grid.columns
         val cellH = hPx / grid.rows
+        SideEffect { onCellSize(cellW, cellH) }
         Box(
             Modifier.fillMaxSize().pointerInput(grid) {
                 detectTransformGestures { centroid, pan, zoom, _ ->
-                    view = view.transformed(
+                    onViewChange(latestView.transformed(
                         zoom, pan.x, pan.y,
                         centroid.x % cellW - cellW / 2f, centroid.y % cellH - cellH / 2f,
                         cellW, cellH,
-                    )
+                    ))
                 }
             },
         ) {
@@ -86,14 +92,23 @@ internal fun SurveyView(
             }
         }
         Row(Modifier.align(Alignment.BottomCenter)) {
-            IconButton(
-                onClick = { view = view.stepZoom(false, cellW, cellH) },
-                modifier = Modifier.size(48.dp).semantics { contentDescription = SurveyCopy.ZOOM_OUT },
-            ) { Text("-") }
-            IconButton(
-                onClick = { view = view.stepZoom(true, cellW, cellH) },
-                modifier = Modifier.size(48.dp).semantics { contentDescription = SurveyCopy.ZOOM_IN },
-            ) { Text("+") }
+            SurveyButton(SurveyCopy.ZOOM_OUT, "-") { onViewChange(view.stepZoom(false, cellW, cellH)) }
+            SurveyButton(SurveyCopy.ZOOM_IN, "+") { onViewChange(view.stepZoom(true, cellW, cellH)) }
+            // Panning without a drag: the same shared view, a quarter cell per press.
+            val zoomed = view.zoom > 1f
+            SurveyButton(SurveyCopy.PAN_LEFT, "\u2190", zoomed) { onViewChange(view.stepPan(PanDirection.LEFT, cellW, cellH)) }
+            SurveyButton(SurveyCopy.PAN_UP, "\u2191", zoomed) { onViewChange(view.stepPan(PanDirection.UP, cellW, cellH)) }
+            SurveyButton(SurveyCopy.PAN_DOWN, "\u2193", zoomed) { onViewChange(view.stepPan(PanDirection.DOWN, cellW, cellH)) }
+            SurveyButton(SurveyCopy.PAN_RIGHT, "\u2192", zoomed) { onViewChange(view.stepPan(PanDirection.RIGHT, cellW, cellH)) }
         }
     }
+}
+
+@Composable
+private fun SurveyButton(description: String, glyph: String, enabled: Boolean = true, onClick: () -> Unit) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.size(48.dp).semantics { contentDescription = description },
+    ) { Text(glyph, color = Color.White) }
 }

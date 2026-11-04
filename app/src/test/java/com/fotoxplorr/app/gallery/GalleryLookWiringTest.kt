@@ -44,7 +44,7 @@ class GalleryLookWiringTest {
     @Test
     fun `with sidecars off the cull keeps values in memory and reports nothing durable`() {
         val photos = listOf(asset(1), asset(2))
-        val store = cullingStore(photos, sidecars = false)
+        val store = cullSession(photos, sidecars = false) { error("not asked for with sidecars off") }.store
         val s = CullState(photos.map { it.id.value }).apply(CullAction.Flag(SidecarFlag.PICK), store)
         assertEquals(SidecarFlag.PICK, store.get(1)?.flag)
         assertFalse(store.lastPutDurable)
