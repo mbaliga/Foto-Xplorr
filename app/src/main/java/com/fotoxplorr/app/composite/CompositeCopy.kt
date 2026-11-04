@@ -21,7 +21,11 @@ internal object CompositeCopy {
     const val STEREO_FAILED = "The 3D photo could not be opened."
     const val SPATIAL_ONLY = "This is a spatial photo; only one eye can be shown here."
 
-    const val GROUP_BURSTS = "Show each burst as one stack you can open."
+    const val GROUP_BURSTS = "Show each burst as one stack; Shift+Enter opens it."
+
+    /** The tile's right-click menu entries for a burst stack. */
+    const val MENU_OPEN_STACK = "Open stack"
+    const val MENU_CLOSE_STACK = "Close stack"
     const val PAIR_LIVE = "Show a Live Photo and its movie as one photo."
 
     fun stackCount(count: Int, expanded: Boolean): String =

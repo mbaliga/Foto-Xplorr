@@ -150,6 +150,7 @@ import kotlinx.coroutines.launch
 // at this call site, same as this file already does for `dev.aarso.cellshell`'s ParkStyle.
 import com.fotoxplorr.app.composite.MediaIdSetSaver
 import com.fotoxplorr.app.composite.rememberCompositeView
+import com.fotoxplorr.app.composite.stackOf
 import com.fotoxplorr.app.composite.toggledStack
 import com.fotoxplorr.app.adaptive.ChromeMotion
 import com.fotoxplorr.app.adaptive.GalleryShortcut
@@ -172,6 +173,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
@@ -1174,6 +1176,7 @@ private fun GalleryBrowser(
             MediaContextAction.MOVE_TO_TRASH -> actions.onMoveToTrash(listOf(asset))
             MediaContextAction.SHARE -> actions.onShare(listOf(asset))
             MediaContextAction.EDIT -> actions.onEditAsset(asset)
+            MediaContextAction.TOGGLE_STACK -> stackOf(compositeView.badges, asset.id)?.let { chromeBridge.onToggleStack(it) }
         }
     }
     // The Trash has no use for a held favourite, share or edit (restore and delete live there).
@@ -1240,6 +1243,10 @@ private fun GalleryBrowser(
                 val focused = ids.firstOrNull { it.id == chromeBridge.keyboardFocusedId } ?: ids.firstOrNull()
                 focused?.let { actions.onOpenAsset(it, ids) }
             }
+            // Shift+Enter: the keyboard's way into a burst at any tile size (the badge is a button
+            // only on a wide tile). The cover opens its stack; any frame of an open stack closes it.
+            GalleryShortcut.ToggleFocusedStack ->
+                stackOf(compositeView.badges, chromeBridge.keyboardFocusedId)?.let { chromeBridge.onToggleStack(it) }
             // Same priority order as BackHandler above: a room first, then a pane, then a
             // selection as the most specific thing to back out of, then search, then the
             // keyboard's own cursor.
@@ -1506,7 +1513,7 @@ private fun GalleryBrowser(
                                 Key.Minus, Key.NumPadSubtract -> GalleryShortcutKey.MINUS
                                 else -> null
                             } ?: return@onKeyEvent false
-                            val shortcut = galleryShortcutFor(shortcutKey, event.isCtrlPressed)
+                            val shortcut = galleryShortcutFor(shortcutKey, event.isCtrlPressed, event.isShiftPressed)
                                 ?: return@onKeyEvent false
                             // Not consumed over a pane, the map or a room, so a key the grid ignores there still
                             // reaches whatever else wants it.

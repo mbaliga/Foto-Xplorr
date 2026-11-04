@@ -124,6 +124,23 @@ class CompositeSeamTest {
     }
 
     @Test
+    fun `the badge on a mid tile takes keyboard focus but no touches`() {
+        var toggles = 0
+        val badge = StackBadge(MediaId(11), 4, expanded = false, members = emptyList())
+        compose.setContent {
+            Box(Modifier.size(56.dp)) { BurstBadge(badge, onToggle = { toggles++ }, modifier = Modifier.size(56.dp)) }
+        }
+        val node = compose.onNodeWithTag(burstBadgeTag(MediaId(11)))
+        assertTrue(SemanticsActions.OnClick !in node.fetchSemanticsNode().config)
+        node.performSemanticsAction(SemanticsActions.RequestFocus)
+        node.assertIsFocused()
+        node.performKeyInput { pressKey(Key.Enter) }
+        node.performKeyInput { pressKey(Key.Spacebar) }
+        compose.waitForIdle()
+        assertEquals(2, toggles)
+    }
+
+    @Test
     fun `the 3D view offers its modes as 48 dp choices and closes`() {
         val photo = fileAsset(4, "stereo.mpo", CompositeTestFiles.mpo(CompositeTestFiles.jpeg(-1), CompositeTestFiles.jpeg(-1)))
         val pair = CompositeProbe.facts(context, photo).stereo!!

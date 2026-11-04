@@ -207,5 +207,15 @@ internal val MediaIdSetSaver: Saver<Set<MediaId>, LongArray> = Saver(
     restore = { saved -> saved.mapTo(LinkedHashSet()) { MediaId(it) } },
 )
 
+/**
+ * The stack a keyboard cursor or a context menu on [id] acts on: the stack [id] represents, else
+ * the open stack [id] is a frame of (so Shift+Enter on any frame closes it); null for a lone photo.
+ */
+internal fun stackOf(badges: Map<MediaId, StackBadge<MediaId>>, id: MediaId?): MediaId? {
+    if (id == null) return null
+    if (id in badges) return id
+    return badges.values.firstOrNull { it.expanded && id in it.members }?.representative
+}
+
 /** The open stacks after the badge of [id] is pressed: open becomes closed and closed open. */
 internal fun toggledStack(expanded: Set<MediaId>, id: MediaId): Set<MediaId> = if (id in expanded) expanded - id else expanded + id

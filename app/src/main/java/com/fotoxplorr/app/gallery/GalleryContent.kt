@@ -36,6 +36,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.BurstMode
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Explore
@@ -46,6 +47,7 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.UnfoldLess
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -82,6 +84,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.style.TextOverflow
@@ -89,6 +92,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Dialog
 import com.fotoxplorr.app.composite.BurstBadge
+import com.fotoxplorr.app.composite.CompositeCopy
+import com.fotoxplorr.app.composite.stackOf
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.ui.RoomRow
 import com.fotoxplorr.app.ui.RoomStyle
@@ -121,6 +126,9 @@ internal val GRID_GUTTER = 4.dp
  */
 internal const val GRID_TILE_ASPECT = 144f / 160f
 
+/** Test tag of the "Open stack" / "Close stack" entry of a tile's right-click menu. */
+internal const val STACK_MENU_TAG = "tileMenuStack"
+
 /**
  * The pure-black canvas the mockups sit every grid on. Deliberately a literal black rather
  * than `colorScheme.background`: the mockups are black regardless of the theme's surface
@@ -135,7 +143,16 @@ val GRID_BACKGROUND: Color = Color.Black
  * there -- everything a multi-select action bar already covers (move, copy, tag, export) stays
  * reachable only through selecting, so this is not a second, incomplete copy of that surface.
  */
-enum class MediaContextAction { OPEN, TOGGLE_FAVORITE, MOVE_TO_TRASH, SHARE, EDIT }
+enum class MediaContextAction {
+    OPEN,
+    TOGGLE_FAVORITE,
+    MOVE_TO_TRASH,
+    SHARE,
+    EDIT,
+
+    /** Opens or closes the burst stack the tile is the cover (or an open frame) of. */
+    TOGGLE_STACK,
+}
 
 /**
  * Wires the grid's mouse- and pinch-driven chrome to whatever owns it, across a boundary a
@@ -676,6 +693,20 @@ internal fun MediaTile(
                         chromeBridge.onContextAction(asset, MediaContextAction.OPEN)
                     },
                 )
+                // The keyboard and mouse path into a burst at any tile size (the badge is only a
+                // button on a wide tile): the cover opens its stack, any frame of an open one closes it.
+                stackOf(chromeBridge.stackBadges, asset.id)?.let { stack ->
+                    val open = chromeBridge.stackBadges[stack]?.expanded == true
+                    DropdownMenuItem(
+                        text = { Text(if (open) CompositeCopy.MENU_CLOSE_STACK else CompositeCopy.MENU_OPEN_STACK) },
+                        leadingIcon = { Icon(if (open) Icons.Outlined.UnfoldLess else Icons.Outlined.BurstMode, null) },
+                        modifier = Modifier.testTag(STACK_MENU_TAG),
+                        onClick = {
+                            contextMenuVisible = false
+                            chromeBridge.onContextAction(asset, MediaContextAction.TOGGLE_STACK)
+                        },
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text(if (favorite) "Remove from favourites" else "Add to favourites") },
                     leadingIcon = {

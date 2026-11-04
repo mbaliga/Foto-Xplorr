@@ -104,7 +104,7 @@ object LongPressResolver {
                 MediaContextAction.TOGGLE_FAVORITE -> "Favourite"
                 MediaContextAction.SHARE -> "Share"
                 MediaContextAction.EDIT -> "Edit"
-                MediaContextAction.OPEN, MediaContextAction.MOVE_TO_TRASH -> return null
+                MediaContextAction.OPEN, MediaContextAction.MOVE_TO_TRASH, MediaContextAction.TOGGLE_STACK -> return null
             }
         }
         return LongClickSemantics(label, outcome)

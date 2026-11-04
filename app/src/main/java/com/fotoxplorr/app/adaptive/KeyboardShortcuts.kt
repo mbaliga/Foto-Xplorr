@@ -30,6 +30,9 @@ enum class MoveDirection { UP, DOWN, LEFT, RIGHT }
 sealed interface GalleryShortcut {
     data class MoveSelection(val direction: MoveDirection) : GalleryShortcut
     data object OpenFocused : GalleryShortcut
+
+    /** Shift and Enter: opens or closes the burst stack of the keyboard-focused tile, at any tile size. */
+    data object ToggleFocusedStack : GalleryShortcut
     data object CloseOrClear : GalleryShortcut
     data object TrashSelected : GalleryShortcut
     data object SelectAll : GalleryShortcut
@@ -47,8 +50,9 @@ sealed interface GalleryShortcut {
  * Escape backs out (of a selection, of search, of the open photo -- the call site decides which,
  * same as the existing `BackHandler`), Delete trashes the current selection, Ctrl+A selects
  * everything in view, and `/` jumps to search -- the six the owner asked for -- plus Ctrl with plus
- * or minus to zoom the grid a rung, in one place so a next one can be added here rather than
- * wherever the next call site happens to need one.
+ * or minus to zoom the grid a rung, and Shift+Enter to open or close the burst stack under the
+ * cursor (Enter alone still opens the photo), in one place so a next one can be added here rather
+ * than wherever the next call site happens to need one.
  *
  * Returns `null` for a key this table has no opinion about, rather than a default -- an unbound
  * key must fall through to whatever the OS or a text field would otherwise do with it (typing
@@ -57,9 +61,11 @@ sealed interface GalleryShortcut {
  *
  * [ctrlPressed] only changes the outcome for `A`, plus and minus (bare `A`, `+` and `-` are not
  * shortcuts -- they would fight typing into the search box) and is otherwise ignored: Ctrl+Enter and Enter open the same
- * thing, because there is nothing a modifier could sensibly change about "open".
+ * thing, because there is nothing a modifier could sensibly change about "open". [shiftPressed]
+ * only changes Enter: Shift+Enter is the keyboard's way into a burst stack, whose badge is too
+ * small to reach on a dense grid.
  */
-fun galleryShortcutFor(key: GalleryShortcutKey, ctrlPressed: Boolean): GalleryShortcut? = when {
+fun galleryShortcutFor(key: GalleryShortcutKey, ctrlPressed: Boolean, shiftPressed: Boolean = false): GalleryShortcut? = when {
     key == GalleryShortcutKey.LETTER_A && ctrlPressed -> GalleryShortcut.SelectAll
     key == GalleryShortcutKey.LETTER_A -> null
     key == GalleryShortcutKey.SLASH -> GalleryShortcut.FocusSearch
@@ -69,7 +75,7 @@ fun galleryShortcutFor(key: GalleryShortcutKey, ctrlPressed: Boolean): GallerySh
     key == GalleryShortcutKey.ARROW_DOWN -> GalleryShortcut.MoveSelection(MoveDirection.DOWN)
     key == GalleryShortcutKey.ARROW_LEFT -> GalleryShortcut.MoveSelection(MoveDirection.LEFT)
     key == GalleryShortcutKey.ARROW_RIGHT -> GalleryShortcut.MoveSelection(MoveDirection.RIGHT)
-    key == GalleryShortcutKey.ENTER -> GalleryShortcut.OpenFocused
+    key == GalleryShortcutKey.ENTER -> if (shiftPressed) GalleryShortcut.ToggleFocusedStack else GalleryShortcut.OpenFocused
     key == GalleryShortcutKey.ESCAPE -> GalleryShortcut.CloseOrClear
     key == GalleryShortcutKey.DELETE -> GalleryShortcut.TrashSelected
     else -> null
