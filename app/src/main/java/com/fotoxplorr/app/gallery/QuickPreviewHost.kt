@@ -5,6 +5,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
@@ -16,6 +17,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerType
 import kotlinx.coroutines.delay
+import android.os.SystemClock
 
 /**
  * The Android seam of [HoverPreview]: reports the tile a MOUSE pointer rests on. Touch never
@@ -27,16 +29,18 @@ internal fun Modifier.hoverPreview(
     id: Long,
     onShown: (Long?) -> Unit,
     onScrubX: ((x: Float, width: Float) -> Unit)? = null,
+    /** Monotonic, the same clock `delay` runs on; a wall clock can step and stall the wait. */
+    clock: () -> Long = SystemClock::uptimeMillis,
 ): Modifier {
     var state: HoverPreview by remember(id) { mutableStateOf(HoverPreview.Idle) }
-    val clock = remember { System::currentTimeMillis }
-    // The wait runs only while Pending; leaving or pressing resets the state and cancels it.
+    val currentOnShown by rememberUpdatedState(onShown)
+    // The wait runs only while Pending; leaving or pressing changes the state, which cancels it.
     val pending = state as? HoverPreview.Pending
     if (pending != null) {
         LaunchedEffect(pending) {
-            delay(state.remainingMs(clock()) ?: 0L)
-            state = state.onTick(clock())
-            onShown(state.shownId())
+            val shown = pending.awaitShown(clock) { delay(it) }
+            state = shown
+            currentOnShown(shown.shownId())
         }
     }
     return this.pointerInput(id) {

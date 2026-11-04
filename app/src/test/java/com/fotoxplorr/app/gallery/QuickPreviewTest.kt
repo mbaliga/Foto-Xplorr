@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import kotlinx.coroutines.runBlocking
 import org.junit.Test
 
 class QuickPreviewTest {
@@ -110,5 +111,27 @@ class QuickPreviewTest {
         assertEquals(5, previewPaneItem(40, 5, 10))
         assertNull(previewPaneItem(null, null, 10))
         assertNull(previewPaneItem(1, 1, 0))
+    }
+
+    @Test
+    fun `a sleep that wakes early re-waits instead of staying pending`() = runBlocking {
+        var t = 1000L
+        // the clock advances one ms less than asked: the drift that used to strand the preview
+        val shown = HoverPreview.Idle.onEnter(4, t).awaitShown({ t }) { ms -> t += (ms - 1).coerceAtLeast(1) }
+        assertEquals(4L, shown.shownId())
+        assertTrue(t >= 1400)
+    }
+
+    @Test
+    fun `a clock that does not move still ends, one ms at a time, once time passes`() = runBlocking {
+        var t = 0L
+        var sleeps = 0
+        val shown = HoverPreview.Idle.onEnter(1, 0).awaitShown({ t }) { ms -> sleeps++; if (sleeps > 3) t += ms }
+        assertEquals(1L, shown.shownId())
+    }
+
+    @Test
+    fun `awaitShown leaves a non-pending state alone`() = runBlocking {
+        assertEquals(HoverPreview.Idle, HoverPreview.Idle.awaitShown({ 0L }) { error("no sleep") })
     }
 }

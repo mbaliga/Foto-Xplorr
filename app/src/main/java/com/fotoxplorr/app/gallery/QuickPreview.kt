@@ -37,6 +37,21 @@ internal fun HoverPreview.onEnter(id: Long, nowMs: Long): HoverPreview = when {
 internal fun HoverPreview.onTick(nowMs: Long): HoverPreview =
     if (this is HoverPreview.Pending && nowMs - sinceMs >= HOVER_PREVIEW_DELAY_MS) HoverPreview.Showing(id) else this
 
+/**
+ * Waits out a [HoverPreview.Pending] on [now] and returns the state it settles in. Loops rather
+ * than sleeping once, so a sleep that wakes a millisecond early (or a clock that reads behind the
+ * sleep's own) re-waits the remainder instead of leaving the preview pending for good. Always
+ * sleeps at least 1 ms, so it cannot spin.
+ */
+internal suspend fun HoverPreview.awaitShown(now: () -> Long, sleep: suspend (Long) -> Unit): HoverPreview {
+    var s = this
+    while (s is HoverPreview.Pending) {
+        sleep((s.remainingMs(now()) ?: 0L).coerceAtLeast(1L))
+        s = s.onTick(now())
+    }
+    return s
+}
+
 /** The pointer left the tile, a press began, or the grid scrolled: all drop the preview. */
 internal fun HoverPreview.onDismiss(): HoverPreview = HoverPreview.Idle
 
