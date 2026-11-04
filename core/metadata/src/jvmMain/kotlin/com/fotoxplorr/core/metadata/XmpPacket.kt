@@ -72,7 +72,8 @@ class XmpPacket private constructor(private val document: Document) {
     }
 
     /** Replaces the whole property with a single "x-default" entry. Blank/null removes it. */
-    fun setLangAlt(namespaceUri: String, prefix: String, localName: String, value: String?) {
+    fun setLangAlt(namespaceUri: String, prefix: String, localName: String, text: String?) {
+        val value = text?.let(::xmlSafe)
         if (value.isNullOrBlank()) {
             removeProperty(namespaceUri, localName)
             return
@@ -129,7 +130,7 @@ class XmpPacket private constructor(private val document: Document) {
         containerLocalName: String,
         values: List<String>,
     ) {
-        val cleaned = values.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        val cleaned = values.map { xmlSafe(it).trim() }.filter { it.isNotEmpty() }.distinct()
         if (cleaned.isEmpty()) {
             removeProperty(namespaceUri, localName)
             return
@@ -175,7 +176,8 @@ class XmpPacket private constructor(private val document: Document) {
     }
 
     /** Writes the attribute-shorthand form and removes any element-form copy. Null or blank clears both. */
-    fun setStringValue(namespaceUri: String, prefix: String, localName: String, value: String?) {
+    fun setStringValue(namespaceUri: String, prefix: String, localName: String, text: String?) {
+        val value = text?.let(::xmlSafe)
         removeProperty(namespaceUri, localName)
         removeAttributeEverywhere(null, namespaceUri, localName)
         if (value.isNullOrBlank()) return
@@ -191,7 +193,8 @@ class XmpPacket private constructor(private val document: Document) {
      * an `rdf:Alt` at all (plain element text, attribute form) is replaced the [setLangAlt] way,
      * since there is no other-language content in it to keep.
      */
-    fun setLangAltDefault(namespaceUri: String, prefix: String, localName: String, value: String?) {
+    fun setLangAltDefault(namespaceUri: String, prefix: String, localName: String, text: String?) {
+        val value = text?.let(::xmlSafe)
         val property = findProperty(namespaceUri, localName)
         val alt = property?.let { firstChildElementNs(it, RDF_NS, "Alt") }
         if (property == null || alt == null) {
@@ -492,6 +495,31 @@ class XmpPacket private constructor(private val document: Document) {
         private const val XPACKET_END = "<?xpacket end=\"w\"?>"
 
         fun empty(): XmpPacket = XmpPacket(newDocument()).also { it.createDescription() }
+
+        /**
+         * [text] without the code points XML 1.0 cannot carry at all (C0 controls other than tab,
+         * LF and CR, lone surrogates, U+FFFE/U+FFFF). The serializer would write them as `&#1;`,
+         * which no XML 1.0 parser accepts, so one pasted control character would make the whole
+         * packet -- and every foreign field kept in it -- unreadable. Every text setter runs this.
+         */
+        fun xmlSafe(text: String): String {
+            if (text.all { it == '\t' || it == '\n' || it == '\r' || it in '\u0020'..'\uD7FF' || it in '\uE000'..'\uFFFD' }) {
+                return text
+            }
+            val out = StringBuilder(text.length)
+            var i = 0
+            while (i < text.length) {
+                val c = text[i]
+                if (Character.isHighSurrogate(c) && i + 1 < text.length && Character.isLowSurrogate(text[i + 1])) {
+                    out.append(c).append(text[i + 1])
+                    i += 2
+                    continue
+                }
+                if (c == '\t' || c == '\n' || c == '\r' || c in '\u0020'..'\uD7FF' || c in '\uE000'..'\uFFFD') out.append(c)
+                i++
+            }
+            return out.toString()
+        }
 
         /**
          * Parses an existing packet, or returns null if it cannot be understood as XML.

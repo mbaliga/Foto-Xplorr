@@ -159,9 +159,17 @@ object XmpAnnotationCodec {
     fun readBytes(bytes: ByteArray): SidecarAnnotations? = parse(bytes)?.let(::read)
 
     /**
-     * The new sidecar bytes: [existing] (null = no file yet) with [annotations] applied, merged
-     * with what [existing] already says by [SidecarAnnotations.merge]. Null when [existing] is
-     * present but unparseable -- the caller must then NOT write, or a foreign file is destroyed.
+     * The new sidecar bytes: [existing] (null = no file yet) with [annotations] applied over it.
+     * Null when [existing] is present but unparseable -- the caller must then NOT write, or a
+     * foreign file is destroyed.
+     *
+     * This is an explicit user edit, so every non-null field of [annotations] wins outright: it is
+     * NOT ordered against the file's `xmp:MetadataDate` by [SidecarAnnotations.merge] (an
+     * offset-less date read as UTC, or a desktop clock running ahead, would otherwise silently
+     * drop the user's tap while the write still reported success). Fields the user did not touch
+     * are left as the packet has them, and only the user's own [SidecarAnnotations.keywordPaths]
+     * are expanded into `dc:subject`: a rating tap never rewrites another tool's flat keyword list.
+     * [SidecarAnnotations.merge] stays for index-time reconciliation of two stored states.
      */
     fun update(
         existing: ByteArray?,
@@ -171,9 +179,7 @@ object XmpAnnotationCodec {
         removedPaths: Set<String> = emptySet(),
     ): ByteArray? {
         val packet = if (existing == null) XmpPacket.empty() else parse(existing) ?: return null
-        val merged = SidecarAnnotations.merge(annotations.copy(metadataDate = stamp), read(packet))
-        // merge's keyword union would resurrect removed ones; apply() handles the removal
-        apply(packet, merged, stamp, removedKeywords, removedPaths)
+        apply(packet, annotations, stamp, removedKeywords, removedPaths)
         return packet.serialize().toByteArray(Charsets.UTF_8)
     }
 

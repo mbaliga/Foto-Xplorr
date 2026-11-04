@@ -43,8 +43,14 @@ object XmpSidecarStore {
 
     private fun existingSidecar(originalFile: File, preferred: SidecarStyle?): File? {
         val directory = originalFile.parentFile ?: return null
-        val names = if (preferred == null) SidecarNaming.candidateSidecarFileNames(originalFile.name)
-        else SidecarNaming.candidateSidecarFileNames(originalFile.name, preferred)
+        // A JPEG never reads (or inherits on write) its RAW partner's extension-less sidecar.
+        val siblings = directory.list()?.toList() ?: emptyList()
+        val names = if (preferred != null) {
+            SidecarNaming.candidateSidecarFileNames(originalFile.name, preferred, siblings)
+        } else {
+            val safe = SidecarNaming.candidateSidecarFileNames(originalFile.name, SidecarStyle.DARKTABLE, siblings)
+            SidecarNaming.candidateSidecarFileNames(originalFile.name).filter { it in safe }
+        }
         return names.map { File(directory, it) }.firstOrNull { it.isFile }
     }
 
