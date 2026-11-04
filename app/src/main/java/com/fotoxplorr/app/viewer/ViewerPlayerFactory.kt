@@ -4,9 +4,11 @@ import android.content.Context
 import androidx.compose.runtime.RememberObserver
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
 
 /**
  * The one place a foreground video player is configured, shared by [VideoPlayer] and the video
@@ -45,7 +47,7 @@ internal fun buildViewerPlayer(context: Context): ExoPlayer =
  * observer's own can both run.
  */
 internal class ViewerPlayerHolder(context: Context) : RememberObserver {
-    val player: ExoPlayer = buildViewerPlayer(context)
+    val player: ExoPlayer = buildViewerPlayer(context).also { it.addListener(SeekResetOnResume(it)) }
     private var released = false
 
     fun release() {
@@ -57,4 +59,27 @@ internal class ViewerPlayerHolder(context: Context) : RememberObserver {
     override fun onRemembered() = Unit
     override fun onForgotten() = release()
     override fun onAbandoned() = release()
+}
+
+/**
+ * The seek mode outside frame stepping. NOTE: in media3 (1.9) [SeekParameters.DEFAULT] IS
+ * [SeekParameters.EXACT], so today ordinary seeks are exact too and the reset below changes nothing
+ * observable; it is kept, on the player itself, so that choosing a cheaper ordinary mode later
+ * (e.g. CLOSEST_SYNC for scrubbing, a product decision) cannot be undone by a frame step.
+ */
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
+internal val ORDINARY_SEEK: SeekParameters = SeekParameters.DEFAULT
+
+/**
+ * Puts [player] back on [ordinary] seeks whenever playback is asked to resume, by any path: the play
+ * button, Retry, a re-prepare. Frame stepping sets [SeekParameters.EXACT]; this is what drops it again.
+ */
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
+internal class SeekResetOnResume(
+    private val player: ExoPlayer,
+    private val ordinary: SeekParameters = ORDINARY_SEEK,
+) : Player.Listener {
+    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+        if (playWhenReady) runCatching { player.setSeekParameters(ordinary) }
+    }
 }

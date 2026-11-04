@@ -618,8 +618,9 @@ private fun ArmedVideoPlayer(
     }
 
     // Frame stepping (plan 2.9): pause, then seek EXACTLY to the neighbouring frame's time. The frame
-    // grid comes from the declared rate (FrameStep); seek-exact is dropped again when play resumes
-    // so ordinary scrubbing keeps its cheap sync-frame seeks.
+    // grid comes from the declared rate (FrameStep); seek-exact is dropped again whenever play resumes
+    // (SeekResetOnResume, on the player itself, so every resume path is covered) back to
+    // ORDINARY_SEEK -- which in media3 today is itself exact; see its KDoc.
     fun stepFrames(frames: Int) {
         if (player.currentTimeline.isEmpty) return
         if (player.playWhenReady) player.pause()
@@ -640,13 +641,16 @@ private fun ArmedVideoPlayer(
             player.playWhenReady = !player.playWhenReady
         } else {
             // Pause while buffering, re-prepare from idle, replay from the end: the library knows.
-            runCatching { player.setSeekParameters(SeekParameters.DEFAULT) }
+            runCatching { player.setSeekParameters(ORDINARY_SEEK) }
             Util.handlePlayPauseButtonAction(player)
         }
     }
 
     fun retryPlayback() {
         playbackFailure = null
+        // Also done by the holder's SeekResetOnResume on every resume; said here too because a
+        // Retry with play already requested raises no play-when-ready change.
+        runCatching { player.setSeekParameters(ORDINARY_SEEK) }
         player.playWhenReady = true
         loadRequest = LoadRequest(
             withSubtitles = !retriedWithoutSubtitles,

@@ -76,6 +76,12 @@ object FrameStep {
     /** A press shorter than this is one step; longer starts repeating. */
     const val HOLD_BEFORE_REPEAT_MS = 450L
 
+    /** How one wait of a held frame-step button ended. */
+    enum class HoldWait { RELEASED, CANCELLED, TIMED_OUT }
+
+    /** Only a wait that ran out with the finger still on the button steps again. */
+    fun holdRepeats(outcome: HoldWait): Boolean = outcome == HoldWait.TIMED_OUT
+
     object Copy {
         const val STEP_BACK = "Previous frame"
         const val STEP_FORWARD = "Next frame"

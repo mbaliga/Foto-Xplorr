@@ -62,9 +62,14 @@ internal fun FrameStepButton(
                     var held = 0L
                     while (true) {
                         val wait = FrameStep.repeatDelayMs(held)
-                        val up = withTimeoutOrNull(wait) { waitForUpOrCancellation() }
-                        if (up != null || !live) break
-                        // Timed out with the finger still down: this is a repeat.
+                        // Three outcomes, kept apart: waitForUpOrCancellation returns null at once
+                        // when the finger slides off the button or a parent takes the move, and
+                        // withTimeoutOrNull returns null on a timeout. Only the timeout is a repeat;
+                        // a slide-off cancels the hold without another step.
+                        val outcome = withTimeoutOrNull(wait) {
+                            if (waitForUpOrCancellation() != null) FrameStep.HoldWait.RELEASED else FrameStep.HoldWait.CANCELLED
+                        } ?: FrameStep.HoldWait.TIMED_OUT
+                        if (!FrameStep.holdRepeats(outcome) || !live) break
                         held += wait
                         step()
                     }
