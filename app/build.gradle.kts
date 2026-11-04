@@ -1,3 +1,4 @@
+import java.io.File
 import com.android.build.api.artifact.SingleArtifact
 import org.gradle.api.artifacts.result.ResolvedComponentResult
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
@@ -522,4 +523,86 @@ tasks.register("verifyOfflineManifest") {
 tasks.register("verifyOfflineRuntimeClasspath") {
     group = "verification"
     dependsOn(tasks.matching { it.name.startsWith("verifyOfflineRuntimeClasspathOffline") })
+}
+
+/**
+ * WP1.9 licence inventory: writes build/reports/licences/<flavor>.tsv, one line per component on the
+ * flavor's RESOLVED release runtime classpath (what ships): "group:name:version<TAB>licence names
+ * joined by ' | '" ("-" when no POM, nor any parent POM, declares one; "?" when the POM could not be fetched). Uses Gradle's own artifact
+ * resolution query for the POMs, so it adds no plugin and no dependency. scripts/verify-licences.sh
+ * applies the policy (fail on GPL/AGPL, warn on LGPL/CDDL/unknown) to these files; the policy lives
+ * in the script so that its --self-test can exercise it without Gradle. Resolves at execution time
+ * (the project does not use the configuration cache). Needs the repositories reachable the first
+ * time (a POM is a different artifact from the module metadata a normal build downloads, so
+ * `--offline` fails on a cold cache); after that the POMs are in Gradle's cache and the task takes seconds.
+ */
+tasks.register("reportRuntimeLicences") {
+    group = "verification"
+    description = "Writes the resolved runtime classpath's POM licences, per flavor, for scripts/verify-licences.sh."
+    val outDir = layout.buildDirectory.dir("reports/licences")
+    doLast {
+        fun pomLicences(file: File): Pair<List<String>, Triple<String, String, String>?> {
+            val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance().apply {
+                isNamespaceAware = false
+                setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+            }.newDocumentBuilder().parse(file)
+            val root = doc.documentElement
+            fun child(parent: org.w3c.dom.Element, tag: String) =
+                (0 until parent.childNodes.length).map { parent.childNodes.item(it) }
+                    .filterIsInstance<org.w3c.dom.Element>().filter { it.tagName == tag }
+            val names = child(root, "licenses").flatMap { child(it, "license") }
+                .mapNotNull { child(it, "name").firstOrNull()?.textContent?.trim()?.replace(Regex("\\s+"), " ") }
+                .filter { it.isNotEmpty() }
+            val parent = child(root, "parent").firstOrNull()?.let { p ->
+                fun t(tag: String) = child(p, tag).firstOrNull()?.textContent?.trim().orEmpty()
+                Triple(t("groupId"), t("artifactId"), t("version"))
+            }
+            return names to parent
+        }
+
+        fun pomFor(group: String, name: String, version: String): File? {
+            var failure: Throwable? = null
+            repeat(3) { attempt ->
+                if (attempt > 0) Thread.sleep(3000) // a repository hiccup (e.g. HTTP 429) is not a missing POM
+                val result = dependencies.createArtifactResolutionQuery()
+                    .forModule(group, name, version)
+                    .withArtifacts(
+                        org.gradle.maven.MavenModule::class.java,
+                        org.gradle.maven.MavenPomArtifact::class.java,
+                    )
+                    .execute()
+                val arts = result.resolvedComponents.firstOrNull()
+                    ?.getArtifacts(org.gradle.maven.MavenPomArtifact::class.java).orEmpty()
+                arts.filterIsInstance<org.gradle.api.artifacts.result.ResolvedArtifactResult>().firstOrNull()
+                    ?.let { return it.file }
+                failure = arts.filterIsInstance<org.gradle.api.artifacts.result.UnresolvedArtifactResult>().firstOrNull()?.failure
+            }
+            logger.lifecycle("reportRuntimeLicences: no POM for $group:$name:$version (${failure?.message ?: "not found"})")
+            return null
+        }
+
+        val cache = HashMap<String, List<String>>()
+        fun licencesOf(group: String, name: String, version: String, depth: Int = 0): List<String> =
+            cache.getOrPut("$group:$name:$version") {
+                val pom = runCatching { pomFor(group, name, version) }.getOrNull() ?: return@getOrPut listOf("?")
+                val (own, parent) = runCatching { pomLicences(pom) }.getOrDefault(emptyList<String>() to null)
+                if (own.isNotEmpty() || parent == null || depth >= 5 || parent.third.isEmpty()) own
+                else licencesOf(parent.first, parent.second, parent.third, depth + 1)
+            }
+
+        val out = outDir.get().asFile.also { it.mkdirs() }
+        for (flavor in listOf("offline", "connect")) {
+            val config = configurations.getByName("${flavor}ReleaseRuntimeClasspath")
+            val lines = config.incoming.resolutionResult.allComponents
+                .map { it.id }
+                .filterIsInstance<org.gradle.api.artifacts.component.ModuleComponentIdentifier>()
+                .sortedBy { "${it.group}:${it.module}:${it.version}" }
+                .map { id ->
+                    val names = licencesOf(id.group, id.module, id.version)
+                    "${id.group}:${id.module}:${id.version}\t${if (names.isEmpty()) "-" else names.joinToString(" | ")}"
+                }
+            File(out, "$flavor.tsv").writeText(lines.joinToString("\n") + "\n")
+            logger.lifecycle("reportRuntimeLicences: $flavor ${lines.size} components")
+        }
+    }
 }

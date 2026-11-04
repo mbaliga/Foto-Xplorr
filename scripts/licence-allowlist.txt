@@ -1,0 +1,16 @@
+# Components that scripts/verify-licences.sh would otherwise warn about. Format:
+#   <group>:<name>[:<version>] | <reason>      (a trailing * is a prefix match; '#' comments)
+# An entry here silences a WARNING only; it never excuses a GPL/AGPL failure. An entry that
+# matches nothing on either flavor's resolved classpath is reported as stale, so keep this list
+# honest: delete a line when its component leaves the build. Reviewed 2026-11-04.
+
+# ---- Proprietary Google terms (the POM names a vendor licence, not an open-source one) ----
+com.google.mlkit:* | POM licence is "ML Kit Terms of Service" (https://developers.google.com/ml-kit/terms): proprietary Google terms, not OSI. Accepted: they are the terms for the bundled face/label/text models (docs/MODEL_LICENSES.md); these terms permit use in an app, not separate redistribution.
+com.google.android.gms:play-services-mlkit-* | Same "ML Kit Terms of Service" POM licence. Pulled in as a dependency of the bundled com.google.mlkit artifacts (see their POMs); present on both flavors.
+com.google.android.gms:play-services-base:* | POM licence is "Android Software Development Kit License": proprietary Google terms. Transitive dependency of the bundled ML Kit artifacts.
+com.google.android.gms:play-services-basement:* | Same Android SDK licence; transitive dependency of the bundled ML Kit artifacts.
+com.google.android.gms:play-services-tasks:* | Same Android SDK licence; transitive dependency of the bundled ML Kit artifacts.
+com.google.android.odml:image:* | Same Android SDK licence (ODML image types); transitive dependency of the ML Kit vision-common / image-labeling-common artifacts.
+
+# ---- Dual licences where a permissive option is declared ----
+org.checkerframework:checker-compat-qual:2.5.3 | POM lists "GPL-2.0 with the classpath exception" AND "MIT". The MIT option is the one relied on; annotations only, no code of ours links GPL code. Arrives through guava 27.0.1-android (declared by the ML Kit and media3-common POMs); on both flavors.
