@@ -128,6 +128,11 @@ android {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
 
+    // WP1.8: the synthetic format corpus (testdata/formats, see docs/testdata-formats.md) ships as
+    // androidTest ASSETS only -- the instrumented FormatCorpusDecodeTest reads it there; the
+    // app APK never carries it. JVM tests read the same folder straight from disk.
+    sourceSets.getByName("androidTest").assets.srcDir("$rootDir/testdata/formats")
+
     lint {
         // Locale-dependent String.format is used throughout for EXIF/size readouts that are
         // numeric-only; the app has no translations, so this is noise rather than a defect.
