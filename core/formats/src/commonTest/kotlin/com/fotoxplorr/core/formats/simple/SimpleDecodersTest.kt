@@ -169,7 +169,7 @@ class SimpleDecodersTest {
         refused(MediaFormat.Psb, ByteArray(40))
     }
 
-    @Test fun `icns picks the largest PNG, legacy RLE elements work, jp2 only is refused`() {
+    @Test fun `icns picks the largest PNG and legacy RLE elements work and jp2 only is refused`() {
         // legacy: is32 16x16 with each plane one run of 16*16 as runs of 130 (k=255 -> 128 copies)
         fun plane(v: Int): ByteArray { // 256 pixels = 128 + 128
             return bytes(253, v, 253, v)
