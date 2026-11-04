@@ -1696,7 +1696,16 @@ Everything in the checklist. Above all:
 - **Library-rewriting work, until the owner has device-tested:** the WP1.3 catalogue cut-over; moving
   Favorite/Sensitive/Library/PrivateFolder; the WP1.5 SQL paging UI cut-over; the WP1.6 shred/audit log.
 - **Persistent rating and flag storage:** an owner data decision (memory, or sidecars by opt-in, until then).
-- **WP2.8 composite media (U11):** motion photos, Live Photo pairing, bursts, stereo. Not started this batch.
+- **WP2.8 composite media (U11): built after the rest of this batch** (b25e9bb, b730877, b3b638a, f16e2d0, ce3dea9,
+  df461b3, 85146df, 5fc9ccf, 6a5803f, 15d1bdf, d8420f9). Motion photos (Google Container, legacy MicroVideo, Samsung
+  SEF): a 48 dp play button (tap, hold, mouse hover), always silent, export still or clip as new files. Live Photo
+  pairing (ContentIdentifier, else same name within 2 s). Burst stacks (BurstUUID, _BURST/COVER and Samsung names, a
+  guarded time rule) with a count badge, keyboard and menu paths; "Group bursts" and "Pair Live Photos" switches in
+  Settings > Media (on; presentation only, nothing stored). Stereo MPO: side-by-side, cross-eye, red-cyan, wiggle (hidden
+  with animations off). About 90 new tests. One review round (10 problems, 1 high: selection acted on hidden frames),
+  a fix check, a follow-up round (4 more) and a final review (3 low), all fixed. Left: spatial HEIC shows one eye (needs
+  native HEIF item decode); HEIC motion XMP past 512 KB not found; selecting a collapsed stack selects its cover only; a
+  folder locked while the viewer is open clears its clip only when the viewer closes. Traps #150-#152.
 - **Struck by the owner:** sphere ambient audio and slideshow music.
 - **Native packs and new dependencies:** piex, LibRaw (WP2.4), JXL, AVIF backport, multi-page TIFF, EXR, JP2, JXR,
   DXT/BC, KTX and APNG playback.

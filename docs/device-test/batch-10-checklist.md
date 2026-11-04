@@ -214,5 +214,25 @@ Prepare:
 - [ ] **Owner's eye.** The redraw is compared side by side with your original artwork. (unverified)
 
 ## 16. CI
-- [ ] **Green run.** The PR's CI is green (`<CI>`) after these commits, including `core-native`, `lintOfflineDebug` and
+- [ ] **Green run.** The PR's CI is green after these commits, including `core-native`, `lintOfflineDebug` and
       the full unit suite for both flavors. (unverified)
+
+## 17. Composite media (WP2.8)
+- [ ] **Motion photos.** A Pixel motion photo (Container), an older MicroVideo file and a Samsung motion photo show the
+      play button; tap and hold play the clip with no sound, and music from another app keeps playing. (unverified)
+- [ ] **Export.** Export still / Export video create new files in Pictures/Fotoz and Movies/Fotoz; a HEIC still is
+      saved as .heic; Google Photos no longer shows the still as a motion photo; the original is unchanged; a sensitive
+      or locked photo offers no export. On Android 8 or 9 the files keep their extension after a media rescan. (unverified)
+- [ ] **Live Photos.** iPhone HEIC+MOV pairs show as one photo; the MOV is hidden in the grid and the button plays it
+      silently. (unverified)
+- [ ] **Bursts.** iPhone, Google and Samsung bursts collapse into one tile with a count badge; tap, Tab+Enter,
+      Shift+Enter, the right-click "Open stack" and TalkBack open and close it; a same-second WhatsApp batch stays as
+      separate tiles. (unverified)
+- [ ] **Selection.** In a folder with a collapsed burst, Select all checks only the visible tiles and Trash removes only
+      those. (unverified)
+- [ ] **Round trip.** Open a stack, open frame 5, press Back: same photo, same place, stack still open; a search
+      keystroke or a library refresh does not unstack iPhone bursts. (unverified)
+- [ ] **Stereo.** A real MPO (Fuji W3 or 3DS) opens in all four 3D modes; the anaglyph works with red-cyan glasses;
+      wiggle is hidden with Remove animations on; a spatial HEIC shows the "only one eye" line. (unverified)
+- [ ] **Cost.** The first identifier scan of a 20k HEIC library: time, and no rescan or regroup flicker afterwards;
+      cacheDir/motion-clips is empty after closing the viewer. (unverified)

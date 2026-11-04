@@ -2135,3 +2135,39 @@ artboard; it is a redraw, not the owner's own SVG). Light and dark are one drawi
 system dark theme. The monochrome layer is the Android 13+ themed icon; the art is scaled by 0.66 about the centre so
 it stays inside the 66 dp safe circle every launcher mask keeps.
 minSdk 26 means no PNG fallback. When the owner sends the exact SVG, replace the shape list and re-run the script.
+
+## 150. Composite media is a view: select, count and act on what the grid draws
+
+Bursts and Live Photo pairs (WP2.8) are computed on the fly from the list the view draws
+(`scrubberAssets = rememberCompositeView(viewAssets).visible` in `gallery/GalleryScreen.kt`) and are never stored. Every
+selection path (`selectedAssets`, `currentIds`, `retainAvailable`, Select all, Ctrl+A) must walk that stacked list,
+never `currentAssets`: otherwise "Select all" then Trash removes collapsed burst frames and hidden Live Photo movies the
+user cannot see (the one high finding of the WP2.8 review). Groups must not restart empty when the gallery re-enters
+composition after the viewer: start from `CompositeGroupsMemory`, keep `expandedStacks` `rememberSaveable`, and seed
+Apple identifiers from `AppleIdentifierMemory` (keyed by id, size and date modified, misses cached too) so a 20k HEIC
+library is read once per process, not on every search keystroke. The burst time rule skips a taken time that equals the
+scanner's `dateModified*1000` stand-in (`takenIsCaptureTime`) and needs frame numbers 1-2 apart, or a WhatsApp batch
+written in one second collapses into a "burst". Collapsed stacks open by tap (64 dp tiles and up), Tab+Enter on the
+badge (48-63 dp), Shift+Enter or the right-click menu (any size) and the TalkBack action.
+
+## 151. Motion clips: trust only an ftyp range, play silent, export by the bytes
+
+`core/formats/.../composite/MotionPhoto.kt` accepts a clip range only when it lies inside the file AND starts with an
+`ftyp` box: re-saved JPEGs keep stale `Item:Length` values. Container offsets count back from the end of the file.
+`SilentClip` must stay silent: volume 0, audio track type disabled, no audio focus; never reuse the viewer's player
+builder, which takes focus and pauses the user's music. An exported still is the primary's bytes with the
+MotionPhoto/MicroVideo flags flipped 1 to 0 in place (the whole 512 KB head is patched first), typed by its own first
+bytes (JPEG or HEIC/HEIF), always a NEW MediaStore row. Before Android 10 there is no RELATIVE_PATH: set `DATA` to
+`Pictures/Fotoz` or `Movies/Fotoz` with a name reserved by `createNewFile()` so two exports cannot share a path.
+Copied clips live in `cacheDir/motion-clips` for one viewer session only: cleared off the main thread on close, on
+sensitive/trash, and at the first copy in each process; a play after a clear checks the file and copies again. Box
+readers compare u32 sizes as Long (`size > b.size - pos`), never `pos + size.toInt()`.
+
+## 152. Two CI lessons from WP2.8: drain the paused looper, one Gradle at a time
+
+A Robolectric Compose test that waits with a bare `compose.waitUntil` can fail with
+`CalledFromWrongThreadException` under full-suite load: Robolectric's main looper is paused, so background work lands
+at an arbitrary point. Wait with `compose.waitUntil { shadowOf(Looper.getMainLooper()).idle(); condition() }`, as
+every other screen test here does (`CompositeSeamTest` failed once in CI without it). And never run two Gradle builds
+on this machine at once (an isolated worktree is no exception): the local gate's daemon was killed mid-test while a
+worktree build ran beside it. Always go through `flock /tmp/gradle.lock`.
