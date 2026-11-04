@@ -119,7 +119,16 @@ internal fun BoxScope.CompositeViewerLayer(
 
     // The clip file is made only once someone asks to play: paging through motion photos copies nothing.
     LaunchedEffect(play.playing, asset.id) {
-        if (!play.playing || clipUri != null) return@LaunchedEffect
+        // A copied clip may have been cleared since (the photo was marked sensitive or trashed, or the
+        // viewer closed): never hand the player a file that is gone, copy again instead.
+        if (!play.playing) return@LaunchedEffect
+        val cached = clipUri
+        if (cached != null) {
+            val gone = cached.scheme == "file" &&
+                withContext(Dispatchers.IO) { cached.path?.let { java.io.File(it).isFile } != true }
+            if (!gone) return@LaunchedEffect
+            clipUri = null
+        }
         clipUri = when {
             liveMovie != null -> liveMovie.contentUri
             motion != null -> withContext(Dispatchers.IO) { MotionClipCache.clipFile(context, asset, motion) }?.let(Uri::fromFile)

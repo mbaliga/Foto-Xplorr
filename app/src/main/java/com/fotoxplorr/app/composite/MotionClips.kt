@@ -193,7 +193,11 @@ internal class CompositeExporter(context: Context) {
                 putLegacyPath(this, legacyFile)
             }
         }
-        val uri = runCatching { resolver.insert(collection, values) }.getOrNull() ?: return@withContext CompositeExportResult.Failed
+        val uri = runCatching { resolver.insert(collection, values) }.getOrNull()
+        if (uri == null) {
+            legacyFile?.let { reserved -> runCatching { if (reserved.length() == 0L) reserved.delete() } }
+            return@withContext CompositeExportResult.Failed
+        }
         try {
             val copied = resolver.openOutputStream(uri)?.use { out ->
                 // A clip streams through untouched; a still's head goes out with its flags off.
@@ -232,7 +236,9 @@ internal class CompositeExporter(context: Context) {
             val root = Environment.getExternalStoragePublicDirectory(if (video) Environment.DIRECTORY_MOVIES else Environment.DIRECTORY_PICTURES)
             val directory = File(root, "Fotoz")
             if (!directory.isDirectory && !directory.mkdirs()) return null
-            return uniqueFile(directory, name)
+            // The name is reserved by creating the empty file, so two exports at once can never pick
+            // the same path and write over each other; the caller deletes it if the insert fails.
+            return uniqueFile(directory, name) { candidate -> !runCatching { candidate.createNewFile() }.getOrDefault(false) }
         }
 
         /** The DATA column is deprecated from Android 10 on, where this is never called. */

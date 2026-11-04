@@ -94,7 +94,9 @@ internal fun BurstBadge(badge: StackBadge<MediaId>, onToggle: () -> Unit, modifi
                     .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(8.dp))
                     .then(
                         when {
-                            focused -> Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                            // Only the keyboard-only badge tracks focus: a zoom that makes it tappable
+                            // drops onFocusChanged without a last "lost" call, so the flag can be stale.
+                            keyOnly && focused -> Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
                             badge.expanded -> Modifier.border(1.5.dp, Color.White, RoundedCornerShape(8.dp))
                             else -> Modifier
                         },
