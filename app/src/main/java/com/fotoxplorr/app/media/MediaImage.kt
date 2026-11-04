@@ -18,6 +18,7 @@ import coil3.request.ImageRequest
 import com.fotoxplorr.core.formats.LoadResult
 import com.fotoxplorr.core.formats.SizeHint
 import com.fotoxplorr.core.formats.TileState
+import com.fotoxplorr.core.formats.simple.SimpleFormatDecoders
 import com.fotoxplorr.core.formats.tileState
 
 /**
@@ -63,7 +64,7 @@ fun MediaImage(
     // The decoder is attached PER REQUEST rather than registered on the shared ImageLoader, which
     // is what makes "loop animations" a real setting: a decoder registered globally would animate
     // everything everywhere with no way to opt a surface out.
-    val request = remember(asset.contentUriString, asset.dateModifiedSeconds, animate) {
+    val request = remember(asset.contentUriString, asset.dateModifiedSeconds, animate, format) {
         ImageRequest.Builder(context)
             .data(asset.contentUri)
             // Without this, Coil's default memory-cache key is the Uri alone -- so a successful
@@ -73,7 +74,10 @@ fun MediaImage(
             // exactly the signal Coil needs to treat this as a different image to cache.
             .memoryCacheKey(mediaImageCacheKey(asset.contentUriString, asset.dateModifiedSeconds))
             .apply {
-                if (animate) {
+                // Pure-Kotlin decoders for TGA, TIFF, PSD... (never animated, so they win over `animate`).
+                if (SimpleFormatDecoders.supports(format)) {
+                    decoderFactory(SimpleCoilDecoder.Factory(format))
+                } else if (animate) {
                     // ImageDecoder-backed on API 28+, which handles animated WebP and HEIF as
                     // well; the older GifDecoder is GIF-only but works back to this app's minSdk.
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {

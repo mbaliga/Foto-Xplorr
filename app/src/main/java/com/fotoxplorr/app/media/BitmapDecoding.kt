@@ -65,6 +65,7 @@ suspend fun decodeUpright(context: Context, uri: Uri, limits: DecodeLimits): Dec
         }
         decodeRawEmbeddedPreview(context, uri, limits)
             ?: decodeWithBitmapFactory(context, uri, limits, orientation)
+            ?: SimpleFormatReader.decode(context, uri, limits)
     }
 
 /**

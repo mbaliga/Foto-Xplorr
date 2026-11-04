@@ -61,7 +61,7 @@ class PlatformDecoderProvider(
 
         // No decoder planned (PSB, XCF, ICNS, PCX) or not built yet (ORA, KRA unzip).
         MediaFormat.Psb, MediaFormat.Xcf, MediaFormat.Icns, MediaFormat.Pcx, MediaFormat.Ora,
-        MediaFormat.Kra -> DecoderVerdict.NotDecodable(FormatCopy.NO_DECODER)
+        MediaFormat.Kra, MediaFormat.Tga -> DecoderVerdict.NotDecodable(FormatCopy.NO_DECODER)
     }
 
     private fun gated(format: MediaFormat, canonicalMime: String?, minApi: Int, release: String): DecoderVerdict {

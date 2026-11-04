@@ -76,14 +76,15 @@ class FormatPlaceholderTest {
     }
 
     @Test
-    fun `an unknown type is sniffed from its first bytes and becomes a tiff placeholder`() {
+    fun `an unknown type is sniffed from its first bytes and becomes an exr placeholder`() {
         val uri = "content://fake/mystery"
-        val tiff = byteArrayOf(0x49, 0x49, 0x2A, 0x00) + ByteArray(60)
+        // EXR: TIFF is decodable now (core/formats/simple), so it no longer ends as a placeholder.
+        val tiff = byteArrayOf(0x76, 0x2F, 0x31, 0x01) + ByteArray(60)
         shadowOf(ApplicationProvider.getApplicationContext<android.app.Application>().contentResolver)
             .registerInputStream(Uri.parse(uri), ByteArrayInputStream(tiff))
         compose.setContent { MediaImage(asset("mystery", "application/octet-stream", uri), Modifier.size(200.dp)) }
-        compose.waitUntil(5_000) { compose.onAllNodesWithText("TIFF").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithContentDescription("TIFF image, can't be shown here.").assertIsDisplayed()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("EXR").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("EXR image, can't be shown here.").assertIsDisplayed()
     }
 
     @Test
