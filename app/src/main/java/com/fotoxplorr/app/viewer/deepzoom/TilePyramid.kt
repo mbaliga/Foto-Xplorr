@@ -27,7 +27,7 @@ data class SourceRect(val left: Int, val top: Int, val right: Int, val bottom: I
 object TilePyramid {
     const val TILE_PX = 512
 
-    /** More than this many tiles for one window means the level is wrong or the window nonsense. */
+    /** The most MARGIN tiles are added to the visible ones (visible tiles are never dropped). */
     const val MAX_TILES_PER_VIEW = 48
 
     /**
@@ -82,14 +82,26 @@ object TilePyramid {
         val r1 = min(rows - 1, floor((y1 - 0.001f) / span).toInt() + marginTiles)
         val cx = (x0 + x1) / 2f / span
         val cy = (y0 + y1) / 2f / span
-        val out = ArrayList<TileKey>()
-        for (r in r0..r1) for (c in c0..c1) out += TileKey(sample, c, r)
-        out.sortBy { k ->
+        val vc0 = max(0, floor(x0 / span).toInt())
+        val vc1 = min(cols - 1, floor((x1 - 0.001f) / span).toInt())
+        val vr0 = max(0, floor(y0 / span).toInt())
+        val vr1 = min(rows - 1, floor((y1 - 0.001f) / span).toInt())
+        fun dist(k: TileKey): Float {
             val dx = k.col + 0.5f - cx
             val dy = k.row + 0.5f - cy
-            dx * dx + dy * dy
+            return dx * dx + dy * dy
         }
-        return if (out.size > MAX_TILES_PER_VIEW) out.subList(0, MAX_TILES_PER_VIEW).toList() else out
+        val visible = ArrayList<TileKey>()
+        val margin = ArrayList<TileKey>()
+        for (r in r0..r1) for (c in c0..c1) {
+            val k = TileKey(sample, c, r)
+            if (c in vc0..vc1 && r in vr0..vr1) visible += k else margin += k
+        }
+        // Every visible tile is kept, nearest the centre first; only the margin ring is capped.
+        visible.sortBy(::dist)
+        margin.sortBy(::dist)
+        val room = (MAX_TILES_PER_VIEW - visible.size).coerceAtLeast(0)
+        return visible + margin.take(room)
     }
 
     /** The deepest level worth having: past this one tile already covers the whole image. */

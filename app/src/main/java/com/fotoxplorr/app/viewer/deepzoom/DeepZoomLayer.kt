@@ -23,6 +23,7 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.viewer.ZoomViewport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.isActive
@@ -51,7 +52,7 @@ internal fun DeepZoomLayer(
     offsetY: () -> Float,
     modifier: Modifier = Modifier,
 ) {
-    if (!enabled || containerSize.width <= 0 || containerSize.height <= 0) return
+    if (containerSize.width <= 0 || containerSize.height <= 0) return
     val context = LocalContext.current
     var decoder by remember(asset.contentUriString, asset.dateModifiedSeconds) { mutableStateOf<RegionTileDecoder?>(null) }
     val cache = remember(asset.contentUriString, asset.dateModifiedSeconds) {
@@ -65,14 +66,22 @@ internal fun DeepZoomLayer(
             cache.clear()
         }
     }
-    LaunchedEffect(asset.contentUriString, asset.dateModifiedSeconds) {
-        decoder = withContext(Dispatchers.IO) {
+    // Once the layer has been wanted it keeps its decoder and tiles while merely disabled (a pinch's
+    // rotation noise), so re-enabling costs nothing; it only opens the file the first time it is wanted.
+    var wanted by remember(asset.contentUriString, asset.dateModifiedSeconds) { mutableStateOf(false) }
+    if (enabled) wanted = true
+    LaunchedEffect(asset.contentUriString, asset.dateModifiedSeconds, wanted) {
+        if (!wanted || decoder != null) return@LaunchedEffect
+        // NonCancellable: an open that finishes after this effect was cancelled must still be closed,
+        // not thrown away with its file descriptor and native decoder.
+        val opened = withContext(NonCancellable + Dispatchers.IO) {
             RegionTileDecoder.open(context, android.net.Uri.parse(asset.contentUriString))
         }
+        if (isActive) decoder = opened else opened?.close()
     }
 
     val d = decoder
-    if (d != null) {
+    if (d != null && enabled) {
         val oneToOne = DeepZoomPolicy.oneToOneScale(
             d.width, d.height, containerSize.width.toFloat(), containerSize.height.toFloat(),
         )

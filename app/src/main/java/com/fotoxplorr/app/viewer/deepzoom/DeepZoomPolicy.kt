@@ -52,6 +52,13 @@ object DeepZoomPolicy {
             else -> SMALL_PHOTO_TAP_SCALE
         }
 
+    /** [maxScale] when tiles run, else the old ceiling (a picture the tiles cannot sharpen gains nothing past it). */
+    fun maxScaleFor(tilesOn: Boolean, srcW: Int, srcH: Int, containerW: Float, containerH: Float): Float =
+        if (tilesOn) maxScale(srcW, srcH, containerW, containerH) else BASE_MAX_SCALE
+
+    /** The 1:1 the double-tap may use: [oneToOne] when tiles run, else 1 (so the fixed small-photo zoom applies). */
+    fun oneToOneFor(tilesOn: Boolean, oneToOne: Float): Float = if (tilesOn) oneToOne else 1f
+
     /** Whether this file's format can be read by region at all. */
     fun regionDecodable(mimeType: String?): Boolean = mimeType?.lowercase() in REGION_MIME
 

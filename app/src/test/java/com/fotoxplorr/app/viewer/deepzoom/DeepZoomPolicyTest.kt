@@ -68,4 +68,13 @@ class DeepZoomPolicyTest {
         assertEquals(2, TilePyramid.sampleFor(DeepZoomPolicy.pixelsPerSourcePx(s / 2f, oneToOne)))
         assertEquals(8, TilePyramid.sampleFor(DeepZoomPolicy.pixelsPerSourcePx(s / 8f, oneToOne)))
     }
+
+    @Test
+    fun `without tiles the old ceiling and the fixed double tap zoom apply`() {
+        assertEquals(6f, DeepZoomPolicy.maxScaleFor(false, 11_550, 8_660, 1080f, 2400f), 0f)
+        assertEquals(DeepZoomPolicy.maxScale(11_550, 8_660, 1080f, 2400f), DeepZoomPolicy.maxScaleFor(true, 11_550, 8_660, 1080f, 2400f), 0f)
+        assertEquals(1f, DeepZoomPolicy.oneToOneFor(false, oneToOne), 0f)
+        assertEquals(2.5f, DeepZoomPolicy.doubleTapTarget(1f, false, DeepZoomPolicy.oneToOneFor(false, oneToOne)), 0f)
+        assertEquals(oneToOne, DeepZoomPolicy.oneToOneFor(true, oneToOne), 0f)
+    }
 }

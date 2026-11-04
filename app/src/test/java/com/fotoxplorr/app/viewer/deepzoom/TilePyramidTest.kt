@@ -64,9 +64,24 @@ class TilePyramidTest {
     }
 
     @Test
-    fun `a window never returns more than the cap`() {
-        val keys = TilePyramid.tilesCovering(40_000, 40_000, 0f, 0f, 1f, 1f, sample = 1)
-        assertEquals(TilePyramid.MAX_TILES_PER_VIEW, keys.size)
+    fun `the cap bites the margin only, never a visible tile`() {
+        // 40000 px at level 1 is 79 tiles a side: the whole window is far over the cap and all of it stays.
+        val whole = TilePyramid.tilesCovering(40_000, 40_000, 0f, 0f, 1f, 1f, sample = 1)
+        assertEquals(79 * 79, whole.size)
+        // A 10 x 9 visible block (90 tiles) with a margin ring: nothing visible is dropped, the margin is.
+        val src = 10_000
+        val vis = TilePyramid.tilesCovering(src, src, 0.3f, 0.3f, 0.3f + 4_600f / src, 0.3f + 4_100f / src, 1)
+        val withMargin = TilePyramid.tilesCovering(src, src, 0.3f, 0.3f, 0.3f + 4_600f / src, 0.3f + 4_100f / src, 1, marginTiles = 1)
+        assertTrue(withMargin.containsAll(vis))
+        assertEquals(vis.size, withMargin.size) // already over the cap: no room for margin
+    }
+
+    @Test
+    fun `margin tiles fill the room left under the cap and come after the visible ones`() {
+        val vis = TilePyramid.tilesCovering(8000, 8000, 0.4f, 0.4f, 0.5f, 0.5f, 1)
+        val all = TilePyramid.tilesCovering(8000, 8000, 0.4f, 0.4f, 0.5f, 0.5f, 1, marginTiles = 1)
+        assertEquals(vis, all.take(vis.size))
+        assertTrue(all.size <= TilePyramid.MAX_TILES_PER_VIEW)
     }
 
     @Test
