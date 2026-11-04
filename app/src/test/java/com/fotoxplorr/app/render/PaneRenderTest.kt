@@ -184,8 +184,9 @@ class PaneRenderTest {
             }
         }
         val switches = compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch))
-        // Fill the tile and Play animations. (Long press is a choice row now, not a switch.)
-        switches.assertCountEquals(2)
+        // Fill the tile, Justified rows, Save ratings beside photos and Play animations. (Long press is a choice
+        // row, not a switch.)
+        switches.assertCountEquals(4)
 
         compose.onNodeWithText("Fill the tile").performClick()
         // The default is fit-to-tile ON, so a tap on the row turns it off.
