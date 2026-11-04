@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -125,16 +126,10 @@ internal fun SphereScreen(asset: MediaAsset, onClose: () -> Unit, modifier: Modi
     Box(
         modifier = modifier.fillMaxSize().background(Color.Black).testTag(SPHERE_TAG)
             // Over everything, and a pointer target in its own right, so a touch while loading or
-            // failed is hit here and never falls through to the viewer drawn beneath. What the
-            // controls and the stage leave is consumed on the Final pass (after they have seen it).
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    do {
-                        val event = awaitPointerEvent(PointerEventPass.Final)
-                        event.changes.forEach { if (!it.isConsumed) it.consume() }
-                    } while (event.changes.any { it.pressed })
-                }
-            },
+            // failed is hit here and never falls through to the viewer drawn beneath: hit testing
+            // stops at this topmost sibling. It consumes NOTHING: the Final pass runs ancestor
+            // first, so consuming here would cancel the Close and pad clicks on any finger jitter.
+            .pointerInput(Unit) { sphereTouchTarget() },
     ) {
         val data = loaded
         if (data == null) {
@@ -152,6 +147,19 @@ internal fun SphereScreen(asset: MediaAsset, onClose: () -> Unit, modifier: Modi
                 .background(Color.Black.copy(alpha = 0.55f), CircleShape)
                 .semantics { contentDescription = SphereCopy.CLOSE },
         ) { Icon(Icons.Outlined.Close, contentDescription = null, tint = Color.White) }
+    }
+}
+
+/**
+ * Makes the sphere's root a pointer target without consuming anything: it only follows each gesture
+ * to its last finger up. Hit testing already keeps the viewer beneath (a lower sibling) from seeing
+ * the touch; the controls inside see every change unconsumed, as a clickable needs.
+ */
+internal suspend fun PointerInputScope.sphereTouchTarget() {
+    awaitEachGesture {
+        do {
+            val event = awaitPointerEvent(PointerEventPass.Main)
+        } while (event.changes.any { it.pressed })
     }
 }
 
