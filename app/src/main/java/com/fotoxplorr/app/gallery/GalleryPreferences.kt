@@ -165,6 +165,13 @@ data class GalleryPreferencesState(
      */
     val cullSidecars: Boolean = false,
     /**
+     * Show each burst as one stack with a count badge (WP2.8). Purely a presentation: the grid
+     * computes the stacks from the list it draws and nothing is stored, so it is on by default.
+     */
+    val groupBursts: Boolean = true,
+    /** Show a Live Photo's still and movie as one item (WP2.8); a presentation like [groupBursts]. */
+    val pairLivePhotos: Boolean = true,
+    /**
      * The nine-destination rail is pinned open by default on a window wide enough to fit it
      * beside the grid (tablet, foldable, desktop/ChromeOS); this lets the user fold it down to
      * a narrow strip without losing the choice every time the window is resized or the app is
@@ -325,6 +332,14 @@ class GalleryPreferences(context: Context) {
         state.value.copy(justifiedLayout = enabled),
     ) { putBoolean(KEY_JUSTIFIED_LAYOUT, enabled) }
 
+    fun setGroupBursts(enabled: Boolean) = update(
+        state.value.copy(groupBursts = enabled),
+    ) { putBoolean(KEY_GROUP_BURSTS, enabled) }
+
+    fun setPairLivePhotos(enabled: Boolean) = update(
+        state.value.copy(pairLivePhotos = enabled),
+    ) { putBoolean(KEY_PAIR_LIVE_PHOTOS, enabled) }
+
     fun setCullSidecars(enabled: Boolean) = update(
         state.value.copy(cullSidecars = enabled),
     ) { putBoolean(KEY_CULL_SIDECARS, enabled) }
@@ -445,6 +460,8 @@ class GalleryPreferences(context: Context) {
         fitToTile = preferences.getBoolean(KEY_FIT_TO_TILE, true),
         justifiedLayout = preferences.getBoolean(KEY_JUSTIFIED_LAYOUT, false),
         cullSidecars = preferences.getBoolean(KEY_CULL_SIDECARS, false),
+        groupBursts = preferences.getBoolean(KEY_GROUP_BURSTS, true),
+        pairLivePhotos = preferences.getBoolean(KEY_PAIR_LIVE_PHOTOS, true),
         navRailCollapsed = preferences.getBoolean(KEY_NAV_RAIL_COLLAPSED, false),
         editorSaveMode = enumValue(KEY_EDITOR_SAVE_MODE, EditorSaveMode.ASK),
         shareStripMetadata = preferences.getBoolean(KEY_SHARE_STRIP, true),
@@ -506,6 +523,8 @@ class GalleryPreferences(context: Context) {
         const val KEY_NAV_RAIL_COLLAPSED = "nav_rail_collapsed"
         const val KEY_JUSTIFIED_LAYOUT = "justified_layout"
         const val KEY_CULL_SIDECARS = "cull_sidecars"
+        const val KEY_GROUP_BURSTS = "group_bursts"
+        const val KEY_PAIR_LIVE_PHOTOS = "pair_live_photos"
         const val KEY_SHARE_STRIP = "share_strip_metadata"
         const val KEY_SHARE_WATERMARK = "share_watermark"
         const val KEY_SHARE_FRAME = "share_frame"

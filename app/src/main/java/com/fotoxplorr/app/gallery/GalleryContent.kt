@@ -88,6 +88,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Dialog
+import com.fotoxplorr.app.composite.BurstBadge
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.ui.RoomRow
 import com.fotoxplorr.app.ui.RoomStyle
@@ -95,6 +96,7 @@ import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.organize.LibraryState
 import com.fotoxplorr.app.organize.MediaCollection
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
+import com.fotoxplorr.core.formats.composite.StackBadge
 import com.fotoxplorr.core.model.MediaId
 import kotlin.math.exp
 import kotlinx.coroutines.Job
@@ -199,6 +201,16 @@ class GridChromeBridge {
      */
     var keyboardFocusedId: MediaId? by mutableStateOf(null)
         internal set
+
+    /**
+     * Burst stacks in the grid on screen (WP2.8), by the id of each stack's representative tile.
+     * Observable, like [keyboardFocusedId]: a tile draws its count badge from it.
+     */
+    var stackBadges: Map<MediaId, StackBadge<MediaId>> by mutableStateOf(emptyMap())
+        internal set
+
+    /** Opens or closes the stack whose representative tile is the given photo. */
+    internal var onToggleStack: (MediaId) -> Unit = {}
 
     /**
      * The justified rows' layout and the list it was built for, published by [JustifiedGrid] so
@@ -712,6 +724,14 @@ internal fun MediaTile(
                 modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
                 color = Color.White,
                 style = MaterialTheme.typography.titleMedium,
+            )
+        }
+        // A burst stack's count badge (WP2.8): opens or closes the stack in place.
+        chromeBridge.stackBadges[asset.id]?.let { badge ->
+            BurstBadge(
+                badge = badge,
+                onToggle = { chromeBridge.onToggleStack(asset.id) },
+                modifier = Modifier.matchParentSize(),
             )
         }
         if (selected) {

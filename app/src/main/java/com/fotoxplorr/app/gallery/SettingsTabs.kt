@@ -268,6 +268,18 @@ fun SettingsTabsRoom(
                         enabled = preferences.fitToTile,
                     )
                     SwitchRow(
+                        SettingsRow.GROUP_BURSTS,
+                        com.fotoxplorr.app.composite.CompositeCopy.GROUP_BURSTS,
+                        preferences.groupBursts,
+                        actions.onSetGroupBursts,
+                    )
+                    SwitchRow(
+                        SettingsRow.PAIR_LIVE,
+                        com.fotoxplorr.app.composite.CompositeCopy.PAIR_LIVE,
+                        preferences.pairLivePhotos,
+                        actions.onSetPairLivePhotos,
+                    )
+                    SwitchRow(
                         SettingsRow.CULL_SIDECARS,
                         HelpCopy.Caption.CULL_SIDECARS,
                         preferences.cullSidecars,

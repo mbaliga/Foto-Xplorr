@@ -1723,6 +1723,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
                     onSetFitToTile = galleryPreferences::setFitToTile,
                     onSetJustifiedLayout = galleryPreferences::setJustifiedLayout,
+                    onSetGroupBursts = galleryPreferences::setGroupBursts,
+                    onSetPairLivePhotos = galleryPreferences::setPairLivePhotos,
                     onSetCullSidecars = galleryPreferences::setCullSidecars,
                     onSetLoopAnimations = galleryPreferences::setLoopAnimations,
                     onSetGridLongPress = galleryPreferences::setGridLongPress,

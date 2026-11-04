@@ -148,6 +148,9 @@ import kotlinx.coroutines.launch
 // See each file's own doc for why this stays pure Kotlin with no Compose/Android import of its
 // own -- the mapping into real Compose types (Key, WindowMetrics, ParkStyle) happens only here,
 // at this call site, same as this file already does for `dev.aarso.cellshell`'s ParkStyle.
+import com.fotoxplorr.app.composite.MediaIdSetSaver
+import com.fotoxplorr.app.composite.rememberCompositeView
+import com.fotoxplorr.app.composite.toggledStack
 import com.fotoxplorr.app.adaptive.ChromeMotion
 import com.fotoxplorr.app.adaptive.GalleryShortcut
 import com.fotoxplorr.app.adaptive.GalleryShortcutKey
@@ -303,6 +306,8 @@ data class GalleryActions(
     val onSetFitToTile: (Boolean) -> Unit,
     /** Justified rows instead of square tiles on the column rungs; see [JustifiedLayout]. */
     val onSetJustifiedLayout: (Boolean) -> Unit = {},
+    val onSetGroupBursts: (Boolean) -> Unit = {},
+    val onSetPairLivePhotos: (Boolean) -> Unit = {},
     /** Whether culling also writes XMP sidecars beside the photos; see [AnnotationStore]. */
     val onSetCullSidecars: (Boolean) -> Unit = {},
     val onSetLoopAnimations: (Boolean) -> Unit,
@@ -802,14 +807,35 @@ private fun GalleryBrowser(
     val currentAssets = remember(route, destinationAssets, routeBase, timeRange) {
         if (route == BrowserRoute.Root) destinationAssets else routeBase.inTimeRange(timeRange)
     }
+    val viewAssets = if (route == BrowserRoute.Root) destinationAssets else currentAssets
+    // Composite media (WP2.8), a presentation over the list this view draws and nothing else: bursts
+    // collapse into one stack tile (its badge opens and closes it) and a Live Photo's movie hides
+    // behind its still. Grouped from this view's own browsable list (TRAPS #33), never stored, and
+    // each half has a Settings > Media switch. Everything below keys off scrubberAssets, so the
+    // layout, GridIndexMap, the rail, selection and the anchor all see the stacked list. The open
+    // stacks are saveable so the viewer round trip (GALLERY_STATE_KEY) brings them back as left.
+    var expandedStacks by rememberSaveable(stateSaver = MediaIdSetSaver) { mutableStateOf(emptySet<MediaId>()) }
+    val compositeView = rememberCompositeView(
+        items = viewAssets,
+        library = viewAssets,
+        pairLive = state.preferences.pairLivePhotos,
+        groupBursts = state.preferences.groupBursts,
+        expanded = expandedStacks,
+    )
+    val scrubberAssets = compositeView.visible
+    chromeBridge.stackBadges = compositeView.badges
+    chromeBridge.onToggleStack = { id -> expandedStacks = toggledStack(expandedStacks, id) }
     // Both of these walk the full projection, and both are only ever read while a selection is
     // active (the selection top bar). Building a 22k-entry set on every recomposition to answer a
     // question nobody is asking is pure waste, so they collapse to a constant when idle.
-    val selectedAssets = remember(currentAssets, selection) {
-        if (selection.isActive) currentAssets.filter { it.id in selection.selectedIds } else emptyList()
+    // Both walk scrubberAssets, the list the grid draws: Select all, Ctrl+A and every bulk action
+    // see the same photos the user sees. A frame inside a collapsed stack or a Live Photo's hidden
+    // movie is not selectable, and one selected while its stack was open drops out when it closes.
+    val selectedAssets = remember(scrubberAssets, selection) {
+        if (selection.isActive) scrubberAssets.filter { it.id in selection.selectedIds } else emptyList()
     }
-    val currentIds = remember(currentAssets, selection.isActive) {
-        if (selection.isActive) currentAssets.mapTo(linkedSetOf()) { it.id } else emptySet()
+    val currentIds = remember(scrubberAssets, selection.isActive) {
+        if (selection.isActive) scrubberAssets.mapTo(linkedSetOf()) { it.id } else emptySet()
     }
     val inTrash = (route as? BrowserRoute.Smart)?.album == SmartAlbum.TRASH
     val inArchive = (route as? BrowserRoute.Smart)?.album == SmartAlbum.ARCHIVED
@@ -931,7 +957,6 @@ private fun GalleryBrowser(
     val firstVisibleIndex by remember(gridState) {
         derivedStateOf { gridState.firstVisibleItemIndex }
     }
-    val scrubberAssets = if (route == BrowserRoute.Root) destinationAssets else currentAssets
     // What the pill says on the map: how many of the photos in this view have a place. Only
     // counted while the map is up, and only when the geo index changes.
     val locatedMetadata = LocalSpatialExperience.current?.geoState?.metadataById

@@ -5,6 +5,7 @@ import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.Animation
 import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.BatteryAlert
+import androidx.compose.material.icons.outlined.BurstMode
 import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.Bedtime
 import androidx.compose.material.icons.outlined.BlurOn
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.MotionPhotosOn
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
@@ -115,6 +117,8 @@ enum class SettingsIcon(val vector: ImageVector) {
     MAP(Icons.Outlined.Map),
     OFFLINE_MAP(Icons.Outlined.DownloadForOffline),
     WEB(Icons.Outlined.Language),
+    BURST(Icons.Outlined.BurstMode),
+    MOTION(Icons.Outlined.MotionPhotosOn),
 }
 
 /** The glyph of a Settings tab. Exhaustive, so a new tab does not compile without one. */
@@ -143,6 +147,8 @@ enum class SettingsRow(val label: String, val icon: SettingsIcon) {
     FILL_TILE("Fill the tile", SettingsIcon.CROP),
     JUSTIFIED("Justified rows", SettingsIcon.JUSTIFY),
     CULL_SIDECARS("Save ratings beside photos", SettingsIcon.SAVE),
+    GROUP_BURSTS("Group bursts", SettingsIcon.BURST),
+    PAIR_LIVE("Pair Live Photos", SettingsIcon.MOTION),
     PLAY_ANIMATIONS("Play animations", SettingsIcon.ANIMATION),
     LONG_PRESS("Long press does", SettingsIcon.TOUCH),
     SAVING_EDITS("Saving edits", SettingsIcon.SAVE),
