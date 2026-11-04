@@ -1,5 +1,6 @@
 package com.fotoxplorr.app.gallery
 
+import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.core.organize.GridIndexMap
 
 /**
@@ -53,6 +54,12 @@ internal class LayoutAnchor {
     private var grouping = TimelineGrouping.MONTH
     private var sideways = false
 
+    /** The justified rows last drawn, or null when the last layout was the square grid (or none). */
+    private var justified: JustifiedLayout? = null
+
+    /** The photos the last layout drew, so the photo at the top is found again by its id. */
+    private var assets: List<MediaAsset>? = null
+
     /**
      * Records the layout now drawn and returns the item the grid must be moved to first, if any.
      * [firstVisible] is still the PREVIOUS layout's top line: this runs after composition and
@@ -64,10 +71,16 @@ internal class LayoutAnchor {
         grouping: TimelineGrouping,
         sideways: Boolean,
         firstVisible: Int,
+        assets: List<MediaAsset>? = null,
     ): Int? {
         val previous = this.map
+        val previousRows = justified
         var target: Int? = null
-        if (previous != null && previous !== map) {
+        if (previousRows != null) {
+            // From the justified rows: the old index is a ROW, which means nothing as a square
+            // grid item. Carry the photo heading that row instead.
+            target = carried(JustifiedIndexSpace(previousRows), MapIndexSpace(map), firstVisible, assets)
+        } else if (previous != null && previous !== map) {
             target = reanchoredGridIndex(
                 old = previous,
                 oldHasHeaders = this.hasHeaders,
@@ -84,7 +97,47 @@ internal class LayoutAnchor {
         this.hasHeaders = hasHeaders
         this.grouping = grouping
         this.sideways = sideways
+        this.justified = null
+        this.assets = assets
         return target
+    }
+
+    /**
+     * The justified rows' counterpart of [settle]. Rows are rebuilt on every rung change (the row
+     * height follows the rung) and their keys (`jrow:<first id>`) mostly do not survive that, so
+     * the lazy grid would keep a bare row number that now holds quite another photo; coming from
+     * the square grid the old index is an ITEM, read here as a row. Both ways the photo at the top
+     * is carried by id into the row that now holds it.
+     */
+    fun settleJustified(layout: JustifiedLayout, assets: List<MediaAsset>, firstVisible: Int): Int? {
+        val previousRows = justified
+        val previousMap = map
+        val old: GridIndexSpace? = when {
+            previousRows === layout && this.assets === assets -> null
+            previousRows != null -> JustifiedIndexSpace(previousRows)
+            previousMap != null -> MapIndexSpace(previousMap)
+            else -> null
+        }
+        val target = old?.let { carried(it, JustifiedIndexSpace(layout), firstVisible, assets) }
+        justified = layout
+        map = null
+        sideways = false
+        this.assets = assets
+        return target
+    }
+
+    /** The item of [new] showing the photo that item [firstVisible] of [old] showed. */
+    private fun carried(old: GridIndexSpace, new: GridIndexSpace, firstVisible: Int, newAssets: List<MediaAsset>?): Int? {
+        if (old.itemCount <= 1 || new.itemCount <= 1) return null
+        val oldIndex = old.assetIndexAt(firstVisible)
+        val oldAssets = assets
+        val newIndex = if (oldAssets == null || newAssets == null || oldAssets === newAssets) {
+            oldIndex
+        } else {
+            val id = oldAssets.getOrNull(oldIndex)?.id
+            newAssets.indexOfFirst { it.id == id }.takeIf { it >= 0 } ?: oldIndex
+        }
+        return new.gridIndexOf(newIndex)
     }
 
     /**
@@ -94,5 +147,7 @@ internal class LayoutAnchor {
      */
     fun forget() {
         map = null
+        justified = null
+        assets = null
     }
 }

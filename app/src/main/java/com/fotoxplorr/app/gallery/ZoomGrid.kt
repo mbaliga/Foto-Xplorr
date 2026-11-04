@@ -156,8 +156,8 @@ internal fun ZoomGrid(
     }
 
     if (justifiedActive(justified, masonry = false, rung = rung)) {
-        // The rows are their own layout: the square grid's key anchor does not apply.
-        SideEffect { anchor.forget() }
+        // The rows anchor by the photo at the top (LayoutAnchor.settleJustified), inside the
+        // grid, where the rows are built for the measured width.
         JustifiedGrid(
             assets = assets,
             columns = columnsAcross(rung, ZOOM_RUNG_LAST_GRID),
@@ -171,6 +171,7 @@ internal fun ZoomGrid(
             gridState = gridState,
             loopAnimations = loopAnimations,
             animatedIds = animatedIds,
+            anchor = anchor,
         )
         return
     }
@@ -204,6 +205,7 @@ internal fun ZoomGrid(
             sideways = sideways,
             // Still the old layout's top line: this runs before the next measure.
             firstVisible = gridState.firstVisibleItemIndex,
+            assets = assets,
         )?.let { gridState.requestScrollToItem(it) }
     }
 

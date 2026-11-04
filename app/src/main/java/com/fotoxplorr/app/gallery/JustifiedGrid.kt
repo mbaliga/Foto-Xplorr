@@ -90,6 +90,7 @@ internal fun JustifiedGrid(
     gridState: LazyGridState,
     loopAnimations: Boolean,
     animatedIds: Set<MediaId>,
+    anchor: LayoutAnchor? = null,
 ) {
     val bridge = LocalGridChromeBridge.current
     var peeked by remember { mutableStateOf<MediaAsset?>(null) }
@@ -106,6 +107,10 @@ internal fun JustifiedGrid(
             bridge.justified = JustifiedSnapshot(assets, layout)
             // Arrow keys step about one row.
             bridge.columnsAcross = if (layout.rows == 0) 1 else (assets.size / layout.rows).coerceAtLeast(1)
+            // Keep the photo at the top across a rung change or a switch from the square grid:
+            // firstVisibleItemIndex is still the previous layout's top line here.
+            anchor?.settleJustified(layout, assets, gridState.firstVisibleItemIndex)
+                ?.let { gridState.requestScrollToItem(it) }
         }
         LazyVerticalGrid(
             columns = GridCells.Fixed(1),
