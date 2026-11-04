@@ -1722,6 +1722,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     onSetSlideshowShuffle = galleryPreferences::setSlideshowShuffle,
                     onSetAutoplayVideos = galleryPreferences::setAutoplayVideos,
                     onSetFitToTile = galleryPreferences::setFitToTile,
+                    onSetJustifiedLayout = galleryPreferences::setJustifiedLayout,
+                    onSetCullSidecars = galleryPreferences::setCullSidecars,
                     onSetLoopAnimations = galleryPreferences::setLoopAnimations,
                     onSetGridLongPress = galleryPreferences::setGridLongPress,
                     onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,

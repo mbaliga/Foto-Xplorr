@@ -32,6 +32,8 @@ internal object HelpCopy {
         const val BLUR_OR_HIDE = "Blur or hide in the grid."
         const val KEEP_SCREEN_ON = "While a photo is open. Uses more battery."
         const val FILL_TILE = "Fill each square. Off shows the whole photo."
+        const val JUSTIFIED = "Rows of photos at their own shape, each row the full width."
+        const val CULL_SIDECARS = "Write ratings and flags to a file beside each photo."
         const val TIMELINE = "Date orders only. The photos make room for the strip."
         const val SCROLL_AXIS = "Across suits a top or bottom timeline. Stamps stay vertical."
         const val LONG_PRESS = "What holding a photo does. While selecting, a hold adds it."

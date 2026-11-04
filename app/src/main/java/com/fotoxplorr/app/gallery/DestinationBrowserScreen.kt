@@ -373,6 +373,7 @@ internal fun DestinationContent(
                     animatedIds = state.animatedIds,
                     anchor = anchor,
                     horizontal = horizontal,
+                    justified = state.preferences.justifiedLayout,
                 )
             }
         }

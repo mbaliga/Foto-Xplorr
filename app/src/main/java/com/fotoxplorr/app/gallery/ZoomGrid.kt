@@ -121,8 +121,14 @@ internal fun ZoomGrid(
     animatedIds: Set<MediaId>,
     anchor: LayoutAnchor,
     horizontal: Boolean = false,
+    /** The justified-rows setting; drawn only where [justifiedActive] says (see [JustifiedGrid]). */
+    justified: Boolean = false,
 ) {
     val assets = layout.renderedAssets
+    val justifiedBridge = LocalGridChromeBridge.current
+    if (!justifiedActive(justified, masonry = !fitToTile, rung = rung)) {
+        SideEffect { justifiedBridge.justified = null }
+    }
     if (assets.isEmpty()) {
         SideEffect { anchor.forget() }
         GalleryMessage(emptyMessage)
@@ -143,6 +149,26 @@ internal fun ZoomGrid(
             onToggleSelection = onToggleSelection,
             gridState = gridState,
             fitToTile = false,
+            loopAnimations = loopAnimations,
+            animatedIds = animatedIds,
+        )
+        return
+    }
+
+    if (justifiedActive(justified, masonry = false, rung = rung)) {
+        // The rows are their own layout: the square grid's key anchor does not apply.
+        SideEffect { anchor.forget() }
+        JustifiedGrid(
+            assets = assets,
+            columns = columnsAcross(rung, ZOOM_RUNG_LAST_GRID),
+            favoriteIds = favoriteIds,
+            sensitiveIds = sensitiveIds,
+            blurSensitive = blurSensitive,
+            selectedIds = selectedIds,
+            selectionActive = selectionActive,
+            onOpen = onOpen,
+            onToggleSelection = onToggleSelection,
+            gridState = gridState,
             loopAnimations = loopAnimations,
             animatedIds = animatedIds,
         )

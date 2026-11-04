@@ -3,6 +3,7 @@ package com.fotoxplorr.app.gallery
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.Animation
+import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.BatteryAlert
 import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.Bedtime
@@ -76,6 +77,7 @@ enum class SettingsIcon(val vector: ImageVector) {
     COLOUR(Icons.Outlined.ColorLens),
     ZOOM(Icons.Outlined.ZoomIn),
     CROP(Icons.Outlined.Crop),
+    JUSTIFY(Icons.Outlined.Dashboard),
     ANIMATION(Icons.Outlined.Animation),
     TOUCH(Icons.Outlined.TouchApp),
     SAVE(Icons.Outlined.Save),
@@ -139,6 +141,8 @@ enum class SettingsRow(val label: String, val icon: SettingsIcon) {
     GRID_ZOOM("Grid zoom", SettingsIcon.ZOOM),
     MANAGE_SELECTED("Manage selected photos and videos", SettingsIcon.PHOTOS),
     FILL_TILE("Fill the tile", SettingsIcon.CROP),
+    JUSTIFIED("Justified rows", SettingsIcon.JUSTIFY),
+    CULL_SIDECARS("Save ratings beside photos", SettingsIcon.SAVE),
     PLAY_ANIMATIONS("Play animations", SettingsIcon.ANIMATION),
     LONG_PRESS("Long press does", SettingsIcon.TOUCH),
     SAVING_EDITS("Saving edits", SettingsIcon.SAVE),

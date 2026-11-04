@@ -260,6 +260,20 @@ fun SettingsTabsRoom(
                         actions.onSetFitToTile,
                     )
                     SwitchRow(
+                        SettingsRow.JUSTIFIED,
+                        HelpCopy.Caption.JUSTIFIED,
+                        preferences.justifiedLayout,
+                        actions.onSetJustifiedLayout,
+                        // Justified rows replace the square tiles; masonry has its own shapes.
+                        enabled = preferences.fitToTile,
+                    )
+                    SwitchRow(
+                        SettingsRow.CULL_SIDECARS,
+                        HelpCopy.Caption.CULL_SIDECARS,
+                        preferences.cullSidecars,
+                        actions.onSetCullSidecars,
+                    )
+                    SwitchRow(
                         SettingsRow.PLAY_ANIMATIONS,
                         HelpCopy.Caption.LOOP_ANIMATIONS,
                         preferences.loopAnimations,

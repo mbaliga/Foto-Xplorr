@@ -199,6 +199,16 @@ class GridChromeBridge {
      */
     var keyboardFocusedId: MediaId? by mutableStateOf(null)
         internal set
+
+    /**
+     * The justified rows' layout and the list it was built for, published by [JustifiedGrid] so
+     * the screen can map the scrubber and the arrow keys through the rows ([JustifiedIndexSpace]).
+     * Null whenever the justified grid is not the one on screen.
+     */
+    internal var justified: JustifiedSnapshot? by mutableStateOf(null)
+
+    /** The photo a mouse has rested on long enough for the hover preview; see [hoverPreview]. */
+    internal var hovered: MediaAsset? by mutableStateOf(null)
 }
 
 val LocalGridChromeBridge = staticCompositionLocalOf { GridChromeBridge() }

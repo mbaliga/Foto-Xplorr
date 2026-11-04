@@ -154,6 +154,17 @@ data class GalleryPreferencesState(
      */
     val fitToTile: Boolean = true,
     /**
+     * Lay the column rungs out as justified rows (each photo at its own shape, every row the full
+     * width) instead of square tiles. Opt-in; the stamps rung and the masonry layout ignore it.
+     * See [JustifiedLayout].
+     */
+    val justifiedLayout: Boolean = false,
+    /**
+     * Culling also writes ratings, flags and labels to an XMP sidecar beside each photo. Off by
+     * default: then they live in memory only and are gone when the app closes.
+     */
+    val cullSidecars: Boolean = false,
+    /**
      * The nine-destination rail is pinned open by default on a window wide enough to fit it
      * beside the grid (tablet, foldable, desktop/ChromeOS); this lets the user fold it down to
      * a narrow strip without losing the choice every time the window is resized or the app is
@@ -310,6 +321,14 @@ class GalleryPreferences(context: Context) {
         state.value.copy(fitToTile = enabled),
     ) { putBoolean(KEY_FIT_TO_TILE, enabled) }
 
+    fun setJustifiedLayout(enabled: Boolean) = update(
+        state.value.copy(justifiedLayout = enabled),
+    ) { putBoolean(KEY_JUSTIFIED_LAYOUT, enabled) }
+
+    fun setCullSidecars(enabled: Boolean) = update(
+        state.value.copy(cullSidecars = enabled),
+    ) { putBoolean(KEY_CULL_SIDECARS, enabled) }
+
     fun setNavRailCollapsed(collapsed: Boolean) = update(
         state.value.copy(navRailCollapsed = collapsed),
     ) { putBoolean(KEY_NAV_RAIL_COLLAPSED, collapsed) }
@@ -424,6 +443,8 @@ class GalleryPreferences(context: Context) {
             ?: LongPressResolver.fromLegacyPeekFlag(preferences.getBoolean(KEY_LONG_PRESS_PREVIEW, true)),
         loopAnimations = preferences.getBoolean(KEY_LOOP_ANIMATIONS, false),
         fitToTile = preferences.getBoolean(KEY_FIT_TO_TILE, true),
+        justifiedLayout = preferences.getBoolean(KEY_JUSTIFIED_LAYOUT, false),
+        cullSidecars = preferences.getBoolean(KEY_CULL_SIDECARS, false),
         navRailCollapsed = preferences.getBoolean(KEY_NAV_RAIL_COLLAPSED, false),
         editorSaveMode = enumValue(KEY_EDITOR_SAVE_MODE, EditorSaveMode.ASK),
         shareStripMetadata = preferences.getBoolean(KEY_SHARE_STRIP, true),
@@ -483,6 +504,8 @@ class GalleryPreferences(context: Context) {
         const val KEY_EDITOR_SAVE_MODE = "editor_save_mode"
         const val KEY_FIT_TO_TILE = "fit_to_tile"
         const val KEY_NAV_RAIL_COLLAPSED = "nav_rail_collapsed"
+        const val KEY_JUSTIFIED_LAYOUT = "justified_layout"
+        const val KEY_CULL_SIDECARS = "cull_sidecars"
         const val KEY_SHARE_STRIP = "share_strip_metadata"
         const val KEY_SHARE_WATERMARK = "share_watermark"
         const val KEY_SHARE_FRAME = "share_frame"

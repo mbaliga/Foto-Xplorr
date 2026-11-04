@@ -300,6 +300,10 @@ data class GalleryActions(
     val onSetSlideshowShuffle: (Boolean) -> Unit,
     val onSetAutoplayVideos: (Boolean) -> Unit,
     val onSetFitToTile: (Boolean) -> Unit,
+    /** Justified rows instead of square tiles on the column rungs; see [JustifiedLayout]. */
+    val onSetJustifiedLayout: (Boolean) -> Unit = {},
+    /** Whether culling also writes XMP sidecars beside the photos; see [AnnotationStore]. */
+    val onSetCullSidecars: (Boolean) -> Unit = {},
     val onSetLoopAnimations: (Boolean) -> Unit,
     /** What a hold on a grid tile does -- see [GridLongPress]. */
     val onSetGridLongPress: (GridLongPress) -> Unit = {},
@@ -948,17 +952,20 @@ private fun GalleryBrowser(
     val masonryActive = !state.preferences.fitToTile
     val maxZoomRung = if (masonryActive) ZOOM_RUNG_LAST_GRID else ZOOM_RUNG_STAMPS
     val activeRung = zoomRung.coerceAtMost(maxZoomRung)
+    // Justified rows (opt-in) replace the square tiles on the column rungs: like masonry they draw
+    // no headers and stay vertical, but unlike masonry they share gridState, so the scrubber stays.
+    val justifiedOn = justifiedActive(state.preferences.justifiedLayout, masonryActive, activeRung)
     // Whether the grid below draws header rows: the stamp view in a date order, and the column rungs
     // while the timeline is on (see headersShown). A plain Boolean so stepping between the column
     // rungs does not rebuild the layout.
     val timelineOn = state.preferences.timelineOn
     val headersActive = headersShown(
-        activeRung, state.preferences.sort, masonryActive, timelineOn, state.preferences.timelineGrouping,
+        activeRung, state.preferences.sort, masonryActive || justifiedOn, timelineOn, state.preferences.timelineGrouping,
     )
     val layoutGrouping = headerGrouping(activeRung, state.preferences.timelineGrouping)
     // Whether the grid on screen scrolls sideways: the setting, except at the stamps and in masonry,
     // which stay vertical. Latest-first then reads left to right (see timelineSortLabel).
-    val sidewaysGrid = gridScrollsHorizontally(state.preferences.scrollAxis, activeRung, masonryActive)
+    val sidewaysGrid = gridScrollsHorizontally(state.preferences.scrollAxis, activeRung, masonryActive || justifiedOn)
     // The one layout computation, shared by the grid (ZoomGrid, below) and everything that used to
     // assume grid index == asset index (the scrubber, the pill, arrow keys, and the list handed to
     // the viewer on open) -- see docs/TRAPS.md #5 and #9. Without headers this is the identity: one
@@ -980,6 +987,12 @@ private fun GalleryBrowser(
             trailingFooter = true,
         )
     }
+    // The space the scrubber, pill, arrow keys and anchor really use: the rows when the justified
+    // grid has published a layout for exactly these photos, otherwise gridIndexMap.
+    val justifiedSnapshot = chromeBridge.justified.takeIf { justifiedOn }
+    val indexSpace = remember(gridIndexMap, justifiedSnapshot, renderedAssets) {
+        gridIndexSpace(gridIndexMap, justifiedSnapshot, renderedAssets)
+    }
     // The scrubber's stops, in the GRID's index space (its own contract: it does not know or
     // care what an index means, only that stops/itemCount/currentIndex/onScrubTo all agree on
     // one space). timelineStops itself still reasons in asset-index space over renderedAssets --
@@ -988,10 +1001,10 @@ private fun GalleryBrowser(
     // headers every stop opens a run (stops and runs both cut where the month changes), so it
     // targets the header row just above that run's first photo, not the photo: landing on the
     // photo would leave the month's own header scrolled out of sight.
-    val scrubberStops = remember(renderedAssets, gridIndexMap, layout.hasHeaders) {
+    val scrubberStops = remember(renderedAssets, indexSpace, layout.hasHeaders) {
         val headerRows = if (layout.hasHeaders) 1 else 0
         timelineStops(renderedAssets).map {
-            it.copy(itemIndex = (gridIndexMap.gridIndexOf(it.itemIndex) - headerRows).coerceAtLeast(0))
+            it.copy(itemIndex = (indexSpace.gridIndexOf(it.itemIndex) - headerRows).coerceAtLeast(0))
         }
     }
     // P0-15: masonry's staggered grid keeps its own LazyStaggeredGridState, entirely unreachable
@@ -1042,7 +1055,7 @@ private fun GalleryBrowser(
         if (anchorIsReady && anchoredToken != anchorTokenNow) {
             anchoredToken = anchorTokenNow
             gridState.scrollToItem(
-                anchorIndex(gridIndexMap.itemCount, latestAtEnd(state.preferences.sort)),
+                anchorIndex(indexSpace.itemCount, latestAtEnd(state.preferences.sort)),
             )
         }
     }
@@ -1144,7 +1157,7 @@ private fun GalleryBrowser(
                 // scrollToItem, not animateScrollToItem: matches the edge scrubber's own choice
                 // just below -- a held-down arrow key fires many of these in quick succession, and
                 // an animated scroll queued behind an animated scroll is how that becomes a stutter.
-                gridScope.launch { gridState.scrollToItem(gridIndexMap.gridIndexOf(next)) }
+                gridScope.launch { gridState.scrollToItem(indexSpace.gridIndexOf(next)) }
             }
             GalleryShortcut.OpenFocused -> {
                 val ids = renderedAssets
@@ -1623,6 +1636,7 @@ private fun GalleryBrowser(
                                         animatedIds = state.animatedIds,
                                         anchor = layoutAnchor,
                                         horizontal = sidewaysGrid,
+                                        justified = state.preferences.justifiedLayout,
                                     )
                                 }
                             }
@@ -1653,7 +1667,7 @@ private fun GalleryBrowser(
                             if (stripDrawn(stripShown, selection.isActive)) {
                                 TimelineRail(
                                     stops = scrubberStops,
-                                    itemCount = gridIndexMap.itemCount,
+                                    itemCount = indexSpace.itemCount,
                                     currentIndex = firstVisibleIndex,
                                     onScrubTo = { index ->
                                         // scrollToItem, not animateScrollToItem: the finger is already
@@ -1736,7 +1750,7 @@ private fun GalleryBrowser(
                             caption = when {
                                 mapOpen -> mapCaption
                                 scrubberTrackable ->
-                                    pillCaption(renderedAssets, gridIndexMap.assetIndexAt(firstVisibleIndex))
+                                    pillCaption(renderedAssets, indexSpace.assetIndexAt(firstVisibleIndex))
                                 else -> ""
                             },
                             onOpenTimeRange = if (rangeApplies) {
