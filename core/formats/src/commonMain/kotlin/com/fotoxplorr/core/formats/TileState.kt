@@ -26,6 +26,7 @@ object FormatCopy {
     const val PROTECTED = "This photo is protected."
 
     const val RAW_NO_PREVIEW = "Raw photos can't be previewed yet."
+    const val TOO_LARGE = "This picture is too big to show here."
 
     fun notOnThisPhone(kind: String): String = "This phone can't show $kind files."
     fun needsPack(kind: String): String = "$kind files need an add-on to show."
@@ -62,6 +63,7 @@ object FormatLabels {
         MediaFormat.Ktx -> "KTX"
         MediaFormat.Icns -> "ICNS"
         MediaFormat.Pcx -> "PCX"
+        MediaFormat.Tga -> "TGA"
         MediaFormat.Xcf -> "XCF"
         MediaFormat.Apng -> "APNG"
         MediaFormat.Ora -> "ORA"

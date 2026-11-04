@@ -225,6 +225,12 @@ sealed interface MediaFormat {
         override val isLikelyDecodable = false
     }
 
+    /** Truevision TGA. No magic number, so it is recognised by extension or mime only (the sniffer
+     *  cannot see it); decoded by the pure-Kotlin simple-format decoders. */
+    data object Tga : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
     /**
      * Everything this classifier does not recognise. Deliberately [isLikelyDecodable] = true,
      * not false: "unrecognised" is not the same claim as "known broken", and defaulting to true
@@ -292,6 +298,7 @@ sealed interface MediaFormat {
             mime == "image/ktx" || mime == "image/ktx2" || extension == "ktx" || extension == "ktx2" -> Ktx
             mime == "image/x-icns" || extension == "icns" -> Icns
             mime == "image/x-pcx" || extension == "pcx" -> Pcx
+            mime == "image/x-tga" || mime == "image/x-targa" || extension == "tga" -> Tga
             mime == "image/x-xcf" || extension == "xcf" -> Xcf
             mime == "image/vnd.microsoft.icon" || mime == "image/x-icon" || extension == "ico" -> Ico
             mime == "image/openraster" || extension == "ora" -> Ora
@@ -307,7 +314,7 @@ sealed interface MediaFormat {
          */
         val all: List<MediaFormat> = listOf(
             Jpeg, Png, Bmp, WebP, Gif, Heif, Svg, Video, Ico, Avif, JpegXl, Tiff, Psd, Exr, Hdr, Pnm, Jp2,
-            Jxr, Qoi, Dds, Ktx, Icns, Pcx, Xcf, Apng, Psb, Ora, Kra, Other,
+            Jxr, Qoi, Dds, Ktx, Icns, Pcx, Xcf, Apng, Psb, Ora, Kra, Tga, Other,
         ) + RawVariant.entries.map { Raw(it) }
     }
 }

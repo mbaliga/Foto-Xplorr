@@ -83,7 +83,7 @@ object FormatCapabilities {
         MediaFormat.Exr -> setOf(Capability.Decode, Capability.Thumbnail, Capability.Hdr)
         MediaFormat.Hdr -> setOf(Capability.Decode, Capability.Thumbnail, Capability.Hdr)
         MediaFormat.Pnm, MediaFormat.Jp2, MediaFormat.Jxr, MediaFormat.Qoi, MediaFormat.Dds, MediaFormat.Ktx -> decodeOnly
-        MediaFormat.Icns, MediaFormat.Pcx -> decodeOnly
+        MediaFormat.Icns, MediaFormat.Pcx, MediaFormat.Tga -> decodeOnly
         MediaFormat.Ora, MediaFormat.Kra -> decodeOnly
         // PSB and XCF: no permissive decoder, a placeholder is the plan (§4).
         MediaFormat.Psb, MediaFormat.Xcf -> placeholderOnly

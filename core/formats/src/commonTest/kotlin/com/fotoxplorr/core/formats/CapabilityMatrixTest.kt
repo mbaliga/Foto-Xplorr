@@ -13,7 +13,7 @@ class CapabilityMatrixTest {
         assertEquals(ids.size, ids.toSet().size, "ids must be unique: $ids")
         // of() is an exhaustive when; calling it for every member proves no row throws.
         MediaFormat.all.forEach { FormatCapabilities.of(it) }
-        assertEquals(29 + RawVariant.entries.size, MediaFormat.all.size)
+        assertEquals(30 + RawVariant.entries.size, MediaFormat.all.size)
     }
 
     @Test

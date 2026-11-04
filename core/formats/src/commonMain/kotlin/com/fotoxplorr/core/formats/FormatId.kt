@@ -39,6 +39,7 @@ val MediaFormat.formatId: FormatId
             MediaFormat.Psb -> "psb"
             MediaFormat.Ora -> "ora"
             MediaFormat.Kra -> "kra"
+            MediaFormat.Tga -> "tga"
             MediaFormat.Other -> "other"
         },
     )
