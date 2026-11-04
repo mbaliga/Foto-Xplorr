@@ -106,4 +106,17 @@ class SidecarWriteSafetyTest {
         assertEquals(setOf("IMG_1.CR3.XMP"), docs.docs.keys)
         assertTrue(SafeDocumentWrite.create(InMemoryDocuments(), "IMG_1.CR3.xmp", "new".toByteArray()))
     }
+
+    @Test
+    fun `a RAW whose base is the other style's sidecar reports the new file, not the base`() {
+        val dir = InMemorySidecarDirectory().also {
+            it.others += "IMG_1.CR2"
+            it.files["IMG_1.xmp"] = rawSidecar.toByteArray()
+        }
+        val cr2 = SidecarAsset("IMG_1.CR2", raw, SidecarParent.Directory(dir))
+        val result = service().write(cr2, SidecarAnnotations(label = "Red"), true) as SidecarWriteResult.Written
+        assertEquals(SidecarLocation.Writable("mem://folder/IMG_1.CR2.xmp", "IMG_1.CR2.xmp", true), result.location)
+        // the Lightroom file is left as it was
+        assertArrayEquals(rawSidecar.toByteArray(), dir.files["IMG_1.xmp"])
+    }
 }

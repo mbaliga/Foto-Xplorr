@@ -43,15 +43,23 @@ object XmpSidecarStore {
 
     private fun existingSidecar(originalFile: File, preferred: SidecarStyle?): File? {
         val directory = originalFile.parentFile ?: return null
-        // A JPEG never reads (or inherits on write) its RAW partner's extension-less sidecar.
-        val siblings = directory.list()?.toList() ?: emptyList()
-        val names = if (preferred != null) {
-            SidecarNaming.candidateSidecarFileNames(originalFile.name, preferred, siblings)
+        return candidateNames(originalFile.name, preferred, directory.list()?.toList())
+            .map { File(directory, it) }.firstOrNull { it.isFile }
+    }
+
+    /**
+     * The sidecar names to look for, in order. A JPEG never reads (or inherits on write) its RAW
+     * partner's extension-less sidecar. [siblings] null (the folder could not be listed) gets only
+     * the configured style's own name, the safe side, as the app's `SidecarLocator.findExisting`.
+     */
+    internal fun candidateNames(originalName: String, preferred: SidecarStyle?, siblings: List<String>?): List<String> {
+        if (siblings == null) return listOf(SidecarNaming.sidecarFileName(originalName, preferred ?: SidecarStyle.DARKTABLE))
+        return if (preferred != null) {
+            SidecarNaming.candidateSidecarFileNames(originalName, preferred, siblings)
         } else {
-            val safe = SidecarNaming.candidateSidecarFileNames(originalFile.name, SidecarStyle.DARKTABLE, siblings)
-            SidecarNaming.candidateSidecarFileNames(originalFile.name).filter { it in safe }
+            val safe = SidecarNaming.candidateSidecarFileNames(originalName, SidecarStyle.DARKTABLE, siblings)
+            SidecarNaming.candidateSidecarFileNames(originalName).filter { it in safe }
         }
-        return names.map { File(directory, it) }.firstOrNull { it.isFile }
     }
 
     /**

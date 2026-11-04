@@ -118,9 +118,12 @@ class DefaultSidecarService(
         // find() ignores case: an existing IMG.CR3.XMP is overwritten under its own name.
         val sameNameEntry = dir.find(targetName)
         return if (dir.write(targetName, sameNameEntry, bytes)) {
+            // Report the file actually written, never the base's uri: when the base was the other
+            // style's file (IMG_1.xmp for a darktable-style RAW), target still points at it.
+            val written = sameNameEntry ?: dir.find(targetName)
             SidecarWriteResult.Written(
-                if (sameNameEntry != null) SidecarLocation.Writable(sameNameEntry.uri, sameNameEntry.fileName, true)
-                else target.copy(fileName = targetName),
+                if (written != null) SidecarLocation.Writable(written.uri, written.fileName, true)
+                else SidecarLocation.Writable(dir.uri, targetName, false),
             )
         } else {
             SidecarWriteResult.Failed("The sidecar could not be written.")

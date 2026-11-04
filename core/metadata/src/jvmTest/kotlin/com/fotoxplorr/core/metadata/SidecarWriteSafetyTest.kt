@@ -109,4 +109,29 @@ class SidecarWriteSafetyTest {
             SidecarNaming.candidateSidecarFileNames("IMG_1.JPG", SidecarStyle.LIGHTROOM, listOf("IMG_1.cr2")),
         )
     }
+
+    @Test
+    fun `a keyword added with a control character can be removed again by the same string`() {
+        val raw = "bea\u001Fch"
+        val added = XmpAnnotationCodec.update(
+            null, SidecarAnnotations(keywords = setOf(raw, "keep"), keywordPaths = setOf("Places|bea\u001Fch")), stamp,
+        )!!
+        assertEquals(setOf("beach", "keep", "Places"), XmpAnnotationCodec.readBytes(added)!!.keywords)
+        val removed = XmpAnnotationCodec.update(
+            added, SidecarAnnotations(), stamp, removedKeywords = setOf(raw, " Places "), removedPaths = setOf("Places|bea\u001Fch"),
+        )!!
+        val back = XmpAnnotationCodec.readBytes(removed)!!
+        assertEquals(setOf("keep"), back.keywords)
+        assertTrue(back.keywordPaths.isEmpty())
+    }
+
+    @Test
+    fun `a folder that cannot be listed offers only the configured style's own name`() {
+        assertEquals(listOf("IMG_1.JPG.xmp"), XmpSidecarStore.candidateNames("IMG_1.JPG", null, null))
+        assertEquals(listOf("IMG_1.JPG.xmp"), XmpSidecarStore.candidateNames("IMG_1.JPG", SidecarStyle.DARKTABLE, null))
+        assertEquals(listOf("IMG_1.CR2.xmp"), XmpSidecarStore.candidateNames("IMG_1.CR2", SidecarStyle.DARKTABLE, null))
+        // listed and alone, the JPEG still finds a Lightroom-style name
+        assertTrue("IMG_1.xmp" in XmpSidecarStore.candidateNames("IMG_1.JPG", SidecarStyle.DARKTABLE, listOf("IMG_1.JPG")))
+        assertTrue("IMG_1.xmp" !in XmpSidecarStore.candidateNames("IMG_1.JPG", SidecarStyle.DARKTABLE, listOf("IMG_1.JPG", "IMG_1.CR2")))
+    }
 }

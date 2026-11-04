@@ -149,7 +149,10 @@ object XmpAnnotationCodec {
         packet: XmpPacket, ns: String, prefix: String, name: String, add: Set<String>, remove: Set<String>,
     ) {
         if (add.isEmpty() && remove.isEmpty()) return
-        val result = (packet.bag(ns, name) + add).filterNot { it in remove }.distinct()
+        // Compared as setList stores them (XML-safe, trimmed): a keyword added with a control
+        // character is stored stripped, and removing the same raw string must still match it.
+        val removed = remove.map { XmpPacket.xmlSafe(it).trim() }.toSet()
+        val result = (packet.bag(ns, name) + add).filterNot { XmpPacket.xmlSafe(it).trim() in removed }.distinct()
         packet.setBag(ns, prefix, name, result)
     }
 
