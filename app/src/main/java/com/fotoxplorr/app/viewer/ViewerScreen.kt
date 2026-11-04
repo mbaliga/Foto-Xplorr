@@ -8,6 +8,9 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
@@ -108,6 +111,14 @@ import com.fotoxplorr.app.viewer.colour.WindowColourMode
 import com.fotoxplorr.app.viewer.colour.rememberProAnalysis
 import com.fotoxplorr.app.viewer.colour.screenColourFacts
 import com.fotoxplorr.app.viewer.deepzoom.DeepZoomLayer
+import com.fotoxplorr.app.viewer.slideshow.KenBurns
+import com.fotoxplorr.app.viewer.slideshow.KenBurnsPath
+import com.fotoxplorr.app.viewer.slideshow.SlideshowStyleRoomSection
+import com.fotoxplorr.app.viewer.slideshow.SlideshowStyleStore
+import com.fotoxplorr.app.viewer.slideshow.SlideshowTransition
+import com.fotoxplorr.app.viewer.slideshow.SlideshowTransitions
+import com.fotoxplorr.app.viewer.slideshow.TransitionFrame
+import com.fotoxplorr.app.viewer.slideshow.systemAnimationsEnabled
 import com.fotoxplorr.app.viewer.deepzoom.DeepZoomPolicy
 import com.fotoxplorr.app.palette.PaletteMemo
 import com.fotoxplorr.app.palette.PaletteSwatch
@@ -472,6 +483,42 @@ fun ViewerScreen(
     }
     ApplyWindowColourMode(colourDecision.mode)
     val proAnalysis = rememberProAnalysis(asset, proChoice.needsPixels && !asset.isVideo)
+
+    // Slideshow v2 (no music): a transition between photos and an optional slow drift on each one.
+    // The look is remembered; the decisions are pure (slideshow/). With the system's animations off
+    // the slideshow cuts and stays still. The outgoing photo is held for the transition's length
+    // and drawn over the incoming one, which is already in place underneath.
+    val slideStore = remember { SlideshowStyleStore(context) }
+    var slideStyle by remember { mutableStateOf(slideStore.load()) }
+    val animationsOn = remember(context) { systemAnimationsEnabled(context) }
+    val slideEff = slideStyle.effective(animationsOn)
+    val lastShown = remember { arrayOfNulls<MediaAsset>(1) }
+    val outgoing = remember(asset.id) {
+        lastShown[0]?.takeIf {
+            slideshowActive && it.id != asset.id && !it.isVideo && !asset.isVideo &&
+                slideEff.transition != SlideshowTransition.NONE
+        }
+    }
+    SideEffect { lastShown[0] = asset }
+    val transitionT = remember(asset.id) { Animatable(if (outgoing != null) 0f else 1f) }
+    LaunchedEffect(asset.id) {
+        if (transitionT.value < 1f) {
+            transitionT.animateTo(1f, tween(slideEff.transitionMs(slideshowIntervalSeconds), easing = LinearEasing))
+        }
+    }
+    val kenBurnsOn = slideshowActive && slideEff.kenBurns && !slideshowPaused && !asset.isVideo
+    var kenBurnsT by remember(asset.id) { mutableFloatStateOf(0f) }
+    LaunchedEffect(asset.id, kenBurnsOn, slideshowIntervalSeconds) {
+        if (kenBurnsOn) {
+            val total = slideshowIntervalSeconds.coerceAtLeast(2) * 1_000f
+            var last = withFrameMillis { it }
+            while (kenBurnsT < 1f) {
+                val now = withFrameMillis { it }
+                kenBurnsT = (kenBurnsT + (now - last) / total).coerceAtMost(1f)
+                last = now
+            }
+        }
+    }
     LaunchedEffect(asset.id, metadataRevision) {
         exif = readImageExifDetails(context, asset)
     }
@@ -551,16 +598,30 @@ fun ViewerScreen(
     val deepSize = remember(asset.width, asset.height, exif.displayWidth, exif.displayHeight) {
         PlaceMorph.restingImageSize(asset.width, asset.height, exif.displayWidth, exif.displayHeight)
     }
-    val oneToOne = DeepZoomPolicy.oneToOneScale(
+    val fileOneToOne = DeepZoomPolicy.oneToOneScale(
         deepSize.width.toInt(), deepSize.height.toInt(),
         containerSize.width.toFloat(), containerSize.height.toFloat(),
     )
-    val maxScale = if (asset.isVideo) MAX_SCALE else DeepZoomPolicy.maxScale(
-        deepSize.width.toInt(), deepSize.height.toInt(),
+    // Gated on the SNAPPED rotation: a pinch carries a fraction of a degree of noise that is only
+    // squared up on release, and taking the layer out of composition per pinch would close the
+    // decoder and drop every tile each time.
+    val tilesOn = !asset.isVideo && snapRotation(rotation) == 0f &&
+        DeepZoomPolicy.tilesWorthRunning(asset.mimeType, fileOneToOne, animatedImage, colourVision.choice.filtering)
+    val oneToOne = DeepZoomPolicy.oneToOneFor(tilesOn, fileOneToOne)
+    val maxScale = if (asset.isVideo) MAX_SCALE else DeepZoomPolicy.maxScaleFor(
+        tilesOn, deepSize.width.toInt(), deepSize.height.toInt(),
         containerSize.width.toFloat(), containerSize.height.toFloat(),
     )
     val liveMaxScale by rememberUpdatedState(maxScale)
     val liveOneToOne by rememberUpdatedState(oneToOne)
+    // The drift pans only along an axis the fitted photo fills, so no letterbox bar slides into view.
+    val kenBurnsPath = remember(asset.id, photoRect, containerSize) {
+        KenBurns.plan(
+            asset.id.hashCode().toLong(),
+            filledX = photoRect.width >= containerSize.width - 1f,
+            filledY = photoRect.height >= containerSize.height - 1f,
+        )
+    }
     val onPinPositioned = remember(pinHolder) { { rect: Rect -> pinHolder.rect = rect } }
     // The pin left the room (the location picker replaced the plate): the held rectangle is stale,
     // and the flier would land, opaque, on it over the picker. No rectangle, no flier.
@@ -788,6 +849,13 @@ fun ViewerScreen(
                 onSetPinchMode = onSetPinchMode,
                 transparencyBackground = transparencyBackground,
                 onSetTransparencyBackground = onSetTransparencyBackground,
+                slideshowStyleSection = {
+                    SlideshowStyleRoomSection(
+                        style = slideStyle,
+                        onSetTransition = { slideStyle = slideStyle.copy(transition = it); slideStore.setTransition(it) },
+                        onSetKenBurns = { slideStyle = slideStyle.copy(kenBurns = it); slideStore.setKenBurns(it) },
+                    )
+                },
                 proOverlaySection = {
                     if (!asset.isVideo) {
                         ProOverlayRoomSection(proChoice) { overlay, on ->
@@ -1016,11 +1084,21 @@ fun ViewerScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            scaleX = scale
-                            scaleY = scale
+                            // The slideshow's own motion rides on top of the viewer's zoom and
+                            // only while the photo is at rest: a pinch or a turn takes over.
+                            val resting = scale <= 1.001f && rotation == 0f
+                            val kb = if (kenBurnsOn && resting) kenBurnsPath.at(kenBurnsT) else KenBurnsPath.Frame.REST
+                            val tr = if (resting && outgoing != null) {
+                                SlideshowTransitions.frame(slideEff.transition, transitionT.value)
+                            } else {
+                                TransitionFrame.DONE
+                            }
+                            scaleX = scale * kb.scale * tr.inScale
+                            scaleY = scale * kb.scale * tr.inScale
                             rotationZ = rotation
-                            translationX = offsetX
-                            translationY = offsetY
+                            translationX = offsetX + size.width * (kb.panX + tr.inShift)
+                            translationY = offsetY + size.height * kb.panY
+                            alpha = tr.inAlpha
                         },
                 ) {
                     // Behind the photo and inside the zoom layer, so it moves with the picture.
@@ -1055,10 +1133,7 @@ fun ViewerScreen(
                     // animation, a turned photo or one under a colour filter.
                     DeepZoomLayer(
                         asset = asset,
-                        enabled = !asset.isVideo && rotation == 0f &&
-                            DeepZoomPolicy.tilesWorthRunning(
-                                asset.mimeType, oneToOne, animatedImage, colourVision.choice.filtering,
-                            ),
+                        enabled = tilesOn,
                         containerSize = containerSize,
                         scale = { scale },
                         offsetX = { offsetX },
@@ -1074,6 +1149,22 @@ fun ViewerScreen(
                         active = viewerMode.isSelectingText,
                         scale = { scale },
                     )
+                }
+                // The photo just left, over the newcomer, for the length of the transition only.
+                if (outgoing != null && transitionT.value < 1f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                val tr = SlideshowTransitions.frame(slideEff.transition, transitionT.value)
+                                scaleX = tr.outScale
+                                scaleY = tr.outScale
+                                translationX = size.width * tr.outShift
+                                alpha = tr.outAlpha
+                            },
+                    ) {
+                        MediaImage(asset = outgoing, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                    }
                 }
             }
 
