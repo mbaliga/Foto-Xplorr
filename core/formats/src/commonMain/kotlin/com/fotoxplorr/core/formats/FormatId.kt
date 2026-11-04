@@ -35,6 +35,10 @@ val MediaFormat.formatId: FormatId
             MediaFormat.Icns -> "icns"
             MediaFormat.Pcx -> "pcx"
             MediaFormat.Xcf -> "xcf"
+            MediaFormat.Apng -> "apng"
+            MediaFormat.Psb -> "psb"
+            MediaFormat.Ora -> "ora"
+            MediaFormat.Kra -> "kra"
             MediaFormat.Other -> "other"
         },
     )

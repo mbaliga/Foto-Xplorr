@@ -114,4 +114,22 @@ class MediaFormatTest {
         assertEquals(MediaFormat.Raw(RawVariant.CR2), format)
         assertFalse(format.isLikelyDecodable)
     }
+
+    @Test
+    fun `pack gated formats classify by extension or mime instead of falling to Other`() {
+        val expected = mapOf(
+            "scan.tif" to MediaFormat.Tiff, "scan.TIFF" to MediaFormat.Tiff, "a.jxl" to MediaFormat.JpegXl,
+            "a.avif" to MediaFormat.Avif, "a.psd" to MediaFormat.Psd, "a.psb" to MediaFormat.Psb,
+            "a.exr" to MediaFormat.Exr, "a.hdr" to MediaFormat.Hdr, "a.ppm" to MediaFormat.Pnm,
+            "a.jp2" to MediaFormat.Jp2, "a.jxr" to MediaFormat.Jxr, "a.qoi" to MediaFormat.Qoi,
+            "a.dds" to MediaFormat.Dds, "a.ktx2" to MediaFormat.Ktx, "a.icns" to MediaFormat.Icns,
+            "a.pcx" to MediaFormat.Pcx, "a.xcf" to MediaFormat.Xcf, "a.ico" to MediaFormat.Ico,
+            "a.apng" to MediaFormat.Apng, "a.ora" to MediaFormat.Ora, "a.kra" to MediaFormat.Kra,
+        )
+        expected.forEach { (name, format) ->
+            assertEquals(format, MediaFormat.classify("", name), name)
+        }
+        assertEquals(MediaFormat.Tiff, MediaFormat.classify("image/tiff", "noextension"))
+        assertEquals(MediaFormat.Avif, MediaFormat.classify("image/avif", "x"))
+    }
 }
