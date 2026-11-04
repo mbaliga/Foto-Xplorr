@@ -1,6 +1,8 @@
 # Components that scripts/verify-licences.sh would otherwise warn about. Format:
 #   <group>:<name>[:<version>] | <reason>      (a trailing * is a prefix match; '#' comments)
-# An entry here silences a WARNING only; it never excuses a GPL/AGPL failure. An entry that
+# An entry silences a WARNING for what it matches. An EXACT entry (group:name or group:name:version,
+# no *) also clears the FAIL for an unknown licence ("?" POM not fetched, "-" none declared or POM
+# did not parse); a * glob never does. No entry ever excuses a GPL/AGPL failure. An entry that
 # matches nothing on either flavor's resolved classpath is reported as stale, so keep this list
 # honest: delete a line when its component leaves the build. Reviewed 2026-11-04.
 

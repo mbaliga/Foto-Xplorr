@@ -59,7 +59,8 @@ GRADLE_ARGS=(
 ./gradlew "${GRADLE_ARGS[@]}"
 
 # WP1.9: licence policy over the resolved runtime classpaths :app:reportRuntimeLicences just wrote
-# (fails on GPL/AGPL; warns on LGPL/CDDL/unknown unless scripts/licence-allowlist.txt covers it).
+# (fails on GPL/AGPL, and on an unknown licence "?"/"-" unless an exact scripts/licence-allowlist.txt
+# entry names it; warns on LGPL/CDDL/EPL/MPL and unrecognised names unless the allowlist covers it).
 ./scripts/verify-licences.sh
 
 # WP1.9 (ADR-009 decision 5, the `core-native` CI job): scripts/verify-native.sh owns the actual

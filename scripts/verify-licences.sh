@@ -14,7 +14,8 @@
 #         at least one permissive choice is not a failure: you may take the other licence).
 #   FAIL  a component whose licence is not known because its POM could not be fetched ("?") or
 #         named no licence ("-"; the Gradle task also writes "-" when a POM fails to parse), UNLESS
-#         an allowlist entry covers it. Otherwise a GPL library whose POM fetch timed out or hit
+#         an EXACT allowlist entry names it (group:name or group:name:version; a trailing-* glob
+#         never clears an unknown, since it was reviewed for a licence name, not for its absence). Otherwise a GPL library whose POM fetch timed out or hit
 #         HTTP 429 would pass the gate; an unknown licence is treated as a failure, not a shrug.
 #   WARN  LGPL, CDDL, EPL, MPL, GPL-with-classpath-exception, a dual licence that offers GPL, and a
 #         licence name this script does not recognise.
@@ -23,8 +24,9 @@
 #
 # Allowlist lines: "<group>:<name>[:<version>] | <reason>" ; a trailing * is a prefix match;
 # '#' starts a comment. An entry that matches nothing is reported as stale (warning), so the list
-# cannot rot. An allowlist entry never excuses a GPL/AGPL failure; it does clear an unknown ("?" or
-# "-") licence, because that is exactly the reviewed exception the list exists for.
+# cannot rot. An allowlist entry never excuses a GPL/AGPL failure; an exact (non-glob) entry does
+# clear an unknown ("?" or "-") licence, because that is exactly the reviewed exception the list
+# exists for. A glob such as com.google.mlkit:* only silences warnings.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -56,6 +58,16 @@ check_file() {
       }
       return ""
     }
+    # allowed_exact: like allowed() but only for a non-glob entry naming at least group:name, so a
+    # prefix glob reviewed for a vendor licence name cannot clear a component whose licence is unknown
+    function allowed_exact(id,   i, p) {
+      for (i = 1; i <= nallow; i++) {
+        p = pat[i]
+        if (substr(p, length(p)) == "*" || index(p, ":") == 0) continue
+        if (id == p || index(id, p ":") == 1) { used[i] = 1; return reason[i] }
+      }
+      return ""
+    }
     BEGIN {
       while ((getline line < allowfile) > 0) {
         sub(/^[ \t]+/, "", line)
@@ -80,8 +92,8 @@ check_file() {
         printf "FAIL %s: %s  (%s)\n", label, id, names; fails++; next
       }
       if (names == "-" || names == "?") {
-        if (allowed(id) != "") { allowlisted++; next }
-        printf "FAIL %s: %s  [%s; add a reviewed allowlist entry if this is known to be fine]  (%s)\n", label, id, (names == "?" ? "POM could not be fetched, licence unknown" : "no licence declared in any POM (or the POM did not parse)"), names
+        if (allowed_exact(id) != "") { allowlisted++; next }
+        printf "FAIL %s: %s  [%s; add a reviewed exact allowlist entry (no *) if this is known to be fine]  (%s)\n", label, id, (names == "?" ? "POM could not be fetched, licence unknown" : "no licence declared in any POM (or the POM did not parse)"), names
         fails++; next
       }
       why = ""
@@ -177,6 +189,13 @@ self_test() {
   printf 'q:glob:1\tOdd Terms\nq:glob:2\tOdd Terms\nr:other:1\tOdd Terms\n' > "$t/glob.tsv"
   printf 'q:* | prefix match\n' > "$t/allow-glob.txt"
   expect "prefix glob covers q:* but not r:other" 0 'WARN fixture: r:other:1' "$t/glob.tsv" "$t/allow-glob.txt"
+  printf 'q:x:1\t?\nq:y:1\t-\nq:glob:1\tOdd Terms\n' > "$t/glob-unk.tsv"
+  expect "prefix glob never clears an unknown licence" 1 'FAIL fixture: q:x:1.*POM could not be fetched' "$t/glob-unk.tsv" "$t/allow-glob.txt"
+  expect "prefix glob never clears a missing licence" 1 'FAIL fixture: q:y:1' "$t/glob-unk.tsv" "$t/allow-glob.txt"
+  printf 'q | group-only entry\n' > "$t/allow-group.txt"
+  expect "group-only entry never clears an unknown licence" 1 'FAIL fixture: q:x:1' "$t/glob-unk.tsv" "$t/allow-group.txt"
+  printf 'q:x:1 | reviewed by hand\nq:y | reviewed by hand\nq:* | prefix match\n' > "$t/allow-exact.txt"
+  expect "exact entries clear unknowns beside a glob" 0 '3 allowlisted, 0 warnings.*0 FAILURES' "$t/glob-unk.tsv" "$t/allow-exact.txt"
 
   if [ "$fails" -ne 0 ]; then echo "verify-licences self-test: $fails FAILED" >&2; return 1; fi
   echo "verify-licences self-test OK"
