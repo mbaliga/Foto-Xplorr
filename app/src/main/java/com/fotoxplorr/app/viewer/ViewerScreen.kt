@@ -76,6 +76,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.TextFields
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.ui.input.pointer.PointerInputScope
@@ -111,6 +112,8 @@ import com.fotoxplorr.app.viewer.colour.WindowColourMode
 import com.fotoxplorr.app.viewer.colour.rememberProAnalysis
 import com.fotoxplorr.app.viewer.colour.screenColourFacts
 import com.fotoxplorr.app.viewer.deepzoom.DeepZoomLayer
+import com.fotoxplorr.app.viewer.sphere.SphereCopy
+import com.fotoxplorr.app.viewer.sphere.SphereScreen
 import com.fotoxplorr.app.viewer.slideshow.KenBurns
 import com.fotoxplorr.app.viewer.slideshow.KenBurnsPath
 import com.fotoxplorr.app.viewer.slideshow.SlideshowStyleRoomSection
@@ -1247,6 +1250,22 @@ fun ViewerScreen(
             // navigator that only appears when the chrome does is a navigator nobody finds while
             // zoomed, and the owner's reference shows it over the bare photo. It is the one
             // thing drawn over the photo without asking, and only while the photo is zoomed.
+            // 360 view (U14): a way in for a photo sphere, and the viewer itself over everything. A tap, no gesture needed.
+            var sphereOpen by remember(asset.id) { mutableStateOf(false) }
+            if (!asset.isVideo && !modeActive && chromeShown && exif.isPanorama) {
+                IconButton(
+                    onClick = { sphereOpen = true },
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .navigationBarsPadding()
+                        .padding(start = 12.dp, bottom = ViewerChromePolicy.videoBottomInsetDp(filmstripShown).dp + 12.dp)
+                        .size(48.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                        .semantics { contentDescription = SphereCopy.OPEN },
+                ) { Icon(Icons.Outlined.Public, contentDescription = null, tint = Color.White) }
+            }
+            if (sphereOpen) SphereScreen(asset = asset, onClose = { sphereOpen = false })
+
             // The pro card (info rows and/or histogram): chrome-level, not zoomed, lifted over the filmstrip band.
             if (!asset.isVideo && !modeActive && proChoice.anyOn) {
                 val proLines = remember(exif, asset.id, colourDecision) {
