@@ -91,6 +91,13 @@ object DeepZoomPolicy {
         mimeType?.lowercase() in OPAQUE_MIME || !tileHasAlpha
 
     /**
+     * Whether a probe region must be decoded when the decoder opens, before tiles are reported live:
+     * every format but JPEG may carry alpha, and finding it only from the first real tile would raise
+     * the ceiling and the 1:1 double-tap and then snap the zoom back down.
+     */
+    fun needsAlphaProbe(mimeType: String?): Boolean = mimeType?.lowercase() !in OPAQUE_MIME
+
+    /**
      * When the ceiling drops under the current zoom (tiles turned off by a rotation or a colour
      * filter, or found unusable), the zoom and its pan are pulled down to [maxScale] together, so
      * the same point stays at the centre. Unchanged when already within it.

@@ -36,6 +36,12 @@ internal class RegionTileDecoder private constructor(
     private val ops: OrientationOps,
     private val rawW: Int,
     private val rawH: Int,
+    /**
+     * Whether this file's tiles may be drawn over its base picture ([DeepZoomPolicy.tileDrawable]),
+     * decided at [open] from a probe region, so the viewer never offers a deep zoom it would take back
+     * once the first tile showed alpha. The per-tile check in the layer stays as a backstop.
+     */
+    val tilesDrawable: Boolean,
 ) : Closeable {
     /** The upright photo's size in pixels. */
     val width: Int = RegionRects.uprightSize(rawW, rawH, ops).first
@@ -69,8 +75,13 @@ internal class RegionTileDecoder private constructor(
     fun closeInBackground() = closeOffMain(this)
 
     companion object {
-        /** Opens [uri] for region reads, or null (unreadable, unsupported format, zero size). Blocking: call off the main thread. */
-        fun open(context: Context, uri: Uri): RegionTileDecoder? = runCatching {
+        /**
+         * Opens [uri] for region reads, or null (unreadable, unsupported format, zero size). Blocking:
+         * call off the main thread. For a format that may carry alpha ([mimeType] not JPEG) one tiny
+         * corner is decoded first and [tilesDrawable] records whether tiles may be drawn: alpha is a
+         * property of the PNG colour type or WebP header, so the corner speaks for every tile.
+         */
+        fun open(context: Context, uri: Uri, mimeType: String?): RegionTileDecoder? = runCatching {
             val resolver = context.contentResolver
             val orientation = resolver.openInputStream(uri)?.use {
                 ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
@@ -83,9 +94,30 @@ internal class RegionTileDecoder private constructor(
                 if (decoder.width <= 0 || decoder.height <= 0) {
                     decoder.recycle(); return@closingOnFailure null
                 }
-                RegionTileDecoder(decoder, pfd, orientationTransform(orientation), decoder.width, decoder.height)
+                val drawable = drawableAfterProbe(mimeType) { probeRegion(decoder) }
+                RegionTileDecoder(decoder, pfd, orientationTransform(orientation), decoder.width, decoder.height, drawable)
             }
         }.getOrNull()
+
+        /**
+         * Whether this file's tiles may be drawn over the base: JPEG without decoding anything, any
+         * other format from [probe] (a tiny region, recycled here). A failed probe means no tiles,
+         * the safe side: the viewer then keeps its old ceiling and the soft picture.
+         */
+        internal fun drawableAfterProbe(mimeType: String?, probe: () -> Bitmap?): Boolean {
+            if (!DeepZoomPolicy.needsAlphaProbe(mimeType)) return true
+            val bitmap = runCatching { probe() }.getOrNull() ?: return false
+            return DeepZoomPolicy.tileDrawable(mimeType, bitmap.hasAlpha()).also { bitmap.recycle() }
+        }
+
+        /** The top-left corner of the file, a few pixels square, decoded as tiles are. */
+        private fun probeRegion(decoder: BitmapRegionDecoder): Bitmap? {
+            val rect = Rect(0, 0, minOf(PROBE_PX, decoder.width), minOf(PROBE_PX, decoder.height))
+            val options = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+            return decoder.decodeRegion(rect, options)
+        }
+
+        private const val PROBE_PX = 16
 
         @Suppress("DEPRECATION")
         private fun openDecoder(context: Context, uri: Uri, pfd: ParcelFileDescriptor?): BitmapRegionDecoder? {

@@ -63,8 +63,8 @@ internal fun DeepZoomLayer(
         TileCache<ImageBitmap>(CACHE_BYTES) { (it.width.toLong() * it.height * 4L) }
     }
     var version by remember(cache) { mutableIntStateOf(0) }
-    // Set once a tile comes back with alpha in a format that may carry it: from then on nothing is
-    // drawn over the base picture (DeepZoomPolicy.tileDrawable), and the viewer's ceiling falls back.
+    // Set when the open's probe (or, as a backstop, a tile) finds alpha in a format that may carry it:
+    // nothing is drawn over the base picture (DeepZoomPolicy.tileDrawable) and tiles are never live.
     var translucent by remember(asset.contentUriString, asset.dateModifiedSeconds) { mutableStateOf(false) }
     val live = decoder != null && !translucent
     val reportLive by rememberUpdatedState(onLiveChanged)
@@ -83,13 +83,22 @@ internal fun DeepZoomLayer(
     var wanted by remember(asset.contentUriString, asset.dateModifiedSeconds) { mutableStateOf(false) }
     if (enabled) wanted = true
     LaunchedEffect(asset.contentUriString, asset.dateModifiedSeconds, wanted) {
-        if (!wanted || decoder != null) return@LaunchedEffect
+        if (!wanted || decoder != null || translucent) return@LaunchedEffect
         // NonCancellable: an open that finishes after this effect was cancelled must still be closed,
         // not thrown away with its file descriptor and native decoder.
         val opened = withContext(NonCancellable + Dispatchers.IO) {
-            RegionTileDecoder.open(context, android.net.Uri.parse(asset.contentUriString))
+            RegionTileDecoder.open(context, android.net.Uri.parse(asset.contentUriString), asset.mimeType)
         }
-        if (isActive) decoder = opened else opened?.closeInBackground()
+        when {
+            !isActive -> opened?.closeInBackground()
+            // Alpha found by the open's probe: never reported live, so the ceiling and the 1:1
+            // double-tap never offer a deep zoom that the first tile would take back.
+            opened != null && !opened.tilesDrawable -> {
+                opened.closeInBackground()
+                translucent = true
+            }
+            else -> decoder = opened
+        }
     }
 
     val d = decoder
