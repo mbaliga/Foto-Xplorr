@@ -7,6 +7,7 @@ import android.net.Uri
 import com.fotoxplorr.core.formats.raw.ByteSource
 import com.fotoxplorr.core.formats.raw.RawPreview
 import com.fotoxplorr.core.formats.raw.RawPreviewExtractor
+import com.fotoxplorr.core.formats.raw.RawPreviewKind
 import java.io.FileInputStream
 import java.io.InputStream
 import java.nio.ByteBuffer
@@ -34,13 +35,21 @@ internal object RawPreviewReader {
         RawPreviewExtractor.extract(ChannelByteSource(channel, start))
     }
 
-    fun decode(context: Context, uri: Uri, limits: DecodeLimits): DecodedBitmap? =
-        runCatching { decodeOrNull(context, uri, limits) }.getOrNull()
+    /**
+     * The preview, upright and within [limits]; [accept] can refuse a preview by kind (the TIFF
+     * route refuses thumbnails and single strips, see [DecodeRoutes.acceptsPreview]).
+     */
+    fun decode(
+        context: Context,
+        uri: Uri,
+        limits: DecodeLimits,
+        accept: (RawPreviewKind) -> Boolean = { true },
+    ): DecodedBitmap? = runCatching { decodeOrNull(context, uri, limits, accept) }.getOrNull()
 
-    private fun decodeOrNull(context: Context, uri: Uri, limits: DecodeLimits): DecodedBitmap? =
+    private fun decodeOrNull(context: Context, uri: Uri, limits: DecodeLimits, accept: (RawPreviewKind) -> Boolean): DecodedBitmap? =
         withChannel(context, uri) { channel, start ->
             val preview = RawPreviewExtractor.extract(ChannelByteSource(channel, start)) ?: return@withChannel null
-            if (preview.length > MAX_PREVIEW_BYTES) return@withChannel null
+            if (preview.length > MAX_PREVIEW_BYTES || !accept(preview.kind)) return@withChannel null
             val ops = orientationTransform(preview.orientation)
             val uprightW = if (ops.swapsDimensions) preview.height else preview.width
             val uprightH = if (ops.swapsDimensions) preview.width else preview.height
@@ -62,12 +71,7 @@ internal object RawPreviewReader {
                     if (it !== sampled) sampled.recycle()
                 }
             }
-            DecodedBitmap(
-                bitmap = applyOrientation(scaled, ops),
-                sourceWidth = uprightW,
-                sourceHeight = uprightH,
-                downscaled = tw < uprightW || th < uprightH,
-            )
+            previewDecoded(applyOrientation(scaled, ops), uprightW, uprightH)
         }
 
     /** Opens a seekable channel on [uri] (null for pipes and unreadable URIs); [block] gets the
@@ -81,6 +85,19 @@ internal object RawPreviewReader {
     }
 
     private const val MAX_PREVIEW_BYTES = 32L shl 20
+
+    /**
+     * A preview is never the RAW's full resolution, and the sensor size is unknown here: the result
+     * is always marked [DecodedBitmap.downscaled] and [DecodedBitmap.fromPreview], so callers'
+     * "saved at reduced size" notes fire. [previewW] x [previewH] is the upright preview's size.
+     */
+    internal fun previewDecoded(bitmap: Bitmap, previewW: Int, previewH: Int) = DecodedBitmap(
+        bitmap = bitmap,
+        sourceWidth = previewW,
+        sourceHeight = previewH,
+        downscaled = true,
+        fromPreview = true,
+    )
 
     /** Positional reads on a [FileChannel]; the shift handles an asset that starts mid-file. */
     private class ChannelByteSource(private val channel: FileChannel, private val start: Long = 0L) : ByteSource {

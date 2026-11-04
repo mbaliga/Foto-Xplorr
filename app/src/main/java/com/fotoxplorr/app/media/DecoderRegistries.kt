@@ -3,6 +3,7 @@ package com.fotoxplorr.app.media
 import android.os.Build
 import com.fotoxplorr.core.formats.DecoderProvider
 import com.fotoxplorr.core.formats.DecoderRegistry
+import com.fotoxplorr.core.formats.raw.RawPreviewProvider
 import com.fotoxplorr.core.formats.simple.SimpleDecoderProvider
 
 /**
@@ -17,7 +18,7 @@ object DecoderRegistries {
     private var cached: DecoderRegistry? = null
 
     fun current(): DecoderRegistry = cached ?: synchronized(this) {
-        cached ?: DecoderRegistry(listOf(PlatformDecoderProvider(Build.VERSION.SDK_INT, AndroidMimeProbe), SimpleDecoderProvider()) + installed)
+        cached ?: DecoderRegistry(listOf(PlatformDecoderProvider(Build.VERSION.SDK_INT, AndroidMimeProbe), SimpleDecoderProvider(), RawPreviewProvider()) + installed)
             .also { cached = it }
     }
 

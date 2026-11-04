@@ -18,7 +18,6 @@ import coil3.request.ImageRequest
 import com.fotoxplorr.core.formats.LoadResult
 import com.fotoxplorr.core.formats.SizeHint
 import com.fotoxplorr.core.formats.TileState
-import com.fotoxplorr.core.formats.simple.SimpleFormatDecoders
 import com.fotoxplorr.core.formats.tileState
 
 /**
@@ -74,9 +73,10 @@ fun MediaImage(
             // exactly the signal Coil needs to treat this as a different image to cache.
             .memoryCacheKey(mediaImageCacheKey(asset.contentUriString, asset.dateModifiedSeconds))
             .apply {
-                // Pure-Kotlin decoders for TGA, TIFF, PSD... (never animated, so they win over `animate`).
-                if (SimpleFormatDecoders.supports(format)) {
-                    decoderFactory(SimpleCoilDecoder.Factory(format))
+                // RAW previews and the pure-Kotlin decoders (TGA, TIFF, PSD...): never animated, so
+                // they win over `animate`; Coil's own decoders still run if they decline.
+                if (DecodeRoutes.forTile(format).isNotEmpty()) {
+                    decoderFactory(RouteCoilDecoder.Factory(format, asset.contentUri))
                 } else if (animate) {
                     // ImageDecoder-backed on API 28+, which handles animated WebP and HEIF as
                     // well; the older GifDecoder is GIF-only but works back to this app's minSdk.

@@ -55,16 +55,25 @@ class FormatPlaceholderTest {
 
     @Test
     fun `an undecodable raw draws a badge and a reason and says so to a screen reader`() {
-        compose.setContent { MediaImage(asset("IMG_0001.CR3", ""), Modifier.size(200.dp)) }
-        compose.onNodeWithText("CR3").assertIsDisplayed()
+        // X3F: a container the RAW preview extractor cannot walk, so it is refused up front. (A CR3
+        // is decodable through its embedded preview now and goes to the loader first.)
+        compose.setContent { MediaImage(asset("IMG_0001.X3F", ""), Modifier.size(200.dp)) }
+        compose.onNodeWithText("X3F").assertIsDisplayed()
         compose.onNodeWithText("Raw photos can't be previewed yet.").assertIsDisplayed()
-        compose.onNodeWithContentDescription("CR3 raw photo, can't be shown here.").assertIsDisplayed()
+        compose.onNodeWithContentDescription("X3F raw photo, can't be shown here.").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a raw without a readable preview tries the loader and then shows a placeholder`() {
+        compose.setContent { MediaImage(asset("IMG_0001.CR3", "", "content://fake/missing-raw"), Modifier.size(200.dp)) }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("CR3").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("This file couldn't be read.").assertIsDisplayed()
     }
 
     @Test
     fun `a stamp sized tile keeps the badge and drops the sentence`() {
-        compose.setContent { MediaImage(asset("IMG_0001.CR3", ""), Modifier.size(48.dp)) }
-        compose.onNodeWithText("CR3").assertIsDisplayed()
+        compose.setContent { MediaImage(asset("IMG_0001.X3F", ""), Modifier.size(48.dp)) }
+        compose.onNodeWithText("X3F").assertIsDisplayed()
         assertEquals(0, compose.onAllNodesWithText("Raw photos can't be previewed yet.").fetchSemanticsNodes().size)
     }
 
