@@ -184,9 +184,9 @@ class PaneRenderTest {
             }
         }
         val switches = compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch))
-        // Fill the tile, Justified rows, Save ratings beside photos and Play animations. (Long press is a choice
-        // row, not a switch.)
-        switches.assertCountEquals(4)
+        // Fill the tile, Justified rows, Group bursts, Pair Live Photos, Save ratings beside photos and Play
+        // animations. (Long press is a choice row, not a switch.)
+        switches.assertCountEquals(6)
 
         compose.onNodeWithText("Fill the tile").performClick()
         // The default is fit-to-tile ON, so a tap on the row turns it off.
@@ -204,7 +204,8 @@ class PaneRenderTest {
         }
         compose.onNodeWithText("Long press does").assertExists()
         GridLongPress.entries.forEach { compose.onNodeWithText(it.label).assertExists() }
-        compose.onNodeWithText("Nothing").performClick()
+        // Two more Media switches (WP2.8) moved the row further down: scroll to it first.
+        compose.onNodeWithText("Nothing").performScrollTo().performClick()
         assertEquals(GridLongPress.NOTHING, chosen)
     }
 
