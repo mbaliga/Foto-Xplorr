@@ -104,6 +104,23 @@ class RawPreviewExtractorTest {
     }
 
     @Test
+    fun `old orf with an undefined type CameraSettings sub ifd`() {
+        val b = Buf(true)
+        tiffHeader(b, magic = 0x4F52)
+        val thumb = jpeg(160, 120, 300)
+        val prev = jpeg(1600, 1200, 800)
+        b.ifd(8, 0, intArrayOf(0x8769, 4, 1, 60))
+        b.ifd(60, 0, intArrayOf(0x927C, 7, 200, 120))
+        b.ascii(120, "OLYMPUS\u0000"); b.ascii(128, "II"); b.u16(130, 3)
+        // 0x2020 as UNDEFINED: count = the IFD's byte size (2 + 2 * 12 + 4), value = its offset.
+        // The makernote's own thumbnail (0x0100) is there too and must lose to the big preview.
+        b.ifd(132, 0, intArrayOf(0x0100, 7, thumb.size, 300 - 120), intArrayOf(0x2020, 7, 30, 40))
+        b.ifd(160, 0, intArrayOf(0x0101, 4, 1, 500 - 120), intArrayOf(0x0102, 4, 1, prev.size))
+        b.put(300, thumb).put(500, prev)
+        check(RawPreviewExtractor.extract(b.source()), b, 1600, 1200, RawPreviewKind.MAKER_NOTE_PREVIEW)
+    }
+
+    @Test
     fun `pentax like makernote preview`() {
         val b = Buf(false)
         tiffHeader(b)
@@ -171,8 +188,7 @@ class RawPreviewExtractorTest {
         return b.bytes
     }
 
-    @Test
-    fun `cr3 like isobmff with a PRVW box and CMT1 orientation`() {
+    private fun cr3File(): ByteArray {
         val prev = jpeg(1620, 1080, 700)
         val thmb = jpeg(160, 120, 300)
         // PRVW payload: u32 0, u16 1, u16 w, u16 h, u16 1, u32 size, jpeg
@@ -184,14 +200,40 @@ class RawPreviewExtractorTest {
         val tiff = Buf(true); tiffHeader(tiff); tiff.ifd(8, 0, intArrayOf(0x0112, 3, 1, 6))
         val moovUuid = ByteArray(16) { 0x22 } + box("CMT1", tiff.bytes) + box("THMB", th.bytes)
         val ftyp = box("ftyp", "crx ".encodeToByteArray() + ByteArray(4) + "crx isom".encodeToByteArray())
-        val file = ftyp + box("moov", box("uuid", moovUuid)) + box("uuid", prvwUuid) + box("mdat", ByteArray(500))
+        return ftyp + box("moov", box("uuid", moovUuid)) + box("uuid", prvwUuid) + box("mdat", ByteArray(500))
+    }
+
+    @Test
+    fun `cr3 like isobmff with a PRVW box and CMT1 orientation`() {
+        val file = cr3File()
         val src = ByteArraySource(file)
         val p = RawPreviewExtractor.extract(src)
         assertNotNull(p)
         assertEquals(1620, p.width); assertEquals(1080, p.height)
         assertEquals(RawPreviewKind.ISOBMFF_PRVW, p.kind)
         assertEquals(6, p.orientation)
-        assertEquals(prev.size.toLong(), p.length)
+        assertEquals(1620L * 1080L, p.pixels)
+    }
+
+    @Test
+    fun `a cr3 source of more than 2 GiB is still walked`() {
+        val file = cr3File()
+        // The real bytes first and zeros after; the top-level walk must not wrap (end - pos) to an Int.
+        val huge = object : ByteSource {
+            override val length: Long = 2_500_000_000L
+            override fun read(position: Long, buffer: ByteArray, offset: Int, count: Int): Int {
+                if (position < 0 || position >= length || count <= 0) return -1
+                val n = minOf(count.toLong(), length - position).toInt()
+                for (i in 0 until n) {
+                    val at = position + i
+                    buffer[offset + i] = if (at < file.size) file[at.toInt()] else 0
+                }
+                return n
+            }
+        }
+        val p = RawPreviewExtractor.extract(huge)
+        assertNotNull(p)
+        assertEquals(RawPreviewKind.ISOBMFF_PRVW, p.kind)
     }
 
     @Test

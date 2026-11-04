@@ -228,12 +228,13 @@ class SimpleDecodersTest {
     }
 
     @Test fun `tiff 8-bit grey with min-is-white and predictor`() {
-        fun tiffGrey(photo: Long, predictor: Long?, pixels: ByteArray): ByteArray {
+        fun tiffGrey(photo: Long, predictor: Long?, pixels: ByteArray, extra: List<Triple<Int, Int, Long>> = emptyList()): ByteArray {
             val entries = mutableListOf(
                 Triple(256, 4, 3L), Triple(257, 4, 1L), Triple(258, 3, 8L), Triple(259, 3, 1L), Triple(262, 3, photo),
                 Triple(273, 4, 200L), Triple(278, 4, 1L), Triple(279, 4, 3L),
             )
             if (predictor != null) entries.add(Triple(317, 3, predictor))
+            entries.addAll(extra)
             entries.sortBy { it.first }
             var d = le16(entries.size)
             for ((tag, type, v) in entries) d += le16(tag) + le16(type) + le32(1) + le32(v)
@@ -246,6 +247,10 @@ class SimpleDecodersTest {
         val pred = ok(MediaFormat.Tiff, tiffGrey(1, 2, bytes(10, 5, 5)))
         assertEquals(0xFF0F0F0F.toInt(), pred.argb[1])
         assertEquals(0xFF141414.toInt(), pred.argb[2])
+        // The same decodable file marked as a RAW's reduced-resolution IFD0, or as a DNG, is refused.
+        refused(MediaFormat.Tiff, tiffGrey(1, null, bytes(1, 2, 3), listOf(Triple(254, 4, 1L))))
+        refused(MediaFormat.Tiff, tiffGrey(1, null, bytes(1, 2, 3), listOf(Triple(0xC612, 1, 1L))))
+        ok(MediaFormat.Tiff, tiffGrey(1, null, bytes(1, 2, 3), listOf(Triple(254, 4, 0L))))
     }
 
     // ---- limits, provider, registry

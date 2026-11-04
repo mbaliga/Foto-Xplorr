@@ -111,7 +111,7 @@ object RawPreviewExtractor {
                 if (maker != null) {
                     when (maker) {
                         Maker.OLYMPUS -> {
-                            if (e.tag == 0x2020) t.uint(e)?.let { walk(t, it, Role.MAKER, depth + 1, Maker.OLYMPUS_CAMERA, bases) }
+                            if (e.tag == 0x2020) olympusSubIfd(t, e)?.let { walk(t, it, Role.MAKER, depth + 1, Maker.OLYMPUS_CAMERA, bases) }
                             if (e.tag == 0x0100 && e.type == 7) {
                                 t.dataPos(e)?.let { out.add(RawPreviewKind.MAKER_NOTE_PREVIEW, e.count, it) }
                             }
@@ -146,6 +146,17 @@ object RawPreviewExtractor {
             if ((role == Role.MAIN || role == Role.THUMB) && ifd.next != 0L && chain < MAX_CHAIN) {
                 walk(t, ifd.next, Role.THUMB, depth, null, bases, chain + 1)
             }
+        }
+
+        /**
+         * Olympus 0x2020 (CameraSettings): newer bodies store it as a LONG/IFD pointer, older ones
+         * (E-1, E-300...) as UNDEFINED with count = the IFD's byte size and the value field holding
+         * its offset. For the latter, uint() would read the IFD's first byte, not its position.
+         */
+        private fun olympusSubIfd(t: Tiff, e: TiffEntry): Long? = when (e.type) {
+            4, 13 -> t.uint(e)
+            7 -> if (e.count > 4) e.raw.u32(8, t.le) else null
+            else -> null
         }
 
         private fun absolute(bases: LongArray, rel: Long) = LongArray(bases.size) { bases[it] + rel }
@@ -194,7 +205,7 @@ object RawPreviewExtractor {
         private fun boxWalk(start: Long, end: Long, depth: Int) {
             var pos = start
             while (pos + 8 <= end && boxes++ < MAX_BOXES) {
-                val h = r.bytes(pos, 16.coerceAtMost((end - pos).toInt())) ?: return
+                val h = r.bytes(pos, minOf(16L, end - pos).toInt()) ?: return
                 var size = h.u32(0, false)
                 var header = 8
                 if (size == 1L) {

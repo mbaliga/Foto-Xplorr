@@ -7,7 +7,8 @@ package com.fotoxplorr.core.formats.simple
  *  - compression: none, LZW, Deflate (8 and 32946), PackBits; horizontal predictor for 8-bit data;
  *  - either byte order, the orientation tag is applied.
  * JPEG-in-TIFF, tiles, CMYK/Lab, floating-point and 32-bit samples are refused (the tile then shows
- * the placeholder). RAW containers that share this header are handled earlier by RawPreviewExtractor.
+ * the placeholder). An IFD0 marked reduced-resolution (NewSubfileType bit 0) or carrying DNGVersion
+ * is refused too: that is a RAW's thumbnail, and the RAW preview route handles the file.
  */
 internal object TiffDecoder {
 
@@ -67,6 +68,9 @@ internal object TiffDecoder {
         val sampleFormat = ifd.one(339, 1).toInt()
         val bits = bitsArr[0].toInt()
         if (ifd.many(322) != null || ifd.many(324) != null) bad("tiled TIFF is not supported")
+        // A TIFF-based RAW (DNG, NEF...) often has a small uncompressed thumbnail as IFD0; showing it
+        // as "the picture" would be wrong, so leave such files to the RAW preview route.
+        if (ifd.one(254, 0) and 1L != 0L || ifd.many(0xC612) != null) bad("reduced-resolution or DNG IFD0")
         if (bitsArr.any { it.toInt() != bits } || sampleFormat != 1) bad("TIFF sample layout not supported")
         if (spp !in 1..5 || planar !in 1..2) bad("TIFF sample layout not supported")
         val colour = when (photo) {
