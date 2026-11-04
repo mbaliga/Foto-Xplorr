@@ -179,6 +179,7 @@
             android:launchMode="singleTop"
             android:supportsPictureInPicture="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density">
+            <layout android:defaultWidth="960dp" android:defaultHeight="640dp" android:minWidth="360dp" android:minHeight="360dp" />
             <!-- P0-09: Compose reacts to every one of these through LocalConfiguration without
                  needing the Activity recreated: confirmed no values-night/values-land/locale-
                  qualified resource directories exist in res/ (only density-qualified mipmaps,
@@ -234,6 +235,7 @@
             android:name=".viewer.ExternalViewerActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density">
+            <layout android:defaultWidth="960dp" android:defaultHeight="640dp" android:minWidth="360dp" android:minHeight="360dp" />
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -254,6 +256,7 @@
             android:name=".picker.PhotoPickerActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density">
+            <layout android:defaultWidth="960dp" android:defaultHeight="640dp" android:minWidth="360dp" android:minHeight="360dp" />
             <intent-filter>
                 <action android:name="android.intent.action.GET_CONTENT" />
                 <category android:name="android.intent.category.DEFAULT" />
