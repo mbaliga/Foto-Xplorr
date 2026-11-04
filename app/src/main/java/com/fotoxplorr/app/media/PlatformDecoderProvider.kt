@@ -87,7 +87,11 @@ internal fun trustedMimeProbe(raw: (String) -> Boolean): (String) -> Boolean? {
 
 /** Asks the device's [ImageDecoder]; `null` below API 29, where the question does not exist. */
 object AndroidMimeProbe : (String) -> Boolean? {
-    private val probe = trustedMimeProbe { mime -> runCatching { ImageDecoder.isMimeTypeSupported(mime) }.getOrDefault(false) }
+    private val probe = trustedMimeProbe { mime ->
+        // The SDK check sits inside the lambda too: lint cannot see the guard in invoke().
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            runCatching { ImageDecoder.isMimeTypeSupported(mime) }.getOrDefault(false)
+    }
 
     override fun invoke(mime: String): Boolean? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) probe(mime) else null
