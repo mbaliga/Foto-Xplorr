@@ -1,0 +1,214 @@
+package com.fotoxplorr.app.composite
+
+import android.content.Context
+import android.net.Uri
+import android.provider.Settings
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
+import androidx.test.core.app.ApplicationProvider
+import com.fotoxplorr.app.composite.CompositeTestFiles.asset
+import com.fotoxplorr.core.formats.composite.MotionPhotoLayout
+import com.fotoxplorr.core.formats.composite.StackBadge
+import com.fotoxplorr.core.formats.composite.StereoMode
+import com.fotoxplorr.core.model.MediaId
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import java.io.File
+
+/** The Android seam on real files: probing, the clip cache, both eyes of an MPO, the badge and the 3D screen. */
+@OptIn(ExperimentalTestApi::class)
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [34])
+class CompositeSeamTest {
+    @get:Rule
+    val compose = createComposeRule()
+
+    @get:Rule
+    val folder = TemporaryFolder()
+
+    private val context: Context get() = ApplicationProvider.getApplicationContext()
+
+    private fun fileAsset(id: Long, name: String, bytes: ByteArray): com.fotoxplorr.app.media.MediaAsset {
+        val file = File(folder.root, name).apply { writeBytes(bytes) }
+        return asset(id, name, uri = Uri.fromFile(file).toString())
+    }
+
+    @Test
+    fun `a motion photo on disk is found and its clip copied byte for byte`() {
+        val (bytes, clip) = CompositeTestFiles.microVideo()
+        val photo = fileAsset(1, "PXL_1.MP.jpg", bytes)
+        val facts = CompositeProbe.facts(context, photo)
+        val motion = facts.motion!!
+        assertEquals(MotionPhotoLayout.GOOGLE_MICRO_VIDEO, motion.layout)
+        val file = MotionClipCache.clipFile(context, photo, motion)!!
+        assertArrayEquals(clip, file.readBytes())
+        assertTrue(file.path.startsWith(context.cacheDir.path))
+        // The original is untouched.
+        assertArrayEquals(bytes, File(folder.root, "PXL_1.MP.jpg").readBytes())
+    }
+
+    @Test
+    fun `an ordinary photo has no composite facts`() {
+        val photo = fileAsset(2, "plain.jpg", CompositeTestFiles.jpeg(0xFF00FF00.toInt()))
+        assertTrue(CompositeProbe.facts(context, photo).isEmpty)
+    }
+
+    @Test
+    fun `both eyes of an MPO decode upright and the anaglyph mixes them`() {
+        val red = CompositeTestFiles.jpeg(0xFFFF0000.toInt())
+        val blue = CompositeTestFiles.jpeg(0xFF0000FF.toInt())
+        val photo = fileAsset(3, "stereo.mpo", CompositeTestFiles.mpo(red, blue))
+        val pair = CompositeProbe.facts(context, photo).stereo!!
+        val eyes = StereoDecoding.decode(context, photo.contentUri, pair)!!
+        assertEquals(64, eyes.left.width)
+        assertEquals(eyes.left.width, eyes.right.width)
+        val leftPixel = eyes.left.getPixel(32, 24)
+        val rightPixel = eyes.right.getPixel(32, 24)
+        assertTrue((leftPixel shr 16 and 0xFF) > 200 && (leftPixel and 0xFF) < 60)
+        assertTrue((rightPixel and 0xFF) > 200 && (rightPixel shr 16 and 0xFF) < 60)
+        val blended = StereoDecoding.anaglyph(eyes).getPixel(32, 24)
+        assertTrue((blended and 0xFF) > 200)
+    }
+
+    @Test
+    fun `the badge on a wide tile is a 48 dp button that toggles the stack`() {
+        var toggles = 0
+        val badge = StackBadge(MediaId(7), 5, expanded = false, members = emptyList())
+        compose.setContent {
+            Box(Modifier.size(120.dp)) { BurstBadge(badge, onToggle = { toggles++ }, modifier = Modifier.size(120.dp)) }
+        }
+        compose.onNodeWithTag(burstBadgeTag(MediaId(7))).assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp).performClick()
+        assertEquals(1, toggles)
+    }
+
+    @Test
+    fun `the badge on a tiny tile opens through the screen reader action`() {
+        var toggles = 0
+        val badge = StackBadge(MediaId(8), 3, expanded = true, members = emptyList())
+        compose.setContent {
+            Box(Modifier.size(40.dp)) { BurstBadge(badge, onToggle = { toggles++ }, modifier = Modifier.size(40.dp)) }
+        }
+        val node = compose.onNodeWithTag(burstBadgeTag(MediaId(8))).fetchSemanticsNode()
+        assertTrue(SemanticsActions.OnClick !in node.config)
+        assertEquals("Open", node.config[SemanticsProperties.StateDescription])
+        compose.runOnUiThread { node.config[SemanticsActions.CustomActions].single().action() }
+        assertEquals(1, toggles)
+    }
+
+    @Test
+    fun `the 3D view offers its modes as 48 dp choices and closes`() {
+        val photo = fileAsset(4, "stereo.mpo", CompositeTestFiles.mpo(CompositeTestFiles.jpeg(-1), CompositeTestFiles.jpeg(-1)))
+        val pair = CompositeProbe.facts(context, photo).stereo!!
+        var closed = false
+        compose.setContent { StereoScreen(asset = photo, pair = pair, onClose = { closed = true }) }
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText(CompositeCopy.STEREO_LOADING).fetchSemanticsNodes().isEmpty()
+        }
+        for (mode in StereoMode.entries) {
+            compose.onNodeWithTag(StereoTags.mode(mode)).assertHeightIsAtLeast(48.dp)
+        }
+        compose.onNodeWithTag(StereoTags.mode(StereoMode.ANAGLYPH)).performClick().assertIsSelected()
+        compose.onNode(SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf(CompositeCopy.CLOSE_STEREO))).performClick()
+        assertTrue(closed)
+    }
+
+    @Test
+    fun `wiggle is not offered while the system animations are off`() {
+        Settings.Global.putFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
+        try {
+            val photo = fileAsset(5, "stereo.mpo", CompositeTestFiles.mpo(CompositeTestFiles.jpeg(-1), CompositeTestFiles.jpeg(-1)))
+            val pair = CompositeProbe.facts(context, photo).stereo!!
+            compose.setContent { StereoScreen(asset = photo, pair = pair, onClose = {}) }
+            compose.onNodeWithTag(StereoTags.mode(StereoMode.SIDE_BY_SIDE)).assertIsSelected()
+            assertEquals(0, compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.TestTag, StereoTags.mode(StereoMode.WIGGLE))).fetchSemanticsNodes().size)
+        } finally {
+            Settings.Global.putFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+        }
+    }
+
+    @Test
+    fun `the viewer layer offers play and export for a motion photo and nothing for a plain one`() {
+        val (bytes, _) = CompositeTestFiles.microVideo()
+        val photo = fileAsset(6, "PXL_6.MP.jpg", bytes)
+        compose.setContent {
+            Box(Modifier.size(400.dp)) {
+                CompositeViewerLayer(asset = photo, chromeShown = true, mayExport = { true }, onOpenStereo = {}, bottomPaddingDp = 0)
+            }
+        }
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.TestTag, CompositeTags.PLAY)).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag(CompositeTags.PLAY).assertWidthIsAtLeast(48.dp)
+        assertNotNull(compose.onNodeWithTag(CompositeTags.EXPORT_STILL).fetchSemanticsNode())
+        assertNotNull(compose.onNodeWithTag(CompositeTags.EXPORT_VIDEO).fetchSemanticsNode())
+    }
+
+    @Test
+    fun `export buttons are not offered when the photo may not be copied`() {
+        val (bytes, _) = CompositeTestFiles.microVideo()
+        val photo = fileAsset(7, "PXL_7.MP.jpg", bytes)
+        compose.setContent {
+            Box(Modifier.size(400.dp)) {
+                CompositeViewerLayer(asset = photo, chromeShown = true, mayExport = { false }, onOpenStereo = {}, bottomPaddingDp = 0)
+            }
+        }
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.TestTag, CompositeTags.PLAY)).fetchSemanticsNodes().isNotEmpty()
+        }
+        assertEquals(0, compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.TestTag, CompositeTags.EXPORT_STILL)).fetchSemanticsNodes().size)
+    }
+
+    @Test
+    fun `closing the viewer clears every copied clip`() {
+        val (bytes, _) = CompositeTestFiles.microVideo()
+        val photo = fileAsset(8, "PXL_8.MP.jpg", bytes)
+        val clip = MotionClipCache.clipFile(context, photo, CompositeProbe.facts(context, photo).motion!!)!!
+        assertTrue(clip.isFile)
+        MotionClipCache.clear(context)
+        assertTrue(!clip.exists())
+        assertEquals(0, File(context.cacheDir, "motion-clips").listFiles()?.size ?: 0)
+    }
+
+    @Test
+    fun `the play button takes keyboard focus and Enter or Space toggles it`() {
+        var taps = 0
+        compose.setContent {
+            MotionButton(playing = false, label = CompositeCopy.PLAY_MOTION, onTap = { taps++ }, onHold = {}, onHover = {})
+        }
+        val button = compose.onNodeWithTag(CompositeTags.PLAY)
+        button.performSemanticsAction(SemanticsActions.RequestFocus)
+        button.assertIsFocused()
+        button.performKeyInput { pressKey(Key.Enter) }
+        button.performKeyInput { pressKey(Key.Spacebar) }
+        compose.waitForIdle()
+        assertEquals(2, taps)
+    }
+}

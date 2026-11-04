@@ -93,6 +93,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.adaptive.PINCH_STEP_THRESHOLD
+import com.fotoxplorr.app.composite.CompositeViewerLayer
+import com.fotoxplorr.app.composite.MotionClipCache
+import com.fotoxplorr.app.composite.StereoScreen
 import com.fotoxplorr.app.gallery.TransparencyBackground
 import com.fotoxplorr.app.gallery.ViewerPinchMode
 import com.fotoxplorr.app.lift.LiftOverlay
@@ -138,6 +141,7 @@ import com.fotoxplorr.app.vision.PhotoKey
 import com.fotoxplorr.app.vision.VisionSupport
 import com.fotoxplorr.app.vision.rememberColourVisionViewer
 import com.fotoxplorr.app.vision.visionSupport
+import com.fotoxplorr.core.formats.composite.StereoPair
 import com.fotoxplorr.core.model.MediaId
 import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.SpatialShell
@@ -404,7 +408,9 @@ fun ViewerScreen(
     var viewerMode by remember(asset.id) { mutableStateOf<ViewerMode>(ViewerMode.Browsing) }
     // 360 view (U14): drawn over everything while open, and counted as owning the screen.
     var sphereOpen by remember(asset.id) { mutableStateOf(false) }
-    val modeActive = ViewerChromePolicy.screenOwned(viewerMode, sphereOpen)
+    // The 3D view of a stereo MPO (WP2.8): owns the screen exactly like the 360 view.
+    var stereoPair by remember(asset.id) { mutableStateOf<StereoPair?>(null) }
+    val modeActive = ViewerChromePolicy.screenOwned(viewerMode, sphereOpen || stereoPair != null)
     // Whether a subject can be lifted from THIS asset at all (not a video, SVG, RAW or an
     // animated image): gates both the long press and the actions-room row, so neither offers an
     // editor that could only report that it cannot open the photo.
@@ -447,7 +453,7 @@ fun ViewerScreen(
     val roomsWithdrawn by remember(shell, asset.id) {
         derivedStateOf {
             ViewerChromePolicy.roomsWithdrawn(
-                modeActive = ViewerChromePolicy.screenOwned(viewerMode, sphereOpen),
+                modeActive = ViewerChromePolicy.screenOwned(viewerMode, sphereOpen || stereoPair != null),
                 atHome = shell.atHome,
             )
         }
@@ -475,6 +481,9 @@ fun ViewerScreen(
     // has been looked at (P0-02 through the loading state). The photo's displayed size comes off
     // the same read, which is why it is above the flight's rectangle.
     val context = LocalContext.current
+    // Motion clips copied for playback live only while the viewer is open: closing it deletes
+    // them, so a photo locked, hidden or trashed afterwards leaves no clip in the cache.
+    DisposableEffect(Unit) { onDispose { MotionClipCache.clear(context) } }
     var exif by remember(asset.id) { mutableStateOf(ImageExifDetails.PENDING) }
     // HDR / wide colour and the pro overlays (U7). The decision is pure (ColourModePolicy) and the
     // window is only asked for what this screen can show; the overlays are off until chosen in the
@@ -1286,6 +1295,18 @@ fun ViewerScreen(
                         .semantics { contentDescription = SphereCopy.OPEN },
                 ) { Icon(Icons.Outlined.Public, contentDescription = null, tint = Color.White) }
             }
+            // Composite media (WP2.8): play a motion photo's or Live Photo's clip without sound, save
+            // its still or clip as a new file, open a stereo MPO in 3D. Draws nothing for an
+            // ordinary photo; export follows the same live "may copy" answer as the colour copy.
+            if (!asset.isVideo && !modeActive) {
+                CompositeViewerLayer(
+                    asset = asset,
+                    chromeShown = chromeShown,
+                    mayExport = { catalogueActions && !asset.isExternal && !liveSensitive && liveMayCopy(asset) },
+                    onOpenStereo = { stereoPair = it },
+                    bottomPaddingDp = ViewerChromePolicy.videoBottomInsetDp(filmstripShown) + 12 + if (exif.isSphere) 60 else 0,
+                )
+            }
             // The pro card (info rows and/or histogram): chrome-level, not zoomed, lifted over the filmstrip band.
             if (!asset.isVideo && !modeActive && proChoice.anyOn) {
                 val proLines = remember(exif, asset.id, colourDecision) {
@@ -1435,6 +1456,7 @@ fun ViewerScreen(
     // open the screen counts as owned (screenOwned above): the slideshow stops counting down and
     // the strip, the pro card and the colour chip stand down.
     if (sphereOpen) SphereScreen(asset = asset, onClose = { sphereOpen = false })
+    stereoPair?.let { pair -> StereoScreen(asset = asset, pair = pair, onClose = { stereoPair = null }) }
     }
 }
 
