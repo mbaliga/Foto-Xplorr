@@ -134,9 +134,10 @@ was available. Test-only rows are in the second table.
 `./gradlew :app:reportRuntimeLicences` writes, per flavor, every component of the resolved release runtime
 classpath with the licence names from its POM (parent POMs followed), using only Gradle's artifact-resolution API.
 `scripts/verify-licences.sh` applies the policy and `scripts/verify.sh` runs both: a component whose every declared
-licence is GPL or AGPL fails the build; LGPL, CDDL, EPL, MPL, GPL-with-classpath-exception, an unrecognised licence
-name, or a missing licence warns unless `scripts/licence-allowlist.txt` lists the component with a reason (an
-unused allowlist line warns too). `scripts/verify-licences.sh --self-test` proves the policy on built-in fixtures,
+licence is GPL or AGPL fails the build; so does a component whose licence is unknown (its POM could not be fetched,
+named no licence, or did not parse) unless `scripts/licence-allowlist.txt` lists that exact coordinate with a reason,
+so a GPL library whose POM lookup timed out cannot slip through. LGPL, CDDL, EPL, MPL, GPL-with-classpath-exception
+or an unrecognised licence name warns unless the allowlist covers it (an unused allowlist line warns too). `scripts/verify-licences.sh --self-test` proves the policy on built-in fixtures,
 including a deliberately bad GPL dependency, without touching the real build.
 
 Result on 2026-11-04 (228 components on Offline, 236 on Connect): **no GPL or AGPL component on either flavor.**

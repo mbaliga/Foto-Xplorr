@@ -12,14 +12,19 @@
 #
 #   FAIL  a component whose every declared licence is GPL or AGPL (a dual-licensed component with
 #         at least one permissive choice is not a failure: you may take the other licence).
-#   WARN  LGPL, CDDL, EPL, MPL, GPL-with-classpath-exception, a dual licence that offers GPL, a
-#         licence name this script does not recognise, and a component with no licence element.
+#   FAIL  a component whose licence is not known because its POM could not be fetched ("?") or
+#         named no licence ("-"; the Gradle task also writes "-" when a POM fails to parse), UNLESS
+#         an allowlist entry covers it. Otherwise a GPL library whose POM fetch timed out or hit
+#         HTTP 429 would pass the gate; an unknown licence is treated as a failure, not a shrug.
+#   WARN  LGPL, CDDL, EPL, MPL, GPL-with-classpath-exception, a dual licence that offers GPL, and a
+#         licence name this script does not recognise.
 #   OK    a recognised permissive licence (Apache, MIT, BSD, ISC, zlib, public domain, CC0 ...),
 #         or any warning covered by an entry in scripts/licence-allowlist.txt.
 #
 # Allowlist lines: "<group>:<name>[:<version>] | <reason>" ; a trailing * is a prefix match;
 # '#' starts a comment. An entry that matches nothing is reported as stale (warning), so the list
-# cannot rot. An allowlist entry never excuses a GPL/AGPL failure.
+# cannot rot. An allowlist entry never excuses a GPL/AGPL failure; it does clear an unknown ("?" or
+# "-") licence, because that is exactly the reviewed exception the list exists for.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -74,10 +79,15 @@ check_file() {
       if (strong > 0 && perm == 0 && weak == 0 && unk == 0) {
         printf "FAIL %s: %s  (%s)\n", label, id, names; fails++; next
       }
+      if (names == "-" || names == "?") {
+        if (allowed(id) != "") { allowlisted++; next }
+        printf "FAIL %s: %s  [%s; add a reviewed allowlist entry if this is known to be fine]  (%s)\n", label, id, (names == "?" ? "POM could not be fetched, licence unknown" : "no licence declared in any POM (or the POM did not parse)"), names
+        fails++; next
+      }
       why = ""
       if (strong > 0) why = "offers GPL/AGPL as one of several licences"
       else if (weak > 0) why = "weak copyleft (LGPL/CDDL/EPL/MPL/classpath exception)"
-      else if (unk > 0) why = (names == "-" ? "no licence declared in any POM" : (names == "?" ? "POM could not be fetched" : "unrecognised licence name"))
+      else if (unk > 0) why = "unrecognised licence name"
       if (why == "") { ok++; next }
       r = allowed(id)
       if (r != "") { allowlisted++; next }
@@ -148,15 +158,23 @@ self_test() {
   expect "GPL with classpath exception only warns" 0 'WARN' "$t/cddl.tsv" "$t/empty.txt"
   printf 'd:dual:1\tGPL-2.0 | MIT\n' > "$t/dual.tsv"
   expect "dual GPL | MIT warns, does not fail" 0 'offers GPL' "$t/dual.tsv" "$t/empty.txt"
-  printf 'u:none:1\t-\nv:odd:1\tML Kit Terms of Service\n' > "$t/unk.tsv"
-  expect "no licence and unrecognised licence warn" 0 'WARN fixture: u:none:1' "$t/unk.tsv" "$t/empty.txt"
+  printf 'v:odd:1\tML Kit Terms of Service\n' > "$t/odd.tsv"
+  expect "unrecognised licence name warns" 0 'WARN fixture: v:odd:1' "$t/odd.tsv" "$t/empty.txt"
+  printf 'u:none:1\t-\n' > "$t/none.tsv"
+  expect "no licence declared FAILS" 1 'FAIL fixture: u:none:1' "$t/none.tsv" "$t/empty.txt"
   printf 'p:nopom:1\t?\n' > "$t/q.tsv"
-  expect "unfetchable POM warns" 0 'POM could not be fetched' "$t/q.tsv" "$t/empty.txt"
+  expect "unfetchable POM FAILS" 1 'FAIL fixture: p:nopom:1.*POM could not be fetched' "$t/q.tsv" "$t/empty.txt"
+  printf 'p:nopom:1\t?\na:ok:1\tApache-2.0\n' > "$t/q2.tsv"
+  printf 'p:nopom-extra | a longer name is not this component\np:no | nor is a shorter one\n' > "$t/allow-near.txt"
+  expect "allowlist matches the coordinate exactly, not a near name" 1 'FAIL fixture: p:nopom:1' "$t/q2.tsv" "$t/allow-near.txt"
+  printf 'p:nopom | reviewed: vendor artifact, terms read by hand\n' > "$t/allow-q.txt"
+  expect "allowlisted unfetchable POM passes" 0 '1 allowlisted, 0 warnings.*0 FAILURES' "$t/q.tsv" "$t/allow-q.txt"
+  printf 'u:none:1\t-\nv:odd:1\tML Kit Terms of Service\n' > "$t/unk.tsv"
   printf 'u:none | known vendor artifact with no POM licence\nv:odd:1 | proprietary terms, reviewed\n' > "$t/allow-ok.txt"
   expect "allowlisted components are quiet" 0 '2 allowlisted, 0 warnings' "$t/unk.tsv" "$t/allow-ok.txt"
   printf 'x:never:* | matches nothing\n' > "$t/allow-stale.txt"
   expect "stale allowlist entry is reported" 0 'stale allowlist entry' "$t/clean.tsv" "$t/allow-stale.txt"
-  printf 'q:glob:1\t-\nq:glob:2\t-\nr:other:1\t-\n' > "$t/glob.tsv"
+  printf 'q:glob:1\tOdd Terms\nq:glob:2\tOdd Terms\nr:other:1\tOdd Terms\n' > "$t/glob.tsv"
   printf 'q:* | prefix match\n' > "$t/allow-glob.txt"
   expect "prefix glob covers q:* but not r:other" 0 'WARN fixture: r:other:1' "$t/glob.tsv" "$t/allow-glob.txt"
 
