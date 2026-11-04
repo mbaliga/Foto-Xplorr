@@ -16,8 +16,6 @@ import com.fotoxplorr.core.formats.simple.DecodedImage
 import com.fotoxplorr.core.formats.simple.SimpleFormatDecoders
 import com.fotoxplorr.core.formats.simple.SimpleLimits
 import com.fotoxplorr.core.formats.simple.SimpleResult
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 
 /**
  * The Coil side of [DecodeRoutes]: [MediaImage] attaches it per request for a RAW, a TIFF or one of
@@ -30,9 +28,11 @@ import kotlinx.coroutines.sync.withPermit
  * Sizes follow the request ([TileSizing]): a Crop tile (Scale.FILL) gets a bitmap whose short edge
  * covers the tile, anything else fits inside the box. The RAW preview is read through the content
  * [uri] with a positional channel (a RAW is never read whole); a simple format is read once through
- * the [uri] into one array ([BoundedBytes]) under the tile caps of [TileSizing.TILE_INPUT], decoded at
- * full size (the decoders have no sampled entry point), averaged down into a tile-sized array and
- * only then made a Bitmap. UNVERIFIED on a device.
+ * the [uri] into one array ([BoundedBytes]), decoded at full size (the decoders have no sampled entry
+ * point), averaged down into a tile-sized array and only then made a Bitmap. A tile reads under the
+ * tile caps of [TileSizing.TILE_INPUT] beside one other; one past them is read again under the
+ * defaults with no other simple decode running ([SimpleDecodeGate]), as is a viewer request, so a
+ * large TIFF or PSD still gets its thumbnail. UNVERIFIED on a device.
  */
 internal class RouteCoilDecoder(
     private val result: SourceFetchResult,
@@ -52,7 +52,7 @@ internal class RouteCoilDecoder(
                 DecodeStep.RawPreview -> RawPreviewReader.decode(
                     options.context, uri, { w, h -> TileSizing.limitsFor(w, h, reqW, reqH, fill) },
                 ) { DecodeRoutes.acceptsPreview(format, it) }
-                DecodeStep.SimpleFormat -> simpleGate.withPermit { decodeSimple() }
+                DecodeStep.SimpleFormat -> decodeSimple()
                 DecodeStep.Platform -> null
             } ?: continue
             return DecodeResult(image = decoded.bitmap.asImage(), isSampled = decoded.downscaled)
@@ -67,8 +67,16 @@ internal class RouteCoilDecoder(
         peek.readByteArray(minOf(peek.buffer.size, count.toLong()))
     }.getOrDefault(ByteArray(0))
 
-    private fun decodeSimple(): DecodedBitmap? {
-        val image = decodeFull(TileSizing.simpleLimits(reqW, reqH)) ?: return null
+    private suspend fun decodeSimple(): DecodedBitmap? {
+        if (TileSizing.isTile(reqW, reqH)) {
+            val light = simpleGate.shared { decodeFull(TileSizing.TILE_INPUT) }
+            light.image?.let { return toBitmap(it) }
+            if (!TileSizing.retryAlone(light.fileLength, light.failure)) return null
+        }
+        return simpleGate.alone { decodeFull(SimpleLimits()) }.image?.let(::toBitmap)
+    }
+
+    private fun toBitmap(image: DecodedImage): DecodedBitmap {
         val (tw, th) = TileSizing.target(image.width, image.height, reqW, reqH, fill)
         val same = tw == image.width && th == image.height
         val pixels = if (same) image.argb else TileSizing.downscale(image.argb, image.width, image.height, tw, th)
@@ -76,10 +84,18 @@ internal class RouteCoilDecoder(
         return DecodedBitmap(bitmap, image.width, image.height, downscaled = !same)
     }
 
+    /** A full-size decode, or why not: the file's length (-1 when unknown) and the decoder's reason. */
+    private class Full(val image: DecodedImage?, val fileLength: Long, val failure: String?)
+
     /** Its own function so the file's bytes are unreachable before the pixels are averaged down. */
-    private fun decodeFull(limits: SimpleLimits): DecodedImage? {
-        val bytes = BoundedBytes.read(options.context, uri, limits.maxInputBytes) ?: return null
-        return (SimpleFormatDecoders.decode(format, bytes, limits) as? SimpleResult.Success)?.image
+    private fun decodeFull(limits: SimpleLimits): Full {
+        var length = -1L
+        val bytes = BoundedBytes.read(options.context, uri, limits.maxInputBytes) { length = it }
+            ?: return Full(null, length, null)
+        return when (val r = SimpleFormatDecoders.decode(format, bytes, limits)) {
+            is SimpleResult.Success -> Full(r.image, length, null)
+            is SimpleResult.Failure -> Full(null, length, r.reason)
+        }
     }
 
     class Factory(private val format: MediaFormat, private val uri: Uri) : Decoder.Factory {
@@ -100,6 +116,6 @@ internal class RouteCoilDecoder(
 
     private companion object {
         /** Bounds how many full-size simple decodes hold memory at once (see [TileSizing.TILE_INPUT]). */
-        val simpleGate = Semaphore(TileSizing.SIMPLE_DECODES_AT_ONCE)
+        val simpleGate = SimpleDecodeGate(TileSizing.SIMPLE_DECODES_AT_ONCE)
     }
 }

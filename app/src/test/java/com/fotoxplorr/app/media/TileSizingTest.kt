@@ -1,9 +1,17 @@
 package com.fotoxplorr.app.media
 
+import com.fotoxplorr.core.formats.MediaFormat
+import com.fotoxplorr.core.formats.simple.SimpleFormatDecoders
+import com.fotoxplorr.core.formats.simple.SimpleLimits
+import com.fotoxplorr.core.formats.simple.SimpleResult
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -44,14 +52,68 @@ class TileSizingTest {
     }
 
     @Test
-    fun `a tile reads under much lower caps than the viewer`() {
+    fun `a tile tries the tile caps first and only a size refusal is retried alone`() {
         assertTrue(TileSizing.isTile(300, 300))
         assertTrue(TileSizing.isTile(300, null))
         assertFalse(TileSizing.isTile(1080, 2400))
         assertFalse(TileSizing.isTile(null, null))
-        assertEquals(32L shl 20, TileSizing.simpleLimits(300, 300).maxInputBytes)
-        assertEquals(12_000_000L, TileSizing.simpleLimits(300, 300).maxPixels)
-        assertEquals(192L shl 20, TileSizing.simpleLimits(1080, 2400).maxInputBytes)
+        assertEquals(32L shl 20, TileSizing.TILE_INPUT.maxInputBytes)
+        assertEquals(12_000_000L, TileSizing.TILE_INPUT.maxPixels)
+        // A 60 MB camera TIFF: over the tile's byte cap, inside the viewer's.
+        assertTrue(TileSizing.retryAlone(60L shl 20, null))
+        // Past the default cap too: the viewer would refuse it as well.
+        assertFalse(TileSizing.retryAlone(200L shl 20, null))
+        // A small file whose picture is over the tile's pixel cap.
+        assertTrue(TileSizing.retryAlone(1L shl 20, TileSizing.TOO_LARGE))
+        // A corrupt or unreadable file is not decoded twice.
+        assertFalse(TileSizing.retryAlone(1L shl 20, "corrupt file"))
+        assertFalse(TileSizing.retryAlone(-1L, null))
+    }
+
+    @Test
+    fun `the size refusal the retry listens for is the one the decoders give`() {
+        // A 16 MP run-length TGA: small on disk, over the tile's pixel cap, inside the default one.
+        val w = 4000
+        val h = 4000
+        val header = ByteArray(18).also {
+            it[2] = 10
+            it[12] = (w and 0xFF).toByte(); it[13] = (w shr 8).toByte()
+            it[14] = (h and 0xFF).toByte(); it[15] = (h shr 8).toByte()
+            it[16] = 24; it[17] = 0x20
+        }
+        val packets = ByteArray(w * h / 128 * 4) { if (it % 4 == 0) 0xFF.toByte() else 0x80.toByte() }
+        val tga = header + packets
+        val tile = SimpleFormatDecoders.decode(MediaFormat.Tga, tga, TileSizing.TILE_INPUT)
+        assertEquals(TileSizing.TOO_LARGE, (tile as SimpleResult.Failure).reason)
+        assertTrue(SimpleFormatDecoders.decode(MediaFormat.Tga, tga, SimpleLimits()) is SimpleResult.Success)
+    }
+
+    @Test
+    fun `a heavy decode runs with nothing beside it, light ones run two at a time`() = runBlocking {
+        val gate = SimpleDecodeGate(2)
+        var running = 0
+        var most = 0
+        var heavyRunning = false
+        var heavyBeside = 0
+        suspend fun work(heavy: Boolean) {
+            if (heavyRunning || (heavy && running > 0)) heavyBeside++
+            running++
+            heavyRunning = heavy
+            most = maxOf(most, running)
+            delay(5)
+            running--
+            if (heavy) heavyRunning = false
+        }
+        // One thread (runBlocking's), so the counters need no locking; delay() is where the decodes overlap.
+        coroutineScope {
+            repeat(12) { i ->
+                launch {
+                    if (i % 4 == 0) gate.alone { work(heavy = true) } else gate.shared { work(heavy = false) }
+                }
+            }
+        }
+        assertEquals(2, most)
+        assertEquals(0, heavyBeside)
     }
 
     @Test

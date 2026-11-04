@@ -27,13 +27,17 @@ internal object BoundedBytes {
         return out
     }
 
-    /** The bytes of [uri] under [cap], or null (unreadable, a pipe with no length, too large). */
-    fun read(context: Context, uri: Uri, cap: Long): ByteArray? = runCatching {
+    /**
+     * The bytes of [uri] under [cap], or null (unreadable, a pipe with no length, too large). [onLength] hears the
+     * file's length once it is known, before any byte is read, so a caller can tell "too large" from "unreadable".
+     */
+    fun read(context: Context, uri: Uri, cap: Long, onLength: (Long) -> Unit = {}): ByteArray? = runCatching {
         val afd = context.contentResolver.openAssetFileDescriptor(uri, "r") ?: return null
         afd.use {
             val length = if (it.length != AssetFileDescriptor.UNKNOWN_LENGTH) it.length else {
                 runCatching { FileInputStream(it.fileDescriptor).channel.size() - it.startOffset }.getOrDefault(-1L)
             }
+            onLength(length)
             if (length < 0 || length > cap) return null
             it.createInputStream().use { stream -> read(stream, length, cap) }
         }

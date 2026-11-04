@@ -21,15 +21,15 @@ internal object TileSizing {
     const val TILE_EDGE = 1024
 
     /**
-     * What one tile of a simple format may read and decode: 32 MB of file and 12 MP of pixels. The simple
-     * decoders have no sampled entry point, so a tile is decoded at full size and then averaged down; at the
-     * defaults (192 MB, 24 MP) one tile could hold the file plus 96 MB of pixels. Here the worst tile holds
-     * 32 MB plus 48 MB, and only [SIMPLE_DECODES_AT_ONCE] of them run together. A larger file shows the
-     * placeholder in the grid and still opens in the viewer, whose request is not a tile.
+     * What a tile of a simple format first tries to read and decode: 32 MB of file and 12 MP of pixels. The simple
+     * decoders have no sampled entry point, so a tile is decoded at full size and then averaged down; such a tile
+     * holds at most 32 MB plus 48 MB, and [SIMPLE_DECODES_AT_ONCE] of them run together. A tile over these caps
+     * (a 20 MP camera TIFF is about 60 MB) is not refused: it is decoded again under the defaults (192 MB, 24 MP,
+     * the viewer's caps) ALONE ([SimpleDecodeGate.alone]), so the worst moment is one such decode, never two.
      */
     val TILE_INPUT: SimpleLimits = SimpleLimits(maxPixels = 12_000_000L, maxInputBytes = 32L shl 20)
 
-    /** Simple-format decodes (tile or viewer) allowed at the same time across all requests. */
+    /** Light simple-format tile decodes allowed at the same time; a heavy one (or a viewer one) takes them all. */
     const val SIMPLE_DECODES_AT_ONCE = 2
 
     fun isTile(reqW: Int?, reqH: Int?): Boolean {
@@ -37,8 +37,19 @@ internal object TileSizing {
         return sides.isNotEmpty() && sides.all { it <= TILE_EDGE }
     }
 
-    /** The caps a simple-format decode of this request reads under. */
-    fun simpleLimits(reqW: Int?, reqH: Int?): SimpleLimits = if (isTile(reqW, reqH)) TILE_INPUT else SimpleLimits()
+    /**
+     * Whether a tile that failed under [TILE_INPUT] is worth one more try under the defaults, alone: the file was
+     * over the tile's byte cap ([fileLength], -1 when it was never known) but inside the default one, or the decoder
+     * refused the picture's size ([SimpleLimits.checkSize] says "image too large"). A corrupt file is not retried.
+     */
+    fun retryAlone(fileLength: Long, failure: String?): Boolean {
+        val defaults = SimpleLimits()
+        if (fileLength > TILE_INPUT.maxInputBytes) return fileLength <= defaults.maxInputBytes
+        return failure == TOO_LARGE
+    }
+
+    /** The reason [SimpleLimits.checkSize] gives for a picture over the pixel or side cap. */
+    const val TOO_LARGE = "image too large"
 
     /** The size to produce for a [srcW] x [srcH] picture. */
     fun target(srcW: Int, srcH: Int, reqW: Int?, reqH: Int?, fill: Boolean): Pair<Int, Int> {

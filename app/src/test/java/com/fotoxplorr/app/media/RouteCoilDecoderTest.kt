@@ -36,8 +36,8 @@ import org.robolectric.annotation.GraphicsMode
 /**
  * [RouteCoilDecoder] over constructed files, the way Coil hands it a request: a Crop tile (Scale.FILL) gets a
  * bitmap whose short edge covers the tile, a Fit one fits inside it, a declined file leaves nothing buffered in
- * Coil's source for the decoders after it, a tile does not decode a picture past the tile cap, and a TIFF that is
- * really a RAW gets its preview before the whole-file TIFF decode.
+ * Coil's source for the decoders after it, a tile past the tile caps is still decoded (alone, under the viewer's
+ * caps), and a TIFF that is really a RAW gets its preview before the whole-file TIFF decode.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -123,12 +123,32 @@ class RouteCoilDecoderTest {
     }
 
     @Test
-    fun `a tile does not decode a picture over the tile cap, the viewer still does`() {
+    fun `a tile over the tile pixel cap still gets its thumbnail, and the viewer its picture`() {
         val big = file("big.tga", rleTga(4000, 3200))
-        assertNull(decode(big, MediaFormat.Tga, Size(300, 300), Scale.FILL).first)
+        val tile = decode(big, MediaFormat.Tga, Size(300, 300), Scale.FILL).first
+        assertEquals(375, tile!!.width)
+        assertEquals(300, tile.height)
         val viewer = decode(big, MediaFormat.Tga, Size(2000, 2000), Scale.FIT).first
         assertEquals(2000, viewer!!.width)
         assertEquals(1600, viewer.height)
+    }
+
+    @Test
+    fun `a tile of a file over the tile byte cap still gets its thumbnail`() {
+        // 3700 x 3700 uncompressed: about 39 MB on disk and 13.7 MP, past both tile caps, inside the viewer's.
+        val big = file("camera.tga", tga(3700, 3700))
+        assertTrue(big.length() > TileSizing.TILE_INPUT.maxInputBytes)
+        val tile = decode(big, MediaFormat.Tga, Size(300, 300), Scale.FILL).first
+        assertNotNull(tile)
+        assertEquals(300, tile!!.width)
+        assertEquals(Color.RED, nearest(tile.getPixel(10, 150)))
+        assertEquals(Color.BLUE, nearest(tile.getPixel(290, 150)))
+    }
+
+    @Test
+    fun `a corrupt tile is still declined`() {
+        val (bitmap, _) = decode(file("bad.tga", ByteArray(18) + ByteArray(1000)), MediaFormat.Tga, Size(300, 300), Scale.FILL)
+        assertNull(bitmap)
     }
 
     // ---- a TIFF that is really a RAW ------------------------------------------------------------------
