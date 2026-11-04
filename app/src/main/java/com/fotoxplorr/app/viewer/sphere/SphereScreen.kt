@@ -1,7 +1,6 @@
 package com.fotoxplorr.app.viewer.sphere
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -9,6 +8,7 @@ import android.hardware.SensorManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -59,6 +60,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.exifinterface.media.ExifInterface
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.decodeUpright
@@ -73,6 +75,7 @@ object SphereCopy {
     const val OPEN = "View in 360"
     const val CLOSE = "Close 360 view"
     const val FAILED = "This photo could not be opened as a 360 view."
+    const val NO_MEMORY = "There is not enough memory to open this 360 view."
     const val LEFT = "Turn left"
     const val RIGHT = "Turn right"
     const val UP = "Look up"
@@ -91,8 +94,6 @@ internal fun readSphereMeta(context: Context, asset: MediaAsset, imageWidth: Int
     }
 }.getOrNull()
 
-private const val DECODE_EDGE = 4096
-private const val FRAME_W = 480
 
 /**
  * The 360 viewer: look around a photo sphere by dragging, pinching, the buttons (every gesture has a
@@ -106,26 +107,39 @@ internal fun SphereScreen(asset: MediaAsset, onClose: () -> Unit, modifier: Modi
     val context = LocalContext.current
     BackHandler(onBack = onClose)
 
-    class Loaded(val pixels: IntArray, val w: Int, val h: Int, val meta: SphereMeta)
-    var loaded by remember(asset.id) { mutableStateOf<Loaded?>(null) }
-    var failed by remember(asset.id) { mutableStateOf(false) }
+    var loaded by remember(asset.id) { mutableStateOf<LoadedSphere?>(null) }
+    var failure by remember(asset.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(asset.id) {
-        val result = withContext(Dispatchers.Default) {
-            val d = decodeUpright(context, asset.contentUri, DecodeLimits(DECODE_EDGE, DECODE_EDGE.toLong() * (DECODE_EDGE / 2)))
-                ?: return@withContext null
-            val meta = withContext(Dispatchers.IO) { readSphereMeta(context, asset, d.bitmap.width, d.bitmap.height) }
-                ?: return@withContext null
-            val px = IntArray(d.bitmap.width * d.bitmap.height).also { d.bitmap.getPixels(it, 0, d.bitmap.width, 0, 0, d.bitmap.width, d.bitmap.height) }
-            Loaded(px, d.bitmap.width, d.bitmap.height, meta)
+        // Every failure is the one-line message, never a crash: the decode seam can throw before its
+        // own guard (TRAPS #49), and the pixel copy can run out of memory.
+        val outcome: Any? = SphereLoading.guarded(onFailure = { SphereLoading.messageFor(it) }) {
+            withContext(Dispatchers.Default) { loadSphere(context, asset) }
         }
-        if (result == null) failed = true else loaded = result
+        when (outcome) {
+            is LoadedSphere -> loaded = outcome
+            is String -> failure = outcome
+            else -> failure = SphereCopy.FAILED
+        }
     }
 
-    Box(modifier = modifier.fillMaxSize().background(Color.Black).testTag(SPHERE_TAG)) {
+    Box(
+        modifier = modifier.fillMaxSize().background(Color.Black).testTag(SPHERE_TAG)
+            // Over everything, and a pointer target in its own right, so a touch while loading or
+            // failed is hit here and never falls through to the viewer drawn beneath. What the
+            // controls and the stage leave is consumed on the Final pass (after they have seen it).
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    do {
+                        val event = awaitPointerEvent(PointerEventPass.Final)
+                        event.changes.forEach { if (!it.isConsumed) it.consume() }
+                    } while (event.changes.any { it.pressed })
+                }
+            },
+    ) {
         val data = loaded
         if (data == null) {
             Text(
-                text = if (failed) SphereCopy.FAILED else "",
+                text = failure.orEmpty(),
                 color = Color.White,
                 modifier = Modifier.align(Alignment.Center).padding(24.dp),
             )
@@ -141,13 +155,42 @@ internal fun SphereScreen(asset: MediaAsset, onClose: () -> Unit, modifier: Modi
     }
 }
 
+/** The decoded sphere: its pixels (the decoded Bitmap is already recycled) and its GPano meta. */
+private class LoadedSphere(val pixels: IntArray, val w: Int, val h: Int, val meta: SphereMeta)
+
+/**
+ * Decodes the sphere at the edge the free heap allows, reads its GPano block against the ORIGINAL
+ * size (FullPano* is in original pixels), copies the pixels out and recycles the Bitmap at once.
+ * A String is the one-line message for a known failure. Blocking: call off the main thread.
+ */
+private suspend fun loadSphere(context: Context, asset: MediaAsset): Any {
+    val edge = SphereLoading.decodeEdge(SphereLoading.availableHeapBytes()) ?: return SphereCopy.NO_MEMORY
+    val d = decodeUpright(context, asset.contentUri, DecodeLimits(edge, edge.toLong() * (edge / 2)))
+        ?: return SphereCopy.FAILED
+    val bmp = d.bitmap
+    try {
+        val (metaW, metaH) = SphereLoading.metaSize(d.sourceWidth, d.sourceHeight, bmp.width, bmp.height)
+        val meta = withContext(Dispatchers.IO) { readSphereMeta(context, asset, metaW, metaH) }
+            ?: return SphereCopy.FAILED
+        val px = IntArray(bmp.width * bmp.height).also { bmp.getPixels(it, 0, bmp.width, 0, 0, bmp.width, bmp.height) }
+        return LoadedSphere(px, bmp.width, bmp.height, meta)
+    } finally {
+        // A private software copy: the IntArray is all the projection reads.
+        bmp.recycle()
+    }
+}
+
 @Composable
 private fun SphereStage(pixels: IntArray, srcW: Int, srcH: Int, meta: SphereMeta) {
     val context = LocalContext.current
     var size by remember { mutableStateOf(IntSize.Zero) }
     val aspect = if (size.height > 0) size.width.toFloat() / size.height else 0.5f
     var look by remember(meta) { mutableStateOf(SphereLook.initial(meta, aspect)) }
+    // The first look was clamped before layout (aspect unknown); clamp again when the real size or a
+    // rotation arrives, so a partial panorama never opens showing past its edge.
+    LaunchedEffect(meta, aspect) { look = SphereLook.clamp(look, meta, aspect) }
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
+    val buffers = remember { SphereFrameBuffers() }
     var gyroOn by remember { mutableStateOf(false) }
     val liveAspect by rememberUpdatedState(aspect)
     val gyroAvailable = remember(context) { gameRotationSensor(context) != null }
@@ -156,10 +199,10 @@ private fun SphereStage(pixels: IntArray, srcW: Int, srcH: Int, meta: SphereMeta
     LaunchedEffect(meta, size) {
         if (size.width <= 0 || size.height <= 0) return@LaunchedEffect
         snapshotFlow { look }.collectLatest { l ->
-            val fw = FRAME_W
-            val fh = (FRAME_W * size.height.toFloat() / size.width).toInt().coerceAtLeast(1)
+            val fw = SphereLoading.FRAME_W
+            val fh = (fw * size.height.toFloat() / size.width).toInt().coerceAtLeast(1)
             val out = withContext(Dispatchers.Default) { SphereProjection.render(pixels, srcW, srcH, meta, l, fw, fh) }
-            frame = Bitmap.createBitmap(out, fw, fh, Bitmap.Config.ARGB_8888).asImageBitmap()
+            frame = buffers.fill(out, fw, fh).asImageBitmap()
         }
     }
 
@@ -224,17 +267,21 @@ private fun PadButton(icon: ImageVector, description: String, tag: String, onCli
 private fun gameRotationSensor(context: Context): Sensor? =
     (context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager)?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
 
-/** Listens to the game rotation vector while composed; turns are relative to the view when it started. */
+/**
+ * Listens to the game rotation vector while composed AND the host is started ([StartedGate]): Home
+ * or the lock key unregisters it on ON_STOP. Turns are relative to the view when listening (re)started.
+ */
 @Composable
 private fun GyroEffect(onTurn: (Float, Float, Look) -> Unit, current: () -> Look) {
     val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     val turn by rememberUpdatedState(onTurn)
     val now by rememberUpdatedState(current)
-    DisposableEffect(context) {
+    DisposableEffect(context, lifecycle) {
         val sm = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         val sensor = sm?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
         val gyro = GyroLook()
-        val base = now()
+        var base = now()
         val matrix = FloatArray(9)
         val listener = object : SensorEventListener {
             override fun onSensorChanged(e: SensorEvent) {
@@ -244,8 +291,19 @@ private fun GyroEffect(onTurn: (Float, Float, Look) -> Unit, current: () -> Look
             }
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
         }
-        if (sm != null && sensor != null) sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
-        onDispose { sm?.unregisterListener(listener) }
+        val gate = StartedGate(
+            start = {
+                gyro.reset()
+                base = now()
+                if (sm != null && sensor != null) sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+            },
+            stop = { sm?.unregisterListener(listener) },
+        )
+        lifecycle.addObserver(gate)
+        onDispose {
+            lifecycle.removeObserver(gate)
+            gate.close()
+        }
     }
 }
 

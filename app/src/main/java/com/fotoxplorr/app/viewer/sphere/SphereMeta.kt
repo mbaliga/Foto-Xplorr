@@ -40,9 +40,10 @@ data class SphereMeta(
         /**
          * Reads GPano properties through [get] (property local name -> text, e.g. `"ProjectionType"`).
          * Null unless the projection is equirectangular and the sizes are sane. Missing cropped-area
-         * fields mean "the picture is the whole thing", with the decoded [imageWidth] x [imageHeight]
-         * standing in for the sizes (so a 2:1 equirectangular file with only ProjectionType still
-         * works as a full sphere).
+         * fields mean "the picture is the whole thing", with [imageWidth] x [imageHeight] standing in
+         * for the sizes (so a 2:1 equirectangular file with only ProjectionType still works as a full
+         * sphere). Those must be the ORIGINAL upright size, the unit FullPano* is in -- never a
+         * downscaled decode's, which would turn a full sphere into a partial one.
          */
         fun parse(get: (String) -> String?, imageWidth: Int, imageHeight: Int): SphereMeta? {
             if (get("ProjectionType")?.trim()?.equals("equirectangular", ignoreCase = true) != true) return null
@@ -63,6 +64,13 @@ data class SphereMeta(
                 initialFov = float("InitialVerticalFOVDegrees")?.takeIf { it in 10f..140f },
             )
         }
+
+        /**
+         * Whether [parse] would accept this GPano block for SOME image size: the gate for offering the
+         * 360 view before the picture's size is known. The smallest size stands in, so only the
+         * projection and the file's own sizes decide.
+         */
+        fun accepts(get: (String) -> String?): Boolean = parse(get, 1, 1) != null
     }
 }
 

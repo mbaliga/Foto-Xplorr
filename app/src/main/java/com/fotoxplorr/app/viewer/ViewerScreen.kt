@@ -402,7 +402,9 @@ fun ViewerScreen(
     // like every other per-photo gesture state here, so paging to the next photo cannot leave a
     // stale "picking a subject" overlay armed over a photo the user never long-pressed.
     var viewerMode by remember(asset.id) { mutableStateOf<ViewerMode>(ViewerMode.Browsing) }
-    val modeActive = viewerMode.ownsScreen
+    // 360 view (U14): drawn over everything while open, and counted as owning the screen.
+    var sphereOpen by remember(asset.id) { mutableStateOf(false) }
+    val modeActive = ViewerChromePolicy.screenOwned(viewerMode, sphereOpen)
     // Whether a subject can be lifted from THIS asset at all (not a video, SVG, RAW or an
     // animated image): gates both the long press and the actions-room row, so neither offers an
     // editor that could only report that it cannot open the photo.
@@ -443,7 +445,12 @@ fun ViewerScreen(
     // open a room under the mode. Held until the shell is home so a room that was just closed to
     // start the mode slides away instead of vanishing.
     val roomsWithdrawn by remember(shell, asset.id) {
-        derivedStateOf { ViewerChromePolicy.roomsWithdrawn(modeActive = viewerMode.ownsScreen, atHome = shell.atHome) }
+        derivedStateOf {
+            ViewerChromePolicy.roomsWithdrawn(
+                modeActive = ViewerChromePolicy.screenOwned(viewerMode, sphereOpen),
+                atHome = shell.atHome,
+            )
+        }
     }
     // True while the user is moving the filmstrip (a finger on it, or its fling). Pauses a playing
     // video and keeps the next one from starting until the strip settles -- see VideoPlayer's
@@ -610,12 +617,25 @@ fun ViewerScreen(
     // decoder and drop every tile each time.
     val tilesOn = !asset.isVideo && snapRotation(rotation) == 0f &&
         DeepZoomPolicy.tilesWorthRunning(asset.mimeType, fileOneToOne, animatedImage, colourVision.choice.filtering)
-    val oneToOne = DeepZoomPolicy.oneToOneFor(tilesOn, fileOneToOne)
+    // The ceiling and the 1:1 double-tap follow whether the tile layer REALLY runs (its region
+    // decoder opened and its tiles may be drawn), not the wish: a file the platform will not
+    // region-read keeps the old ceiling instead of magnifying the soft picture.
+    var tilesOpen by remember(asset.id) { mutableStateOf(false) }
+    val tilesLive = DeepZoomPolicy.tilesLive(tilesOn, tilesOpen)
+    val oneToOne = DeepZoomPolicy.oneToOneFor(tilesLive, fileOneToOne)
     val maxScale = if (asset.isVideo) MAX_SCALE else DeepZoomPolicy.maxScaleFor(
-        tilesOn, deepSize.width.toInt(), deepSize.height.toInt(),
+        tilesLive, deepSize.width.toInt(), deepSize.height.toInt(),
         containerSize.width.toFloat(), containerSize.height.toFloat(),
     )
     val liveMaxScale by rememberUpdatedState(maxScale)
+    // A ceiling that drops under the current zoom (a turn or a colour filter took the tiles away)
+    // pulls the zoom down now, with its pan, rather than in one jump on the next pinch frame.
+    LaunchedEffect(maxScale) {
+        val (s, ox, oy) = DeepZoomPolicy.clampToCeiling(scale, offsetX, offsetY, maxScale)
+        scale = s
+        offsetX = ox
+        offsetY = oy
+    }
     val liveOneToOne by rememberUpdatedState(oneToOne)
     // The drift pans only along an axis the fitted photo fills, so no letterbox bar slides into view.
     val kenBurnsPath = remember(asset.id, photoRect, containerSize) {
@@ -1129,8 +1149,6 @@ fun ViewerScreen(
                         // only one image is ever on screen at a time, unlike a grid tile.
                         animate = animatedImage,
                     )
-                    // Clipping and focus-peaking marks, in the zoom layer so they ride with the photo.
-                    ProMaskLayer(proChoice, proAnalysis, Modifier.fillMaxSize())
                     // Sharp tiles of the full-resolution file while zoomed (U6). Nothing at all for a
                     // photo the screen already shows in full, a format region reads cannot open, an
                     // animation, a turned photo or one under a colour filter.
@@ -1142,7 +1160,11 @@ fun ViewerScreen(
                         offsetX = { offsetX },
                         offsetY = { offsetY },
                         modifier = Modifier.fillMaxSize(),
+                        onLiveChanged = { tilesOpen = it },
                     )
+                    // Clipping and focus-peaking marks, in the zoom layer so they ride with the photo,
+                    // and ABOVE the tiles: zooming in is exactly when the person checks them.
+                    ProMaskLayer(proChoice, proAnalysis, Modifier.fillMaxSize())
 
                     // Select text: the outlines and the finger's strokes, inside the zoom layer so
                     // they track the image. Renders nothing at all unless the mode is on, so a photo
@@ -1250,9 +1272,9 @@ fun ViewerScreen(
             // navigator that only appears when the chrome does is a navigator nobody finds while
             // zoomed, and the owner's reference shows it over the bare photo. It is the one
             // thing drawn over the photo without asking, and only while the photo is zoomed.
-            // 360 view (U14): a way in for a photo sphere, and the viewer itself over everything. A tap, no gesture needed.
-            var sphereOpen by remember(asset.id) { mutableStateOf(false) }
-            if (!asset.isVideo && !modeActive && chromeShown && exif.isPanorama) {
+            // 360 view (U14): a way in for a photo sphere the viewer can actually open (an
+            // equirectangular GPano block, not any panorama flag). A tap, no gesture needed.
+            if (!asset.isVideo && !modeActive && chromeShown && exif.isSphere) {
                 IconButton(
                     onClick = { sphereOpen = true },
                     modifier = Modifier
@@ -1264,8 +1286,6 @@ fun ViewerScreen(
                         .semantics { contentDescription = SphereCopy.OPEN },
                 ) { Icon(Icons.Outlined.Public, contentDescription = null, tint = Color.White) }
             }
-            if (sphereOpen) SphereScreen(asset = asset, onClose = { sphereOpen = false })
-
             // The pro card (info rows and/or histogram): chrome-level, not zoomed, lifted over the filmstrip band.
             if (!asset.isVideo && !modeActive && proChoice.anyOn) {
                 val proLines = remember(exif, asset.id, colourDecision) {
@@ -1321,7 +1341,7 @@ fun ViewerScreen(
             // it from under the finger the instant the scrub landed on a video. The two used to
             // be kept apart because both anchor to this bottom edge; instead the video transport
             // now sits `bottomInset` above the strip's resting band (above), and dims while the
-            // strip is being moved. Last child of this Box on purpose: it stays on top of the
+            // strip is being moved. Last child but the 360 view on purpose: it stays on top of the
             // player, so it is the first thing a touch near the bottom edge reaches.
             if (filmstripShown) {
                 FilmstripScrubber(
@@ -1409,6 +1429,12 @@ fun ViewerScreen(
             }
         }
     }
+
+    // The 360 view (U14), last of all: over the shell, its rooms, the filmstrip and every overlay,
+    // and outside the photo's gesture box, so no touch reaches the viewer beneath it. While it is
+    // open the screen counts as owned (screenOwned above): the slideshow stops counting down and
+    // the strip, the pro card and the colour chip stand down.
+    if (sphereOpen) SphereScreen(asset = asset, onClose = { sphereOpen = false })
     }
 }
 

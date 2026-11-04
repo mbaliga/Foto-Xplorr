@@ -273,6 +273,14 @@ internal object ViewerChromePolicy {
      */
     fun roomsWithdrawn(modeActive: Boolean, atHome: Boolean): Boolean = modeActive && atHome
 
+    /**
+     * Whether something owns the whole screen: a viewer mode ([ViewerMode.ownsScreen]) or the 360
+     * view drawn over everything. Fed to every `modeActive` predicate here, so while the sphere is
+     * open the slideshow stops counting down, the filmstrip, the pro card and the colour chip stand
+     * down, and the rooms are withdrawn.
+     */
+    fun screenOwned(mode: ViewerMode, sphereOpen: Boolean): Boolean = mode.ownsScreen || sphereOpen
+
     // ── the shrink-to-map flight ──────────────────────────────────────────────────────────────
 
     /**

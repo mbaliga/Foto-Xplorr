@@ -10,6 +10,7 @@ import com.fotoxplorr.app.media.uriForLocationRead
 import com.fotoxplorr.app.metadata.CurrentMetadata
 import com.fotoxplorr.app.metadata.currentMetadataFrom
 import com.fotoxplorr.app.metadata.xmpAttributeUtf8
+import com.fotoxplorr.app.viewer.sphere.SphereMeta
 import com.fotoxplorr.core.metadata.XmpPacket
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -126,6 +127,11 @@ data class ImageExifDetails(
     val hasDepthMap: Boolean = false,
     /** Whether the file's XMP carries panorama / Photo Sphere metadata. */
     val isPanorama: Boolean = false,
+    /**
+     * Whether the 360 view can open it: the GPano block passes [SphereMeta.accepts] (equirectangular,
+     * sane sizes). Narrower than [isPanorama], which a cylindrical panorama also sets.
+     */
+    val isSphere: Boolean = false,
 ) {
     companion object {
         /** The state before the first read finishes. See [pending]. */
@@ -253,6 +259,7 @@ internal fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
         isMotionPhoto = xmp?.isMotionPhoto() == true,
         hasDepthMap = xmp?.hasDepthMap() == true,
         isPanorama = xmp?.isPanorama() == true,
+        isSphere = xmp != null && SphereMeta.accepts { name -> xmp.stringValue(XmpPacket.GPANO_NS, name) },
     )
 }
 
