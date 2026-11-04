@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.core.formats.composite.EmbeddedRange
@@ -129,6 +130,8 @@ internal sealed interface CompositeExportResult {
  * Saves the still or the clip of a motion photo as a NEW file in this app's own folders
  * (`Pictures/Fotoz/`, `Movies/Fotoz/`), the way the panorama writer does: a pending row, the bytes,
  * then the row made visible; any failure deletes the row. The original is never opened for writing.
+ * Before Android 10 the row is given its full path in those folders (DATA), with its own extension
+ * and a name no existing file has, since there is no RELATIVE_PATH to ask for.
  *
  * - The still is the primary image's bytes, unchanged except that the motion flags are turned off
  *   ([MotionPhotoStill.disarm]), so it keeps its Exif and XMP and is no longer called a motion photo.
@@ -171,13 +174,23 @@ internal class CompositeExporter(context: Context) {
         if (!mayExport()) return@withContext CompositeExportResult.Refused
         val resolver = appContext.contentResolver
         val collection = if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val name = exportName(asset.displayName, video, format.extension)
+        // Before Android 10 there is no RELATIVE_PATH: without a DATA path the provider makes one
+        // up, and on some versions not with this name or extension. So the file is placed by hand.
+        val legacyFile = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            legacyTarget(video, name) ?: return@withContext CompositeExportResult.Failed
+        } else {
+            null
+        }
         val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, exportName(asset.displayName, video, format.extension))
+            put(MediaStore.MediaColumns.DISPLAY_NAME, legacyFile?.name ?: name)
             put(MediaStore.MediaColumns.MIME_TYPE, format.mime)
             if (asset.dateTakenMillis > 0) put(MediaStore.MediaColumns.DATE_TAKEN, asset.dateTakenMillis)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.MediaColumns.RELATIVE_PATH, if (video) "Movies/Fotoz/" else "Pictures/Fotoz/")
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
+            } else if (legacyFile != null) {
+                putLegacyPath(this, legacyFile)
             }
         }
         val uri = runCatching { resolver.insert(collection, values) }.getOrNull() ?: return@withContext CompositeExportResult.Failed
@@ -209,7 +222,48 @@ internal class CompositeExporter(context: Context) {
     companion object {
         private const val HEAD_BYTES = 512L * 1024
 
-        /** `PXL_1.MP.jpg` -> `PXL_1.MP-still.jpg` / `PXL_1.MP-motion.mp4`; MediaStore adds a number on a clash. */
+        /**
+         * Android 8-9 only: `Pictures/Fotoz/<name>` or `Movies/Fotoz/<name>` on shared storage, the
+         * folder made if missing, the name made unique ([uniqueFile]) so nothing is overwritten.
+         * Null when the folder cannot be made (no storage permission, or no shared storage).
+         */
+        @Suppress("DEPRECATION")
+        private fun legacyTarget(video: Boolean, name: String): File? {
+            val root = Environment.getExternalStoragePublicDirectory(if (video) Environment.DIRECTORY_MOVIES else Environment.DIRECTORY_PICTURES)
+            val directory = File(root, "Fotoz")
+            if (!directory.isDirectory && !directory.mkdirs()) return null
+            return uniqueFile(directory, name)
+        }
+
+        /** The DATA column is deprecated from Android 10 on, where this is never called. */
+        @Suppress("DEPRECATION")
+        private fun putLegacyPath(values: ContentValues, file: File) {
+            values.put(MediaStore.MediaColumns.DATA, file.absolutePath)
+        }
+
+        /**
+         * [name] in [directory], or `stem (2).ext`, `stem (3).ext`... when taken: the first that does
+         * not exist. Before Android 10 the provider writes to the given path, so it must be free.
+         */
+        internal fun uniqueFile(directory: File, name: String, exists: (File) -> Boolean = File::exists): File? {
+            val first = File(directory, name)
+            if (!exists(first)) return first
+            val dot = name.lastIndexOf('.')
+            val stem = if (dot > 0) name.substring(0, dot) else name
+            val extension = if (dot > 0) name.substring(dot) else ""
+            for (n in 2..MAX_SUFFIX) {
+                val candidate = File(directory, "$stem ($n)$extension")
+                if (!exists(candidate)) return candidate
+            }
+            return null
+        }
+
+        private const val MAX_SUFFIX = 999
+
+        /**
+         * `PXL_1.MP.jpg` -> `PXL_1.MP-still.jpg` / `PXL_1.MP-motion.mp4`. From Android 10 MediaStore
+         * adds a number on a clash; before it, [uniqueFile] does.
+         */
         internal fun exportName(displayName: String, video: Boolean, extension: String = if (video) "mp4" else "jpg"): String {
             val dot = displayName.lastIndexOf('.')
             val stem = (if (dot > 0) displayName.substring(0, dot) else displayName)
