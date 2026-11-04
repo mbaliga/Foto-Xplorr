@@ -2,7 +2,10 @@ package com.fotoxplorr.app.media
 
 import android.os.Build
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isSpecified
@@ -12,6 +15,10 @@ import coil3.compose.AsyncImage
 import coil3.gif.AnimatedImageDecoder
 import coil3.gif.GifDecoder
 import coil3.request.ImageRequest
+import com.fotoxplorr.core.formats.LoadResult
+import com.fotoxplorr.core.formats.SizeHint
+import com.fotoxplorr.core.formats.TileState
+import com.fotoxplorr.core.formats.tileState
 
 /**
  * Every photo and video thumbnail in the app goes through here.
@@ -23,6 +30,11 @@ import coil3.request.ImageRequest
  * @param onImageSize told the size the image decoded to, once it has (the viewer's backdrop for a
  *   transparent photo needs the picture's real shape, which a vector image has no other source
  *   for). Only the shape is meaningful: the decode may be smaller than the file.
+ * @param showReason draw the placeholder's one-line reason even on a small area (the viewer does).
+ *
+ * A file that cannot be drawn -- the registry says no decoder exists, or the load fails -- gets a
+ * [FormatPlaceholder] instead of an empty or black area (WP1.7). The decision is the pure
+ * [tileState]; this function only feeds it.
  */
 @Composable
 fun MediaImage(
@@ -31,8 +43,23 @@ fun MediaImage(
     contentScale: ContentScale = ContentScale.Fit,
     animate: Boolean = false,
     onImageSize: ((Size) -> Unit)? = null,
+    showReason: Boolean = false,
 ) {
     val context = LocalContext.current
+    val format by rememberResolvedFormat(asset)
+    val verdict = remember(format, asset.mimeType, asset.width, asset.height, asset.sizeBytes) {
+        DecoderRegistries.current().probe(format, asset.mimeType, SizeHint(asset.width, asset.height, asset.sizeBytes))
+    }
+    var load by remember(asset.contentUriString, asset.dateModifiedSeconds) { mutableStateOf(LoadResult.Pending) }
+    val state = tileState(format, verdict, load)
+    if (state is TileState.Placeholder) {
+        FormatPlaceholder(
+            state, modifier, showReason,
+            nameForReader = if (load == LoadResult.Failed && verdict.canShow) asset.displayName else null,
+        )
+        return
+    }
+
     // The decoder is attached PER REQUEST rather than registered on the shared ImageLoader, which
     // is what makes "loop animations" a real setting: a decoder registered globally would animate
     // everything everywhere with no way to opt a surface out.
@@ -64,11 +91,11 @@ fun MediaImage(
         contentDescription = asset.displayName,
         modifier = modifier,
         contentScale = contentScale,
-        onSuccess = onImageSize?.let { report ->
-            { state ->
-                val size = state.painter.intrinsicSize
-                if (size.isSpecified) report(size)
-            }
+        onError = { load = LoadResult.Failed },
+        onSuccess = { state ->
+            load = LoadResult.Loaded
+            val size = state.painter.intrinsicSize
+            if (onImageSize != null && size.isSpecified) onImageSize(size)
         },
     )
 }
