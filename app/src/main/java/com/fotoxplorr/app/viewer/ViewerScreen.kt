@@ -95,6 +95,8 @@ import com.fotoxplorr.app.lift.LiftOverlay
 import com.fotoxplorr.app.lift.canLiftSubject
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.viewer.deepzoom.DeepZoomLayer
+import com.fotoxplorr.app.viewer.deepzoom.DeepZoomPolicy
 import com.fotoxplorr.app.palette.PaletteMemo
 import com.fotoxplorr.app.palette.PaletteSwatch
 import com.fotoxplorr.app.spatial.ExpandedPhotoMap
@@ -514,6 +516,22 @@ fun ViewerScreen(
             size.width, size.height,
         )
     }
+    // Deep zoom (U6): how far this file can honestly be pinched, and whether sharp tiles run at all.
+    // From the displayed size the EXIF read found, so a 100 MP photo reaches 1:1 and beyond while a
+    // small one keeps the old ceiling. Pure decisions in DeepZoomPolicy; the tiles are the layer below.
+    val deepSize = remember(asset.width, asset.height, exif.displayWidth, exif.displayHeight) {
+        PlaceMorph.restingImageSize(asset.width, asset.height, exif.displayWidth, exif.displayHeight)
+    }
+    val oneToOne = DeepZoomPolicy.oneToOneScale(
+        deepSize.width.toInt(), deepSize.height.toInt(),
+        containerSize.width.toFloat(), containerSize.height.toFloat(),
+    )
+    val maxScale = if (asset.isVideo) MAX_SCALE else DeepZoomPolicy.maxScale(
+        deepSize.width.toInt(), deepSize.height.toInt(),
+        containerSize.width.toFloat(), containerSize.height.toFloat(),
+    )
+    val liveMaxScale by rememberUpdatedState(maxScale)
+    val liveOneToOne by rememberUpdatedState(oneToOne)
     val onPinPositioned = remember(pinHolder) { { rect: Rect -> pinHolder.rect = rect } }
     // The pin left the room (the location picker replaced the plate): the held rectangle is stale,
     // and the flier would land, opaque, on it over the picker. No rectangle, no flier.
@@ -822,7 +840,7 @@ fun ViewerScreen(
                         // the one-finger page turn and pan are off; a pinch still reaches this.
                         oneFingerInert = { !ViewerChromePolicy.oneFingerGesturesAreViewers(viewerMode.ownsScreen) },
                         onTransform = { zoomChange, panChange, rotationChange ->
-                            val next = (scale * zoomChange).coerceIn(MIN_SCALE, MAX_SCALE)
+                            val next = (scale * zoomChange).coerceIn(MIN_SCALE, liveMaxScale)
                             rotation += rotationChange
                             if (next <= 1.001f && rotation == 0f) {
                                 offsetX = 0f
@@ -881,13 +899,15 @@ fun ViewerScreen(
                         },
                         onDoubleTap = {
                             if (!asset.isVideo && ViewerChromePolicy.oneFingerGesturesAreViewers(viewerMode.ownsScreen)) {
-                                if (scale > 1.05f || rotation != 0f) {
+                                // fit -> 1:1 -> fit (DeepZoomPolicy); a small photo keeps the fixed zoom.
+                                val target = DeepZoomPolicy.doubleTapTarget(scale, rotation != 0f, liveOneToOne)
+                                if (target <= 1f) {
                                     scale = 1f
                                     rotation = 0f
                                     offsetX = 0f
                                     offsetY = 0f
                                 } else {
-                                    scale = DOUBLE_TAP_SCALE
+                                    scale = target.coerceAtMost(liveMaxScale)
                                 }
                             }
                         },
@@ -990,6 +1010,21 @@ fun ViewerScreen(
                         // static one costs nothing extra through the animated decode path when
                         // only one image is ever on screen at a time, unlike a grid tile.
                         animate = animatedImage,
+                    )
+                    // Sharp tiles of the full-resolution file while zoomed (U6). Nothing at all for a
+                    // photo the screen already shows in full, a format region reads cannot open, an
+                    // animation, a turned photo or one under a colour filter.
+                    DeepZoomLayer(
+                        asset = asset,
+                        enabled = !asset.isVideo && rotation == 0f &&
+                            DeepZoomPolicy.tilesWorthRunning(
+                                asset.mimeType, oneToOne, animatedImage, colourVision.choice.filtering,
+                            ),
+                        containerSize = containerSize,
+                        scale = { scale },
+                        offsetX = { offsetX },
+                        offsetY = { offsetY },
+                        modifier = Modifier.fillMaxSize(),
                     )
 
                     // Select text: the outlines and the finger's strokes, inside the zoom layer so
@@ -1621,4 +1656,3 @@ private const val SWIPE_THRESHOLD_PX = 180f
 
 private const val MIN_SCALE = 1f
 private const val MAX_SCALE = 6f
-private const val DOUBLE_TAP_SCALE = 2.5f
