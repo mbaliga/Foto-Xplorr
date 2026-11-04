@@ -95,6 +95,18 @@ import com.fotoxplorr.app.lift.LiftOverlay
 import com.fotoxplorr.app.lift.canLiftSubject
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.viewer.colour.ApplyWindowColourMode
+import com.fotoxplorr.app.viewer.colour.ColourDecision
+import com.fotoxplorr.app.viewer.colour.ColourModePolicy
+import com.fotoxplorr.app.viewer.colour.PhotoColourFacts
+import com.fotoxplorr.app.viewer.colour.ProInfoLines
+import com.fotoxplorr.app.viewer.colour.ProOverlayCard
+import com.fotoxplorr.app.viewer.colour.ProOverlayRoomSection
+import com.fotoxplorr.app.viewer.colour.ProOverlayStore
+import com.fotoxplorr.app.viewer.colour.ProMaskLayer
+import com.fotoxplorr.app.viewer.colour.WindowColourMode
+import com.fotoxplorr.app.viewer.colour.rememberProAnalysis
+import com.fotoxplorr.app.viewer.colour.screenColourFacts
 import com.fotoxplorr.app.viewer.deepzoom.DeepZoomLayer
 import com.fotoxplorr.app.viewer.deepzoom.DeepZoomPolicy
 import com.fotoxplorr.app.palette.PaletteMemo
@@ -443,6 +455,23 @@ fun ViewerScreen(
     // the same read, which is why it is above the flight's rectangle.
     val context = LocalContext.current
     var exif by remember(asset.id) { mutableStateOf(ImageExifDetails.PENDING) }
+    // HDR / wide colour and the pro overlays (U7). The decision is pure (ColourModePolicy) and the
+    // window is only asked for what this screen can show; the overlays are off until chosen in the
+    // view-options room and are remembered between photos.
+    val proStore = remember { ProOverlayStore(context) }
+    var proChoice by remember { mutableStateOf(proStore.load()) }
+    val colourDecision = remember(asset.id, asset.isVideo, exif) {
+        if (asset.isVideo) {
+            ColourDecision(WindowColourMode.DEFAULT, null)
+        } else {
+            ColourModePolicy.decide(
+                PhotoColourFacts(exif.hasHdrGainMap, exif.colorProfile, exif.colorSpace),
+                context.screenColourFacts(),
+            )
+        }
+    }
+    ApplyWindowColourMode(colourDecision.mode)
+    val proAnalysis = rememberProAnalysis(asset, proChoice.needsPixels && !asset.isVideo)
     LaunchedEffect(asset.id, metadataRevision) {
         exif = readImageExifDetails(context, asset)
     }
@@ -759,6 +788,14 @@ fun ViewerScreen(
                 onSetPinchMode = onSetPinchMode,
                 transparencyBackground = transparencyBackground,
                 onSetTransparencyBackground = onSetTransparencyBackground,
+                proOverlaySection = {
+                    if (!asset.isVideo) {
+                        ProOverlayRoomSection(proChoice) { overlay, on ->
+                            proChoice = proChoice.with(overlay, on)
+                            proStore.set(overlay, on)
+                        }
+                    }
+                },
                 colourVisionSection = {
                     ColourVisionRoomSection(
                         viewer = colourVision,
@@ -1011,6 +1048,8 @@ fun ViewerScreen(
                         // only one image is ever on screen at a time, unlike a grid tile.
                         animate = animatedImage,
                     )
+                    // Clipping and focus-peaking marks, in the zoom layer so they ride with the photo.
+                    ProMaskLayer(proChoice, proAnalysis, Modifier.fillMaxSize())
                     // Sharp tiles of the full-resolution file while zoomed (U6). Nothing at all for a
                     // photo the screen already shows in full, a format region reads cannot open, an
                     // animation, a turned photo or one under a colour filter.
@@ -1117,6 +1156,22 @@ fun ViewerScreen(
             // navigator that only appears when the chrome does is a navigator nobody finds while
             // zoomed, and the owner's reference shows it over the bare photo. It is the one
             // thing drawn over the photo without asking, and only while the photo is zoomed.
+            // The pro card (info rows and/or histogram): chrome-level, not zoomed, lifted over the filmstrip band.
+            if (!asset.isVideo && !modeActive && proChoice.anyOn) {
+                val proLines = remember(exif, asset.id, colourDecision) {
+                    ProInfoLines.of(exif, asset.mimeType, asset.width, asset.height, asset.sizeBytes, colourDecision)
+                }
+                ProOverlayCard(
+                    choice = proChoice,
+                    lines = proLines,
+                    analysis = proAnalysis,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .navigationBarsPadding()
+                        .padding(end = 12.dp, bottom = ViewerChromePolicy.videoBottomInsetDp(filmstripShown).dp + 12.dp),
+                )
+            }
+
             if (!asset.isVideo && !modeActive && scale > MINIMAP_SCALE_THRESHOLD) {
                 ZoomMinimap(
                     asset = asset,

@@ -78,6 +78,8 @@ fun ViewerSettingsRoom(
      * and bringing its own rule and heading. Null leaves the room without it.
      */
     colourVisionSection: (@Composable ColumnScope.() -> Unit)? = null,
+    /** The pro overlays group (histogram, clipping, focus peaking, photo info), drawn after colour vision. */
+    proOverlaySection: (@Composable ColumnScope.() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -137,6 +139,7 @@ fun ViewerSettingsRoom(
         }
 
         colourVisionSection?.invoke(this)
+        proOverlaySection?.invoke(this)
 
         RoomRule(Modifier.padding(vertical = 14.dp))
         RoomEyebrow("SLIDESHOW")
