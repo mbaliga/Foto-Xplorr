@@ -236,6 +236,22 @@ class SimpleHostileHeaderTest {
         assertEquals(0xFF010203.toInt(), img[1])
     }
 
+    @Test fun tiffSixteenBitRawSingleStripOverTheStripCapStillDecodes() {
+        // 4 x 2 RGB 16-bit in one strip: 48 raw bytes, 24 kept. The raw strip is read in place, so
+        // only the kept rows count against maxInflated; a deflated strip needs its own 48-byte buffer.
+        val limits = SimpleLimits(maxInflated = 32)
+        val raw = ByteArray(48) { if (it % 2 == 1) (0x10 + it / 2).toByte() else 0x7F }
+        fun file(compression: Long, strip: ByteArray) = tiff(listOf(
+            e(256, 4, 4), e(257, 4, 2), e(258, 3, 16, 16, 16), e(259, 3, compression), e(262, 3, 2), e(277, 3, 3),
+            e(273, 4, 1024), e(279, 4, strip.size.toLong()),
+        ), strip)
+        val r = SimpleFormatDecoders.decode(MediaFormat.Tiff, file(1, raw), limits)
+        assertIs<SimpleResult.Success>(r, (r as? SimpleResult.Failure)?.reason)
+        assertEquals(0xFF101112.toInt(), r.image[0])
+        assertEquals(0xFF252627.toInt(), r.image[7])
+        assertIs<SimpleResult.Failure>(SimpleFormatDecoders.decode(MediaFormat.Tiff, file(8, zlib(raw)), limits))
+    }
+
     @Test fun tiffDeflateLastStripPaddedToRowsPerStripIsAccepted() {
         // 2 x 3 grey, RowsPerStrip 2: the second strip should hold 1 row but carries 2.
         val s0 = zlib(bytes(1, 2, 3, 4))

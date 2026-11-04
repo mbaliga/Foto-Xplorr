@@ -119,7 +119,10 @@ internal object TiffDecoder {
         val keptBits = if (bits == 16) 8 else bits
         val dataRow = ((width.toLong() * samplesPerPixelInPlane * keptBits + 7) / 8).toInt()
         if (dataRow.toLong() * height * planes > limits.maxInflated) bad("TIFF too large")
-        if (bytesPerRow.toLong() * rowsPerStrip > limits.maxInflated) bad("TIFF strip too large")
+        // A raw strip is read in place unless the predictor has to rewrite it; only a strip that gets
+        // its own buffer (decompressed or predicted) is held to the per-strip cap.
+        val inPlace = compression == 1 && predictor == 1
+        if (!inPlace && bytesPerRow.toLong() * rowsPerStrip > limits.maxInflated) bad("TIFF strip too large")
         val palette = ifd.many(320)
         if (photo == 3 && (palette == null || palette.size < 3 * (1 shl bits))) bad("TIFF palette missing")
         if (compression !in intArrayOf(1, 5, 8, 32946, 32773)) bad("TIFF compression not supported")
@@ -140,8 +143,6 @@ internal object TiffDecoder {
             val cnt = counts[idx].toInt()
             val rows = minOf(rowsPerStrip, height - s * rowsPerStrip)
             val want = bytesPerRow * rows
-            // A raw strip is read in place unless the predictor has to rewrite it.
-            val inPlace = compression == 1 && predictor == 1
             val strip = when (compression) {
                 1 -> if (inPlace) b else b.copyOfRange(off, off + want)
                 5 -> lzw(b, off, cnt, want)
