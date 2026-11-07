@@ -21,10 +21,11 @@ import org.robolectric.annotation.GraphicsMode
 
 /**
  * The longest destination word has to be readable in the narrowest places the rail is drawn: the
- * 260 dp pinned rail and the pull-out room on a 360 dp phone. At 44 sp bold "Experimental" is
- * about 274 sp wide, wider than either leaves for it, so the row shrinks a word that would
- * otherwise be cut to "Experim...". Robolectric draws with whatever face it resolves, so these
- * prove the fitting rule, not the pixels; the device check is a look at the real rail.
+ * 260 dp pinned rail and the pull-out room, which the open park (owner reference 2026-11-07)
+ * narrows to the 53% of the window the card leaves -- about 190 dp on a 360 dp phone. A word the
+ * room cannot hold at the 24 sp focus size is shrunk rather than cut to "Experim...". Robolectric
+ * draws with whatever face it resolves, so these prove the fitting rule, not the pixels; the
+ * device check is a look at the real rail.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -64,9 +65,23 @@ class DestinationWordRailFitTest {
 
     @Test
     fun `Experimental is not cut in the pull-out room of a 360 dp phone`() {
-        // The shell pads the room by its 72 dp band, so the panel gets 288 dp.
-        mountAt(288)
+        // The open park keeps 47% of the window for the card, so the room gets the other 53%.
+        mountAt((360 * (1f - dev.aarso.cellshell.OpenPark().keepFraction)).toInt())
         assertFalse(layoutOf(HyleDestination.PLACES.label).isLineEllipsized(0))
+    }
+
+    @Test
+    fun `Experimental is not cut in a 180 dp room`() {
+        mountAt(180)
+        assertFalse(layoutOf(HyleDestination.PLACES.label).isLineEllipsized(0))
+    }
+
+    @Test
+    fun `no destination is cut in a 180 dp room`() {
+        mountAt(180)
+        HyleDestination.entries.forEach {
+            assertFalse("${it.label} is cut", layoutOf(it.label).isLineEllipsized(0))
+        }
     }
 
     @Test
@@ -74,7 +89,7 @@ class DestinationWordRailFitTest {
         mountAt(260)
         assertFalse(layoutOf("Photos").isLineEllipsized(0))
         assertEquals(
-            "Photos is drawn at the reference size",
+            "Photos is drawn at the reference focus size",
             RAIL_FONT_SP.toFloat(),
             fontSizeOf("Photos"),
             0.01f,
@@ -93,11 +108,18 @@ class DestinationWordRailFitTest {
 
     @Test
     fun `the fitting rule scales to the room and stops at the floor`() {
-        assertEquals(44f, railFontSpFor(naturalPx = 200f, availablePx = 300f), 0.001f)
-        assertEquals(44f, railFontSpFor(naturalPx = 300f, availablePx = 300f), 0.001f)
-        // A quarter too wide: three quarters of the size, less the small safety margin.
-        assertEquals(44f * 0.75f * 0.98f, railFontSpFor(naturalPx = 400f, availablePx = 300f), 0.001f)
+        assertEquals(24f, railFontSpFor(naturalPx = 200f, availablePx = 300f), 0.001f)
+        assertEquals(24f, railFontSpFor(naturalPx = 300f, availablePx = 300f), 0.001f)
+        // A fifth too wide: four fifths of the size, less the small safety margin (18.82 > floor).
+        assertEquals(24f * 0.8f * 0.98f, railFontSpFor(naturalPx = 375f, availablePx = 300f), 0.001f)
         assertEquals(RAIL_MIN_FONT_SP.toFloat(), railFontSpFor(naturalPx = 6000f, availablePx = 100f), 0.001f)
-        assertEquals(44f, railFontSpFor(naturalPx = 0f, availablePx = 0f), 0.001f)
+        assertEquals(24f, railFontSpFor(naturalPx = 0f, availablePx = 0f), 0.001f)
+    }
+
+    @Test
+    fun `the focus size and floor are the reference's and the floor stays above the rest size`() {
+        assertEquals(24, RAIL_FONT_SP)
+        assertEquals(17, RAIL_REST_FONT_SP)
+        assertTrue(RAIL_MIN_FONT_SP > RAIL_REST_FONT_SP)
     }
 }

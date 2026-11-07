@@ -82,7 +82,8 @@ class DestinationWordRailPaneComposeTest {
         return (bounds.top + bounds.bottom) / 2f
     }
 
-    private fun markerY() = centreY(compose.onNodeWithTag(RAIL_MARKER_TAG))
+    /** The wheel's focus line: its vertical centre. A word there is drawn at the full focus look. */
+    private fun focusLineY() = centreY(compose.onNodeWithTag(RAIL_WHEEL_TAG))
 
     private fun wordY(destination: HyleDestination) = centreY(compose.onNodeWithText(destination.label))
 
@@ -163,7 +164,7 @@ class DestinationWordRailPaneComposeTest {
         mount(host)
         compose.mainClock.autoAdvance = false
         advance(100)
-        val focusLineY = wordY(HyleDestination.PHOTOS)
+        val restLineY = wordY(HyleDestination.PHOTOS)
 
         compose.onRoot().performMouseInput { moveTo(center); scroll(3f) }
         advance(300)
@@ -175,7 +176,8 @@ class DestinationWordRailPaneComposeTest {
         }
         val landed = HyleDestination.valueOf(host.selectedId)
         // Settled on a detent: the landed word is on the focus line, not left between two.
-        assertEquals("the wheel rests between words", focusLineY, wordY(landed), 2f)
-        assertEquals(wordY(landed), markerY(), 2f)
+        assertEquals("the wheel rests between words", restLineY, wordY(landed), 2f)
+        // ...which is the focus line, where the landed word is drawn at the full focus look.
+        assertEquals(focusLineY(), wordY(landed), 2f)
     }
 }

@@ -22,7 +22,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
+import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -165,23 +167,24 @@ fun destinationEmptyMessage(
 }
 
 /**
- * The left room: the destinations as the owner's swivel reference (2026-10) draws them -- large
- * bold words on black, the current one white with a filled square beside it, the rest dimmed by
- * their distance from it -- with Settings below.
+ * The left room: the destinations as the owner's left-room reference (2026-11-07) draws them -- a
+ * hamburger at the top left that closes the room, and a short run of words around the middle, the
+ * current one large and full white, the rest smaller in one grey -- with Settings below. The room
+ * is the left half of the window: the gallery parks its card large and flat on the right
+ * (`SpatialShell`'s `leftPark`), so this is laid out for about 190 dp on a phone.
+ *
+ * The floor stays black and the type white, the app's dark design; the reference's light grey is
+ * a mock-up colour, not a direction.
  *
  * The rail is [DestinationWordRail], an app-local re-cut of `dev.aarso:cell-shell`'s word wheel.
- * The falloff maths came *from* this app originally and the shared wheel is still the behaviour
- * (the run turns, the hovered word is committed as the wheel hesitates, release only settles), but its type, fade and marker
- * are private constants that cannot be set from outside and none of them is the reference's --
- * see that composable's own doc for the exact gap. The shared library is untouched.
+ * The shared wheel is still the behaviour (the run turns, the hovered word is committed as the
+ * wheel hesitates, release only settles), but its type, fade and marker are private constants that
+ * cannot be set from outside and none of them is the reference's -- see that composable's own doc.
+ * The shared library is untouched.
  *
- * **The marker is a bullet again, not covers.** On 2026-08-14 the owner replaced the rail's
- * bullet with a cascade of each destination's own covers (*"the few images are indication
- * enough... I would rather have them on the left and for them to do the movement dance"*). The
- * 2026-10 reference draws the bullet and no covers, and a reference is a later decision than a
- * direction, so this follows it: the covers are gone, and so is the gallery state the panel only
- * ever took to fetch them. The dance survives -- the square hops across the rows with the wheel,
- * stretching along its path as it goes.
+ * **No marker and no covers.** The 2026-08-14 covers cascade was replaced by the 2026-10
+ * reference's square bullet, and the 2026-11-07 reference has neither: the current word is told by
+ * its size, weight and `selected` semantics.
  *
  * No scroll wrapper: the wheel measures its own rows against the height it is given and takes
  * care of overflow itself. Wrapping it in a `verticalScroll` would hand it an infinite height to
@@ -194,6 +197,9 @@ fun destinationEmptyMessage(
  * that takes over the place the photos are, opened only from this row. [DestinationWordRail] is
  * handed a bounded height via `Modifier.weight(1f)` so it keeps working exactly as documented
  * above; the settings row is the `Column`'s other, unweighted child.
+ *
+ * [onClose], when set, is the hamburger: a 48 dp button that closes the room (the pull-out room
+ * passes it; the pinned rail on a wide window is not a room and passes null, so it has none).
  *
  * [paneOpen] and [onLeavePane] are the rail's way back from that pane: the selected word is the
  * destination under it, so tapping it is [onReselect], and a scrub that rests on it is
@@ -212,6 +218,7 @@ fun DestinationRailPanel(
     paneOpen: Boolean = false,
     onLeavePane: () -> Unit = {},
     onTurning: (Boolean) -> Unit = {},
+    onClose: (() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
@@ -219,6 +226,21 @@ fun DestinationRailPanel(
             .background(Color.Black)
             .statusBarsPadding(),
     ) {
+        if (onClose != null) {
+            // 48 dp target; the 24 dp glyph inside it sits on the words' left edge.
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier
+                    .padding(start = (RAIL_INSET - 12).dp, top = 4.dp)
+                    .size(48.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Menu,
+                    contentDescription = RailCopy.CLOSE_MENU,
+                    tint = Color.White,
+                )
+            }
+        }
         DestinationWordRail(
             items = items,
             selectedId = selectedId,
@@ -230,9 +252,9 @@ fun DestinationRailPanel(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                // 16 in, so the 16dp square sits at 16..32 and the words, past the rail's own
-                // 32dp gutter, at the reference's 48.
-                .padding(start = RAIL_INSET.dp, end = 16.dp),
+                // The words start on the reference's 24 dp edge; a narrow end margin, because the
+                // open park leaves the room only about half the window.
+                .padding(start = RAIL_INSET.dp, end = 12.dp),
         )
         RailSettingsRow(onClick = onOpenSettings)
     }
@@ -250,10 +272,10 @@ fun DestinationRailPanel(
 @Composable
 private fun RailSettingsRow(onClick: () -> Unit) {
     Text(
-        text = "Settings",
+        text = RailCopy.SETTINGS,
         color = Color.White.copy(alpha = 0.55f),
         // The rail's own face, not the platform default, and set on the same optical edge as the
-        // words above it (the marker's inset plus the rail's gutter), not at the marker's edge.
+        // words above it.
         style = TextStyle(
             fontFamily = HyleGrotesk,
             fontSize = 18.sp,
@@ -266,12 +288,12 @@ private fun RailSettingsRow(onClick: () -> Unit) {
             // This is now the panel's bottom-most element, so it -- not a hardcoded inset --
             // is what has to clear the gesture-navigation bar.
             .navigationBarsPadding()
-            .padding(start = (RAIL_INSET + RAIL_GUTTER_DP).dp, end = 16.dp, top = 14.dp, bottom = 28.dp),
+            .padding(start = RAIL_INSET.dp, end = 12.dp, top = 14.dp, bottom = 28.dp),
     )
 }
 
-/** The panel's inset from the room's left edge: the bullet's own left edge. */
-private const val RAIL_INSET = 16
+/** The panel's inset from the room's left edge: the reference's words start about 24 dp in. */
+private const val RAIL_INSET = 24
 
 /**
  * What a destination actually renders: the zoomable grid, the Experimental section, or the protected-folder list.

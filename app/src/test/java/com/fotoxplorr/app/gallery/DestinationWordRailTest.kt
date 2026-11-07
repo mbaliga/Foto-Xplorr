@@ -6,97 +6,80 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The word rail's fade is its only position indicator — no scrollbar, no highlight box — so the
- * curve is the affordance, and it is the owner's: the reference's greys, not a formula that
- * happens to pass near them.
+ * The word rail's emphasis is its only position indicator -- no scrollbar, no highlight box, no
+ * marker -- so the curve is the affordance, and it is the owner's (reference 2026-11-07): the word
+ * on the focus line at 24sp in full white, every other word at 17sp in one grey.
  */
 class DestinationWordRailTest {
 
     private val tolerance = 1e-4f
 
     @Test
-    fun `the whole-row stops are the reference greys`() {
-        assertEquals(1f, destinationRowAlpha(0), tolerance)
-        assertEquals(0x9A / 255f, destinationRowAlpha(1), tolerance)
-        assertEquals(0x70 / 255f, destinationRowAlpha(2), tolerance)
-        assertEquals(0x4A / 255f, destinationRowAlpha(3), tolerance)
-        assertEquals(0x2E / 255f, destinationRowAlpha(4), tolerance)
+    fun `on the focus line a word is the full focus look`() {
+        val e = destinationRowEmphasis(0f)
+        assertEquals(1f, e.scale, 0f)
+        assertEquals(1f, e.alpha, 0f)
     }
 
     @Test
-    fun `the fade is symmetric about the selected row`() {
-        for (distance in 0..10) {
-            assertEquals(destinationRowAlpha(distance), destinationRowAlpha(-distance), 0f)
+    fun `one row out a word is the reference's 17sp in the uniform grey`() {
+        val e = destinationRowEmphasis(1f)
+        assertEquals(17f / 24f, e.scale, tolerance)
+        assertEquals(RAIL_REST_ALPHA, e.alpha, tolerance)
+        assertEquals(17f, RAIL_FONT_SP * e.scale, tolerance)
+        assertEquals(0.5f, RAIL_REST_ALPHA, tolerance)
+    }
+
+    @Test
+    fun `every word beyond one row is the same, not a further fade`() {
+        // The reference's other words are one grey, however far down the run they are.
+        val rest = destinationRowEmphasis(1f)
+        for (distance in listOf(1.5f, 2f, 3f, 4f, 8f, 40f)) {
+            assertEquals("distance $distance", rest, destinationRowEmphasis(distance))
+            assertEquals("distance -$distance", rest, destinationRowEmphasis(-distance))
         }
     }
 
     @Test
-    fun `four rows out and beyond sit on the floor`() {
-        // A word that fades to nothing has left the rail; the ends of the run must stay present.
-        for (distance in 4..40) {
-            assertEquals("distance $distance", 0x2E / 255f, destinationRowAlpha(distance), tolerance)
+    fun `the emphasis is symmetric about the focus line`() {
+        var d = 0f
+        while (d <= 2f) {
+            assertEquals(destinationRowEmphasis(d), destinationRowEmphasis(-d))
+            d += 0.125f
         }
     }
 
     @Test
-    fun `alpha falls strictly until the floor and never rises`() {
-        for (distance in 1..4) {
-            assertTrue(destinationRowAlpha(distance) < destinationRowAlpha(distance - 1))
-        }
-        for (distance in 1..40) {
-            assertTrue(destinationRowAlpha(distance) <= destinationRowAlpha(distance - 1))
-        }
-    }
-
-    @Test
-    fun `the fractional reading agrees with the stops at every whole row`() {
-        for (distance in -8..8) {
-            assertEquals(
-                "row $distance",
-                destinationRowAlpha(distance),
-                destinationRowFade(distance.toFloat()),
-                tolerance,
-            )
-        }
-    }
-
-    @Test
-    fun `between rows the fade sits between its neighbours`() {
-        // Mid-drag a row is 1.4 rows out; quantising that would make the fade step on settle.
-        val a = destinationRowFade(1.4f)
-        assertTrue(a < destinationRowAlpha(1) && a > destinationRowAlpha(2))
-        assertEquals(
-            destinationRowAlpha(1) + (destinationRowAlpha(2) - destinationRowAlpha(1)) * 0.4f,
-            a,
-            tolerance,
-        )
-        // And it is monotonic across every quarter row out to the floor.
-        var previous = destinationRowFade(0f)
-        var d = 0.25f
-        while (d <= 6f) {
-            val next = destinationRowFade(d)
-            assertTrue("fade rose at $d", next <= previous + tolerance)
+    fun `between the line and one row the emphasis is interpolated, not stepped`() {
+        // Mid-drag a row is 0.4 rows out; quantising that would make the word jump on settle.
+        val e = destinationRowEmphasis(0.4f)
+        assertEquals(1f + (17f / 24f - 1f) * 0.4f, e.scale, tolerance)
+        assertEquals(1f + (RAIL_REST_ALPHA - 1f) * 0.4f, e.alpha, tolerance)
+        // And it falls monotonically across every eighth of a row, then holds.
+        var previous = destinationRowEmphasis(0f)
+        var step = 0.125f
+        while (step <= 3f) {
+            val next = destinationRowEmphasis(step)
+            assertTrue("scale rose at $step", next.scale <= previous.scale + tolerance)
+            assertTrue("alpha rose at $step", next.alpha <= previous.alpha + tolerance)
+            if (step < 1f) {
+                assertTrue("scale stepped at $step", next.scale < previous.scale)
+                assertTrue("alpha stepped at $step", next.alpha < previous.alpha)
+            }
             previous = next
+            step += 0.125f
+        }
+    }
+
+    @Test
+    fun `a word never vanishes or grows past the focus size`() {
+        var d = -5f
+        while (d <= 5f) {
+            val e = destinationRowEmphasis(d)
+            assertTrue(e.alpha in RAIL_REST_ALPHA..1f)
+            assertTrue(e.scale in (17f / 24f - tolerance)..1f)
             d += 0.25f
         }
-    }
-
-    @Test
-    fun `the marker stretch peaks mid-flight and is gone at both ends`() {
-        assertEquals(0f, markerStretch(2f, 2f, 7f), 0f)
-        assertEquals(0f, markerStretch(7f, 2f, 7f), 0f)
-        assertEquals(1f, markerStretch(4.5f, 2f, 7f), tolerance)
-        // Travelling upwards is the same journey the other way.
-        assertEquals(1f, markerStretch(4.5f, 7f, 2f), tolerance)
-        assertEquals(markerStretch(3f, 2f, 7f), markerStretch(6f, 7f, 2f), tolerance)
-    }
-
-    @Test
-    fun `no journey means no stretch`() {
-        assertEquals(0f, markerStretch(3f, 3f, 3f), 0f)
-        // Overshoot from an interrupted animation clamps rather than going negative.
-        assertEquals(0f, markerStretch(9f, 2f, 7f), 0f)
-        assertEquals(0f, markerStretch(0f, 2f, 7f), 0f)
     }
 
     // --- Which word is under the finger -------------------------------------------------------
@@ -113,7 +96,7 @@ class DestinationWordRailTest {
 
     @Test
     fun `exactly between two rows rounds up`() {
-        // Half a pitch is the tie; Float.roundToInt rounds half up. The marker, the debounced
+        // Half a pitch is the tie; Float.roundToInt rounds half up. The emphasis, the debounced
         // commit and the release snap all go through this one function, so whichever way the
         // tie falls they fall the same way -- pin it so a refactor cannot split them.
         assertEquals(1, railFocusIndex(80, 160f, 8))
