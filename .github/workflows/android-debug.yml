@@ -12,7 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -99,7 +99,11 @@ jobs:
 
       - name: Build release APKs for sideloading
         shell: bash
-        run: ./gradlew :app:assembleOfflineRelease -PabiSplits=true
+        run: |
+          # The tests, lint and debug builds above leave a fragmented daemon heap behind; the release
+          # compile of the Connect flavor needs a fresh one (it ran out of memory without this).
+          ./gradlew --stop
+          ./gradlew :app:assembleOfflineRelease :app:assembleConnectRelease -PabiSplits=true
 
       # TRAPS #16 / WP1.9: a read-only regression guard -- AGP already produces 16 KB-aligned
       # output by default, this only catches a future change that breaks it.
@@ -107,7 +111,7 @@ jobs:
         shell: bash
         run: |
           chmod +x scripts/verify-page-alignment.sh
-          ./scripts/verify-page-alignment.sh app/build/outputs/apk/offline/release/*.apk
+          ./scripts/verify-page-alignment.sh app/build/outputs/apk/offline/release/*.apk app/build/outputs/apk/connect/release/*.apk
 
       # Uploaded as SEPARATE artifacts, one per architecture, because GitHub zips an artifact
       # whole: bundling four ABIs would put the size straight back. arm64-v8a is the only one
@@ -117,6 +121,15 @@ jobs:
         with:
           name: fotoz-arm64-INSTALL-THIS
           path: app/build/outputs/apk/offline/release/app-offline-arm64-v8a-release.apk
+          if-no-files-found: error
+
+      # The Connect flavor (street map, region downloads, sync, AI services) for people who want
+      # the network features; the Offline flavor above stays the privacy-strict default.
+      - name: Upload Connect arm64 release APK (street maps and network features)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fotoz-CONNECT-arm64
+          path: app/build/outputs/apk/connect/release/app-connect-arm64-v8a-release.apk
           if-no-files-found: error
 
       - name: Upload other release APKs

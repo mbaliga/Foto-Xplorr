@@ -19,6 +19,8 @@ enum class GalleryShortcutKey {
     DELETE,
     SLASH,
     LETTER_A,
+    PLUS,
+    MINUS,
 }
 
 /** A direction key was pressed, moving the keyboard-focused tile within the grid. */
@@ -28,37 +30,52 @@ enum class MoveDirection { UP, DOWN, LEFT, RIGHT }
 sealed interface GalleryShortcut {
     data class MoveSelection(val direction: MoveDirection) : GalleryShortcut
     data object OpenFocused : GalleryShortcut
+
+    /** Shift and Enter: opens or closes the burst stack of the keyboard-focused tile, at any tile size. */
+    data object ToggleFocusedStack : GalleryShortcut
     data object CloseOrClear : GalleryShortcut
     data object TrashSelected : GalleryShortcut
     data object SelectAll : GalleryShortcut
     data object FocusSearch : GalleryShortcut
+
+    /** Ctrl and the plus key: one rung closer, fewer and bigger tiles. */
+    data object ZoomIn : GalleryShortcut
+
+    /** Ctrl and the minus key: one rung further out, more and smaller tiles. */
+    data object ZoomOut : GalleryShortcut
 }
 
 /**
  * The gallery's keyboard shortcut table: arrows move the keyboard cursor, Enter opens it,
  * Escape backs out (of a selection, of search, of the open photo -- the call site decides which,
  * same as the existing `BackHandler`), Delete trashes the current selection, Ctrl+A selects
- * everything in view, and `/` jumps to search -- the six the owner asked for, in one place so
- * a seventh can be added here rather than wherever the next call site happens to need one.
+ * everything in view, and `/` jumps to search -- the six the owner asked for -- plus Ctrl with plus
+ * or minus to zoom the grid a rung, and Shift+Enter to open or close the burst stack under the
+ * cursor (Enter alone still opens the photo), in one place so a next one can be added here rather
+ * than wherever the next call site happens to need one.
  *
  * Returns `null` for a key this table has no opinion about, rather than a default -- an unbound
  * key must fall through to whatever the OS or a text field would otherwise do with it (typing
  * `/` while the search field already has focus, for instance), which only works if this function
  * stays out of the way instead of swallowing it.
  *
- * [ctrlPressed] only changes the outcome for `A` (bare `A` is not a shortcut -- it would fight
- * typing into the search box) and is otherwise ignored: Ctrl+Enter and Enter open the same
- * thing, because there is nothing a modifier could sensibly change about "open".
+ * [ctrlPressed] only changes the outcome for `A`, plus and minus (bare `A`, `+` and `-` are not
+ * shortcuts -- they would fight typing into the search box) and is otherwise ignored: Ctrl+Enter and Enter open the same
+ * thing, because there is nothing a modifier could sensibly change about "open". [shiftPressed]
+ * only changes Enter: Shift+Enter is the keyboard's way into a burst stack, whose badge is too
+ * small to reach on a dense grid.
  */
-fun galleryShortcutFor(key: GalleryShortcutKey, ctrlPressed: Boolean): GalleryShortcut? = when {
+fun galleryShortcutFor(key: GalleryShortcutKey, ctrlPressed: Boolean, shiftPressed: Boolean = false): GalleryShortcut? = when {
     key == GalleryShortcutKey.LETTER_A && ctrlPressed -> GalleryShortcut.SelectAll
     key == GalleryShortcutKey.LETTER_A -> null
     key == GalleryShortcutKey.SLASH -> GalleryShortcut.FocusSearch
+    key == GalleryShortcutKey.PLUS -> if (ctrlPressed) GalleryShortcut.ZoomIn else null
+    key == GalleryShortcutKey.MINUS -> if (ctrlPressed) GalleryShortcut.ZoomOut else null
     key == GalleryShortcutKey.ARROW_UP -> GalleryShortcut.MoveSelection(MoveDirection.UP)
     key == GalleryShortcutKey.ARROW_DOWN -> GalleryShortcut.MoveSelection(MoveDirection.DOWN)
     key == GalleryShortcutKey.ARROW_LEFT -> GalleryShortcut.MoveSelection(MoveDirection.LEFT)
     key == GalleryShortcutKey.ARROW_RIGHT -> GalleryShortcut.MoveSelection(MoveDirection.RIGHT)
-    key == GalleryShortcutKey.ENTER -> GalleryShortcut.OpenFocused
+    key == GalleryShortcutKey.ENTER -> if (shiftPressed) GalleryShortcut.ToggleFocusedStack else GalleryShortcut.OpenFocused
     key == GalleryShortcutKey.ESCAPE -> GalleryShortcut.CloseOrClear
     key == GalleryShortcutKey.DELETE -> GalleryShortcut.TrashSelected
     else -> null

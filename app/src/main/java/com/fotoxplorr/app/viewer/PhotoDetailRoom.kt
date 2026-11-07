@@ -1,8 +1,6 @@
 package com.fotoxplorr.app.viewer
 
 import android.content.Context
-import android.graphics.BitmapFactory
-import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -58,36 +57,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.exifinterface.media.ExifInterface
 import com.fotoxplorr.app.hyle.HyleTextField
-import com.fotoxplorr.app.media.DecodeLimits
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.decodeUpright
-import com.fotoxplorr.app.media.openForLocationRead
-import com.fotoxplorr.app.media.uriForLocationRead
 import com.fotoxplorr.app.metadata.CurrentMetadata
-import com.fotoxplorr.app.metadata.currentMetadataFrom
-import com.fotoxplorr.app.metadata.xmpAttributeUtf8
-import com.fotoxplorr.app.palette.PaletteExtractor
-import com.fotoxplorr.app.palette.PaletteMemo
 import com.fotoxplorr.app.palette.PaletteSwatch
-import com.fotoxplorr.app.palette.PaletteSwatchRow
 import com.fotoxplorr.app.ui.HyleGrotesk
 import com.fotoxplorr.app.ui.RoomEyebrow
 import com.fotoxplorr.app.ui.RoomStyle
-import com.fotoxplorr.core.search.ColourSearch
-import com.fotoxplorr.core.metadata.XmpPacket
 import com.fotoxplorr.core.model.MediaId
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
+import com.fotoxplorr.app.ui.HelpCopy
 
 // ── The room's palette, every value sampled off the owner's reference (6.png) ─────────────────
 // Fixed on purpose: these are dark neutrals measured off the reference, not accent roles (the one
@@ -109,10 +97,10 @@ private val CARD_CHIP_TEXT = Color(0xFFCAC8CD)
 private val CARD_BODY_TEXT = Color(0xFF626165)
 private val CARD_STRIP_TEXT = Color(0xFF5B5A5E)
 private val CARD_GLYPH = Color(0xFF6A696E)
-private val SECTION_TEXT = Color(0xFFDDDDDD)
-private val ROW_LABEL = Color(0xFF949695)
-private val ROW_VALUE = Color(0xFFDCDCDC)
-private val HAIRLINE = Color(0xFF141414)
+internal val SECTION_TEXT = Color(0xFFDDDDDD)
+internal val ROW_LABEL = Color(0xFF949695)
+internal val ROW_VALUE = Color(0xFFDCDCDC)
+internal val HAIRLINE = Color(0xFF141414)
 private val PLACEHOLDER_TEXT = Color(0xFF474A4A)
 internal val SECONDARY_TEXT = Color(0xFF8A8A8A)
 internal val MUTED_TEXT = Color(0xFF6A6A6A)
@@ -123,8 +111,8 @@ internal val MUTED_TEXT = Color(0xFF6A6A6A)
  * card *is* the way back.
  *
  * The order is the owner's reference (6.png), top to bottom: the filename and date; the camera
- * card; the map plate the photo flies into; the caption; "Information" with a Show More/Show Less
- * toggle; "Tags". Everything this app knows that the reference does not draw comes after that --
+ * card with the colour strip under it; the map plate the photo flies into; the caption;
+ * "Information" with a Show More/Show Less toggle; "Tags". Everything this app knows that the reference does not draw comes after that --
  * the OCR card, the rating/creator/copyright fields, the library marks -- so nothing a previous
  * round made reachable has been deleted, it has only moved below the reference's own content.
  *
@@ -157,10 +145,28 @@ internal val MUTED_TEXT = Color(0xFF6A6A6A)
  * @param plateMapBackdrop what the plate draws under its pin once settled; null means the
  *   flavour's own backdrop. The render test passes a stand-in, since MapLibre cannot render on
  *   the JVM.
+ * @param flightActive true when a [PhotoToPinFlight] is carrying the photo to the place plate's
+ *   pin, so the pin waits for it instead of playing its own in-plate hero shrink. Defaults to
+ *   false, which keeps the original in-plate hero (previews, render tests, an unwired viewer).
+ *   The room also checks that the pin is reachable ([PlaceMorph.canFly]) and fades it in place
+ *   when it is not, so a room scrolled before it is closed needs no special handling by the
+ *   caller. See [PhotoToPinFlight] for everything the screen has to supply.
+ * @param onPinPositioned the place plate's pin tile, in THIS ROOM's coordinates (origin at the
+ *   room's top-left, which is the shell's; scroll included). The shell slides the room rigidly,
+ *   so this is the same number at every progress and is reported once, then again only if the
+ *   pin genuinely moves (a scroll, or a header that reflowed). It is what
+ *   [PhotoToPinFlight]'s `pinRect` reads. Reported for a photo with no place too: the ghost pin
+ *   on [PlaceUnknownPlate] is a landing target like any other.
+ * @param onPinGone the pin tile has left the room (the location picker replaced the plate, or
+ *   there is no plate), so the rectangle last given to [onPinPositioned] is stale and must not
+ *   be flown to. Called once when it happens; the next [onPinPositioned] says it is back.
  * @param recognizedText this photo's OCR text, flattened -- read by the viewer the same way
  *   [exif] is. Blank hides the "Search inside this photo" card entirely.
  * @param onSearchLibrary hands recognised text to the library search. Null leaves that one action
  *   visibly disabled rather than wired to nothing.
+ * @param onSelectText opens the Select text mode on this photo, from the card's "Select text from
+ *   the image" line. Null leaves the line plain (the photo cannot be read for words). The card's
+ *   "Copy text" still copies everything; choosing words is the mode's job.
  */
 @Composable
 fun PhotoDetailRoom(
@@ -185,10 +191,11 @@ fun PhotoDetailRoom(
     onWriteLocationIntoFile: (() -> Unit)? = null,
     recognizedText: String = "",
     onSearchLibrary: ((String) -> Unit)? = null,
+    onSelectText: (() -> Unit)? = null,
     /**
      * This photo's stored palette, off the recognition index (`RecognitionIndex.paletteFor`).
      * Empty for a photo the indexer has not sampled yet, in which case the row decodes it once
-     * itself -- see [PaletteRow]. Each swatch is a button that searches the library for that
+     * itself -- see [PaletteBlock]. Each swatch is a button that searches the library for that
      * colour through [onSearchLibrary].
      */
     palette: List<PaletteSwatch> = emptyList(),
@@ -216,9 +223,46 @@ fun PhotoDetailRoom(
     onSetCopyright: ((String) -> Unit)? = null,
     /** Writes this photo's [tags] into the file's own XMP keyword list. See [TagsBlock]. */
     onEmbedKeywords: (() -> Unit)? = null,
+    /**
+     * This video's file read -- codec, frame rate, bitrate, audio, HDR -- for the Video section.
+     * Null for a still. A video whose read has not finished is [VideoDetails.PENDING].
+     */
+    video: VideoDetails? = null,
+    /**
+     * How many other photos in the run being paged through were taken within a minute of this one,
+     * in its folder ([MetadataSections.nearbyCount]); null while unknown. Browsable photos only.
+     */
+    nearbyCount: Int? = null,
     /** Whether Information starts expanded. Collapsed by default: the reference's three rows. */
     informationInitiallyExpanded: Boolean = false,
+    flightActive: Boolean = false,
+    onPinPositioned: ((Rect) -> Unit)? = null,
+    onPinGone: (() -> Unit)? = null,
 ) {
+    // The room's own layout coordinates, held in a plain object (not snapshot state): they are
+    // only ever READ, at the moment a pin report needs converting to room coordinates, and the
+    // room's position changes on every frame of the pull.
+    val roomCoordinates = remember { RoomCoordinates() }
+    val latestOnPinPositioned by rememberUpdatedState(onPinPositioned)
+    val latestOnPinGone by rememberUpdatedState(onPinGone)
+    // Whether the pin is reachable by a flier. Written only when it flips, so it recomposes the
+    // room at most when a scroll carries the pin away or back, never per frame.
+    var pinFlies by remember { mutableStateOf(true) }
+    val pinReporter = remember {
+        PinReporter(roomCoordinates) { local, roomWidth, roomHeight ->
+            pinFlies = PlaceMorph.canFly(local, roomWidth, roomHeight)
+            latestOnPinPositioned?.invoke(local)
+        }
+    }
+    val reportPin: (Rect) -> Unit = remember(pinReporter) { pinReporter::report }
+    val pinGone: () -> Unit = remember(pinReporter) {
+        {
+            // Forget the last rectangle too: the pin can come back at exactly the same place (the
+            // picker closes), and a de-duplicating reporter would swallow that report.
+            pinReporter.forget()
+            latestOnPinGone?.invoke()
+        }
+    }
     // The shell deliberately consumes no insets — it says so in its own KDoc, because doing so
     // would lift its drag-sensitive edges off the physical screen edge. So a room pads for the
     // system bar itself. This is the TOP room: the shell insets it by the band at the BOTTOM
@@ -226,6 +270,7 @@ fun PhotoDetailRoom(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .onGloballyPositioned { roomCoordinates.coordinates = it }
             .background(ROOM_BACKGROUND)
             .statusBarsPadding()
             // The activity is edge-to-edge, so the window no longer shrinks for the keyboard on
@@ -258,6 +303,15 @@ fun PhotoDetailRoom(
                 facts = remember(asset, exif) { CameraCardFacts.from(asset, exif) },
                 modifier = Modifier.padding(horizontal = GUTTER - PANEL_INSET),
             )
+            // The colours sit on the same raised panel, right under the card, where they are on
+            // screen the moment the room opens -- not a screenful down inside Information (#11).
+            Spacer(Modifier.height(CARD_TO_PALETTE))
+            PaletteBlock(
+                asset = asset,
+                indexed = palette,
+                onSearchLibrary = onSearchLibrary,
+                modifier = Modifier.padding(horizontal = GUTTER - PANEL_INSET),
+            )
         }
         Spacer(Modifier.height(PANEL_TO_PLATE))
         PlaceBlock(
@@ -272,6 +326,10 @@ fun PhotoDetailRoom(
             onWriteIntoFile = onWriteLocationIntoFile,
             onExpandMap = onExpandMap,
             plateMapBackdrop = plateMapBackdrop,
+            flightActive = flightActive,
+            flightFlies = pinFlies,
+            onPinPositioned = reportPin,
+            onPinGone = pinGone,
         )
         CaptionBlock(
             photoId = asset.id,
@@ -285,10 +343,10 @@ fun PhotoDetailRoom(
             exif = exif,
             manualLatitude = manualLatitude,
             manualLongitude = manualLongitude,
+            video = video,
+            nearbyCount = nearbyCount,
             reveal = reveal,
             initiallyExpanded = informationInitiallyExpanded,
-            palette = palette,
-            onSearchLibrary = onSearchLibrary,
         )
         TagsBlock(
             photoId = asset.id,
@@ -302,7 +360,13 @@ fun PhotoDetailRoom(
         // Everything below is this app's own, beyond the reference: kept, after the reference's
         // content, so nothing is lost and nothing displaces the layout the owner drew.
         StatusBlock(asset = asset, isFavorite = isFavorite, isSensitive = isSensitive, reveal = reveal)
-        TextLensBlock(asset = asset, recognizedText = recognizedText, onSearchLibrary = onSearchLibrary, reveal = reveal)
+        TextLensBlock(
+            asset = asset,
+            recognizedText = recognizedText,
+            onSearchLibrary = onSearchLibrary,
+            onSelectText = onSelectText,
+            reveal = reveal,
+        )
         MetadataBlock(
             photoId = asset.id,
             metadata = exif.professionalMetadata,
@@ -319,7 +383,7 @@ fun PhotoDetailRoom(
  * [PlaceMorph.textAlpha], a vertical slide from [PlaceMorph.textOffsetDp]. Draw-time only -- both
  * are read inside the layer lambda, so a drag re-draws the arrival without recomposing anything.
  */
-private fun Modifier.textArrival(reveal: () -> Float): Modifier = graphicsLayer {
+internal fun Modifier.textArrival(reveal: () -> Float): Modifier = graphicsLayer {
     val r = reveal()
     alpha = PlaceMorph.textAlpha(r)
     translationY = PlaceMorph.textOffsetDp(r) * density
@@ -617,6 +681,7 @@ private fun TextLensBlock(
     asset: MediaAsset,
     recognizedText: String,
     onSearchLibrary: ((String) -> Unit)?,
+    onSelectText: (() -> Unit)?,
     reveal: () -> Float,
 ) {
     if (recognizedText.isBlank()) return
@@ -625,6 +690,7 @@ private fun TextLensBlock(
             asset = asset,
             recognizedText = recognizedText,
             onSearchLibrary = onSearchLibrary,
+            onSelectText = onSelectText,
         )
     }
 }
@@ -709,8 +775,7 @@ private fun TagsBlock(
         }
         if (autoTags.isNotEmpty()) {
             Text(
-                text = "Outlined tags were suggested by on-device recognition. Removing one " +
-                    "removes it for good — it will not be suggested again.",
+                text = HelpCopy.Caption.TAGS_SUGGESTED,
                 color = MUTED_TEXT,
                 style = RoomStyle.Caption,
             )
@@ -836,7 +901,7 @@ private fun CaptionBlock(
         }
         if (caption.isNotBlank() && isMachineWritten) {
             Text(
-                text = "Written by on-device recognition. Type over it and it becomes yours.",
+                text = HelpCopy.Caption.CAPTION_MACHINE,
                 color = MUTED_TEXT,
                 style = RoomStyle.Caption,
                 textAlign = TextAlign.Center,
@@ -1055,13 +1120,21 @@ private fun StatusBlock(
 }
 
 /**
- * The place plate, or an honest absence — and the room's only drawing of where this photo was
- * taken.
+ * The place plate, or an honest account of why there is not one -- the room's only drawing of
+ * where this photo was taken.
  *
- * Most libraries are mostly un-geotagged — screenshots, downloads, anything shared through a
- * messenger that strips EXIF. A plate drawn at 0°,0° for those would be a confident lie, so with
- * no location the plate's space is simply empty background (owner's words), with the one
- * explanatory sentence, and the picker when the caller allows a location to be placed by hand.
+ * Most libraries are mostly un-geotagged -- screenshots, downloads, anything shared through a
+ * messenger that strips EXIF. A plate drawn at 0°,0° for those would be a confident lie, so a
+ * photo with no location gets [PlaceUnknownPlate] instead: the same footprint as the real plate
+ * (so the room does not jump when a place is set), a calm static graticule, the photo as a ghost
+ * pin, and the words "No location yet". The photo's flight lands there too, so the shrink has a
+ * target on every photo, not only the geotagged ones.
+ *
+ * "Add a place" is offered only when the caller allows a place to be set AND the metadata read
+ * succeeded (P0-02): a failed read is not evidence the file has no GPS tag, so it never leads to
+ * the picker, which could overwrite one the file already carries. The same goes for a read that
+ * has not finished ([ImageExifDetails.pending]): until it does the block holds the plate's
+ * footprint and says nothing at all.
  */
 @Composable
 private fun PlaceBlock(
@@ -1076,6 +1149,10 @@ private fun PlaceBlock(
     onExpandMap: ((Rect) -> Unit)?,
     plateMapBackdrop: (@Composable BoxScope.(settled: Boolean) -> Unit)?,
     onWriteIntoFile: (() -> Unit)? = null,
+    flightActive: Boolean = false,
+    flightFlies: Boolean = true,
+    onPinPositioned: ((Rect) -> Unit)? = null,
+    onPinGone: (() -> Unit)? = null,
 ) {
     // A hand-placed location stands in for an absent embedded one. It never overrides a real GPS
     // tag: what the camera recorded is a fact about the photograph, and the picker is for photos
@@ -1083,31 +1160,104 @@ private fun PlaceBlock(
     val embedded = PlaceMorph.isDrawable(exif.latitude, exif.longitude)
     val latitude = if (embedded) exif.latitude else manualLatitude
     val longitude = if (embedded) exif.longitude else manualLongitude
+    // Whether a place may be set by hand at all: the caller allows it, the file has no embedded
+    // fix to protect, and the read that says so actually succeeded.
+    val setLocation = onSetLocation.takeIf { exif.readOk && !exif.pending && !embedded }
+    val canPlaceByHand = setLocation != null
+    var editing by remember(asset.id) { mutableStateOf(false) }
+    val mode = PlaceMorph.placeBlockMode(
+        pending = exif.pending,
+        editingWithSetter = editing && setLocation != null,
+        drawable = PlaceMorph.isDrawable(latitude, longitude),
+        readOk = exif.readOk,
+    )
+    // Tell the host when the pin tile leaves the room (the picker replaces the plate, or a failed
+    // reload takes it away), so it stops flying the photo onto a rectangle that is no longer
+    // there. Keyed on whether a pin is shown at all, not on which plate shows it: swapping the
+    // located plate for the unknown one replaces the pin and the new one reports itself.
+    val pinShown = PlaceMorph.hasPin(mode)
+    val latestOnPinGone by rememberUpdatedState(onPinGone)
+    DisposableEffect(pinShown) {
+        onDispose { if (pinShown) latestOnPinGone?.invoke() }
+    }
     Box(Modifier.padding(horizontal = GUTTER)) {
         when {
-            PlaceMorph.isDrawable(latitude, longitude) -> {
-                if (plateMapBackdrop != null) {
-                    PlacePlate(
-                        asset = asset,
-                        latitude = latitude!!,
-                        longitude = longitude!!,
-                        reveal = reveal,
-                        settled = settled,
-                        onExpand = onExpandMap,
-                        mapBackdrop = plateMapBackdrop,
-                    )
-                } else {
-                    PlacePlate(
-                        asset = asset,
-                        latitude = latitude!!,
-                        longitude = longitude!!,
-                        reveal = reveal,
-                        settled = settled,
-                        onExpand = onExpandMap,
+            // Before anything is known: hold the plate's footprint so the room does not jump when
+            // the read lands, and say nothing. No pin, so no rectangle is reported to the flier.
+            mode == PlaceMorph.PlaceBlockMode.LOADING -> {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(PLATE_ASPECT)
+                        .clip(RoundedCornerShape(PLATE_CORNER_DP.dp))
+                        .background(PLATE_GROUND),
+                )
+            }
+            // Next, so the picker stays up while a place is being set: the first tap hands the
+            // host a location, which makes the plate drawable, and without this the picker would
+            // be swapped for the plate under the user's finger.
+            mode == PlaceMorph.PlaceBlockMode.PICKER && setLocation != null -> {
+                Box(Modifier.textArrival(reveal)) {
+                    com.fotoxplorr.app.spatial.LocationPicker(
+                        latitude = latitude,
+                        longitude = longitude,
+                        onSet = setLocation,
+                        onClear = {
+                            onClearLocation?.invoke()
+                            editing = false
+                        },
+                        onWriteIntoFile = onWriteIntoFile,
+                        onDone = { editing = false },
                     )
                 }
             }
-            !exif.readOk -> {
+            mode == PlaceMorph.PlaceBlockMode.PLATE -> {
+                Column {
+                    if (plateMapBackdrop != null) {
+                        PlacePlate(
+                            asset = asset,
+                            latitude = latitude!!,
+                            longitude = longitude!!,
+                            reveal = reveal,
+                            settled = settled,
+                            onExpand = onExpandMap,
+                            flightActive = flightActive,
+                            flightFlies = flightFlies,
+                            onPinPositioned = onPinPositioned,
+                            mapBackdrop = plateMapBackdrop,
+                        )
+                    } else {
+                        PlacePlate(
+                            asset = asset,
+                            latitude = latitude!!,
+                            longitude = longitude!!,
+                            reveal = reveal,
+                            settled = settled,
+                            onExpand = onExpandMap,
+                            flightActive = flightActive,
+                            flightFlies = flightFlies,
+                            onPinPositioned = onPinPositioned,
+                        )
+                    }
+                    if (canPlaceByHand) {
+                        // The way back into the picker for a place the user set by hand, and so
+                        // the only way to reach its "remove" and "write into the file" actions.
+                        Text(
+                            text = "Placed by you · Change",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = RoomStyle.Caption,
+                            modifier = Modifier
+                                .textArrival(reveal)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) { editing = true }
+                                .padding(top = 10.dp, bottom = 4.dp),
+                        )
+                    }
+                }
+            }
+            mode == PlaceMorph.PlaceBlockMode.READ_FAILED -> {
                 // A failed read is not evidence the file has no GPS tag (P0-02) -- only that this
                 // attempt couldn't see it. Never the picker here: offering to hand-place a
                 // location would invite overwriting one that may already be in the file.
@@ -1121,48 +1271,62 @@ private fun PlaceBlock(
                     )
                 }
             }
-            onSetLocation != null -> {
-                Box(Modifier.textArrival(reveal)) {
-                    com.fotoxplorr.app.spatial.LocationPicker(
-                        latitude = latitude,
-                        longitude = longitude,
-                        onSet = onSetLocation,
-                        onClear = { onClearLocation?.invoke() },
-                        onWriteIntoFile = onWriteIntoFile,
-                    )
-                }
-            }
             else -> {
-                // The plate's area is just empty space in the background, with the one sentence
-                // that says why -- photos saved from messaging apps and websites have their GPS
-                // stripped before they ever reach the device, which is the reason for most of the
-                // empty ones in a real library.
-                Column(Modifier.textArrival(reveal).padding(vertical = 6.dp)) {
-                    Text(
-                        text = "No location in this file",
-                        color = RoomStyle.InkMuted,
-                        style = RoomStyle.Row,
-                    )
-                    Text(
-                        text = "Photos saved from messaging apps and websites usually have their " +
-                            "location removed before they arrive.",
-                        color = RoomStyle.InkFaint,
-                        style = RoomStyle.Caption,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-                }
+                PlaceUnknownPlate(
+                    asset = asset,
+                    reveal = reveal,
+                    onAddPlace = if (canPlaceByHand) ({ editing = true }) else null,
+                    flightActive = flightActive,
+                    flightFlies = flightFlies,
+                    onPinPositioned = onPinPositioned,
+                )
             }
         }
     }
 }
 
+/** The room's most recent layout coordinates; a plain holder, see [PhotoDetailRoom]. */
+private class RoomCoordinates {
+    var coordinates: LayoutCoordinates? = null
+}
+
+/**
+ * Turns the pin tile's root-space bounds into the ROOM's coordinates and says so only when they
+ * change.
+ *
+ * The tile's root position changes on every frame of the pull (the whole room slides), but its
+ * position within the room does not, so converting and de-duplicating here is what turns a
+ * per-frame stream into "measured once, again on a scroll".
+ */
+private class PinReporter(
+    private val room: RoomCoordinates,
+    private val onChanged: (local: Rect, roomWidth: Float, roomHeight: Float) -> Unit,
+) {
+    private var last: Rect? = null
+
+    /** Drops the remembered rectangle, so the next report is delivered even if it is the same. */
+    fun forget() {
+        last = null
+    }
+
+    fun report(rootBounds: Rect) {
+        val coordinates = room.coordinates?.takeIf { it.isAttached } ?: return
+        val origin = coordinates.positionInRoot()
+        val local = rootBounds.translate(-origin.x, -origin.y)
+        if (PlaceMorph.sameRect(local, last)) return
+        last = local
+        onChanged(local, coordinates.size.width.toFloat(), coordinates.size.height.toFloat())
+    }
+}
+
 /**
  * "Information": the reference's three rows (Modified, colour space, colour profile) with a
- * Show More / Show Less toggle; expanded, every remaining fact about the file that the camera
- * card does not already state -- aspect, a video's duration, album, folder, the coordinate, and
- * the palette. Labels are present whether or not the file answers them, with a dash where it
- * does not: an absent row tells the reader nothing, a dashed one tells them this photo does not
- * record that.
+ * Show More / Show Less toggle; expanded, the detail sections ([InfoSections], built by
+ * [MetadataSections]): file, image, capture or video, location, library. The palette is not one of
+ * them: it has its own always-visible strip under the card ([PaletteBlock]). The three reference
+ * rows keep their labels whether or not the file answers them, with a dash where it does not (the
+ * owner's note: headers exist, empty values are fine); the sections below omit a row with nothing
+ * to say, and say "Couldn't read" where a read failed rather than claiming the file was empty.
  *
  * The toggle's label names the ACTION, so it reads "Show More" while collapsed; the reference's
  * frame shows "Show Less" over the same three rows, which would make the button a status rather
@@ -1174,11 +1338,10 @@ private fun InformationBlock(
     exif: ImageExifDetails,
     manualLatitude: Double?,
     manualLongitude: Double?,
+    video: VideoDetails?,
+    nearbyCount: Int?,
     reveal: () -> Float,
     initiallyExpanded: Boolean,
-    /** The stored palette and the search a swatch tap opens -- see [PaletteRow]. */
-    palette: List<PaletteSwatch>,
-    onSearchLibrary: ((String) -> Unit)?,
 ) {
     var expanded by remember(asset.id) { mutableStateOf(initiallyExpanded) }
     Column(
@@ -1206,28 +1369,19 @@ private fun InformationBlock(
         InformationRow("Colour space", exif.colorSpace)
         InformationRow("Colour profile", exif.colorProfile)
         if (expanded) {
-            InformationRow("Aspect", aspectRatioLabel(asset.width, asset.height))
-            if (asset.isVideo) {
-                InformationRow("Duration", asset.durationMillis.takeIf { it > 0L }?.let(DetailFormatting::durationLine))
+            // Built only once opened; "now" is read once per set of facts, for the file-age line.
+            val model = remember(asset, exif, video, manualLatitude, manualLongitude, nearbyCount) {
+                MetadataSections.build(
+                    asset = asset,
+                    exif = exif,
+                    video = video,
+                    manualLatitude = manualLatitude,
+                    manualLongitude = manualLongitude,
+                    nearbyCount = nearbyCount,
+                    nowMillis = System.currentTimeMillis(),
+                )
             }
-            // Album and Where look like the same fact on a phone whose album name is the last
-            // segment of its folder path, and they are not: Album is the grouping the library
-            // files this photo under, Where is the folder it physically sits in.
-            InformationRow("Album", asset.bucketName?.takeIf(String::isNotBlank))
-            InformationRow("Where", asset.relativePath?.takeIf(String::isNotBlank))
-            val latitude = exif.latitude ?: manualLatitude
-            val longitude = exif.longitude ?: manualLongitude
-            InformationRow(
-                "Location",
-                if (PlaceMorph.isDrawable(latitude, longitude)) {
-                    PlaceMorph.coordinateLine(latitude!!, longitude!!)
-                } else {
-                    null
-                },
-            )
-            // Not a video: MediaImage never decodes a video's frames here, and readImagePalette
-            // returns nothing for one anyway — so the row is only worth adding for a still photo.
-            if (!asset.isVideo) PaletteRow(asset = asset, indexed = palette, onSearchLibrary = onSearchLibrary)
+            InfoSections(model = model, resetKey = asset.id)
         }
     }
 }
@@ -1275,116 +1429,6 @@ private fun InformationRow(label: String, value: String?) {
     }
 }
 
-/**
- * The colour palette, as one more row of Information: a segmented bar, each colour's width its own
- * share of the photo, hex values under it -- and every segment a button that searches the library
- * for that colour (`colour:#rrggbb`, through the same [onSearchLibrary] the Search pill uses).
- *
- * Three sources, in order. The recognition index first ([indexed], sampled by the indexer at the
- * same 100 px as the decode below, so the two never disagree); then [PaletteMemo], what this
- * process already decoded; and only for a photo the indexer has not reached yet, one decode of
- * its own off the main thread via [readImagePalette]. Whatever is shown also goes into the memo,
- * so the expanded map can colour this photo's dot without decoding anything. Until something is
- * known the row shows the dash every other absent row uses.
- */
-@Composable
-private fun PaletteRow(asset: MediaAsset, indexed: List<PaletteSwatch>, onSearchLibrary: ((String) -> Unit)?) {
-    val context = LocalContext.current
-    var swatches by remember(asset.id, indexed) {
-        mutableStateOf(indexed.ifEmpty { PaletteMemo.get(asset.id).orEmpty() })
-    }
-    LaunchedEffect(asset.id, asset.contentUriString, indexed) {
-        if (indexed.isNotEmpty()) {
-            PaletteMemo.put(asset.id, indexed)
-        } else if (swatches.isEmpty()) {
-            val read = readImagePalette(context, asset)
-            PaletteMemo.put(asset.id, read)
-            swatches = read
-        }
-    }
-
-    Column(Modifier.fillMaxWidth()) {
-        Box(Modifier.fillMaxWidth().height(HAIRLINE_HEIGHT).background(HAIRLINE))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            // The label sits in the same band every other row's label does; the strip is centred
-            // on that band and its hex line hangs below it.
-            Box(Modifier.height(ROW_HEIGHT), contentAlignment = Alignment.CenterStart) {
-                Text(
-                    text = "Palette",
-                    color = ROW_LABEL,
-                    style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp),
-                )
-            }
-            if (swatches.isEmpty()) {
-                Box(Modifier.weight(1f).height(ROW_HEIGHT), contentAlignment = Alignment.CenterEnd) {
-                    Text(
-                        text = CameraCardFacts.DASH,
-                        color = ROW_LABEL,
-                        style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp, fontWeight = FontWeight.Medium),
-                        textAlign = TextAlign.End,
-                    )
-                }
-            } else {
-                PaletteSwatchRow(
-                    swatches = swatches,
-                    // Same path as the Search pill: the activity closes the viewer and seeds the
-                    // grid's search field. With no onSearchLibrary (no catalogue actions) the bar
-                    // stays visible and a tap goes nowhere.
-                    onSwatchTap = { argb -> onSearchLibrary?.invoke(ColourSearch.colourQuery(argb)) },
-                    modifier = Modifier.weight(1f).padding(top = PALETTE_STRIP_TOP, bottom = 6.dp),
-                    labelColor = ROW_LABEL,
-                )
-            }
-        }
-    }
-}
-
-/**
- * The photo's dominant colours, as a segmented-bar-ready list. Empty for a video, or when the
- * file cannot be decoded at all (corrupt, or a format `BitmapFactory` does not understand).
- *
- * The photo is decoded at a small fraction of its real size FIRST — see [decodeUpright] — and
- * only then handed to [PaletteExtractor]. The swatches a viewer perceives "from across the room"
- * do not change with resolution, so paying full-resolution cost for them is pure waste.
- */
-internal suspend fun readImagePalette(
-    context: Context,
-    asset: MediaAsset,
-    maxColors: Int = PaletteExtractor.DEFAULT_MAX_COLORS,
-): List<PaletteSwatch> {
-    if (asset.isVideo) return emptyList()
-    return withContext(Dispatchers.IO) {
-        runCatching {
-            val decoded = decodeUpright(context, asset.contentUri, PALETTE_DECODE_LIMITS)
-                ?: return@runCatching emptyList()
-            val bitmap = decoded.bitmap
-            try {
-                if (bitmap.width <= 0 || bitmap.height <= 0) return@runCatching emptyList()
-                val pixels = IntArray(bitmap.width * bitmap.height)
-                bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-                PaletteExtractor.extract(pixels, maxColors)
-            } finally {
-                bitmap.recycle()
-            }
-        }.getOrDefault(emptyList())
-    }
-}
-
-/**
- * The target longest edge for palette sampling. A segmented bar only ever shows up to
- * [PaletteExtractor.DEFAULT_MAX_COLORS] swatches, and 100px on the long edge is already tens of
- * thousands of sample pixels for the quantiser to work with.
- */
-private const val PALETTE_SAMPLE_DIMENSION = 100
-private val PALETTE_DECODE_LIMITS = DecodeLimits(
-    maxLongEdge = PALETTE_SAMPLE_DIMENSION,
-    maxPixels = PALETTE_SAMPLE_DIMENSION.toLong() * PALETTE_SAMPLE_DIMENSION,
-)
-
 /** `2.0 MP`, or null when the file never recorded its own size. */
 internal fun megapixels(width: Int, height: Int): String? {
     if (width <= 0 || height <= 0) return null
@@ -1424,6 +1468,7 @@ private val PANEL_TOP_PAD = 8.dp
 private val PANEL_BOTTOM_PAD = 8.dp
 private val DATE_TO_CARD = 13.dp
 private val PANEL_TO_PLATE = 10.dp
+private val CARD_TO_PALETTE = 8.dp
 private val PLATE_TO_CAPTION = 18.dp
 private val CAPTION_TO_INFO = 30.dp
 private val SECTION_TO_ROWS = 6.dp
@@ -1432,9 +1477,6 @@ private val TAGS_GAP = 7.dp
 /** 26.5 dp of row under a 1 dp hairline: the reference's 27.5 dp pitch. */
 private val ROW_HEIGHT = 26.5.dp
 private val HAIRLINE_HEIGHT = 1.dp
-
-/** Centres the swatch row's 14dp strip on the label band, like the value of every other row. */
-private val PALETTE_STRIP_TOP = (ROW_HEIGHT - 14.dp) / 2
 private val CARD_CORNER = 10.dp
 private val CARD_HEADER_HEIGHT = 36.dp
 private val CARD_PAD = 6.dp
@@ -1448,157 +1490,3 @@ private val CARD_BODY_BOTTOM = 12.dp
 private val FLASH_GLYPH_SIZE = 21.dp
 /** Measured cell widths of the reference's exposure strip: 72 / 96.5 / 79 / 81 / 71.5 of 400. */
 private val EXPOSURE_WEIGHTS = floatArrayOf(72f, 96.5f, 79f, 81f, 71.5f)
-
-/**
- * EXIF fields for the room's camera card. All optional: many images (esp. screenshots, edited
- * copies, or anything that already had EXIF stripped by this app's own clean-share export)
- * won't carry camera data — which is why those fields are drawn with a dash rather than a card
- * that has to invent a headline when the file says nothing.
- *
- * Numeric fields are kept numeric here and formatted in [DetailFormatting] rather than being
- * pre-stringified at extraction time, so the presentation can be changed without touching
- * the reader and so the formatting is unit-testable on its own.
- */
-data class ImageExifDetails(
-    val make: String? = null,
-    val model: String? = null,
-    val lensModel: String? = null,
-    val focalLengthMm: Double? = null,
-    /** The 35 mm-equivalent focal length, when the file records one -- what the exposure strip shows. */
-    val focalLength35mm: Int? = null,
-    val aperture: Double? = null,
-    val iso: String? = null,
-    val shutterSpeed: String? = null,
-    val exposureBiasEv: Double? = null,
-    /** Raw EXIF flash bitfield; bit 0 set means the flash fired. */
-    val flash: Int? = null,
-    /**
-     * The embedded GPS fix, if the file carries one. Both are null together — a latitude
-     * without a longitude is not half a location, it is no location, and letting them vary
-     * independently would invite a caller to draw a pin on one axis of nonsense.
-     */
-    val latitude: Double? = null,
-    val longitude: Double? = null,
-    /** Human-readable colour space, when the file names one. */
-    val colorSpace: String? = null,
-    /**
-     * The embedded colour profile's name ("sRGB IEC61966-2.1", "Display P3"), from a bounds-only
-     * decode -- no pixels, so this is not a decode path in TRAPS 34's sense. Null when the
-     * platform cannot name it.
-     */
-    val colorProfile: String? = null,
-    /**
-     * The photographer-grade fields this file already carries — caption, creator, copyright,
-     * rating, keywords — read from the SAME [ExifInterface] this whole block is built from
-     * rather than a second file open.
-     */
-    val professionalMetadata: CurrentMetadata = CurrentMetadata.EMPTY,
-    /** Whether this file's XMP declares the Ultra HDR gain-map namespace (P0-16) -- see
-     *  [DetailFormatting.dynamicRangeBadge]. */
-    val hasHdrGainMap: Boolean = false,
-    /**
-     * Whether this file's EXIF was actually read. False means the open or the parse failed --
-     * [PlaceBlock] must never show the "set a location by hand" picker in that case (P0-02): a
-     * read failure is not evidence the file has no GPS tag, only that this attempt couldn't see
-     * it. A video (no EXIF to read) counts as ok: there is nothing this field would be warning
-     * about.
-     */
-    val readOk: Boolean = true,
-)
-
-suspend fun readImageExifDetails(context: Context, asset: MediaAsset): ImageExifDetails {
-    if (asset.isVideo) return ImageExifDetails(readOk = true)
-    return withContext(Dispatchers.IO) {
-        val requested = context.uriForLocationRead(asset.contentUri)
-        val opened = openForLocationRead(requested, asset.contentUri) { uri ->
-            context.contentResolver.openInputStream(uri)
-        }
-        val details = if (opened == null) {
-            ImageExifDetails(readOk = false)
-        } else {
-            val (input, _) = opened
-            runCatching { input.use { exifDetailsFrom(ExifInterface(it)) } }
-                .map { it.copy(readOk = true) }
-                .getOrDefault(ImageExifDetails(readOk = false))
-        }
-        // A second, bounds-only pass for the colour profile's name. Separate from the EXIF read
-        // because ExifInterface does not see ICC data, and tolerant of failure because a file
-        // whose profile cannot be named is still a file whose EXIF was read fine.
-        details.copy(colorProfile = readColorProfileName(context, asset))
-    }
-}
-
-/**
- * The name of the file's colour profile, from a bounds-only decode ([BitmapFactory] with
- * `inJustDecodeBounds`, which reads headers and allocates no pixels -- TRAPS 34 is about pixels).
- * "sRGB IEC61966-2.1" is what the platform calls sRGB, which is exactly the reference's row.
- */
-private fun readColorProfileName(context: Context, asset: MediaAsset): String? {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
-    return runCatching {
-        context.contentResolver.openInputStream(asset.contentUri)?.use { stream ->
-            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeStream(stream, null, options)
-            options.outColorSpace?.name?.takeIf(String::isNotBlank)
-        }
-    }.getOrNull()
-}
-
-@Suppress("DEPRECATION") // TAG_ISO_SPEED_RATINGS is the pre-EXIF-2.3 fallback for older files.
-private fun exifDetailsFrom(exif: ExifInterface): ImageExifDetails {
-    val iso = exif.getAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)
-        ?: exif.getAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS)
-    val shutter = exif.getAttributeDouble(ExifInterface.TAG_EXPOSURE_TIME, Double.NaN)
-        .takeUnless(Double::isNaN)
-    // getLatLong() returns null unless BOTH the coordinate and its hemisphere ref are present
-    // and well-formed, which is exactly the guarantee ImageExifDetails.latitude documents —
-    // so the pair is destructured from one call rather than read as two independent tags.
-    val latLong = exif.latLong
-    // xmpAttributeUtf8(), not getAttribute(TAG_XMP): see that function's own doc for why
-    // getAttribute decodes a real (non-entity-escaped) UTF-8 packet with the wrong charset.
-    // Parsed once and reused below for both the professional-metadata card and the P0-16 HDR
-    // gain-map check, rather than parsing the same packet twice.
-    val xmp = exif.xmpAttributeUtf8()?.let { XmpPacket.parse(it) }
-    return ImageExifDetails(
-        make = exif.getAttribute(ExifInterface.TAG_MAKE)?.trim()?.takeIf(String::isNotEmpty),
-        model = exif.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf(String::isNotEmpty),
-        lensModel = exif.getAttribute(ExifInterface.TAG_LENS_MODEL)?.trim()?.takeIf(String::isNotEmpty),
-        focalLengthMm = exif.getAttributeDouble(ExifInterface.TAG_FOCAL_LENGTH, Double.NaN)
-            .takeUnless(Double::isNaN),
-        focalLength35mm = exif.getAttributeInt(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, 0).takeIf { it > 0 },
-        aperture = exif.getAttributeDouble(ExifInterface.TAG_F_NUMBER, Double.NaN)
-            .takeUnless(Double::isNaN),
-        iso = iso,
-        shutterSpeed = shutter?.let(::formatShutterSpeed),
-        exposureBiasEv = exif.getAttributeDouble(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, Double.NaN)
-            .takeUnless(Double::isNaN),
-        flash = exif.getAttributeInt(ExifInterface.TAG_FLASH, -1).takeIf { it >= 0 },
-        latitude = latLong?.get(0),
-        longitude = latLong?.get(1),
-        colorSpace = colorSpaceName(exif.getAttributeInt(ExifInterface.TAG_COLOR_SPACE, -1)),
-        professionalMetadata = currentMetadataFrom(
-            xmp = xmp,
-            exifImageDescription = exif.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION),
-            exifArtist = exif.getAttribute(ExifInterface.TAG_ARTIST),
-            exifCopyright = exif.getAttribute(ExifInterface.TAG_COPYRIGHT),
-        ),
-        hasHdrGainMap = xmp?.hasNamespace(XmpPacket.HDR_GAIN_MAP_NS) == true,
-    )
-}
-
-/**
- * EXIF stores colour space as a number: 1 is sRGB and 0xFFFF ("uncalibrated") is what almost
- * everything else writes, most often for Display P3. Anything else is unspecified, and is
- * reported as nothing rather than guessed at — the room shows a dash in that case.
- */
-internal fun colorSpaceName(raw: Int): String? = when (raw) {
-    1 -> "sRGB"
-    0xFFFF -> "Uncalibrated"
-    else -> null
-}
-
-internal fun formatShutterSpeed(seconds: Double): String = when {
-    seconds <= 0.0 || seconds.isNaN() -> "—"
-    seconds >= 1.0 -> "%.1f s".format(java.util.Locale.US, seconds)
-    else -> "1/${(1.0 / seconds).roundToInt()} s"
-}

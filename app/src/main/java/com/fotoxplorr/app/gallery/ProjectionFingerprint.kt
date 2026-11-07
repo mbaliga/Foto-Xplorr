@@ -41,7 +41,7 @@ fun describeProjection(projected: List<MediaAsset>): String {
 
 /**
  * Every projection `CatalogueCharacterisationTest` pins, keyed exactly as its goldens are:
- * `destination:<HyleDestination>` (all 10, AUDIO included), `smart:<SmartAlbum>` (all 11),
+ * `destination:<HyleDestination>` (all nine), `smart:<SmartAlbum>` (all 11),
  * `sort:<GallerySort>` (the everyday projection under each of the 4 sort modes) and
  * `timeline:stops`.
  *

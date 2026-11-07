@@ -35,17 +35,33 @@ done
 # so a violation fails in seconds, not minutes. See scripts/verify-core-purity.sh's own doc.
 ./scripts/verify-core-purity.sh
 
+# WP1.9: governance docs vs reality (every Gradle coordinate has a DEPENDENCIES.md row, every model,
+# font and sound has a MODEL_LICENSES.md row) and the proof that both checks, and the licence policy,
+# really fail on bad input. Pure shell, about a second; the licence SCAN itself needs the resolved
+# classpath and runs after the Gradle build below.
+./scripts/verify-governance-docs.sh --self-test
+./scripts/verify-governance-docs.sh
+./scripts/verify-licences.sh --self-test
+
 # The post-WP1 matrix: both flavors build, test and lint, and the offline flavor passes
 # its three enforcement gates — merged manifest, resolved runtime classpath, and the
-# targeted source scan. The gates are the offline claim; the rest is the build.
+# targeted source scan. The gates are the offline claim; the rest is the build. The device tests
+# (app/src/androidTest) cannot RUN here, but they are compiled, so a break in them shows up in CI.
 GRADLE_ARGS=(
   --no-daemon
   :app:testOfflineDebugUnitTest :app:lintOfflineDebug :app:assembleOfflineDebug
   :app:testConnectDebugUnitTest :app:lintConnectDebug :app:assembleConnectDebug
   :app:verifyOfflineManifest :app:verifyOfflineRuntimeClasspath :app:verifyOfflineSourceReferences
+  :app:reportRuntimeLicences
+  :app:compileOfflineDebugAndroidTestKotlin :app:compileConnectDebugAndroidTestKotlin
 )
 
 ./gradlew "${GRADLE_ARGS[@]}"
+
+# WP1.9: licence policy over the resolved runtime classpaths :app:reportRuntimeLicences just wrote
+# (fails on GPL/AGPL, and on an unknown licence "?"/"-" unless an exact scripts/licence-allowlist.txt
+# entry names it; warns on LGPL/CDDL/EPL/MPL and unrecognised names unless the allowlist covers it).
+./scripts/verify-licences.sh
 
 # WP1.9 (ADR-009 decision 5, the `core-native` CI job): scripts/verify-native.sh owns the actual
 # native task list, and is also the `core-native` CI job's own direct entry point -- one

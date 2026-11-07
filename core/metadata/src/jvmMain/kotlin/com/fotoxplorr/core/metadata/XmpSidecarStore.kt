@@ -35,13 +35,31 @@ object XmpSidecarStore {
      * as if nothing were there. See [XmpPacket.parse]'s own doc for why those two states must stay
      * distinguishable.
      */
-    fun read(originalFile: File): XmpPacket? {
-        val directory = originalFile.parentFile ?: return XmpPacket.empty()
-        val sidecar = SidecarNaming.candidateSidecarFileNames(originalFile.name)
-            .map { File(directory, it) }
-            .firstOrNull { it.isFile }
+    fun read(originalFile: File, preferred: SidecarStyle? = null): XmpPacket? {
+        val sidecar = existingSidecar(originalFile, preferred)
             ?: return XmpPacket.empty()
-        return XmpPacket.parse(sidecar.readText(Charsets.UTF_8))
+        return XmpPacket.parse(sidecar.readText(Charsets.UTF_8).removePrefix("\uFEFF"))
+    }
+
+    private fun existingSidecar(originalFile: File, preferred: SidecarStyle?): File? {
+        val directory = originalFile.parentFile ?: return null
+        return candidateNames(originalFile.name, preferred, directory.list()?.toList())
+            .map { File(directory, it) }.firstOrNull { it.isFile }
+    }
+
+    /**
+     * The sidecar names to look for, in order. A JPEG never reads (or inherits on write) its RAW
+     * partner's extension-less sidecar. [siblings] null (the folder could not be listed) gets only
+     * the configured style's own name, the safe side, as the app's `SidecarLocator.findExisting`.
+     */
+    internal fun candidateNames(originalName: String, preferred: SidecarStyle?, siblings: List<String>?): List<String> {
+        if (siblings == null) return listOf(SidecarNaming.sidecarFileName(originalName, preferred ?: SidecarStyle.DARKTABLE))
+        return if (preferred != null) {
+            SidecarNaming.candidateSidecarFileNames(originalName, preferred, siblings)
+        } else {
+            val safe = SidecarNaming.candidateSidecarFileNames(originalName, SidecarStyle.DARKTABLE, siblings)
+            SidecarNaming.candidateSidecarFileNames(originalName).filter { it in safe }
+        }
     }
 
     /**
@@ -56,5 +74,34 @@ object XmpSidecarStore {
             ?: error("${originalFile.path} has no parent directory to write a sidecar into")
         val sidecar = File(directory, SidecarNaming.sidecarFileName(originalFile.name, style))
         sidecar.writeText(packet.serialize(), Charsets.UTF_8)
+    }
+
+    /**
+     * Applies [annotations] to the sidecar for [originalFile] and writes it under [style]: the
+     * WP3.8 write-through. The base is the [style] file if it exists, else the other style's file
+     * (its foreign content is carried into the new name; the old file is left alone), else a blank
+     * packet. Returns false and writes NOTHING when the base exists but is not parseable XML.
+     * Written via a temp file and a rename, so a crash never leaves a half-written sidecar.
+     */
+    fun update(
+        originalFile: File,
+        annotations: SidecarAnnotations,
+        style: SidecarStyle,
+        stamp: String,
+        removedKeywords: Set<String> = emptySet(),
+        removedPaths: Set<String> = emptySet(),
+    ): Boolean {
+        val directory = originalFile.parentFile ?: return false
+        val base = existingSidecar(originalFile, style)
+        val bytes = XmpAnnotationCodec.update(base?.readBytes(), annotations, stamp, removedKeywords, removedPaths)
+            ?: return false
+        val target = File(directory, SidecarNaming.sidecarFileName(originalFile.name, style))
+        val temp = File(directory, target.name + ".tmp")
+        temp.writeBytes(bytes)
+        if (!temp.renameTo(target)) {
+            target.delete()
+            if (!temp.renameTo(target)) { temp.delete(); return false }
+        }
+        return true
     }
 }

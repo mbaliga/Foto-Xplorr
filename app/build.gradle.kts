@@ -1,3 +1,4 @@
+import java.io.File
 import com.android.build.api.artifact.SingleArtifact
 import org.gradle.api.artifacts.result.ResolvedComponentResult
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
@@ -128,6 +129,11 @@ android {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
 
+    // WP1.8: the synthetic format corpus (testdata/formats, see docs/testdata-formats.md) ships as
+    // androidTest ASSETS only -- the instrumented FormatCorpusDecodeTest reads it there; the
+    // app APK never carries it. JVM tests read the same folder straight from disk.
+    sourceSets.getByName("androidTest").assets.srcDir("$rootDir/testdata/formats")
+
     lint {
         // Locale-dependent String.format is used throughout for EXIF/size readouts that are
         // numeric-only; the app has no translations, so this is noise rather than a defect.
@@ -244,6 +250,12 @@ dependencies {
     // ---- end WS-D block ----
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
+    // Encrypted backup (docs/adr/ADR-014): Tink's streaming AEAD (AES-256-GCM, HKDF per file,
+    // chunked with a final-segment flag) seals the pack and manifest files. Used through ONE
+    // small interface (backup/ChunkedAead.kt), so it can be swapped for plain JCA without
+    // touching the format. Pure JVM code, no network or Play Services dependency. 1.22.0 bundles a
+    // relocated protobuf, so it does not meet mediapipe's protobuf-javalite 4.26.1.
+    implementation("com.google.crypto.tink:tink-android:1.22.0")
     // HEIC export
     implementation("androidx.heifwriter:heifwriter:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
@@ -337,11 +349,6 @@ dependencies {
     // the owner asked for one navigation feel across every app, and two apps each deriving
     // their own version of it is precisely how that feel drifts apart.
     implementation("dev.aarso:cell-shell:0.1.0")
-
-    // Media3 session (audio playback service)
-    implementation("androidx.media3:media3-exoplayer:1.9.0")
-    implementation("androidx.media3:media3-session:1.9.0")
-    implementation("androidx.media3:media3-common:1.9.0")
 
     testImplementation("junit:junit:4.13.2")
     // WS-D: JobRunner's state transitions run real coroutines (progress callbacks, cancellation)
@@ -516,4 +523,86 @@ tasks.register("verifyOfflineManifest") {
 tasks.register("verifyOfflineRuntimeClasspath") {
     group = "verification"
     dependsOn(tasks.matching { it.name.startsWith("verifyOfflineRuntimeClasspathOffline") })
+}
+
+/**
+ * WP1.9 licence inventory: writes build/reports/licences/<flavor>.tsv, one line per component on the
+ * flavor's RESOLVED release runtime classpath (what ships): "group:name:version<TAB>licence names
+ * joined by ' | '" ("-" when no POM, nor any parent POM, declares one; "?" when the POM could not be fetched). Uses Gradle's own artifact
+ * resolution query for the POMs, so it adds no plugin and no dependency. scripts/verify-licences.sh
+ * applies the policy (fail on GPL/AGPL, warn on LGPL/CDDL/unknown) to these files; the policy lives
+ * in the script so that its --self-test can exercise it without Gradle. Resolves at execution time
+ * (the project does not use the configuration cache). Needs the repositories reachable the first
+ * time (a POM is a different artifact from the module metadata a normal build downloads, so
+ * `--offline` fails on a cold cache); after that the POMs are in Gradle's cache and the task takes seconds.
+ */
+tasks.register("reportRuntimeLicences") {
+    group = "verification"
+    description = "Writes the resolved runtime classpath's POM licences, per flavor, for scripts/verify-licences.sh."
+    val outDir = layout.buildDirectory.dir("reports/licences")
+    doLast {
+        fun pomLicences(file: File): Pair<List<String>, Triple<String, String, String>?> {
+            val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance().apply {
+                isNamespaceAware = false
+                setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+            }.newDocumentBuilder().parse(file)
+            val root = doc.documentElement
+            fun child(parent: org.w3c.dom.Element, tag: String) =
+                (0 until parent.childNodes.length).map { parent.childNodes.item(it) }
+                    .filterIsInstance<org.w3c.dom.Element>().filter { it.tagName == tag }
+            val names = child(root, "licenses").flatMap { child(it, "license") }
+                .mapNotNull { child(it, "name").firstOrNull()?.textContent?.trim()?.replace(Regex("\\s+"), " ") }
+                .filter { it.isNotEmpty() }
+            val parent = child(root, "parent").firstOrNull()?.let { p ->
+                fun t(tag: String) = child(p, tag).firstOrNull()?.textContent?.trim().orEmpty()
+                Triple(t("groupId"), t("artifactId"), t("version"))
+            }
+            return names to parent
+        }
+
+        fun pomFor(group: String, name: String, version: String): File? {
+            var failure: Throwable? = null
+            repeat(3) { attempt ->
+                if (attempt > 0) Thread.sleep(3000) // a repository hiccup (e.g. HTTP 429) is not a missing POM
+                val result = dependencies.createArtifactResolutionQuery()
+                    .forModule(group, name, version)
+                    .withArtifacts(
+                        org.gradle.maven.MavenModule::class.java,
+                        org.gradle.maven.MavenPomArtifact::class.java,
+                    )
+                    .execute()
+                val arts = result.resolvedComponents.firstOrNull()
+                    ?.getArtifacts(org.gradle.maven.MavenPomArtifact::class.java).orEmpty()
+                arts.filterIsInstance<org.gradle.api.artifacts.result.ResolvedArtifactResult>().firstOrNull()
+                    ?.let { return it.file }
+                failure = arts.filterIsInstance<org.gradle.api.artifacts.result.UnresolvedArtifactResult>().firstOrNull()?.failure
+            }
+            logger.lifecycle("reportRuntimeLicences: no POM for $group:$name:$version (${failure?.message ?: "not found"})")
+            return null
+        }
+
+        val cache = HashMap<String, List<String>>()
+        fun licencesOf(group: String, name: String, version: String, depth: Int = 0): List<String> =
+            cache.getOrPut("$group:$name:$version") {
+                val pom = runCatching { pomFor(group, name, version) }.getOrNull() ?: return@getOrPut listOf("?")
+                val (own, parent) = runCatching { pomLicences(pom) }.getOrDefault(emptyList<String>() to null)
+                if (own.isNotEmpty() || parent == null || depth >= 5 || parent.third.isEmpty()) own
+                else licencesOf(parent.first, parent.second, parent.third, depth + 1)
+            }
+
+        val out = outDir.get().asFile.also { it.mkdirs() }
+        for (flavor in listOf("offline", "connect")) {
+            val config = configurations.getByName("${flavor}ReleaseRuntimeClasspath")
+            val lines = config.incoming.resolutionResult.allComponents
+                .map { it.id }
+                .filterIsInstance<org.gradle.api.artifacts.component.ModuleComponentIdentifier>()
+                .sortedBy { "${it.group}:${it.module}:${it.version}" }
+                .map { id ->
+                    val names = licencesOf(id.group, id.module, id.version)
+                    "${id.group}:${id.module}:${id.version}\t${if (names.isEmpty()) "-" else names.joinToString(" | ")}"
+                }
+            File(out, "$flavor.tsv").writeText(lines.joinToString("\n") + "\n")
+            logger.lifecycle("reportRuntimeLicences: $flavor ${lines.size} components")
+        }
+    }
 }

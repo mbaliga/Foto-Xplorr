@@ -13,12 +13,17 @@ import com.fotoxplorr.app.media.openForLocationRead
 import com.fotoxplorr.app.media.uriForLocationRead
 import com.fotoxplorr.core.model.MediaId
 import java.io.FileDescriptor
+import java.util.Collections
+import java.util.WeakHashMap
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -95,14 +100,58 @@ class GeoMetadataRepository(context: Context) {
     private val mutex = Mutex()
     private val state = MutableStateFlow(helper.readState())
 
+    init {
+        peers.add(this)
+    }
+
     fun observe(): StateFlow<GeoIndexState> = state.asStateFlow()
+
+    /**
+     * Reads the index again once no write or scan of THIS instance is running. The gallery, the
+     * backup and a restore each build their own instance over the same database; a pin written
+     * through one is shown by the others only after this.
+     */
+    private fun reloadWhenFree() {
+        reloadScope.launch {
+            mutex.withLock { state.value = helper.readState().copy(totalCount = state.value.totalCount) }
+        }
+    }
+
+    /**
+     * The pins the person placed by hand (not the ones read from a photo's own GPS), for the
+     * encrypted backup: those cannot be recomputed from the file, so they are the ones worth keeping.
+     */
+    suspend fun manualPins(): List<GeoMetadata> = withContext(Dispatchers.IO) { helper.readManual() }
+
+    /**
+     * Puts back hand-placed pins from an encrypted backup. Additive: a photo that already has a
+     * hand-placed pin keeps it, and a pin outside the globe is refused. Returns how many were
+     * written. The caller should wait until the catalogue lists these photos, because [pruneTo]
+     * removes the rows of photos it does not know.
+     */
+    suspend fun importManualPins(pins: List<GeoMetadata>): Int = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val have = helper.readManual().mapTo(HashSet()) { it.mediaId }
+            var added = 0
+            for (pin in pins) {
+                if (pin.mediaId in have || pin.latitude !in -90.0..90.0 || pin.longitude !in -180.0..180.0) continue
+                helper.upsertManual(pin.mediaId, pin.latitude, pin.longitude)
+                have += pin.mediaId
+                added++
+            }
+            if (added > 0) state.value = helper.readState().copy(totalCount = state.value.totalCount)
+            added
+        }.also { added ->
+            if (added > 0) synchronized(peers) { peers.toList() }.forEach { if (it !== this@GeoMetadataRepository) it.reloadWhenFree() }
+        }
+    }
 
     suspend fun indexMissing(assets: List<MediaAsset>) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val existingIds = helper.readIndexedIds()
             val missing = assets.filterNot { it.id in existingIds }
             if (missing.isEmpty()) {
-                state.value = state.value.copy(totalCount = assets.size)
+                state.value = state.value.copy(totalCount = assets.size, scannedCount = existingIds.size)
                 return@withLock
             }
 
@@ -112,6 +161,7 @@ class GeoMetadataRepository(context: Context) {
             state.value = state.value.copy(totalCount = assets.size, isIndexing = true, errorMessage = null)
 
             var completed = 0
+            var persisted = 0
             missing.chunked(INDEX_BATCH_SIZE).forEach { batch ->
                 val toPersist = batch.mapNotNull { asset ->
                     val read = readMetadata(asset)
@@ -125,6 +175,7 @@ class GeoMetadataRepository(context: Context) {
                 }
                 if (toPersist.isNotEmpty()) helper.upsert(toPersist)
                 completed += batch.size
+                persisted += toPersist.size
 
                 if (toPersist.isNotEmpty()) {
                     val updated = metadataById.toMutableMap()
@@ -135,6 +186,10 @@ class GeoMetadataRepository(context: Context) {
                 }
                 state.value = state.value.copy(
                     metadataById = metadataById,
+                    // Rows in the table, as readState() counts them: a photo whose read failed is
+                    // not written, so it is not scanned. Without this the count stayed at its
+                    // construction-time value and the compass kept offering to read locations.
+                    scannedCount = existingIds.size + persisted,
                     totalCount = assets.size,
                     isIndexing = completed < missing.size,
                 )
@@ -263,6 +318,10 @@ class GeoMetadataRepository(context: Context) {
 
     private companion object {
         const val INDEX_BATCH_SIZE = 32
+
+        /** Live instances, weakly held, so one that is garbage collected is simply gone. */
+        val peers: MutableSet<GeoMetadataRepository> = Collections.synchronizedSet(Collections.newSetFromMap(WeakHashMap()))
+        val reloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }
 
@@ -391,6 +450,25 @@ private class GeoOpenHelper(context: Context) : SQLiteOpenHelper(
         buildSet(cursor.count) {
             val idColumn = cursor.getColumnIndexOrThrow(COL_MEDIA_ID)
             while (cursor.moveToNext()) add(MediaId(cursor.getLong(idColumn)))
+        }
+    }
+
+    fun readManual(): List<GeoMetadata> = readableDatabase.query(
+        TABLE_GEO,
+        ALL_COLUMNS,
+        "$COL_MANUAL = 1 AND $COL_HAS_LOCATION = 1",
+        null,
+        null,
+        null,
+        null,
+    ).use { cursor ->
+        val id = cursor.getColumnIndexOrThrow(COL_MEDIA_ID)
+        val latitude = cursor.getColumnIndexOrThrow(COL_LATITUDE)
+        val longitude = cursor.getColumnIndexOrThrow(COL_LONGITUDE)
+        buildList {
+            while (cursor.moveToNext()) {
+                add(GeoMetadata(MediaId(cursor.getLong(id)), cursor.getDouble(latitude), cursor.getDouble(longitude), null, null))
+            }
         }
     }
 

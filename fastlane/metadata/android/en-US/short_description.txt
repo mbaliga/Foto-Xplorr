@@ -1,1 +1,1 @@
-A local-first gallery with a real photo/video editor, no cloud, no account.
+Local-first gallery and photo/video editor. No account; sync only if you choose.

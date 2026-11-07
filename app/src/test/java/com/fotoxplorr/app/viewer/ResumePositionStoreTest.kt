@@ -77,4 +77,38 @@ class ResumePositionStoreTest {
         assertEquals(10_000L, store.get(a))
         assertEquals(20_000L, store.get(b))
     }
+
+    @Test
+    fun `nothing is ever remembered for the shared external id`() {
+        store.save(MediaId.EXTERNAL, positionMs = 30_000L, durationMs = 100_000L)
+        assertNull(store.get(MediaId.EXTERNAL))
+        assertTrue(prefsFile().all.isEmpty())
+    }
+
+    @Test
+    fun `nothing is remembered for a synthetic negative id`() {
+        val external = MediaId(-123_456L)
+        store.save(external, positionMs = 30_000L, durationMs = 100_000L)
+        assertNull(store.get(external))
+        assertTrue(prefsFile().all.isEmpty())
+    }
+
+    @Test
+    fun `two different external videos cannot share a stored position`() {
+        val a = MediaId(-1L)
+        val b = MediaId(-2L)
+        store.save(a, positionMs = 10_000L, durationMs = 100_000L)
+        assertNull(store.get(b))
+    }
+
+    @Test
+    fun `clearing a synthetic id leaves real entries alone`() {
+        val real = MediaId(7L)
+        store.save(real, positionMs = 30_000L, durationMs = 100_000L)
+        store.clear(MediaId(-7L))
+        assertEquals(30_000L, store.get(real))
+    }
+
+    private fun prefsFile() = RuntimeEnvironment.getApplication()
+        .getSharedPreferences("video_resume_positions", android.content.Context.MODE_PRIVATE)
 }

@@ -10,9 +10,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -147,11 +150,13 @@ class ActivityShadeSurfaceTest {
         val host = Host()
         mount(host)
         compose.runOnIdle { host.activities = jobs(2) }
-        compose.onNode(hasClickAction()).performClick()
+        compose.onAllNodes(hasClickAction()).onFirst().performClick()
         compose.runOnIdle { assertEquals(ShadeState.NOTIFICATION, host.state) }
-        compose.onNode(hasClickAction()).performClick()
+        compose.onAllNodes(hasClickAction()).onFirst().performClick()
         compose.runOnIdle { assertEquals(ShadeState.EXPANDED, host.state) }
-        compose.onNode(hasClickAction()).performClick()
+        // Over the top-left corner: the middle of the expanded shade is the photo stack, whose
+        // taps are its own (they open a photo, they do not cycle the shade).
+        compose.onAllNodes(hasClickAction()).onFirst().performTouchInput { click(androidx.compose.ui.geometry.Offset(4f, 4f)) }
         compose.runOnIdle { assertEquals(ShadeState.COLLAPSED, host.state) }
     }
 

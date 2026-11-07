@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Themed-icon layer (Android 13+): the launcher tints it, so only its shape matters.
+  Redrawn as a vector from the owner's Fotoz artwork (light and dark versions, November 2026); the
+  artboard is 1100 x 1100 units. The group shrinks it to 0.66 about the centre so every corner of the
+  drawing stays inside the 66 dp safe circle a launcher's mask always keeps. The small
+  "asystemofcells / BALIGA" lettering on the top panel is left out: at launcher size it is under a pixel tall.
+  scripts/gen_launcher_icon.py writes this file; edit the script, not this file.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1100"
+    android:viewportHeight="1100">
+    <group android:pivotX="550" android:pivotY="550" android:scaleX="0.66" android:scaleY="0.66">
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="16" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M300,423 L690,668" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="16" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M684,420 L706,690" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="16" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M706,688 L296,944" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="16" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M452,524 L320,608 L298,944" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="16" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M298,944 L802,944" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M297,125 L790,125 L830,418 L270,418 Z" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="16" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M296,607 L805,607 L830,975 L270,975 L296,607" />
+    </group>
+</vector>

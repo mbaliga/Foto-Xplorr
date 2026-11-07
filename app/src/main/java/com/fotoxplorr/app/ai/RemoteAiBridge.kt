@@ -1,6 +1,7 @@
 package com.fotoxplorr.app.ai
 
 import java.io.File
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * Everything in the app that needs a network, behind one seam (WP1, FX-012).
@@ -13,7 +14,7 @@ import java.io.File
  * The three members are the app's complete network surface as of WP1: BYOK provider
  * calls (test + generate) and the similarity-embedder model download. The street map is
  * the fourth network feature and is handled at the source-set level instead
- * (`PhotoMapExperience`), because MapLibre does its own fetching internally and cannot be
+ * (`PhotoMapPane`), because MapLibre does its own fetching internally and cannot be
  * routed through a suspend function.
  */
 interface RemoteAiBridge {
@@ -48,7 +49,7 @@ interface RemoteAiBridge {
  * cannot do this" (expected, explain calmly) from "the network call failed" (an error).
  */
 class RemoteAiUnavailableException : Exception(
-    "This is the offline build of Fotoz — it ships without any network capability.",
+    HelpCopy.Hint.REMOTE_AI_OFFLINE,
 )
 
 /**

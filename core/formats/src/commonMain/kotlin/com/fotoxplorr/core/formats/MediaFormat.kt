@@ -201,6 +201,36 @@ sealed interface MediaFormat {
         override val isLikelyDecodable = false
     }
 
+    /** Animated PNG. The platform's PNG codec decodes the first frame, so a still thumbnail
+     *  works everywhere; playing the frames is the animated-decode path's job and is not claimed
+     *  here (MASTER-PLAN.md §4 names APNG4Android for that). */
+    data object Apng : MediaFormat {
+        override val isLikelyDecodable = true
+    }
+
+    /** Photoshop large document (PSB). MASTER-PLAN.md §4: "PSB: placeholder" -- recognised so the
+     *  tile can say what it is, never decoded. */
+    data object Psb : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** OpenRaster, a ZIP holding `mergedimage.png` (MASTER-PLAN.md §4: unzip it, no native code).
+     *  Not decodable until that unzip path is built. */
+    data object Ora : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** Krita's native document, also a ZIP with a `mergedimage.png`. Same story as [Ora]. */
+    data object Kra : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
+    /** Truevision TGA. No magic number, so it is recognised by extension or mime only (the sniffer
+     *  cannot see it); decoded by the pure-Kotlin simple-format decoders. */
+    data object Tga : MediaFormat {
+        override val isLikelyDecodable = false
+    }
+
     /**
      * Everything this classifier does not recognise. Deliberately [isLikelyDecodable] = true,
      * not false: "unrecognised" is not the same claim as "known broken", and defaulting to true
@@ -240,9 +270,52 @@ sealed interface MediaFormat {
                 mime == "image/jpeg" || mime == "image/jpg" || extension == "jpg" || extension == "jpeg" -> Jpeg
                 mime == "image/bmp" || extension == "bmp" -> Bmp
                 mime.startsWith("video/") -> Video
-                else -> Other
+                else -> classifyByLabel(mime, extension)
             }
         }
+
+        /**
+         * The pack-gated and less common formats, by mime or extension. Split out of [classify]
+         * so the common formats keep their original fast path; before this a `.tiff` or `.jxl`
+         * fell through to [Other], which is "likely decodable", so the grid handed it to Coil and
+         * drew nothing. Everything here is either platform-decodable on newer releases or needs a
+         * pack, and the decoder registry says which.
+         */
+        private fun classifyByLabel(mime: String, extension: String): MediaFormat = when {
+            mime == "image/apng" || extension == "apng" -> Apng
+            mime == "image/avif" || extension == "avif" -> Avif
+            mime == "image/jxl" || extension == "jxl" -> JpegXl
+            mime == "image/tiff" || extension == "tif" || extension == "tiff" -> Tiff
+            mime == "image/vnd.adobe.photoshop" || mime == "image/x-photoshop" || extension == "psd" -> Psd
+            extension == "psb" -> Psb
+            mime == "image/x-exr" || extension == "exr" -> Exr
+            mime == "image/vnd.radiance" || extension == "hdr" -> Hdr
+            extension == "pbm" || extension == "pgm" || extension == "ppm" || extension == "pnm" || extension == "pam" -> Pnm
+            mime == "image/jp2" || extension == "jp2" || extension == "j2k" || extension == "jpx" || extension == "j2c" -> Jp2
+            mime == "image/jxr" || extension == "jxr" || extension == "wdp" || extension == "hdp" -> Jxr
+            mime == "image/qoi" || extension == "qoi" -> Qoi
+            mime == "image/vnd.ms-dds" || extension == "dds" -> Dds
+            mime == "image/ktx" || mime == "image/ktx2" || extension == "ktx" || extension == "ktx2" -> Ktx
+            mime == "image/x-icns" || extension == "icns" -> Icns
+            mime == "image/x-pcx" || extension == "pcx" -> Pcx
+            mime == "image/x-tga" || mime == "image/x-targa" || extension == "tga" -> Tga
+            mime == "image/x-xcf" || extension == "xcf" -> Xcf
+            mime == "image/vnd.microsoft.icon" || mime == "image/x-icon" || extension == "ico" -> Ico
+            mime == "image/openraster" || extension == "ora" -> Ora
+            mime == "application/x-krita" || extension == "kra" -> Kra
+            else -> Other
+        }
+
+        /**
+         * One value for every format the app knows, with [Raw] expanded per [RawVariant]. A sealed
+         * interface cannot enumerate itself in common code, so the matrix and tile tests walk this
+         * list to prove every format has a row; the exhaustive `when` in [FormatCapabilities.of]
+         * proves the other direction at compile time.
+         */
+        val all: List<MediaFormat> = listOf(
+            Jpeg, Png, Bmp, WebP, Gif, Heif, Svg, Video, Ico, Avif, JpegXl, Tiff, Psd, Exr, Hdr, Pnm, Jp2,
+            Jxr, Qoi, Dds, Ktx, Icns, Pcx, Xcf, Apng, Psb, Ora, Kra, Tga, Other,
+        ) + RawVariant.entries.map { Raw(it) }
     }
 }
 

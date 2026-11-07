@@ -57,12 +57,18 @@ fun ToneCurve.toJson(): JsonValue = jsonArrayOf(
     points.map { jsonObjectOf("x" to it.x.toJson(), "y" to it.y.toJson()) },
 )
 
-fun ToneCurve.Companion.fromJson(json: JsonValue): ToneCurve {
-    val points = json.asArray().map { CurvePoint(it["x"].asFloat(0f), it["y"].asFloat(0f)) }
-    // A curve needs at least two points (CurvePoint's own `init` requires it) -- a corrupt or
-    // truncated document falls back to identity rather than crashing the whole recipe load.
-    return if (points.size >= 2) runCatching { ToneCurve(points) }.getOrDefault(ToneCurve.IDENTITY) else ToneCurve.IDENTITY
-}
+fun ToneCurve.Companion.fromJson(json: JsonValue): ToneCurve =
+    // Everything that can throw sits inside the guard, CurvePoint construction included: its
+    // `init` rejects a coordinate outside 0..1 and ToneCurve's rejects fewer than two points, and
+    // either on a stored file would otherwise take the whole recipe (or a built-in Preset) down
+    // with it. A hand-edited or corrupt coordinate is clamped, points are put in x order, and
+    // anything still unusable (too few points, NaN) falls back to identity.
+    runCatching {
+        val points = json.asArray()
+            .map { CurvePoint(it["x"].asFloat(0f).coerceIn(0f, 1f), it["y"].asFloat(0f).coerceIn(0f, 1f)) }
+            .sortedBy { it.x }
+        if (points.size >= 2) ToneCurve(points) else ToneCurve.IDENTITY
+    }.getOrDefault(ToneCurve.IDENTITY)
 
 fun HslBandAdjustment.toJson(): JsonValue = jsonObjectOf(
     "hue" to hue.toJson(), "saturation" to saturation.toJson(), "luminance" to luminance.toJson(),
@@ -102,6 +108,7 @@ fun Adjustments.toJson(): JsonValue = jsonObjectOf(
     "redCurve" to redCurve.toJson(),
     "greenCurve" to greenCurve.toJson(),
     "blueCurve" to blueCurve.toJson(),
+    "lumaCurve" to lumaCurve.toJson(),
     "hsl" to hsl.toJson(),
     "sharpen" to sharpen.toJson(),
     "denoise" to denoise.toJson(),
@@ -124,6 +131,8 @@ fun Adjustments.Companion.fromJson(json: JsonValue): Adjustments = Adjustments(
     redCurve = json["redCurve"].let { if (it is JsonValue.JsonArray) ToneCurve.fromJson(it) else ToneCurve.IDENTITY },
     greenCurve = json["greenCurve"].let { if (it is JsonValue.JsonArray) ToneCurve.fromJson(it) else ToneCurve.IDENTITY },
     blueCurve = json["blueCurve"].let { if (it is JsonValue.JsonArray) ToneCurve.fromJson(it) else ToneCurve.IDENTITY },
+    // Optional: recipes saved before the luma curve existed have no key and load as identity.
+    lumaCurve = json["lumaCurve"].let { if (it is JsonValue.JsonArray) ToneCurve.fromJson(it) else ToneCurve.IDENTITY },
     hsl = json["hsl"].let { if (it is JsonObject) HslAdjustments.fromJson(it) else HslAdjustments.NONE },
     sharpen = json["sharpen"].asFloat(0f),
     denoise = json["denoise"].asFloat(0f),

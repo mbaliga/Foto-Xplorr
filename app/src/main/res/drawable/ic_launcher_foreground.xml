@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Launcher icon foreground. The top panel reads @color/ic_launcher_panel: black on the light
+  background, white on the dark one (values-night).
+  Redrawn as a vector from the owner's Fotoz artwork (light and dark versions, November 2026); the
+  artboard is 1100 x 1100 units. The group shrinks it to 0.66 about the centre so every corner of the
+  drawing stays inside the 66 dp safe circle a launcher's mask always keeps. The small
+  "asystemofcells / BALIGA" lettering on the top panel is left out: at launcher size it is under a pixel tall.
+  scripts/gen_launcher_icon.py writes this file; edit the script, not this file.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1100"
+    android:viewportHeight="1100">
+    <group android:pivotX="550" android:pivotY="550" android:scaleX="0.66" android:scaleY="0.66">
+        <path android:fillColor="#231F20" android:pathData="M296,607 L805,607 L830,975 L270,975 Z" />
+        <path android:fillColor="#BFB3A6" android:pathData="M318,618 L783,618 L800,950 L300,950 Z" />
+        <path android:fillColor="#231F20" android:pathData="M415,758 L790,758 L793,870 L415,870 Z" />
+        <path android:fillColor="#6A5546" android:pathData="M628,748 L748,748 L748,870 L628,870 Z" />
+        <path android:strokeColor="#6A5546" android:strokeWidth="4" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M560,770 L790,770" />
+        <path android:strokeColor="#6A5546" android:strokeWidth="4" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M545,780 L545,870" />
+        <path android:fillColor="#7F7670" android:pathData="M300,950 L690,870 L800,870 L800,930 L300,950 Z" />
+        <path android:fillColor="#BFB3A6" android:pathData="M300,930 L800,930 L800,950 L300,950 Z" />
+        <path android:fillColor="#BFB3A6" android:pathData="M452,524 L702,686 L298,942 L320,608 Z" />
+        <path android:fillColor="#7F7670" android:pathData="M452,524 L540,580 L370,640 L362,722 L328,748 L320,608 Z" />
+        <path android:fillColor="#E0D9CB" android:pathData="M540,580 L572,600 L402,675 L398,700 L362,722 L370,640 Z" />
+        <path android:fillColor="#231F20" android:pathData="M402,675 L560,592 L610,630 L610,688 L395,828 Z" />
+        <path android:strokeColor="#6A5546" android:strokeWidth="3" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M515,658 L610,600" />
+        <path android:strokeColor="#7F7670" android:strokeWidth="3" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M515,658 L515,760" />
+        <path android:strokeColor="#D9A441" android:strokeWidth="6" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M520,694 L584,654" />
+        <path android:fillColor="#BFB3A6" android:pathData="M320,422 L684,422 L690,666 Z" />
+        <path android:fillColor="#231F20" android:pathData="M325,422 L540,422 L618,468 L618,618 Z" />
+        <path android:fillColor="#6A5546" android:pathData="M618,520 L682,556 L688,662 L618,620 Z" />
+        <path android:strokeColor="#6A5546" android:strokeWidth="4" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M450,424 L612,512 L612,468" />
+        <path android:strokeColor="#F5F5F7" android:strokeWidth="13" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M300,423 L690,668" />
+        <path android:strokeColor="#F5F5F7" android:strokeWidth="13" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M684,420 L706,690" />
+        <path android:strokeColor="#F5F5F7" android:strokeWidth="13" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M706,688 L296,944" />
+        <path android:strokeColor="#F5F5F7" android:strokeWidth="13" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M452,524 L320,608 L298,944" />
+        <path android:strokeColor="#F5F5F7" android:strokeWidth="10" android:strokeLineJoin="round"
+            android:strokeLineCap="round" android:pathData="M298,944 L802,944" />
+        <path android:fillColor="@color/ic_launcher_panel" android:pathData="M297,125 L790,125 L830,418 L270,418 Z" />
+    </group>
+</vector>

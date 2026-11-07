@@ -18,18 +18,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
+import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,17 +42,21 @@ import dev.aarso.cellshell.WheelItem
 import com.fotoxplorr.app.curate.ArchiveAdvisor
 import com.fotoxplorr.app.curate.ArchiveReviewItem
 import com.fotoxplorr.app.curate.ArchiveSuggestionsReview
+import com.fotoxplorr.app.experimental.ExperimentalScreen
+import com.fotoxplorr.app.experimental.KeepExperimentalState
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.spatial.LocalSpatialExperience
-import com.fotoxplorr.app.spatial.PlacesScreen
+import com.fotoxplorr.app.ui.HyleGrotesk
+import com.fotoxplorr.app.ui.PaneScaffold
+import com.fotoxplorr.app.ui.RoomStyle
 import com.fotoxplorr.core.model.MediaId
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
- * The primary destinations from the owner's mockups, plus Audio (added for standalone audio
- * file browsing/playback — the one destination here with no [com.fotoxplorr.app.media.MediaAsset]
- * behind it at all; see [destinationAssets] and [com.fotoxplorr.app.audio.LocalAudioLibrary]).
- * These are the app's top-level information architecture -- reached from the rail room, not from
+ * The primary destinations from the owner's mockups. Fotoz is visuals only, so there is no Audio
+ * destination; a saved default of the old Audio value falls back to Photos (see
+ * `GalleryPreferences`). These are the app's top-level information architecture -- reached from the rail room, not from
  * a route -- and have replaced the retired four-tab bottom navigation (Photos / Albums / Discover
  * / Library) as the default IA.
  *
@@ -74,12 +77,12 @@ enum class HyleDestination(val label: String) {
     SCREENSHOTS("Screenshots"),
     PHOTOS("Photos"),
     VIDEOS("Videos"),
-    // Right after Videos, not after Protected: Audio is the other media-TYPE destination (as
-    // opposed to Favourites/Places/Protected, which are cross-cutting views over the same photos
-    // and videos), so it reads naturally beside the destination it is most like.
-    AUDIO("Audio"),
     FAVOURITES("Favourites"),
-    PLACES("Places"),
+    /**
+     * The Experimental section (compass view, 3D wall, ...). The constant is still PLACES because
+     * the name is saved ("Open the app on") and pinned by the goldens; only the label changed.
+     */
+    PLACES("Experimental"),
     PROTECTED("Protected"),
 }
 
@@ -88,6 +91,7 @@ fun destinationAssets(
     destination: HyleDestination,
     state: GalleryUiState,
     query: String = "",
+    personId: Long? = null,
 ): List<MediaAsset> {
     fun smart(album: SmartAlbum) = smartAlbumAssets(
         album, state.assets, state.favoriteIds, state.sensitiveIds,
@@ -112,12 +116,21 @@ fun destinationAssets(
         HyleDestination.SCREENSHOTS -> smart(SmartAlbum.SCREENSHOTS)
         HyleDestination.FAVOURITES -> smart(SmartAlbum.FAVORITES)
         // Backed by the on-device recognition pass (com.fotoxplorr.app.recognition).
-        HyleDestination.PEOPLE -> everyday().filter { it.id in state.recognition.peopleMediaIds }
+        HyleDestination.PEOPLE -> {
+            // A person is a FILTER on the same list: the people overview and the person's own grid
+            // both start from the browsable, face-bearing photos, so a protected photo can be
+            // neither counted nor shown (TRAPS #33).
+            val personMedia = personId?.let { id ->
+                state.recognition.roster.firstOrNull { it.id == id }?.mediaIds?.toHashSet().orEmpty()
+            }
+            everyday().filter {
+                it.id in state.recognition.peopleMediaIds && (personMedia == null || it.id in personMedia)
+            }
+        }
         HyleDestination.PETS -> everyday().filter { it.id in state.recognition.petMediaIds }
         HyleDestination.IDENTITY -> everyday().filter { it.id in state.recognition.identityMediaIds }
-        // Rendered by their own panes rather than a flat grid. AUDIO has no MediaAsset behind it
-        // at all -- its own list comes from LocalAudioLibrary, read directly in DestinationContent.
-        HyleDestination.PLACES, HyleDestination.PROTECTED, HyleDestination.AUDIO -> emptyList()
+        // Rendered by their own panes rather than a flat grid.
+        HyleDestination.PLACES, HyleDestination.PROTECTED -> emptyList()
     }
     if (query.isBlank()) return base
     return base.filter { it.matchesGallerySearch(query, state.library.tagsFor(it.id), state.recognition, state.favoriteIds, state.animatedIds, state.library.archivedIds) }
@@ -140,49 +153,59 @@ fun destinationEmptyMessage(
     progress.message?.let { return "On-device recognition stopped: $it" }
     if (progress.running) {
         return if (progress.total > 0) {
-            "Looking through your photos on this device… ${progress.completed} of ${progress.total}"
+            "${HelpCopy.Hint.SCANNING_DESTINATION} ${progress.completed} of ${progress.total}"
         } else {
-            "Looking through your photos on this device…"
+            HelpCopy.Hint.SCANNING_DESTINATION
         }
     }
     return when (destination) {
-        HyleDestination.PETS -> "No cats, dogs or other pets found in your photos"
-        HyleDestination.PEOPLE -> "No faces found in your photos"
-        HyleDestination.IDENTITY -> "No identity documents found in your photos"
+        HyleDestination.PETS -> HelpCopy.Hint.NO_PETS
+        HyleDestination.PEOPLE -> HelpCopy.Hint.NO_FACES
+        HyleDestination.IDENTITY -> HelpCopy.Hint.NO_ID_DOCUMENTS
         else -> "Nothing here yet"
     }
 }
 
 /**
- * The left room: the destinations as the owner's swivel reference (2026-10) draws them -- large
- * bold words on black, the current one white with a filled square beside it, the rest dimmed by
- * their distance from it -- with Settings below.
+ * The left room: the destinations as the owner's left-room reference (2026-11-07) draws them -- a
+ * hamburger at the top left that closes the room, and a short run of words around the middle, the
+ * current one large and full white, the rest smaller in one grey -- with Settings below. The room
+ * is the left half of the window: the gallery parks its card large and flat on the right
+ * (`SpatialShell`'s `leftPark`), so this is laid out for about 190 dp on a phone.
+ *
+ * The floor stays black and the type white, the app's dark design; the reference's light grey is
+ * a mock-up colour, not a direction.
  *
  * The rail is [DestinationWordRail], an app-local re-cut of `dev.aarso:cell-shell`'s word wheel.
- * The falloff maths came *from* this app originally and the shared wheel is still the behaviour
- * (the run turns, release snaps and selects, the marker travels), but its type, fade and marker
- * are private constants that cannot be set from outside and none of them is the reference's --
- * see that composable's own doc for the exact gap. The shared library is untouched.
+ * The shared wheel is still the behaviour (the run turns, the hovered word is committed as the
+ * wheel hesitates, release only settles), but its type, fade and marker are private constants that
+ * cannot be set from outside and none of them is the reference's -- see that composable's own doc.
+ * The shared library is untouched.
  *
- * **The marker is a bullet again, not covers.** On 2026-08-14 the owner replaced the rail's
- * bullet with a cascade of each destination's own covers (*"the few images are indication
- * enough... I would rather have them on the left and for them to do the movement dance"*). The
- * 2026-10 reference draws the bullet and no covers, and a reference is a later decision than a
- * direction, so this follows it: the covers are gone, and so is the gallery state the panel only
- * ever took to fetch them. The dance survives -- the square still travels across the rows on a
- * selection change, stretching along its path as it goes.
+ * **No marker and no covers.** The 2026-08-14 covers cascade was replaced by the 2026-10
+ * reference's square bullet, and the 2026-11-07 reference has neither: the current word is told by
+ * its size, weight and `selected` semantics.
  *
  * No scroll wrapper: the wheel measures its own rows against the height it is given and takes
  * care of overflow itself. Wrapping it in a `verticalScroll` would hand it an infinite height to
  * measure against, which is the fastest way to make a distance-weighted list stop weighting.
  *
- * Below the wheel, not inside a separate room, sits Settings (owner, 2026-08-14, reference
- * screenshot of a rail with a dimmer "Settings / Help" pair under the primary nav: *"The
- * settings should come below the menu nav itself"*). It used to be reachable only by already
- * knowing to swipe in from the right edge -- true, but not discoverable, especially now that
- * removing the header (item 4, previous round) took away the last visible entry point.
- * [DestinationWordRail] is handed a bounded height via `Modifier.weight(1f)` so it keeps working
- * exactly as documented above; the settings row is the `Column`'s other, unweighted child.
+ * Below the wheel sits Settings (owner, 2026-08-14, reference screenshot of a rail with a dimmer
+ * "Settings / Help" pair under the primary nav: *"The settings should come below the menu nav
+ * itself"*). It was once a room reached by swiping in from an edge -- true, but not discoverable,
+ * especially once removing the header took away the last visible entry point -- and is now a pane
+ * that takes over the place the photos are, opened only from this row. [DestinationWordRail] is
+ * handed a bounded height via `Modifier.weight(1f)` so it keeps working exactly as documented
+ * above; the settings row is the `Column`'s other, unweighted child.
+ *
+ * [onClose], when set, is the hamburger: a 48 dp button that closes the room (the pull-out room
+ * passes it; the pinned rail on a wide window is not a room and passes null, so it has none).
+ *
+ * [paneOpen] and [onLeavePane] are the rail's way back from that pane: the selected word is the
+ * destination under it, so tapping it is [onReselect], and a scrub that rests on it is
+ * [onLeavePane] (see [DestinationWordRail]). [onTurning] reports whether the wheel is being turned
+ * or is still settling, for a host whose content must not react to a scrub that merely rests on a
+ * word.
  */
 @Composable
 fun DestinationRailPanel(
@@ -191,6 +214,11 @@ fun DestinationRailPanel(
     onSelect: (String) -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    onReselect: () -> Unit = {},
+    paneOpen: Boolean = false,
+    onLeavePane: () -> Unit = {},
+    onTurning: (Boolean) -> Unit = {},
+    onClose: (() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
@@ -198,16 +226,35 @@ fun DestinationRailPanel(
             .background(Color.Black)
             .statusBarsPadding(),
     ) {
+        if (onClose != null) {
+            // 48 dp target; the 24 dp glyph inside it sits on the words' left edge.
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier
+                    .padding(start = (RAIL_INSET - 12).dp, top = 4.dp)
+                    .size(48.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Menu,
+                    contentDescription = RailCopy.CLOSE_MENU,
+                    tint = Color.White,
+                )
+            }
+        }
         DestinationWordRail(
             items = items,
             selectedId = selectedId,
             onSelect = onSelect,
+            onReselect = onReselect,
+            paneOpen = paneOpen,
+            onLeavePane = onLeavePane,
+            onTurning = onTurning,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                // 16 in, so the 16dp square sits at 16..32 and the words, past the rail's own
-                // 32dp gutter, at the reference's 48.
-                .padding(start = RAIL_INSET.dp, end = 16.dp),
+                // The words start on the reference's 24 dp edge; a narrow end margin, because the
+                // open park leaves the room only about half the window.
+                .padding(start = RAIL_INSET.dp, end = 12.dp),
         )
         RailSettingsRow(onClick = onOpenSettings)
     }
@@ -225,47 +272,75 @@ fun DestinationRailPanel(
 @Composable
 private fun RailSettingsRow(onClick: () -> Unit) {
     Text(
-        text = "Settings",
+        text = RailCopy.SETTINGS,
         color = Color.White.copy(alpha = 0.55f),
-        style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Normal, letterSpacing = (-0.3).sp),
+        // The rail's own face, not the platform default, and set on the same optical edge as the
+        // words above it.
+        style = TextStyle(
+            fontFamily = HyleGrotesk,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Normal,
+            letterSpacing = (-0.3).sp,
+        ),
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             // This is now the panel's bottom-most element, so it -- not a hardcoded inset --
             // is what has to clear the gesture-navigation bar.
             .navigationBarsPadding()
-            .padding(start = RAIL_INSET.dp, end = 16.dp, top = 14.dp, bottom = 28.dp),
+            .padding(start = RAIL_INSET.dp, end = 12.dp, top = 14.dp, bottom = 28.dp),
     )
 }
 
-/** The panel's inset from the room's left edge: the bullet's own left edge. */
-private const val RAIL_INSET = 16
+/** The panel's inset from the room's left edge: the reference's words start about 24 dp in. */
+private const val RAIL_INSET = 24
 
-/** What a destination actually renders: a grid, the map, or the protected-folder list. */
+/**
+ * What a destination actually renders: the zoomable grid, the Experimental section, or the protected-folder list.
+ *
+ * [layout] is the grid's groups and headers, built once by the screen over these same [assets] so
+ * the scrubber, pill and arrow keys count the positions the grid draws; [rung] is how zoomed it is.
+ * A photo tapped here opens the viewer on [ZoomLayout.renderedAssets], the order on screen.
+ *
+ * [experimentalState] is the one holder, above this call, that keeps the Experimental section's open
+ * experiment and drafts while another pane or word has the place (see [KeepExperimentalState]).
+ */
 @Composable
-fun DestinationContent(
+internal fun DestinationContent(
     destination: HyleDestination,
     assets: List<MediaAsset>,
+    layout: ZoomLayout,
+    rung: Int,
     state: GalleryUiState,
     actions: GalleryActions,
     selection: GallerySelection,
     onSelectionChange: (GallerySelection) -> Unit,
     gridState: LazyGridState,
+    anchor: LayoutAnchor,
     onRequestUnlock: (String, String) -> Unit,
+    horizontal: Boolean = false,
+    experimentalState: SaveableStateHolder? = null,
+    personFilter: Long? = null,
+    onPersonFilter: (Long?) -> Unit = {},
+    shadeReserve: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp.Hairline,
 ) {
     when (destination) {
         HyleDestination.PLACES -> {
             val spatial = LocalSpatialExperience.current
             if (spatial != null) {
-                PlacesScreen(
-                    assets = spatial.assets,
-                    indexInput = spatial.indexInput,
-                    geoState = spatial.geoState,
-                    onIndexLocations = spatial.onIndexLocations,
-                    onOpenAsset = spatial.onOpenAsset,
-                )
+                KeepExperimentalState(experimentalState) {
+                    ExperimentalScreen(
+                        assets = spatial.assets,
+                        indexInput = spatial.indexInput,
+                        geoState = spatial.geoState,
+                        onIndexLocations = spatial.onIndexLocations,
+                        onOpenAsset = spatial.onOpenAsset,
+                        sensitiveIds = state.sensitiveIds,
+                        blurSensitive = state.preferences.blurSensitive,
+                    )
+                }
             } else {
-                DestinationMessage("Places is unavailable here")
+                DestinationMessage("Experimental is unavailable here")
             }
         }
         HyleDestination.PROTECTED -> ProtectedFoldersPane(
@@ -273,103 +348,54 @@ fun DestinationContent(
             unlockedFolders = state.unlockedFolders,
             onOpenFolder = { key -> onRequestUnlock(key, key) },
         )
-        HyleDestination.AUDIO -> {
-            val audio = com.fotoxplorr.app.audio.LocalAudioLibrary.current
-            if (!state.audioPermissionGranted) {
-                DestinationPermissionPrompt(
-                    message = "Foto Xplorr needs permission to see audio files on this device.",
-                    actionLabel = "Allow access",
-                    onAction = actions.onRequestAudioPermission,
-                )
-            } else if (audio != null) {
-                com.fotoxplorr.app.audio.AudioLibraryScreen(
-                    assets = audio.assets,
-                    onPlay = { asset -> audio.onPlay(asset, audio.assets) },
-                    permissionGranted = audio.permissionGranted,
-                    onRequestPermission = audio.onRequestPermission,
-                )
-            } else {
-                DestinationMessage("Audio is unavailable here")
-            }
-        }
         else -> Column(Modifier.fillMaxSize()) {
-            if (destination == HyleDestination.PEOPLE && state.recognition.people.isNotEmpty()) {
-                PeopleStrip(
-                    clusters = state.recognition.people,
-                    // The already-filtered destination list, not raw state.assets: a cluster's
-                    // cover photo must obey the same visibility rule as the grid right below it.
-                    assets = assets,
-                    onOpenPerson = { ids ->
-                        val personAssets = assets.filter { it.id in ids }
-                        personAssets.firstOrNull()?.let { actions.onOpenAsset(it, personAssets) }
-                    },
+            // People: the overview is a grid of person cards; opening one narrows the grid below
+            // to that person, with a chip to take the filter off (see PeoplePane.kt).
+            val peopleOverview = destination == HyleDestination.PEOPLE && personFilter == null
+            if (destination == HyleDestination.PEOPLE && personFilter != null) {
+                PersonFilterHeader(
+                    personId = personFilter,
+                    state = state,
+                    selection = selection,
+                    onSelectionChange = onSelectionChange,
+                    actions = actions.onPeople,
+                    onClear = { onPersonFilter(null) },
+                    shadeReserve = shadeReserve,
                 )
             }
-            // Either the grid or the empty state, never both: TimelineScreen renders its own
-            // generic "No media matches the current filters" when handed an empty list, which
-            // would otherwise stack above this destination's far more useful message and push
-            // it off-screen, since both fill the available height.
-            if (assets.isEmpty()) {
+            // Either the grid or the empty state, never both: the grid renders its own generic
+            // message when handed an empty list, which would otherwise stack above this
+            // destination's far more useful one and push it off-screen, since both fill the
+            // available height.
+            if (peopleOverview) {
+                PeopleOverviewHost(
+                    state = state,
+                    assets = assets,
+                    actions = actions.onPeople,
+                    onOpenPerson = { onPersonFilter(it) },
+                    shadeReserve = shadeReserve,
+                )
+            } else if (assets.isEmpty()) {
                 DestinationMessage(destinationEmptyMessage(destination, state.recognitionProgress))
             } else {
-                TimelineScreen(
-                    assets = assets,
-                    grouping = state.preferences.timelineGrouping,
-                    columns = state.preferences.gridColumns,
+                ZoomGrid(
+                    layout = layout,
+                    rung = rung,
                     favoriteIds = state.favoriteIds,
                     sensitiveIds = state.sensitiveIds,
                     blurSensitive = state.preferences.blurSensitive,
                     selectedIds = selection.selectedIds,
                     selectionActive = selection.isActive,
-                    onOpen = { asset -> actions.onOpenAsset(asset, assets) },
+                    emptyMessage = HelpCopy.Hint.NO_MATCHES,
+                    onOpen = { asset -> actions.onOpenAsset(asset, layout.renderedAssets) },
                     onToggleSelection = { id -> onSelectionChange(selection.toggle(id)) },
-                    // The mockups' main grid is one continuous mosaic with no date headers.
-                    showDateHeaders = false,
                     gridState = gridState,
                     fitToTile = state.preferences.fitToTile,
                     loopAnimations = state.preferences.loopAnimations,
                     animatedIds = state.animatedIds,
-                    longPressPreview = state.preferences.longPressPreview,
-                )
-            }
-        }
-    }
-}
-
-/** The people found by clustering, as a row of round covers above the People grid. */
-@Composable
-private fun PeopleStrip(
-    clusters: List<com.fotoxplorr.app.recognition.PersonCluster>,
-    assets: List<MediaAsset>,
-    onOpenPerson: (Set<MediaId>) -> Unit,
-) {
-    LazyRow(
-        modifier = Modifier.fillMaxWidth().background(Color.Black),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        items(clusters, key = { it.id }) { cluster ->
-            val cover = assets.firstOrNull { it.id in cluster.mediaIds }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(RoundedCornerShape(28.dp))
-                        // Fixed on purpose (reference design): a neutral surface, no accent role.
-                        .background(Color(0xFF1A1A1A))
-                        .clickable { onOpenPerson(cluster.mediaIds.toSet()) },
-                ) {
-                    cover?.let {
-                        MediaImage(it, Modifier.fillMaxSize(), ContentScale.Crop)
-                    }
-                }
-                Text(
-                    // Clusters are unnamed: nothing on the device knows who these people are,
-                    // and inventing names would be fabrication. Numbering them is honest.
-                    "Person ${cluster.id + 1}",
-                    style = TextStyle(fontSize = 11.sp),
-                    color = Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(top = 4.dp),
+                    anchor = anchor,
+                    horizontal = horizontal,
+                    justified = state.preferences.justifiedLayout,
                 )
             }
         }
@@ -388,22 +414,6 @@ private fun DestinationMessage(message: String) {
     }
 }
 
-/** [DestinationMessage] plus a real way forward, for a destination that is empty because a
- *  permission has not been granted rather than because there is genuinely nothing to show. */
-@Composable
-private fun DestinationPermissionPrompt(message: String, actionLabel: String, onAction: () -> Unit) {
-    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-        Column(
-            modifier = Modifier.padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text(message, style = TextStyle(fontSize = 15.sp), color = Color.White.copy(alpha = 0.75f))
-            TextButton(onClick = onAction) { Text(actionLabel) }
-        }
-    }
-}
-
 @Composable
 private fun ProtectedFoldersPane(
     lockedFolders: Set<String>,
@@ -419,6 +429,13 @@ private fun ProtectedFoldersPane(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        item {
+            Text(
+                HelpCopy.Note.PROTECTED_NOT_ENCRYPTED,
+                color = Color.White.copy(alpha = 0.6f),
+                style = RoomStyle.Caption,
+            )
+        }
         items(lockedFolders.toList().sorted(), key = { it }) { key ->
             val unlocked = key in unlockedFolders
             Row(
@@ -468,6 +485,8 @@ fun LegacyScreenHost(
     state: GalleryUiState,
     actions: GalleryActions,
     query: String,
+    /** The pane's back chevron: hands the place the photos are back to the destination below. */
+    onBack: () -> Unit,
     onOpenRoute: (BrowserRoute) -> Unit,
     onRequestUnlock: (String, String) -> Unit,
     onOpenSettings: () -> Unit,
@@ -496,7 +515,12 @@ fun LegacyScreenHost(
         )
     }
 
-    Column(Modifier.fillMaxSize()) {
+    // The same scaffold Settings uses, so the five of these and Settings read as one family: black
+    // ground, a way out in the corner, a title, and white ink whatever the theme. Before this they
+    // had no header and no way out but Back, and drew dark-on-black wherever a Text set no colour.
+    PaneScaffold(title = screen.label, onBack = onBack) {
+        // Each screen fills what the header leaves: an unweighted Column child is measured against
+        // the height remaining after the children before it.
         when (screen) {
             LegacyScreen.ALBUMS -> AlbumsScreen(
                 assets = state.assets,
@@ -540,6 +564,7 @@ fun LegacyScreenHost(
                     animatedIds = state.animatedIds,
                 ),
                 onOpen = { onOpenRoute(BrowserRoute.Smart(it.album)) },
+                onOpenExperimental = { onOpenDestination(HyleDestination.PLACES) },
             )
             LegacyScreen.LIBRARY -> LibraryScreen(
                 library = state.library,
@@ -616,91 +641,3 @@ private fun archiveReviewItems(state: GalleryUiState): List<ArchiveReviewItem> {
         assetsById[suggestion.mediaId]?.let { ArchiveReviewItem(suggestion, it) }
     }
 }
-
-/**
- * The settings panel from the mockup: a small letterspaced "SETTINGS" label over large
- * light "Default View" type, sliding in from the right with the grid still showing at the
- * left edge.
- */
-@Composable
-fun SettingsPanel(
-    preferences: GalleryPreferencesState,
-    onOpenAllSettings: () -> Unit,
-    onSetDefaultDestination: (HyleDestination) -> Unit,
-    onOpenLegacyScreen: (LegacyScreen) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(start = 28.dp, end = 20.dp, top = 32.dp, bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(
-            "SETTINGS",
-            style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp),
-            color = Color.White,
-        )
-        Text(
-            "Default View",
-            style = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Light),
-            color = Color.White,
-            modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
-        )
-        // Now over the nine destinations, not the four retired bottom-nav tabs.
-        HyleDestination.entries.forEach { candidate ->
-            val selected = preferences.defaultDestination == candidate
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSetDefaultDestination(candidate) }
-                    .padding(vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(Modifier.size(width = 20.dp, height = 10.dp), contentAlignment = Alignment.CenterStart) {
-                    if (selected) Box(Modifier.size(8.dp).background(Color.White))
-                }
-                Text(
-                    candidate.label,
-                    style = TextStyle(
-                        fontSize = 18.sp,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Light,
-                    ),
-                    color = Color.White.copy(alpha = if (selected) 1f else 0.55f),
-                )
-            }
-        }
-
-        Text(
-            "MORE",
-            style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp),
-            color = Color.White,
-            modifier = Modifier.padding(top = 26.dp, bottom = 4.dp),
-        )
-        LegacyScreen.entries.forEach { screen ->
-            TextButton(
-                onClick = { onOpenLegacyScreen(screen) },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    screen.label,
-                    color = Color.White.copy(alpha = 0.75f),
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-            }
-        }
-        TextButton(onClick = onOpenAllSettings, modifier = Modifier.fillMaxWidth()) {
-            Text(
-                "All settings…",
-                color = Color.White,
-                modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.bodyLarge,
-            )
-        }
-    }
-}
-

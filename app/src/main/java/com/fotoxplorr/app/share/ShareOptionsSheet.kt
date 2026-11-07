@@ -17,8 +17,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -44,6 +42,7 @@ import com.fotoxplorr.app.media.decodeUpright
 import com.fotoxplorr.app.pro.LocalProEntitlement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.fotoxplorr.app.ui.HelpCopy
 
 // Fixed on purpose (reference design): neutral sheet surfaces, the accent roles in this sheet use
 // primary.
@@ -175,7 +174,7 @@ fun ShareOptionsSheet(
                     value = options.caption.orEmpty(),
                     onValueChange = { options = options.copy(caption = it) },
                     label = "Caption",
-                    caption = "Written along the bottom of the frame. Leave blank for none.",
+                    caption = HelpCopy.Caption.SHARE_NOTE,
                 )
             }
             if (options.frame == ShareFrame.STAMP) {
@@ -183,13 +182,13 @@ fun ShareOptionsSheet(
                     value = options.seal.orEmpty(),
                     onValueChange = { options = options.copy(seal = it) },
                     label = "Your seal",
-                    caption = "A few letters, struck like a postmark in the corner.",
+                    caption = HelpCopy.Caption.SHARE_SEAL,
                 )
             }
 
             SheetSwitch(
                 label = "Remove location and camera data",
-                caption = "On by default. Strips GPS, camera model and timestamps from the copy you send.",
+                caption = HelpCopy.Hint.STRIP_METADATA,
                 checked = options.stripMetadata,
                 onCheckedChange = { options = options.copy(stripMetadata = it) },
             )
@@ -276,23 +275,10 @@ private fun SheetField(
     caption: String,
 ) {
     Column {
-        OutlinedTextField(
+        com.fotoxplorr.app.hyle.HyleTextField(
             value = value,
             onValueChange = onValueChange,
-            label = { Text(label) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = PRIMARY_TEXT,
-                unfocusedTextColor = PRIMARY_TEXT,
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
-                focusedLabelColor = MaterialTheme.colorScheme.primary,
-                unfocusedLabelColor = SECONDARY_TEXT,
-                cursorColor = MaterialTheme.colorScheme.primary,
-                focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent,
-            ),
+            label = label,
         )
         Text(caption, color = MUTED_TEXT, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp, top = 2.dp))
     }

@@ -3,6 +3,11 @@ package com.fotoxplorr.app.organize
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Base64
+import com.fotoxplorr.app.backup.ImportMode
+import com.fotoxplorr.app.backup.MetadataBackup
+import com.fotoxplorr.app.editor.JsonValue
+import com.fotoxplorr.app.editor.parseJson
+import com.fotoxplorr.app.editor.stringify
 import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -644,10 +649,36 @@ class LibraryStore internal constructor(context: Context) {
         put("suppressedMachineCaptionIds", JSONArray(state.value.suppressedMachineCaptionIds.map { it.value }))
     }
 
+    /**
+     * Puts [root] (an [exportJson] document, already remapped to this phone's ids when it came
+     * from a file) into the library.
+     *
+     * [ImportMode.MERGE], the default, adds to what is here and removes and overwrites nothing the
+     * person wrote (see [MetadataBackup.mergeLibraries] for the rules). [ImportMode.REPLACE] clears
+     * the library first and is only ever reached after a confirmation. Either way the document is
+     * checked and the whole result worked out BEFORE the first preference is written, so a damaged
+     * file changes nothing: the failure is returned and the library is as it was.
+     *
+     * Ids are taken as they stand. Whoever read the file from disk is responsible for having
+     * matched them to this phone's photos first (`MetadataBackup.prepare`); this class cannot know.
+     */
     @Synchronized
-    fun importJson(root: JSONObject): Result<Unit> = runCatching {
-        require(root.optInt("schema", 0) == BACKUP_SCHEMA) { "Unsupported metadata backup" }
-        val editor = preferences.edit().clear()
+    fun importJson(root: JSONObject, mode: ImportMode = ImportMode.MERGE): Result<Unit> = runCatching {
+        val incoming = parseJson(root.toString()) ?: error("Unsupported metadata backup")
+        MetadataBackup.checkLibrary(incoming)?.let { throw IllegalArgumentException(it) }
+        val target = when (mode) {
+            ImportMode.MERGE -> MetadataBackup.mergeLibraries(currentAsJson(), incoming)
+            ImportMode.REPLACE -> MetadataBackup.mergeLibraries(MetadataBackup.emptyLibrary(), incoming)
+        }
+        writeLibrary(JSONObject(target.stringify()), clearFirst = mode == ImportMode.REPLACE)
+    }
+
+    private fun currentAsJson(): JsonValue =
+        parseJson(exportJson().toString()) ?: error("The library could not be read")
+
+    private fun writeLibrary(root: JSONObject, clearFirst: Boolean) {
+        val editor = preferences.edit()
+        if (clearFirst) editor.clear()
         val collectionIds = linkedSetOf<String>()
         root.optJSONArray("collections")?.let { collections ->
             for (index in 0 until collections.length()) {
@@ -876,7 +907,7 @@ class LibraryStore internal constructor(context: Context) {
             }
 
         private const val PREFERENCES_NAME = "foto_xplorr_library"
-        private const val BACKUP_SCHEMA = 1
+        private const val BACKUP_SCHEMA = MetadataBackup.LIBRARY_SCHEMA
         private const val KEY_COLLECTION_IDS = "collection_ids"
         private const val KEY_TAG_NAMES = "tag_names"
         private const val KEY_ARCHIVED_IDS = "archived_ids"

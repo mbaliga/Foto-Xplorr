@@ -23,9 +23,9 @@ class IncomingIntentRouteTest {
     }
 
     @Test
-    fun `viewing audio opens the audio player, not the viewer`() {
+    fun `viewing audio is no longer handled`() {
         val route = classifyIncomingIntent(view, "content://media/3", "audio/mpeg")
-        assertEquals(IncomingIntentRoute.ViewAudio("content://media/3"), route)
+        assertEquals(IncomingIntentRoute.Unhandled, route)
     }
 
     @Test
@@ -58,14 +58,14 @@ class IncomingIntentRouteTest {
     }
 
     @Test
-    fun `a shared audio file plays only the first stream`() {
+    fun `a shared audio file is not handled`() {
         val route = classifyIncomingIntent(
             send,
             dataUri = null,
             mimeType = "audio/mpeg",
             streamUris = listOf("content://a", "content://b"),
         )
-        assertEquals(IncomingIntentRoute.ViewAudio("content://a"), route)
+        assertEquals(IncomingIntentRoute.Unhandled, route)
     }
 
     @Test
@@ -94,5 +94,43 @@ class IncomingIntentRouteTest {
             IncomingIntentRoute.Unhandled,
             classifyIncomingIntent("android.intent.action.MAIN", null, null),
         )
+    }
+
+    @Test
+    fun `a file scheme view is refused`() {
+        assertEquals(IncomingIntentRoute.Unhandled, classifyIncomingIntent(view, "file:///sdcard/a.jpg", "image/jpeg"))
+    }
+
+    @Test
+    fun `a file scheme edit is refused`() {
+        assertEquals(IncomingIntentRoute.Unhandled, classifyIncomingIntent(edit, "file:///sdcard/a.png", "image/png"))
+    }
+
+    @Test
+    fun `a file scheme share is refused`() {
+        val route = classifyIncomingIntent(send, null, "image/jpeg", streamUris = listOf("file:///data/data/x/a.jpg"))
+        assertEquals(IncomingIntentRoute.Unhandled, route)
+    }
+
+    @Test
+    fun `a share keeps only its content streams`() {
+        val route = classifyIncomingIntent(
+            sendMultiple,
+            dataUri = null,
+            mimeType = "image/jpeg",
+            streamUris = listOf("file:///sdcard/a.jpg", "content://b", "http://example.invalid/c.jpg"),
+        )
+        assertEquals(IncomingIntentRoute.ViewMedia(listOf("content://b"), isVideo = false), route)
+    }
+
+    @Test
+    fun `the content scheme is matched case-insensitively`() {
+        val route = classifyIncomingIntent(view, "CONTENT://media/1", "image/jpeg")
+        assertEquals(IncomingIntentRoute.ViewMedia(listOf("CONTENT://media/1"), isVideo = false), route)
+    }
+
+    @Test
+    fun `a view with no scheme at all is refused`() {
+        assertEquals(IncomingIntentRoute.Unhandled, classifyIncomingIntent(view, "/sdcard/a.jpg", "image/jpeg"))
     }
 }

@@ -51,7 +51,7 @@ sealed interface SpeechOutcome {
  * appears is not silently swallowed the way it would be calling the platform API directly.
  *
  * Untested here on purpose, the same way [com.fotoxplorr.app.viewer.decodeSampledBitmap] and
- * `exifDetailsFrom` in [com.fotoxplorr.app.viewer.PhotoDetailRoom] are: this class is a thin,
+ * `exifDetailsFrom` in [com.fotoxplorr.app.viewer.ImageExifDetails] are: this class is a thin,
  * literal wrapper over a platform API that only exists on a device. What has a right answer
  * independent of any device -- which action is available given the readiness this class reports
  * -- is pulled out into [LensActions.plan] and pinned there instead.

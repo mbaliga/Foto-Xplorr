@@ -10,7 +10,7 @@ import kotlin.math.ln
  * [ViewerPinchMode.PANEL_SHORTCUTS]'s own judgement call: once a whole gesture's log-scale pinch
  * is in, which panel (if any) it means.
  *
- * Pure, like [SnapRotationTest] and [com.fotoxplorr.app.adaptive.GalleryZoomLadderTest] beside it
+ * Pure, like [SnapRotationTest] and [com.fotoxplorr.app.adaptive.GridZoomTest] beside it
  * -- the actual pointer-input loop this feeds is not independently exercised here (see
  * `detectViewerGestures`'s own doc: it needs a live `PointerInputScope`, the same reason no test
  * in this codebase drives that detector directly), but the one decision worth pinning without a
