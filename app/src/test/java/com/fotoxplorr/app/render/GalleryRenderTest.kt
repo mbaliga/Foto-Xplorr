@@ -37,6 +37,7 @@ import com.fotoxplorr.app.ui.FotoXplorrTheme
 import com.fotoxplorr.app.ui.RoomGeography
 import com.fotoxplorr.app.ui.roomSlots
 import com.github.takahirom.roborazzi.captureRoboImage
+import dev.aarso.cellshell.OpenPark
 import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.RoomEdge
 import dev.aarso.cellshell.SpatialController
@@ -171,8 +172,8 @@ class GalleryRenderTest {
     }
 
     /**
-     * The left room through the real shell, in the swivel style the gallery uses while a room is
-     * being peeked. [settle] drives the controller once the shell has measured itself; the test
+     * The left room through the real shell, parked the open way the gallery parks it (large, flat
+     * card on the right; the swivel style only reaches the other rooms). [settle] drives the controller once the shell has measured itself; the test
      * clock then runs whatever it started to completion before the capture.
      */
     private fun renderRail(name: String, settle: (SpatialController) -> Unit) {
@@ -187,12 +188,15 @@ class GalleryRenderTest {
                     cardColor = Color.Black,
                     modifier = Modifier.fillMaxSize(),
                     parkStyle = ParkStyle.SWIVEL,
+                    // As the gallery does: the left room is the open park (owner, 2026-11-07).
+                    leftPark = OpenPark(),
                     left = {
                         DestinationRailPanel(
                             items = railItems,
                             selectedId = HyleDestination.PHOTOS.name,
                             onSelect = {},
                             onOpenSettings = {},
+                            onClose = { controller.closeAll() },
                         )
                     },
                 ) { ReferenceGridStandIn() }

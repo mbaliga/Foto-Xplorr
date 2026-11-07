@@ -125,6 +125,7 @@ import com.fotoxplorr.app.hyle.TRASH_DESIGN_W
 import com.fotoxplorr.app.hyle.shadeHeight
 import androidx.compose.foundation.layout.offset
 import dev.aarso.cellshell.ShakeToRefresh
+import dev.aarso.cellshell.OpenPark
 import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.SpatialShell
 import dev.aarso.cellshell.rememberSpatialController
@@ -1302,7 +1303,7 @@ private fun GalleryBrowser(
                 selectedId = railSelectedId(mapOpen, destination),
                 // Selecting does NOT close the room: the rail commits the hovered word while the
                 // wheel is still turning, so the room stays put and the pane behind it follows.
-                // The user closes it by tapping the selected word, the parked card, or Back.
+                // The user closes it with the hamburger, the selected word, the parked card, or Back.
                 // Every select drops a destination screen sitting on top (the `legacy != null`
                 // branch below wins over `destination`), or picking Photos from Albums would
                 // close the room and change nothing.
@@ -1331,6 +1332,8 @@ private fun GalleryBrowser(
                     selection = selection.clear()
                     shell.closeAll()
                 },
+                // The reference's hamburger: one tap closes the room, the non-drag way out.
+                onClose = { shell.closeAll() },
             )
         },
         // TOP = what this view is, pulled down over it.
@@ -1413,15 +1416,21 @@ private fun GalleryBrowser(
         // sliding off (owner, 2026-08-14: the Magic Portal shape). Shrink ONLY once the rail is a
         // standing, pinned choice rather than a gesture in progress (owner, 2026-08-20: "if nav
         // is turned on, the central pane just shrinks, doesn't pivot") -- see chromeMotionFor's
-        // own doc for the full distinction. SpatialShell's parkStyle is one setting for every
-        // room it owns, not a per-room one, so pinning the rail also swaps the details, actions
-        // and view options rooms' own motion to plain-shrink for as long as it stays pinned,
-        // which matches the owner's own framing: peeking vs. pinned is a property of how this
-        // WINDOW is being used right now, not of which particular room happens to be opening.
+        // own doc for the full distinction. parkStyle now applies to the details, actions and view
+        // options rooms only (the left room is the open park, below), so pinning the rail swaps
+        // THEIR motion to plain-shrink for as long as it stays pinned, which matches the owner's
+        // own framing: peeking vs. pinned is a property of how this WINDOW is being used right
+        // now, not of which particular room happens to be opening.
         parkStyle = when (chromeMotion) {
             ChromeMotion.SHRINK_ONLY -> ParkStyle.SLIDE
             ChromeMotion.SHRINK_AND_PIVOT -> ParkStyle.SWIVEL
         },
+        // The LEFT room parks the card the open way (owner, 2026-11-07: *"this is how i want it
+        // to behave on the left. The top, bottom and right can continue to work as they are
+        // now"*): the card slides right and stays large, flat and fully lit, keeping about half
+        // the window, and the destinations sit in the half it leaves. Only the gallery has a left
+        // room; the viewer has none.
+        leftPark = OpenPark(),
         // Hand the notification's own strip back to it. Without this the shell claims the top
         // 56dp on the Initial pass and every pull on the status line opens the top room (when
         // there is one) instead of expanding the line -- the two gestures live in the same
@@ -2268,7 +2277,7 @@ internal fun railInsetDp(presentation: NavRailPresentation): Int = when (present
 }
 
 /** A reasonable fixed width for a permanently-visible rail -- wide enough for the word rail's
- * labels and bullet, the same content the pull-out room already shows at full width. */
+ * labels, the same restyled rail the pull-out room shows in the half the open park leaves it. */
 private const val PINNED_RAIL_WIDTH = 260
 
 /** Just wide enough for a touch/click target and the expand glyph; the whole point of collapsed
