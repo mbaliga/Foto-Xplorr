@@ -9,7 +9,8 @@ import androidx.compose.ui.graphics.Color
  * The colours of the destination rail's panel. Two looks: [Dark], the app's black ground and white
  * type that the pinned and collapsed rails on a wide window keep, and [Light], the left room's
  * (owner, 2026-11-08: *"light mode, rounded card, shorter list"*, after the 2026-11-07 reference:
- * light grey ground with a very subtle top-left to bottom-right gradient, near-black type).
+ * light grey ground, near-black type; its faint gradient was dropped because it showed a seam against
+ * the flat floor the shell paints around the card).
  *
  * [ink] is the word colour at full strength: the rail's emphasis curve dims the words off the
  * focus line by alpha, so the unselected grey is this ink at that alpha rather than a second
@@ -44,7 +45,10 @@ data class RailPalette(
         /** The left room's look. The shell blends its floor to [RAIL_LIGHT_FLOOR] as the room opens. */
         val Light = RailPalette(
             groundStart = RAIL_LIGHT_FLOOR,
-            groundEnd = Color(0xFFD3D6DA),
+            // The same colour as the floor the shell paints around the card: the panel and the floor are
+            // one surface, so there is no seam (owner, 2026-11-09: "the seam is visible, match the
+            // colours"). The reference's faint wash had to go: the floor is a flat colour.
+            groundEnd = RAIL_LIGHT_FLOOR,
             ink = RAIL_LIGHT_INK,
             hamburger = RAIL_LIGHT_INK,
             settings = RAIL_LIGHT_INK,

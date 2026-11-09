@@ -184,4 +184,13 @@ class DestinationWordRailTest {
     fun `an unknown selection makes any scrubbed word a change`() {
         assertEquals(0, railPendingCommit(focusIndex = 0, selectedIndex = -1, dragging = true))
     }
+
+    @Test
+    fun `the light room's ground is the floor's colour from end to end so no seam shows`() {
+        // The shell paints a flat RAIL_LIGHT_FLOOR around the card; a panel that ended on another colour
+        // showed as a seam at its edge (owner, 2026-11-09).
+        val light = RailPalette.Light
+        assertEquals(RAIL_LIGHT_FLOOR, light.groundStart)
+        assertEquals(RAIL_LIGHT_FLOOR, light.groundEnd)
+    }
 }
