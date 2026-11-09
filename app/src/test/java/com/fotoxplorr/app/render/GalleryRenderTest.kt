@@ -19,6 +19,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.gallery.DestinationRailPanel
+import com.fotoxplorr.app.gallery.RAIL_LIGHT_FLOOR
+import com.fotoxplorr.app.gallery.RailPalette
 import com.fotoxplorr.app.gallery.GalleryActionsRoom
 import com.fotoxplorr.app.gallery.GalleryInfoRoom
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
@@ -189,9 +191,10 @@ class GalleryRenderTest {
                     modifier = Modifier.fillMaxSize(),
                     parkStyle = ParkStyle.SWIVEL,
                     // As the gallery does: the left room is the open park (owner, 2026-11-07).
-                    leftPark = OpenPark(),
+                    leftPark = OpenPark(floor = RAIL_LIGHT_FLOOR),
                     left = {
                         DestinationRailPanel(
+                            palette = RailPalette.Light,
                             items = railItems,
                             selectedId = HyleDestination.PHOTOS.name,
                             onSelect = {},

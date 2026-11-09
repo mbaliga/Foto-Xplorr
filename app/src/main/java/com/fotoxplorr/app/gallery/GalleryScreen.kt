@@ -97,6 +97,11 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import dev.aarso.cellshell.SpatialController
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -529,6 +534,7 @@ private fun GalleryBrowser(
     // The two rooms are the shell's state, not booleans here: a room is fractionally open for
     // most of its life (the finger is mid-drag), which a Boolean cannot express.
     val shell = rememberSpatialController()
+    LightLeftRoomSystemBars(shell)
     var createCollectionVisible by remember { mutableStateOf(false) }
     var renameCollection by remember { mutableStateOf<BrowserRoute.Collection?>(null) }
     var renameAsset by remember { mutableStateOf<MediaAsset?>(null) }
@@ -1334,6 +1340,8 @@ private fun GalleryBrowser(
                 },
                 // The reference's hamburger: one tap closes the room, the non-drag way out.
                 onClose = { shell.closeAll() },
+                // The room is light (owner, 2026-11-08); the pinned rail keeps the dark default.
+                palette = RailPalette.Light,
             )
         },
         // TOP = what this view is, pulled down over it.
@@ -1430,7 +1438,7 @@ private fun GalleryBrowser(
         // now"*): the card slides right and stays large, flat and fully lit, keeping about half
         // the window, and the destinations sit in the half it leaves. Only the gallery has a left
         // room; the viewer has none.
-        leftPark = OpenPark(),
+        leftPark = OpenPark(floor = RAIL_LIGHT_FLOOR),
         // Hand the notification's own strip back to it. Without this the shell claims the top
         // 56dp on the Initial pass and every pull on the status line opens the top room (when
         // there is one) instead of expanding the line -- the two gestures live in the same
@@ -2909,3 +2917,33 @@ private const val EDGE_SCRUBBER_REST_ALPHA = 0.6f
 /** The time range panel's and chip's inset from the sides, and the gap between them and the pill row. */
 private const val TIME_RANGE_SIDE_MARGIN = 12
 private const val TIME_RANGE_GAP = 8
+
+/**
+ * Dark system-bar icons while the light left room is (mostly) open, the window's own look when it
+ * closes or this screen leaves composition. The "closed" value is whatever the window had when
+ * this screen arrived (`enableEdgeToEdge` sets it from the system theme), read once, not assumed.
+ * The decision is [leftRoomWantsDarkBars]; the window call itself is a device check.
+ */
+@Composable
+private fun LightLeftRoomSystemBars(shell: SpatialController) {
+    val view = LocalView.current
+    if (view.isInEditMode) return
+    var context = view.context
+    while (context is android.content.ContextWrapper && context !is android.app.Activity) context = context.baseContext
+    val window = (context as? android.app.Activity)?.window ?: return
+    LaunchedEffect(window) {
+        val controller = WindowCompat.getInsetsController(window, view)
+        val closedStatus = controller.isAppearanceLightStatusBars
+        val closedNavigation = controller.isAppearanceLightNavigationBars
+        try {
+            snapshotFlow { leftRoomWantsDarkBars(shell.hProgress) }.distinctUntilChanged().collect { dark ->
+                // "Light bars" is Android's word for dark icons.
+                controller.isAppearanceLightStatusBars = dark || closedStatus
+                controller.isAppearanceLightNavigationBars = dark || closedNavigation
+            }
+        } finally {
+            controller.isAppearanceLightStatusBars = closedStatus
+            controller.isAppearanceLightNavigationBars = closedNavigation
+        }
+    }
+}

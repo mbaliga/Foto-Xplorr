@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -51,7 +52,7 @@ import kotlin.math.roundToInt
 /**
  * The destinations as the owner's left-room reference (2026-11-07) draws them: a short run of
  * words down the left of the room, the one on the focus line large (24sp medium) and full white,
- * every other word smaller (17sp) in one uniform grey. No marker: the reference has none, and the
+ * every other word smaller (17sp) and fading out with distance. No marker: the reference has none, and the
  * current word is told by its size and weight (and `selected` semantics), not by colour alone.
  *
  * An app-local wheel, not `dev.aarso:cell-shell`'s `WordWheelRail`. The shared rail's type, its
@@ -89,6 +90,7 @@ import kotlin.math.roundToInt
  *   a fling that comes to rest on the selected word is a choice of it, not a no-op, and says so
  *   through [onLeavePane] (and not [onReselect], which also closes the room under the finger).
  * @param onLeavePane fired when the wheel rests on the selected word while [paneOpen].
+ * @param ink the word colour at full strength; the emphasis dims it by alpha.
  * @param onTurning whether the wheel is moving at all: a finger on it, its fling, or the rail's
  *   own settle. A host that creates something costly from the committed word (the street map)
  *   waits for false, because a commit arrives while the finger is still down.
@@ -103,6 +105,7 @@ fun DestinationWordRail(
     paneOpen: Boolean = false,
     onLeavePane: () -> Unit = {},
     onTurning: (Boolean) -> Unit = {},
+    ink: Color = Color.White,
 ) {
     if (items.isEmpty()) return
 
@@ -290,6 +293,7 @@ fun DestinationWordRail(
                     // Deferred: read on the draw pass, never captured here, so a turn of the
                     // wheel does not recompose this loop.
                     distance = { index - scrollRows() },
+                    ink = ink,
                     onClick = { if (item.id != selectedId) onSelect(item.id) else onReselect() },
                 )
             }
@@ -308,21 +312,28 @@ private fun DestinationRow(
     isSelected: Boolean,
     rowHeight: Dp,
     distance: () -> Float,
+    ink: Color,
     onClick: () -> Unit,
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(rowHeight)
+            // The accessibility click is the ungated one: a row faded out of sight is still a
+            // destination, and a screen reader that focuses it must be able to choose it. Declared
+            // BEFORE clickable so its onClick action is the one the node reports.
+            .semantics { onClick { onClick(); true } }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 // No ripple: the rail is flat type on a flat ground, and touch chrome would be
                 // the only box on the surface.
                 indication = null,
                 role = Role.Tab,
-                onClick = onClick,
+                // A finger's tap on a word that has faded out is an accident (it is not there to
+                // the eye). The distance is read now, at click time, never in composition.
+                onClick = { if (railRowTappable(distance())) onClick() },
             )
-            // Selection is told by size, weight AND this, never by the white alone.
+            // Selection is told by size, weight AND this, never by the ink alone.
             .semantics { selected = isSelected },
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -335,7 +346,7 @@ private fun DestinationRow(
             val density = LocalDensity.current
             val availablePx = constraints.maxWidth.toFloat()
             val baseStyle = TextStyle(
-                color = Color.White,
+                color = ink,
                 fontFamily = HyleGrotesk,
                 fontSize = RAIL_FONT_SP.sp,
                 fontWeight = FontWeight.Medium,
@@ -385,25 +396,38 @@ internal fun railFontSpFor(
     if (naturalPx <= 0f || naturalPx <= availablePx) baseSp
     else (baseSp * availablePx / naturalPx * 0.98f).coerceAtLeast(minSp)
 
-/** How a row is drawn: its scale against the focus size, and its alpha of white. */
+/** How a row is drawn: its scale against the focus size, and its alpha of the rail's ink. */
 internal data class RowEmphasis(val scale: Float, val alpha: Float)
 
 /**
  * The emphasis of a row [distance] rows from the focus line, fractional while the wheel turns.
  *
- * The owner's reference (2026-11-07) has two looks, not a fade: the current word large and full
- * (24sp), every other word smaller (17sp) in one uniform grey. So the curve runs linearly from
- * the focus look at 0 to the rest look at one row and holds it beyond -- a word two rows out is
- * no dimmer than one row out. Interpolated rather than stepped so a word grows as it reaches the
- * line under the finger instead of re-highlighting on settle. Pure so it is asserted.
+ * The owner (2026-11-08, *"shorter list"*) wants about five words showing, three clearly, so the
+ * words fade OUT with distance: alpha 1.0 on the line, 0.5 one row out, 0.2 two rows out, 0 from
+ * [RAIL_FADE_OUT_ROWS] (2.5), linear between those marks and so continuous. The size is the
+ * reference's two looks, 24sp on the line down to 17sp at one row and held beyond. Every word is
+ * still in the wheel, reachable by turning it; it is only not drawn. Interpolated rather than
+ * stepped so a word grows and brightens as it reaches the line under the finger instead of
+ * re-highlighting on settle. Pure so it is asserted.
  */
 internal fun destinationRowEmphasis(distance: Float): RowEmphasis {
-    val t = abs(distance).coerceAtMost(1f)
-    return RowEmphasis(
-        scale = 1f + (RAIL_REST_SCALE - 1f) * t,
-        alpha = 1f + (RAIL_REST_ALPHA - 1f) * t,
-    )
+    val d = abs(distance)
+    val t = d.coerceAtMost(1f)
+    val alpha = when {
+        d <= 1f -> 1f + (RAIL_ALPHA_ONE_ROW - 1f) * d
+        d <= 2f -> RAIL_ALPHA_ONE_ROW + (RAIL_ALPHA_TWO_ROWS - RAIL_ALPHA_ONE_ROW) * (d - 1f)
+        d <= RAIL_FADE_OUT_ROWS -> RAIL_ALPHA_TWO_ROWS * (RAIL_FADE_OUT_ROWS - d) / (RAIL_FADE_OUT_ROWS - 2f)
+        else -> 0f
+    }
+    return RowEmphasis(scale = 1f + (RAIL_REST_SCALE - 1f) * t, alpha = alpha)
 }
+
+/**
+ * Whether a finger's tap on a row [distance] rows from the focus line may select it. A row that has
+ * faded to nothing ([RAIL_TAP_IGNORE_ROWS], a quarter row past where it is fully gone) is not there
+ * to the eye, so a tap on its blank is an accident. Not applied to the accessibility click.
+ */
+internal fun railRowTappable(distance: Float): Boolean = abs(distance) < RAIL_TAP_IGNORE_ROWS
 
 /**
  * The row under the focus line for a scroll offset: with the wheel's half-viewport padding one
@@ -462,8 +486,17 @@ internal const val RAIL_FONT_SP = 24
 internal const val RAIL_REST_FONT_SP = 17
 internal const val RAIL_REST_SCALE = RAIL_REST_FONT_SP.toFloat() / RAIL_FONT_SP
 
-/** The one grey every word off the focus line is drawn in, as an alpha of white on black. */
-internal const val RAIL_REST_ALPHA = 0.5f
+/** A word one row off the line, as an alpha of the ink. */
+internal const val RAIL_ALPHA_ONE_ROW = 0.5f
+
+/** A word two rows off the line. */
+internal const val RAIL_ALPHA_TWO_ROWS = 0.2f
+
+/** From this many rows off the line a word is fully faded. */
+internal const val RAIL_FADE_OUT_ROWS = 2.5f
+
+/** A tap on a row this far or further from the line is ignored. */
+internal const val RAIL_TAP_IGNORE_ROWS = 2.75f
 
 /** The smallest a long word is shrunk to by [railFontSpFor]: still above the rest size. */
 internal const val RAIL_MIN_FONT_SP = 18

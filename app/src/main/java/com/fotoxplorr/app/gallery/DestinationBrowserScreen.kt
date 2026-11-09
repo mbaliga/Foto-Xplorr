@@ -173,8 +173,9 @@ fun destinationEmptyMessage(
  * is the left half of the window: the gallery parks its card large and flat on the right
  * (`SpatialShell`'s `leftPark`), so this is laid out for about 190 dp on a phone.
  *
- * The floor stays black and the type white, the app's dark design; the reference's light grey is
- * a mock-up colour, not a direction.
+ * The look is [palette]: the room passes [RailPalette.Light] (owner, 2026-11-08, after the
+ * reference's light grey ground and near-black type); the pinned rail on a wide window keeps the
+ * default [RailPalette.Dark].
  *
  * The rail is [DestinationWordRail], an app-local re-cut of `dev.aarso:cell-shell`'s word wheel.
  * The shared wheel is still the behaviour (the run turns, the hovered word is committed as the
@@ -219,11 +220,12 @@ fun DestinationRailPanel(
     onLeavePane: () -> Unit = {},
     onTurning: (Boolean) -> Unit = {},
     onClose: (() -> Unit)? = null,
+    palette: RailPalette = RailPalette.Dark,
 ) {
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(palette.groundBrush())
             .statusBarsPadding(),
     ) {
         if (onClose != null) {
@@ -237,7 +239,7 @@ fun DestinationRailPanel(
                 Icon(
                     imageVector = Icons.Rounded.Menu,
                     contentDescription = RailCopy.CLOSE_MENU,
-                    tint = Color.White,
+                    tint = palette.hamburger,
                 )
             }
         }
@@ -249,6 +251,7 @@ fun DestinationRailPanel(
             paneOpen = paneOpen,
             onLeavePane = onLeavePane,
             onTurning = onTurning,
+            ink = palette.ink,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
@@ -256,7 +259,7 @@ fun DestinationRailPanel(
                 // open park leaves the room only about half the window.
                 .padding(start = RAIL_INSET.dp, end = 12.dp),
         )
-        RailSettingsRow(onClick = onOpenSettings)
+        RailSettingsRow(onClick = onOpenSettings, ink = palette.settings)
     }
 }
 
@@ -270,10 +273,10 @@ fun DestinationRailPanel(
  * pretending it is a tenth destination, which is exactly the confusion a fixed row avoids.
  */
 @Composable
-private fun RailSettingsRow(onClick: () -> Unit) {
+private fun RailSettingsRow(onClick: () -> Unit, ink: Color) {
     Text(
         text = RailCopy.SETTINGS,
-        color = Color.White.copy(alpha = 0.55f),
+        color = ink,
         // The rail's own face, not the platform default, and set on the same optical edge as the
         // words above it.
         style = TextStyle(

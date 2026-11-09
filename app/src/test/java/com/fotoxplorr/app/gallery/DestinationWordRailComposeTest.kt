@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
@@ -19,6 +20,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -159,6 +161,54 @@ class DestinationWordRailComposeTest {
     }
 
     @Test
+    fun `a tap on a row two rows out still selects it`() {
+        val host = Host(HyleDestination.PHOTOS.name)
+        mount(host)
+        compose.onNodeWithText("Favourites").performClick()
+        compose.runOnIdle { assertEquals(listOf(HyleDestination.FAVOURITES.name), host.selections) }
+    }
+
+    @Test
+    fun `a tap on a row that has faded out is ignored`() {
+        // Pets is four rows from Photos: not drawn (alpha 0), so a tap there is an accident.
+        val host = Host(HyleDestination.PHOTOS.name)
+        mount(host)
+        compose.onNodeWithText("Pets").performClick()
+        compose.runOnIdle {
+            assertEquals(emptyList<String>(), host.selections)
+            assertEquals(0, host.reselects)
+        }
+    }
+
+    @Test
+    fun `a faded row is still a destination for a screen reader`() {
+        // TalkBack keeps every row in the tree and its click action is not gated by the fade.
+        val host = Host(HyleDestination.PHOTOS.name)
+        mount(host)
+        compose.onNodeWithText("Pets").performSemanticsAction(SemanticsActions.OnClick)
+        compose.runOnIdle { assertEquals(listOf(HyleDestination.PETS.name), host.selections) }
+    }
+
+    @Test
+    fun `the light palette draws the same run`() {
+        val host = Host(HyleDestination.PHOTOS.name)
+        compose.setContent {
+            DestinationRailPanel(
+                items = items,
+                selectedId = host.selectedId,
+                onSelect = {},
+                onOpenSettings = {},
+                onClose = {},
+                palette = RailPalette.Light,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        compose.onNodeWithText("Photos").assertIsSelected()
+        compose.onNodeWithText("Settings").assertIsDisplayed()
+        compose.onNodeWithContentDescription(RailCopy.CLOSE_MENU).assertIsDisplayed()
+    }
+
+    @Test
     fun `a tap on the selected row reselects instead of selecting`() {
         // Release no longer closes the room, so this tap is how the user closes it.
         val host = Host(HyleDestination.PHOTOS.name)
@@ -176,13 +226,14 @@ class DestinationWordRailComposeTest {
         // as a hover, or the debounce would commit one and undo the tap.
         val host = Host(HyleDestination.PROTECTED.name, follow = true)
         mount(host)
+        // Two rows out: still tappable (a row three or more out has faded and is ignored).
         compose.mainClock.autoAdvance = false
         advance(100)
-        compose.onNodeWithText("Videos").performClick()
+        compose.onNodeWithText("Favourites").performClick()
         advance(1_500)
-        compose.runOnIdle { assertEquals(listOf(HyleDestination.VIDEOS.name), host.selections) }
-        compose.onNodeWithText("Videos").assertIsSelected()
-        assertEquals(focusLineY(), wordY(HyleDestination.VIDEOS), 2f)
+        compose.runOnIdle { assertEquals(listOf(HyleDestination.FAVOURITES.name), host.selections) }
+        compose.onNodeWithText("Favourites").assertIsSelected()
+        assertEquals(focusLineY(), wordY(HyleDestination.FAVOURITES), 2f)
     }
 
     @Test
@@ -216,7 +267,9 @@ class DestinationWordRailComposeTest {
         val hovered = emphasisOf(HyleDestination.PLACES)
         val left = emphasisOf(HyleDestination.PHOTOS)
         assertTrue("the hovered word is the emphasised one", hovered.scale > left.scale && hovered.alpha > left.alpha)
-        assertEquals("the word it left is back to the rest look", destinationRowEmphasis(1f), left)
+        // Three rows back it is past the fade: the rest size, and no longer drawn.
+        assertEquals("the word it left is at the rest size", destinationRowEmphasis(3f).scale, left.scale, 1e-4f)
+        assertEquals("and has faded out", 0f, left.alpha, 0f)
 
         // After the pause the hovered word is committed, with the finger still down.
         advance(RAIL_COMMIT_DEBOUNCE_MS * 3)
