@@ -200,21 +200,29 @@ fun RichPhotoMapScreen(
     }
 
     DisposableEffect(lifecycleOwner, mapView) {
+        // One gate for every path that stops the map (the lifecycle owner and this composable's own
+        // disposal both used to destroy it, the first while it was still on screen): see MapViewLifecycle.
+        val gate = MapViewLifecycle(
+            start = mapView::onStart,
+            resume = mapView::onResume,
+            pause = mapView::onPause,
+            stop = mapView::onStop,
+            detach = { (mapView.parent as? android.view.ViewGroup)?.removeView(mapView) },
+            destroy = mapView::onDestroy,
+        )
         val observer = object : DefaultLifecycleObserver {
-            override fun onStart(owner: LifecycleOwner) = mapView.onStart()
-            override fun onResume(owner: LifecycleOwner) = mapView.onResume()
-            override fun onPause(owner: LifecycleOwner) = mapView.onPause()
-            override fun onStop(owner: LifecycleOwner) = mapView.onStop()
-            override fun onDestroy(owner: LifecycleOwner) = mapView.onDestroy()
+            override fun onStart(owner: LifecycleOwner) = gate.onStart()
+            override fun onResume(owner: LifecycleOwner) = gate.onResume()
+            override fun onPause(owner: LifecycleOwner) = gate.onPause()
+            override fun onStop(owner: LifecycleOwner) = gate.onStop()
+            override fun onDestroy(owner: LifecycleOwner) = gate.onDestroy()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        mapView.onStart()
-        mapView.onResume()
+        gate.onStart()
+        gate.onResume()
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            mapView.onPause()
-            mapView.onStop()
-            mapView.onDestroy()
+            gate.onDestroy()
         }
     }
 

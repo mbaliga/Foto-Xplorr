@@ -132,6 +132,18 @@ jobs:
           path: app/build/outputs/apk/connect/release/app-connect-arm64-v8a-release.apk
           if-no-files-found: error
 
+      # The release builds are minified, so a crash report from a phone names classes like `J4.c0`.
+      # R8's mapping files turn those back into real names; they are only useful for the APK they
+      # came from, so they ride with every build.
+      - name: Upload R8 mapping files (to read a crash report from these APKs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fotoz-r8-mapping
+          path: |
+            app/build/outputs/mapping/offlineRelease/mapping.txt
+            app/build/outputs/mapping/connectRelease/mapping.txt
+          if-no-files-found: warn
+
       - name: Upload other release APKs
         uses: actions/upload-artifact@v4
         with:
