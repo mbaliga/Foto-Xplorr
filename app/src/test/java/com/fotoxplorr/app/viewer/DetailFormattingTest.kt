@@ -181,4 +181,132 @@ class DetailFormattingTest {
         assertEquals("2.0 s", formatShutterSpeed(2.0))
         assertEquals("—", formatShutterSpeed(0.0))
     }
+
+    // ── the detail sections' formatters ─────────────────────────────────────────────────────
+
+    @Test
+    fun `metering, white balance and exposure program say nothing for codes they do not know`() {
+        assertEquals("Spot", DetailFormatting.meteringText(3))
+        assertNull(DetailFormatting.meteringText(0))
+        assertNull(DetailFormatting.meteringText(255))
+        assertNull(DetailFormatting.meteringText(null))
+        assertEquals("Auto", DetailFormatting.whiteBalanceText(0))
+        assertNull(DetailFormatting.whiteBalanceText(2))
+        assertEquals("Portrait", DetailFormatting.exposureProgramText(7))
+        assertNull(DetailFormatting.exposureProgramText(0))
+        assertNull(DetailFormatting.exposureProgramText(99))
+    }
+
+    @Test
+    fun `orientation text covers the eight codes and nothing else`() {
+        assertEquals("Upright", DetailFormatting.orientationText(1))
+        assertEquals("Rotated 90° clockwise", DetailFormatting.orientationText(6))
+        assertEquals((1..8).toList(), (1..8).filter { DetailFormatting.orientationText(it) != null })
+        assertNull(DetailFormatting.orientationText(0))
+        assertNull(DetailFormatting.orientationText(9))
+    }
+
+    @Test
+    fun `altitude is above, below or at sea level`() {
+        assertEquals("123 m above sea level", DetailFormatting.altitudeText(123.4))
+        assertEquals("5 m below sea level", DetailFormatting.altitudeText(-4.6))
+        assertEquals("At sea level", DetailFormatting.altitudeText(0.3))
+        assertNull(DetailFormatting.altitudeText(Double.NaN))
+        assertNull(DetailFormatting.altitudeText(null))
+    }
+
+    @Test
+    fun `compass text names the wind and the whole degree`() {
+        assertEquals("N 0°", DetailFormatting.compassText(0.0))
+        assertEquals("NE 45°", DetailFormatting.compassText(45.0))
+        assertEquals("E 90°", DetailFormatting.compassText(90.0))
+        assertEquals("S 180°", DetailFormatting.compassText(180.0))
+        assertEquals("NW 315°", DetailFormatting.compassText(315.2))
+        // 359.6 rounds up to a full turn, which is north, and is not written as 360.
+        assertEquals("N 0°", DetailFormatting.compassText(359.6))
+        assertEquals("N 0°", DetailFormatting.compassText(360.0))
+        assertNull(DetailFormatting.compassText(-1.0))
+        assertNull(DetailFormatting.compassText(361.0))
+        assertNull(DetailFormatting.compassText(Double.NaN))
+        assertNull(DetailFormatting.compassText(null))
+    }
+
+    @Test
+    fun `speed, bitrate and frame rate`() {
+        assertEquals("12 km/h", DetailFormatting.speedText(12.4))
+        assertEquals("0 km/h", DetailFormatting.speedText(0.0))
+        assertNull(DetailFormatting.speedText(-3.0))
+        assertEquals("12.5 Mbps", DetailFormatting.bitrateText(12_500_000L))
+        assertEquals("640 kbps", DetailFormatting.bitrateText(640_000L))
+        assertEquals("1 kbps", DetailFormatting.bitrateText(100L))
+        assertNull(DetailFormatting.bitrateText(0L))
+        assertNull(DetailFormatting.bitrateText(null))
+        assertEquals("30 fps", DetailFormatting.fpsText(30.0))
+        assertEquals("29.97 fps", DetailFormatting.fpsText(29.97))
+        assertEquals("23.98 fps", DetailFormatting.fpsText(23.976))
+        assertEquals("59.9 fps", DetailFormatting.fpsText(59.9))
+        assertNull(DetailFormatting.fpsText(0.0))
+        assertNull(DetailFormatting.fpsText(5_000.0))
+        assertNull(DetailFormatting.fpsText(Double.NaN))
+    }
+
+    @Test
+    fun `file age is in calendar terms and never negative`() {
+        val now = ZonedDateTime.of(2026, 10, 21, 12, 0, 0, 0, utc).toInstant().toEpochMilli()
+        fun ago(year: Int, month: Int, day: Int, hour: Int = 9) =
+            DetailFormatting.fileAgeText(ZonedDateTime.of(year, month, day, hour, 0, 0, 0, utc).toInstant().toEpochMilli(), now, utc)
+        assertEquals("Today", ago(2026, 10, 21, 1))
+        assertEquals("Yesterday", ago(2026, 10, 20, 23))
+        assertEquals("3 days ago", ago(2026, 10, 18))
+        assertEquals("2 weeks ago", ago(2026, 10, 5))
+        assertEquals("1 month ago", ago(2026, 9, 21))
+        assertEquals("5 months ago", ago(2026, 5, 10))
+        assertEquals("1 year ago", ago(2025, 10, 21))
+        assertEquals("3 years ago", ago(2023, 3, 3))
+        assertNull("a photo from the future has no age", DetailFormatting.fileAgeText(now + 86_400_000L, now, utc))
+        assertNull(DetailFormatting.fileAgeText(0L, now, utc))
+    }
+
+    @Test
+    fun `an EXIF offset is a zone only when it parses`() {
+        assertEquals(19_800, DetailFormatting.exifOffset("+05:30")!!.totalSeconds)
+        assertEquals(-28_800, DetailFormatting.exifOffset(" -08:00 ")!!.totalSeconds)
+        assertEquals(0, DetailFormatting.exifOffset("+00:00")!!.totalSeconds)
+        assertNull(DetailFormatting.exifOffset("+15:00"))
+        assertNull(DetailFormatting.exifOffset("+05:75"))
+        assertNull(DetailFormatting.exifOffset("0530"))
+        assertNull(DetailFormatting.exifOffset("banana"))
+        assertNull(DetailFormatting.exifOffset(""))
+        assertNull(DetailFormatting.exifOffset(null))
+        assertEquals("UTC+05:30", DetailFormatting.offsetText(DetailFormatting.exifOffset("+05:30")!!))
+        assertEquals("UTC-08:00", DetailFormatting.offsetText(DetailFormatting.exifOffset("-08:00")!!))
+        assertEquals("UTC", DetailFormatting.offsetText(DetailFormatting.exifOffset("+00:00")!!))
+    }
+
+    @Test
+    fun `EXIF wall-clock time parses, and the all-zero placeholder is unknown`() {
+        assertEquals(
+            java.time.LocalDateTime.of(2026, 8, 1, 22, 33, 0),
+            DetailFormatting.exifDateTime("2026:08:01 22:33:00"),
+        )
+        assertNull(DetailFormatting.exifDateTime("0000:00:00 00:00:00"))
+        assertNull(DetailFormatting.exifDateTime("2026-08-01"))
+        assertNull(DetailFormatting.exifDateTime(null))
+    }
+
+    @Test
+    fun `the taken line says whose clock it is`() {
+        // 17:03 UTC is 22:33 at +05:30.
+        val millis = ZonedDateTime.of(2026, 8, 1, 17, 3, 0, 0, utc).toInstant().toEpochMilli()
+        assertEquals(
+            "Saturday • 1 Aug 2026 • 10:33 PM (UTC+05:30)",
+            DetailFormatting.takenLine(millis, DetailFormatting.exifOffset("+05:30"), utc, Locale.UK),
+        )
+        // No offset in the file: the device's clock, and the line admits it.
+        assertEquals(
+            "Saturday • 1 Aug 2026 • 5:03 PM (device time)",
+            DetailFormatting.takenLine(millis, null, utc, Locale.UK),
+        )
+        assertEquals("Unknown date", DetailFormatting.takenLine(0L, null, utc, Locale.UK))
+    }
 }

@@ -20,9 +20,11 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,7 +34,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
@@ -41,6 +47,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.gallery.RailBulge
+import com.fotoxplorr.app.gallery.RailBulgeSpec
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -73,6 +81,11 @@ import kotlinx.coroutines.launch
  *   lambda and the scale in each thumbnail's layer lambda, so every frame of the bulge is
  *   re-layout and re-draw, never recomposition.
  *
+ * **Roll-level, never asset-level.** The strip does not know or care what the current asset is: it
+ * is shown for a video exactly as for a photo (see [ViewerChromePolicy.filmstripShown]). It must
+ * stay that way, because it drives the host live -- a strip that vanished when the thumbnail
+ * under the finger turned out to be a video would cancel the drag it was in the middle of.
+ *
  * Every thumbnail is laid out at the same width; magnification is a draw-time effect on top of
  * it, never a change to the box itself. A wider current item would shift the strip's own
  * geometry as selection moved, which is what made the centre drift in the very first version.
@@ -85,11 +98,20 @@ fun FilmstripScrubber(
     modifier: Modifier = Modifier,
     /** Test seam: start the strip already bulged, as if a finger were on it. */
     initialBulge: Float = 0f,
+    /**
+     * True while the user is moving the strip (a finger on it, or the fling that finger threw),
+     * false once it comes to rest -- and false again if the strip leaves composition mid-gesture,
+     * so a host can never be left believing someone is still scrubbing. Not true while the strip
+     * animates itself to the host's current photo. Lets the viewer pause a playing video the
+     * moment the strip is touched and hold off starting the next one until the strip settles.
+     */
+    onScrubbingChanged: (Boolean) -> Unit = {},
 ) {
     if (assets.size <= 1) return
     val listState = rememberLazyListState()
     val currentOnSelect by rememberUpdatedState(onSelect)
     val currentAssets by rememberUpdatedState(assets)
+    val currentOnScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
     val density = LocalDensity.current
     val magnifyRadiusPx = with(density) { FilmstripGeometry.MAGNIFY_RADIUS_DP.dp.toPx() }
     val scope = rememberCoroutineScope()
@@ -99,10 +121,30 @@ fun FilmstripScrubber(
     // animates to N while the user is still dragging — the strip stutters under the finger.
     var selfReported by remember { mutableIntStateOf(-1) }
     val bulge = remember { Animatable(initialBulge.coerceIn(0f, 1f)) }
+    // Where the finger last was on the strip (x in the strip's own px; negative until the first touch,
+    // when the centre stands in for it).
+    // Observed on the Initial pass without consuming, so the strip's own drag is untouched; read
+    // only from layer and layout lambdas.
+    val fingerX = remember { mutableFloatStateOf(-1f) }
+    val liftSpec = remember(density.density) { filmstripLiftSpec(density.density) }
+    val liftPx = with(density) { FILMSTRIP_LIFT_DP.dp.toPx() }
 
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val down = event.changes.firstOrNull { it.pressed }
+                        // Kept after the finger lifts: the lift is scaled by the bulge, which eases
+                        // down for a moment, and a jump to the centre would slide the thumbnails
+                        // sideways while they settle. The next touch overwrites it before the
+                        // bulge rises again.
+                        if (down != null) fingerX.floatValue = down.position.x
+                    }
+                }
+            }
             // The band's height follows the bulge at LAYOUT time: reading the Animatable here
             // re-lays out the strip each frame of the bulge without recomposing it.
             .layout { measurable, constraints ->
@@ -138,6 +180,14 @@ fun FilmstripScrubber(
         // strip that scrolls in from item 0 every time the viewer opens is motion nobody asked
         // for. Skips the echo of our own report, and never fights a finger that is still down.
         var centredOnce by remember { mutableIntStateOf(0) }
+        // The echo guard only covers the host following US. When the host moves on its own (a page
+        // swipe, the slideshow) the remembered report is stale, and scrubbing back to that index
+        // would be mistaken for an echo and never select. Declared before the centring effect so
+        // the reset has happened by the time that one compares against it.
+        LaunchedEffect(currentIndex, assets.size) {
+            val target = currentIndex.coerceIn(0, assets.lastIndex)
+            if (target != selfReported && !listState.isScrollInProgress) selfReported = -1
+        }
         LaunchedEffect(currentIndex, assets.size) {
             val target = currentIndex.coerceIn(0, assets.lastIndex)
             if (target == selfReported || listState.isScrollInProgress) return@LaunchedEffect
@@ -160,6 +210,17 @@ fun FilmstripScrubber(
             snapshotFlow { dragged to listState.isScrollInProgress }.collect { (isDragged, scrolling) ->
                 userScroll = isDragged || (userScroll && scrolling)
             }
+        }
+
+        // Tell the host when the user starts and stops moving the strip. The dispose guard matters
+        // because the strip is chrome: toggling the chrome off (or opening the lift editor) in the
+        // middle of a fling removes it with `userScroll` still true, and a host left holding
+        // "scrubbing" would keep its video paused and un-armed for good.
+        LaunchedEffect(listState) {
+            snapshotFlow { userScroll }.collect { currentOnScrubbingChanged(it) }
+        }
+        DisposableEffect(Unit) {
+            onDispose { currentOnScrubbingChanged(false) }
         }
 
         // Turning the strip IS selecting: the moment a different thumbnail is nearest the
@@ -192,6 +253,36 @@ fun FilmstripScrubber(
                         ),
                     )
                 }
+            }
+        }
+
+        // The centre frame (the one the strip selects), large, above the finger: the finger never hides it. Shown only
+        // while the user moves the strip, placed over the strip's top edge (it sits outside this
+        // band's bounds, which nothing clips) and kept on screen. Pointer-free.
+        val previewAsset = centreIndex?.let { assets.getOrNull(it) }
+        if (userScroll && previewAsset != null) {
+            val previewW = with(density) { PREVIEW_WIDTH_DP.dp.roundToPx() }
+            val previewH = with(density) { PREVIEW_HEIGHT_DP.dp.roundToPx() }
+            val gap = with(density) { PREVIEW_GAP_DP.dp.roundToPx() }
+            Box(
+                Modifier
+                    .layout { measurable, _ ->
+                        val placeable = measurable.measure(
+                            androidx.compose.ui.unit.Constraints.fixed(previewW, previewH),
+                        )
+                        layout(0, 0) {
+                            val centreX = if (fingerX.floatValue >= 0f) fingerX.floatValue else constraints.maxWidth / 2f
+                            val x = (centreX - previewW / 2f).coerceIn(0f, (constraints.maxWidth - previewW).coerceAtLeast(0).toFloat())
+                            placeable.place(x.toInt(), -previewH - gap)
+                        }
+                    }
+                    .clip(RoundedCornerShape(10.dp)),
+            ) {
+                MediaImage(
+                    asset = previewAsset,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
             }
         }
 
@@ -231,19 +322,29 @@ fun FilmstripScrubber(
                         .graphicsLayer {
                             val info = listState.layoutInfo
                             val itemInfo = info.visibleItemsInfo.firstOrNull { it.index == index }
+                            var lift = 0f
                             val scale = if (itemInfo != null) {
                                 val viewportCentre = (info.viewportStartOffset + info.viewportEndOffset) / 2f
                                 val itemCentre = itemInfo.offset + itemInfo.size / 2f
+                                // The finger's x, or the centre when nobody is touching (a fling).
+                                val finger = if (fingerX.floatValue >= 0f) fingerX.floatValue else viewportCentre
+                                // The raise: the thumbnails around the finger lift away from it, up
+                                // into the headroom, by the rail's bump (the same arc the timeline
+                                // uses, bulging up on this bottom strip).
+                                lift = liftPx * bulge.value * RailBulge.bump(itemCentre - finger, liftSpec)
                                 FilmstripGeometry.magnification(
                                     distancePx = itemCentre - viewportCentre,
                                     radiusPx = magnifyRadiusPx,
-                                    peakScale = FilmstripGeometry.peakScale(bulge.value),
+                                    // Half the old loupe: the lift needs the headroom the scale
+                                    // used to take, and the big look is the preview above now.
+                                    peakScale = 1f + (FilmstripGeometry.peakScale(bulge.value) - 1f) * LOUPE_SHARE,
                                 )
                             } else {
                                 1f
                             }
                             scaleX = scale
                             scaleY = scale
+                            translationY = -lift
                             // Grow from the bottom edge, so the bottom of the strip stays a
                             // straight line and the bulge is all upward.
                             transformOrigin = TransformOrigin(0.5f, 1f)
@@ -270,6 +371,31 @@ fun FilmstripScrubber(
         }
     }
 }
+
+/** How far the thumbnails at the finger lift at full bulge: within the band's headroom beside a half loupe. */
+private const val FILMSTRIP_LIFT_DP = 34f
+
+/** The share of the old loupe's growth that stays; the rest of the headroom is the lift's. */
+private const val LOUPE_SHARE = 0.5f
+
+/** The preview above the finger. */
+private const val PREVIEW_WIDTH_DP = 96
+private const val PREVIEW_HEIGHT_DP = 120
+private const val PREVIEW_GAP_DP = 10
+
+/**
+ * The rail model's spec for the filmstrip: the bump spans about one thumbnail either side of the
+ * finger (a flat top of one thumbnail's width, then a fall of three and a half label rows).
+ */
+private fun filmstripLiftSpec(density: Float): RailBulgeSpec = RailBulgeSpec(
+    fingerRadiusPx = 28f * density,
+    plateauPx = FilmstripGeometry.THUMB_WIDTH_DP * density * 0.5f,
+    fallPx = FilmstripGeometry.THUMB_WIDTH_DP * density * 1.5f,
+    minPeakPx = FILMSTRIP_LIFT_DP * density,
+    marginPx = 0f,
+    restDepthPx = 0f,
+    maxScale = 1f,
+)
 
 /** A quick rise and an unhurried settle: the strip should feel pulled up, then set down. */
 private const val BULGE_UP_MILLIS = 180

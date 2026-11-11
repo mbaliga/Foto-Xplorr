@@ -101,12 +101,105 @@ object SubjectSegmentation {
             included
         } else {
             val opened = dilate(erode(included, width, height), width, height)
-            erode(dilate(opened, width, height), width, height)
+            // Opening removes anything thinner than the 3x3 kernel, so a small or spindly subject
+            // (a tap on a thin branch, a textured patch whose fill came out a few pixels wide) can
+            // be erased ENTIRELY -- and an empty mask is reported to the person as "couldn't find
+            // a clear subject", which was the single most common way a tap "did nothing". Opening
+            // exists to tidy a region, never to veto one: when it would leave nothing behind, keep
+            // the un-opened fill and only close it.
+            val base = if (opened.any { it }) opened else included
+            erode(dilate(base, width, height), width, height)
         }
-        val closed = cleaned
 
-        return feather(closed, width, height, featherRadius)
+        return feather(cleaned, width, height, featherRadius)
     }
+
+    /**
+     * The colour a fill is anchored to, read from a small disc around the tap rather than from
+     * the one pixel under the finger.
+     *
+     * A single pixel is a sample of size one from a noisy sensor: on fur, foliage, skin or any JPEG
+     * with grain it can sit 30+ levels from the colour the eye reads at that spot, and every other
+     * pixel is then compared to that outlier. The disc is [SEED_DISC_RADIUS] pixels across (a 5x5
+     * window without its corners). Which of its pixels to average depends on what the tap hit:
+     *
+     *  - If the tapped pixel has company -- at least [SEED_MIN_CLUSTER] disc pixels within
+     *    [SEED_AGREE] levels of it -- the tap is on a real feature (a thin line, a boundary, an
+     *    ordinary patch) and the seed is the mean of THAT cluster. Using the disc's majority here
+     *    would hand a tap on a two-pixel-wide wire the colour of the sky behind it.
+     *  - If it is alone, it is a speck, and the seed is the mean of the disc pixels that agree with
+     *    the disc's per-channel median instead, so one hot pixel cannot become the whole selection.
+     */
+    internal fun seedColour(pixels: IntArray, width: Int, height: Int, seedX: Int, seedY: Int): Int {
+        val tapped = pixels[seedY * width + seedX]
+        val rs = IntArray(SEED_DISC_MAX)
+        val gs = IntArray(SEED_DISC_MAX)
+        val bs = IntArray(SEED_DISC_MAX)
+        var n = 0
+        for (dy in -SEED_DISC_RADIUS..SEED_DISC_RADIUS) {
+            for (dx in -SEED_DISC_RADIUS..SEED_DISC_RADIUS) {
+                if (dx * dx + dy * dy > SEED_DISC_RADIUS_SQ) continue
+                val x = seedX + dx
+                val y = seedY + dy
+                if (x !in 0 until width || y !in 0 until height) continue
+                val p = pixels[y * width + x]
+                rs[n] = (p shr 16) and 0xFF
+                gs[n] = (p shr 8) and 0xFF
+                bs[n] = p and 0xFF
+                n++
+            }
+        }
+        val tappedR = (tapped shr 16) and 0xFF
+        val tappedG = (tapped shr 8) and 0xFF
+        val tappedB = tapped and 0xFF
+        val clusterAroundTap = meanAgreeing(rs, gs, bs, n, tappedR, tappedG, tappedB, SEED_MIN_CLUSTER)
+        if (clusterAroundTap != null) return clusterAroundTap
+        return meanAgreeing(rs, gs, bs, n, median(rs, n), median(gs, n), median(bs, n), 1) ?: tapped
+    }
+
+    /** Mean colour of the first [n] samples within [SEED_AGREE] of the reference, or null if fewer than [minCount] agree. */
+    private fun meanAgreeing(
+        rs: IntArray,
+        gs: IntArray,
+        bs: IntArray,
+        n: Int,
+        refR: Int,
+        refG: Int,
+        refB: Int,
+        minCount: Int,
+    ): Int? {
+        var sumR = 0
+        var sumG = 0
+        var sumB = 0
+        var count = 0
+        for (i in 0 until n) {
+            if (abs(rs[i] - refR) <= SEED_AGREE && abs(gs[i] - refG) <= SEED_AGREE && abs(bs[i] - refB) <= SEED_AGREE) {
+                sumR += rs[i]
+                sumG += gs[i]
+                sumB += bs[i]
+                count++
+            }
+        }
+        if (count < minCount || count == 0) return null
+        return (0xFF shl 24) or ((sumR / count) shl 16) or ((sumG / count) shl 8) or (sumB / count)
+    }
+
+    private fun median(values: IntArray, n: Int): Int {
+        if (n == 0) return 0
+        val copy = values.copyOf(n)
+        copy.sort()
+        return copy[n / 2]
+    }
+
+    private const val SEED_DISC_RADIUS = 2
+    private const val SEED_DISC_RADIUS_SQ = 5 // keeps (+-2, +-1) and (+-1, +-2), drops the four (+-2, +-2) corners.
+    private const val SEED_DISC_MAX = (2 * SEED_DISC_RADIUS + 1) * (2 * SEED_DISC_RADIUS + 1)
+
+    /** Per-channel distance within which a disc pixel still counts as "the same colour" for the seed mean. */
+    private const val SEED_AGREE = 24
+
+    /** A tapped pixel needs this many agreeing disc pixels (itself included) to be trusted over the disc median. */
+    private const val SEED_MIN_CLUSTER = 3
 
     /**
      * Classic 4-connected flood fill: a growing frontier of pixels within [tolerance] of the SEED
@@ -130,7 +223,7 @@ object SubjectSegmentation {
     ): BooleanArray {
         val included = BooleanArray(width * height)
         val seedIndex = seedY * width + seedX
-        val seed = pixels[seedIndex]
+        val seed = seedColour(pixels, width, height, seedX, seedY)
         val seedR = (seed shr 16) and 0xFF
         val seedG = (seed shr 8) and 0xFF
         val seedB = seed and 0xFF
@@ -243,7 +336,7 @@ object SubjectSegmentation {
      * jagged". Interior and exterior pixels more than [radius] away from any boundary are
      * untouched (stay exactly 0f or 1f), so this never blurs the SHAPE, only its edge.
      */
-    private fun feather(mask: BooleanArray, width: Int, height: Int, radius: Int): Mask {
+    internal fun feather(mask: BooleanArray, width: Int, height: Int, radius: Int): Mask {
         val alpha = FloatArray(mask.size) { if (mask[it]) 1f else 0f }
         if (radius > 0 && width > 0 && height > 0) {
             val scratch = FloatArray(alpha.size)

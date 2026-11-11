@@ -1,5 +1,7 @@
 package com.fotoxplorr.app.share
 
+import com.fotoxplorr.app.ui.HelpCopy
+
 /**
  * How a shared photo is dressed on its way out of the app.
  *
@@ -27,7 +29,7 @@ enum class ShareFrame(val label: String, val description: String) {
      */
     POLAROID(
         label = "Polaroid",
-        description = "White border with a deep lower edge, room for a caption",
+        description = HelpCopy.Caption.FRAME_WHITE,
     ),
 
     /**
@@ -36,7 +38,7 @@ enum class ShareFrame(val label: String, val description: String) {
      */
     STAMP(
         label = "Postage stamp",
-        description = "Perforated edge, with your seal if you have set one",
+        description = HelpCopy.Caption.FRAME_PERFORATED,
     ),
 }
 

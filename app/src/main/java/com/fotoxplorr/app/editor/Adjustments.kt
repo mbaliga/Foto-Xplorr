@@ -58,6 +58,13 @@ data class Adjustments(
     val redCurve: ToneCurve = ToneCurve.IDENTITY,
     val greenCurve: ToneCurve = ToneCurve.IDENTITY,
     val blueCurve: ToneCurve = ToneCurve.IDENTITY,
+    /**
+     * Brightness-only curve. Unlike [rgbCurve] (which bends all three channels by the same
+     * function and so shifts saturation and hue as it moves tone) this scales each pixel's RGB to
+     * hit the new luma, keeping its hue. Applied per pixel in [applyColour], NOT folded into the
+     * per-channel tables -- a luma curve in the tables would just be an RGB curve in disguise.
+     */
+    val lumaCurve: ToneCurve = ToneCurve.IDENTITY,
 
     // ---- HSL: eight hue bands, each with its own hue/saturation/luminance ----
     val hsl: HslAdjustments = HslAdjustments.NONE,
@@ -85,7 +92,7 @@ data class Adjustments(
             whites == 0f && blacks == 0f && temperature == 0f && tint == 0f &&
             saturation == 0f && vibrance == 0f &&
             rgbCurve.isIdentity && redCurve.isIdentity &&
-            greenCurve.isIdentity && blueCurve.isIdentity && hsl.isIdentity
+            greenCurve.isIdentity && blueCurve.isIdentity && lumaCurve.isIdentity && hsl.isIdentity
 
     /** True when nothing here needs a neighbourhood pass, which are the expensive ones. */
     val spatialIsIdentity: Boolean
@@ -108,7 +115,26 @@ data class Adjustments(
             red = buildLut(gains.red, redCurve),
             green = buildLut(gains.green, greenCurve),
             blue = buildLut(gains.blue, blueCurve),
+            luma = if (lumaCurve.isIdentity) null else lumaCurve.toLut(),
         )
+    }
+
+    /** The curve [channel] refers to. */
+    fun curveFor(channel: CurveChannel): ToneCurve = when (channel) {
+        CurveChannel.RGB -> rgbCurve
+        CurveChannel.LUMA -> lumaCurve
+        CurveChannel.RED -> redCurve
+        CurveChannel.GREEN -> greenCurve
+        CurveChannel.BLUE -> blueCurve
+    }
+
+    /** A copy with [channel]'s curve replaced by [curve] and every other field untouched. */
+    fun withCurve(channel: CurveChannel, curve: ToneCurve): Adjustments = when (channel) {
+        CurveChannel.RGB -> copy(rgbCurve = curve)
+        CurveChannel.LUMA -> copy(lumaCurve = curve)
+        CurveChannel.RED -> copy(redCurve = curve)
+        CurveChannel.GREEN -> copy(greenCurve = curve)
+        CurveChannel.BLUE -> copy(blueCurve = curve)
     }
 
     private fun buildLut(gain: Float, channelCurve: ToneCurve): IntArray {
@@ -198,8 +224,17 @@ data class Adjustments(
 /** Per-channel multipliers. */
 internal data class ChannelGains(val red: Float, val green: Float, val blue: Float)
 
-/** The compiled tonal half of an adjustment: one 256-entry table per channel. */
-data class ChannelLuts(val red: IntArray, val green: IntArray, val blue: IntArray) {
+/**
+ * The compiled tonal half of an adjustment: one 256-entry table per channel, plus an optional luma
+ * table ([Adjustments.lumaCurve]) that [applyColour] applies per pixel after the three channel
+ * tables. Null means "no luma curve", so the common case costs nothing.
+ */
+data class ChannelLuts(
+    val red: IntArray,
+    val green: IntArray,
+    val blue: IntArray,
+    val luma: IntArray? = null,
+) {
     // Arrays do not have value equality, and a data class holding them silently gets identity
     // comparison — which would make two identical LUTs unequal and defeat any caching keyed on them.
     override fun equals(other: Any?): Boolean {
@@ -207,11 +242,13 @@ data class ChannelLuts(val red: IntArray, val green: IntArray, val blue: IntArra
         if (other !is ChannelLuts) return false
         return red.contentEquals(other.red) &&
             green.contentEquals(other.green) &&
-            blue.contentEquals(other.blue)
+            blue.contentEquals(other.blue) &&
+            (luma contentEquals other.luma)
     }
 
     override fun hashCode(): Int =
-        31 * (31 * red.contentHashCode() + green.contentHashCode()) + blue.contentHashCode()
+        31 * (31 * (31 * red.contentHashCode() + green.contentHashCode()) + blue.contentHashCode()) +
+            luma.contentHashCode()
 }
 
 /**
@@ -245,6 +282,11 @@ internal fun encode(value: Float): Float {
     return if (v <= 0.0031308f) v * 12.92f else 1.055f * v.pow(1f / 2.4f) - 0.055f
 }
 
+/** Luma below which the luma curve shifts a pixel additively, and the width of the crossfade
+ *  into the hue-preserving ratio form above it. See [applyColour]. */
+private const val LUMA_BLEND_START = 4f
+private const val LUMA_BLEND_SPAN = 12f
+
 /**
  * Apply the per-pixel colour half of an adjustment to a packed ARGB array, in place.
  *
@@ -252,9 +294,12 @@ internal fun encode(value: Float): Float {
  * the JVM. The Android side hands it `Bitmap.getPixels` output and takes it straight back.
  *
  * Saturation and vibrance live here rather than in the LUT because they need all three channels at
- * once — a table indexed by one channel cannot know how colourful the pixel it came from was.
+ * once — a table indexed by one channel cannot know how colourful the pixel it came from was. The
+ * luma curve ([ChannelLuts.luma]) is the same kind of thing and runs first, so saturation then
+ * works on the tone the curve produced.
  */
 fun applyColour(pixels: IntArray, luts: ChannelLuts, saturation: Float, vibrance: Float) {
+    val lumaLut = luts.luma
     val flatten = saturation != 0f
     val weighted = vibrance != 0f
     for (i in pixels.indices) {
@@ -263,6 +308,25 @@ fun applyColour(pixels: IntArray, luts: ChannelLuts, saturation: Float, vibrance
         var r = luts.red[pixel ushr 16 and 0xFF]
         var g = luts.green[pixel ushr 8 and 0xFF]
         var b = luts.blue[pixel and 0xFF]
+
+        if (lumaLut != null) {
+            // Scale the pixel so its luma lands where the curve says, which keeps its hue: the
+            // ratio between the channels is untouched. Near black the ratio is meaningless (a
+            // luma of a few is mostly rounding) and, under a lifted-black curve, enormous, so
+            // there the shift is added to every channel instead -- a grey lift, not a division by
+            // almost zero. The two forms are CROSSFADED between a luma of 4 and 16 rather than
+            // switched at a threshold: a hard switch sends (4,0,0) to a dark grey but (5,0,0) to a
+            // fully saturated red, a visible contour in any smooth dark gradient.
+            val before = 0.2126f * r + 0.7152f * g + 0.0722f * b
+            val after = lumaLut[(before + 0.5f).toInt().coerceIn(0, 255)]
+            val shift = after - before
+            val t = ((before - LUMA_BLEND_START) / LUMA_BLEND_SPAN).coerceIn(0f, 1f)
+            val ratio = if (before > 0f) after / before else 0f
+            r = (r + shift + (r * ratio - r - shift) * t + 0.5f).toInt()
+            g = (g + shift + (g * ratio - g - shift) * t + 0.5f).toInt()
+            b = (b + shift + (b * ratio - b - shift) * t + 0.5f).toInt()
+            r = r.coerceIn(0, 255); g = g.coerceIn(0, 255); b = b.coerceIn(0, 255)
+        }
 
         if (flatten || weighted) {
             // Rec. 709 luma. The perceptual weighting matters: an unweighted average desaturates

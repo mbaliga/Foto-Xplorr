@@ -118,6 +118,7 @@ class RecognitionIndexer(
         val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
         var completed = 0
+        val recent = RecentIds()
         var failed = 0
         val batch = ArrayList<AssetRecognition>(BATCH_SIZE)
         // Progress is THROTTLED, not published per photo.
@@ -144,6 +145,7 @@ class RecognitionIndexer(
                         null
                     }
                 if (row != null) {
+                    recent.add(asset.id)
                     store.clearFailure(asset.id)
                     batch += row
                     if (batch.size >= BATCH_SIZE) {
@@ -161,6 +163,7 @@ class RecognitionIndexer(
                             completed = completed,
                             total = pending.size,
                             failed = failed,
+                            recentIds = recent.newestFirst(),
                         ),
                     )
                 }
@@ -376,7 +379,24 @@ class RecognitionIndexer(
             faceIndex = faceIndex,
             vector = vector,
             relativeArea = relativeArea,
+            box = faceBoxOf(box, bitmap.width, bitmap.height),
         )
+    }
+
+    /**
+     * The detector's pixel box as a [FaceBox]: normalised, clamped into the frame, and carrying the
+     * frame's shape. Null if the result cannot be cropped, so a bad box costs the card its picture
+     * and nothing else.
+     */
+    private fun faceBoxOf(box: Rect, frameWidth: Int, frameHeight: Int): FaceBox? {
+        if (frameWidth <= 0 || frameHeight <= 0) return null
+        return FaceBox(
+            left = (box.left.toFloat() / frameWidth).coerceIn(0f, 1f),
+            top = (box.top.toFloat() / frameHeight).coerceIn(0f, 1f),
+            right = (box.right.toFloat() / frameWidth).coerceIn(0f, 1f),
+            bottom = (box.bottom.toFloat() / frameHeight).coerceIn(0f, 1f),
+            frameAspect = frameWidth.toFloat() / frameHeight,
+        ).takeIf { it.isUsable }
     }
 
     /**

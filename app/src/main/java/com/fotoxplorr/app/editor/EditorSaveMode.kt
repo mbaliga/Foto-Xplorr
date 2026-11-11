@@ -1,5 +1,7 @@
 package com.fotoxplorr.app.editor
 
+import com.fotoxplorr.app.ui.HelpCopy
+
 /**
  * What the editor's Save does.
  *
@@ -22,7 +24,7 @@ enum class EditorSaveMode(val label: String, val description: String) {
     /** Write a new file beside the original, which is never touched. */
     COPY(
         "Save a copy",
-        "A new photo beside the original. Your original is never touched.",
+        HelpCopy.Caption.SAVE_COPY,
     ),
 
     /**
@@ -37,6 +39,6 @@ enum class EditorSaveMode(val label: String, val description: String) {
      */
     OVERWRITE(
         "Replace the original",
-        "The edit takes the place of the photo. The original cannot be recovered.",
+        HelpCopy.Caption.SAVE_REPLACE,
     ),
 }

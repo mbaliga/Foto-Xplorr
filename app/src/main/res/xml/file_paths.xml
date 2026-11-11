@@ -29,4 +29,11 @@
     <cache-path
         name="moments_export"
         path="moments-export/" />
+    <!--
+      The palette builder's swatch cards (PNG). See AndroidPaletteShare.CARD_DIRECTORY. Its own
+      directory, for the reason given above for lift_stickers: never wiped by another share.
+    -->
+    <cache-path
+        name="palette_cards"
+        path="palette-cards/" />
 </paths>

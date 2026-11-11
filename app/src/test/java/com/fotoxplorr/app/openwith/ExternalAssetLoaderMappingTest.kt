@@ -62,15 +62,4 @@ class ExternalAssetLoaderMappingTest {
         assertEquals("video/*", asset.mimeType)
         assertTrue(asset.isExternal)
     }
-
-    @Test
-    fun `an external audio asset uses its display name as the title`() {
-        val asset = externalAudioAsset(
-            "content://media/3",
-            ExternalMediaMetadata(displayName = "voice-memo.m4a", durationMillis = 5_000),
-        )
-        assertEquals("voice-memo.m4a", asset.title)
-        assertEquals(5_000L, asset.durationMillis)
-        assertTrue(asset.id.value < 0)
-    }
 }

@@ -31,6 +31,12 @@ data class BackgroundActivity(
      * exists for exactly that.
      */
     val onCancel: (() -> Unit)? = null,
+    /**
+     * The photos this job is working on, newest first, already limited to what may be shown (the
+     * browsable list: never a protected photo). Empty when the job has none or the host does not
+     * know them; the hero then draws a neutral stack silhouette. See [PhotoStack].
+     */
+    val photos: List<com.fotoxplorr.app.media.MediaAsset> = emptyList(),
 ) {
     /** 0..1, or null when the total is not yet known and the bar should run indeterminate. */
     val fraction: Float?
@@ -68,6 +74,17 @@ enum class ActivityKind(val label: String, val accent: Color, val glyph: ImageVe
     COPYING("Copying", Color(0xFFFFA100), ActivityGlyphs.Copy),
     BACKING_UP("Backing up", Color(0xFF4DFF00), ActivityGlyphs.Save),
     EXPORTING("Exporting", Color(0xFFFFE600), ActivityGlyphs.Export),
+
+    // A saved map area coming over the network. Pink-red is the one stretch of the wheel still
+    // empty (about 50 degrees from the magenta and 60 from the orange), and saturated so it cannot
+    // be read as the pale error salmon. The glyph is the generic sync mark: a download arrow would
+    // need a new vector in ActivityGlyphs.
+    DOWNLOADING_MAP("Downloading map", Color(0xFFFF4081), ActivityGlyphs.Scan),
+
+    // Copies going to the person's own cloud or folder (sync/). Violet is the stretch between the
+    // blue of Moving and the magenta of Recognising; the glyph is the export arrow, which reads as
+    // "sending out". The foreground-service mapping treats it as a data sync (JobForegroundService).
+    SYNCING("Syncing", Color(0xFF8C6BFF), ActivityGlyphs.Export),
 }
 
 /**

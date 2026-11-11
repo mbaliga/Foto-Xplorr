@@ -44,8 +44,14 @@ import kotlin.coroutines.EmptyCoroutineContext
  */
 internal object ViewerFixtures {
 
-    /** Make Coil decode on the calling thread. Idempotent: `setSafe` keeps the first factory. */
+    /**
+     * Make Coil decode on the calling thread. Resets whatever singleton is installed first: a bare `setSafe`
+     * keeps the first factory, so a test that had already touched Coil through
+     * [com.fotoxplorr.app.FotoXplorrApplication]'s own (asynchronous) loader left every later
+     * class in the same JVM with a loader that decodes off-thread and a capture with no pixels.
+     */
     fun installSynchronousImageLoader(context: Context) {
+        SingletonImageLoader.reset()
         SingletonImageLoader.setSafe {
             ImageLoader.Builder(context.applicationContext)
                 .coroutineContext(EmptyCoroutineContext)

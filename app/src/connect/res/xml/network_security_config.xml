@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Connect build's network security config: plain http is PERMITTED at the platform level, nothing more.
+
+  Why: cloud sync can send to a WebDAV server on the person's own network (a NAS at http://192.168.x.x),
+  and the AI settings already accept a local Ollama at http://127.0.0.1. Android (target 28+) refuses all
+  cleartext traffic unless the app says otherwise, so without this those options could never work.
+
+  What it does NOT do: it is not the policy. The policy is in the app's own code. Sync's HttpCaller
+  allows plain http only when the person switched "allow plain http" on AND the host is a local address
+  (HostRules); the AI client has its own https-or-local check. Anything else in this build that uses
+  http:// by mistake would now be sent in the clear instead of failing: Android's per-IP-range scoping
+  does not exist (domain-config takes host names, not address ranges), so this cannot be narrowed to
+  private networks here. The Offline build has no such file and no network permission at all.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

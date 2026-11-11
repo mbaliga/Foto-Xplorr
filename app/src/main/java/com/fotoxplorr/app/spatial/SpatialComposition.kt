@@ -4,7 +4,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import com.fotoxplorr.app.media.MediaAsset
 
 data class SpatialExperience(
-    /** What Places, the map, the compass and the 3D scenes actually draw -- always
+    /** What the Experimental section, the map, the compass and the 3D scenes actually draw -- always
      *  browsable-filtered (`browsableAssets`). Never fed to an indexer: see [indexInput]. */
     val assets: List<MediaAsset>,
     /** Every asset an indexer reachable from this experience (geo, similarity) should cover,

@@ -8,9 +8,26 @@ References: the owner's screenshots `5.png` (viewer + filmstrip) and `6.png` (de
 This file records every judgment call, every reversal of a previously documented decision, what
 could not be matched and why. The master progress row is the owner's to add at merge.
 
+**Revised 21 Oct 2026 (owner-feedback batch 1).** Three things described below changed after the
+owner's later reports: the filmstrip no longer disappears over a video (section D), the photo's
+flight into the map pin is a separate overlay rather than a shrink inside the plate (section C), and
+the no-location plate is a calm graticule with a ghost pin rather than plain background (section C).
+The original text is kept where it records a decision and marked **[superseded]** where the code no
+longer does it; "Revisions in batch 1" at the end says what replaced it and why.
+
+**Revised again 21 Oct 2026 (batch 2).** The viewer's rooms moved: section A's documented deviation
+is retired (one geography, with actions at the bottom and view options on the right), and the chrome
+row gained a favourite heart and a transparency button while the slideshow gained a bar. "Revisions in
+batch 2" at the end says what changed.
+
 ## What changed, surface by surface
 
 ### A. Details is the pull-DOWN room (a documented deviation from the app's geography)
+
+**[Superseded 21 Oct 2026, batch 2: the deviation is retired. The viewer now has the gallery's
+geography (details top, actions bottom, view options right); the viewer's old "settings" room is its
+view-options room and the actions room moved from the right edge to the bottom. Everything below
+about the *details* room being the top room still holds. See "Revisions in batch 2".]**
 
 `ViewerScreen`'s rooms are now `top = PhotoDetailRoom` (reveal = `shell.vProgress`, POSITIVE, which
 is `SpatialMotion`'s sign for a TOP room) and `bottom = ViewerSettingsRoom`. The pinch shortcut
@@ -79,7 +96,8 @@ tile with a 2 dp white border, 8 dp corners and a 14 x 7 pointer, the GROUP cent
 (measured: the reference centres tile + pointer, not the pointer's tip). The pin is shared with both
 expanded maps so the tile a map highlights is the tile the plate flew the photo into.
 
-The flight: `PlaceMorph.heroScale` starts the photo at 92% of the plate's width (4.6x the pin on a
+**[Superseded 21 Oct 2026: this in-plate flight is now only the fallback; see "Revisions in batch
+1", B.]** The flight: `PlaceMorph.heroScale` starts the photo at 92% of the plate's width (4.6x the pin on a
 400 dp plate) and smoothsteps it to 1x by 85% reveal; the white border fades in with the plate;
 the pointer appears only in the last stretch (`pointerAlpha`, from 1.25x down to 1x) because a
 pointer hanging mid-photo read as a stray mark in the mid-flight render. The room's text slides up
@@ -95,7 +113,8 @@ fades it in over 420 ms and caches it per photo (`PlateMapSnapshots`, LRU 8, key
 verified against the coordinate). The offline flavour's `PlateMapBackdrop` draws nothing: the
 graticule look, no network -- the `PhotoMapEntry` seam again, one call, two source sets.
 
-**No location** draws the plate's space as plain background with the one explanatory sentence
+**[Superseded 21 Oct 2026: the owner found this plate "weird, and not comforting at all"; see
+"Revisions in batch 1", C.]** **No location** draws the plate's space as plain background with the one explanatory sentence
 (owner's words); the picker still appears when a location may be placed by hand; a failed EXIF
 read still refuses the picker (P0-02).
 
@@ -119,6 +138,9 @@ The connect snapshot and the connect expanded map are therefore compiled and rev
 rendered: they need a device.
 
 ### D. The filmstrip drives the photo live, and bulges while dragged
+
+*(Revised 21 Oct 2026: the strip is also drawn over a video. It used to be hidden for a video; see
+"Revisions in batch 1", A.)*
 
 `FilmstripScrubber` rests at the reference's geometry (`FilmstripGeometry`: 53 x 58 dp thumbnails,
 1 dp gaps, a 74 dp band = 58 + 16 under them, the current photo centred, NO frame, NO dimming, NO
@@ -211,11 +233,18 @@ this state; the owner's words were "bulge up as I swipe through it".
 ### `viewer-4-details-mid.png`
 
 Reveal 0.5: the photo at ~2.8x its pin, border at 42%, no pointer yet, the room's text at ~2%
-alpha and 17 dp below its resting place. No reference frame exists for mid-flight.
+alpha and 17 dp below its resting place. No reference frame exists for mid-flight. (Since 21 Oct 2026
+this is the *fallback* path: the room is rendered with `flightActive` off, as it is for a zoomed or
+turned photo or a pin scrolled out of reach. In the shipped flow the overlay flier does this work;
+its frames are probed by `PhotoToPinFlightTest` into `app/build/renders/flight-probe-*.png`.)
 
 ### `viewer-5-details-no-location.png`
 
-The plate's space is background with the sentence; everything else as in frame 3.
+**[Superseded 21 Oct 2026.]** The plate's space was background with the sentence; everything else
+as in frame 3. The room now draws `PlaceUnknownPlate` there (a still graticule, a dimmed ghost pin,
+"No location yet" and the sentence), so this render changed with the code. No reference frame exists
+for this state, and it has not been compared against anything; `PlaceUnknownPlateTest` also writes
+`app/build/renders/place-unknown-add.png` and `place-picker-empty.png`.
 
 ### `viewer-6-minimap.png`
 
@@ -237,7 +266,15 @@ the stamp map in focus mode with 2,000 dots and a focus the index does not know)
 whose dispatchers are the caller's), which is what puts real pixels in these renders where earlier
 render tests had empty tiles. The fixtures are synthetic portraits; the repo carries no photos.
 
-Test counts: 912 offline unit tests before; 960 per flavour after (every new test runs under both
+Batch 1 (21 Oct 2026) added `ViewerChromePolicyTest`, `ViewerIntegrationTest` (filmstrip over a
+video, scrubbing across videos, the lift row and its withdrawn rooms, the flier at every state),
+`PhotoToPinFlightTest`, `PlaceFlightGeometryTest`, `PlaceUnknownPlateTest`, `LocationPickerTest`, and
+extended `PlaceMorphTest`. The three shared files (`ViewerEdgeCaseTest`, `ViewerRenderTest`, `ViewerFixtures`) were
+deliberately not appended to (their last edit predates the batch); the integration unit reported
+`ViewerEdgeCaseTest` and `ViewerRenderTest` passing unchanged, including the existing video test,
+now under autoplay-on and chrome-up-on-open.
+
+Test counts from the original round: 912 offline unit tests before; 960 per flavour after (every new test runs under both
 flavours' test tasks; the expand/collapse test is skipped under connect by assumption, so connect
 reports 1 skipped). `./scripts/verify.sh` green on both flavours: tests, lint, assemble, and the
 three offline gates.
@@ -246,4 +283,171 @@ three offline gates.
 
 - `shared-libraries` (cell-shell) is untouched; the shell's API was used as is.
 - No model-identifier text in code, comments or docs.
-- `MASTER-PROGRESS.md` is deliberately not edited (the owner adds the row at merge).
+- `MASTER-PROGRESS.md` is deliberately not edited (the owner adds the row at merge). *(The batch 1
+  section of 21 Oct 2026 was added to it separately.)*
+
+## Revisions in batch 1 (21 Oct 2026)
+
+The owner's later reports (#28 the filmstrip over a video, #19 the transition to the map and the
+unknown-location plate) reversed or replaced parts of the round above. Nothing here has run on a
+device; `docs/device-test/batch-1-checklist.md` lists what only a phone can settle, and
+`docs/TRAPS.md` #39 to #41 record the lessons.
+
+### A. The filmstrip stays up over a video (owner #28)
+
+Before: the strip was drawn only under `!asset.isVideo`. Because it drives the viewer live, scrubbing
+onto a video removed it from under the finger, cancelled the drag, and put the video's transport in
+its place. Now `ViewerChromePolicy.filmstripShown` takes no asset (chrome up, not in picture-in-
+picture, the preference, a roll larger than one, not lifting), so the strip is identical for a photo
+and a video, and its geometry and bulge (section D above) are unchanged.
+
+- The video transport lifts by `FilmstripGeometry.REST_BAND_DP` (74 dp) when the strip is shown
+  (`bottomInset`). The 116 dp bulge is *not* reserved: while the strip is touched the transport dims
+  and the video pauses, so the taller band is allowed to cover it. On a short landscape window
+  (about 360 dp tall) the second transport row (speed, subtitles, audio, A-B loop, PiP) folds behind a
+  "More controls" toggle once the fixed chrome would exceed 40% of the height
+  (`shouldCollapseSecondRow`); it only engages when there is an inset, so default usage is unchanged.
+- Touching the strip pauses a playing video; the next one does not start until the strip settles.
+  The player is not even built until the video has been on screen 250 ms without a finger on the
+  strip, so a scrub past several videos decodes nothing.
+- The chrome (position chip, transport, strip) is up when the viewer opens on a video, and the first
+  time a video is reached when it opened on a photo; after that the person's tap decides, and paging
+  to a second video after hiding the chrome keeps it hidden. (Owner decision: a video opened into a
+  bare black screen with no visible way to start it is what read as "Fotoz is not playing videos".)
+- **Deviation.** The brief said to use the filmstrip's flag for the position chip too. Taken literally
+  that hides the chip whenever the filmstrip *preference* is off, so the chip uses the shared
+  `chromeShown` rule (chrome up, not in picture-in-picture, not lifting) and the strip adds the
+  preference and the roll size. Both give way to the lift editor.
+- Neither chip nor strip is drawn inside the picture-in-picture window.
+
+### B. The photo shrinks into the map pin (owner #19)
+
+Before: the "flight" was a second copy of the photo shrinking *inside* the plate, timed to a window of
+the drag in which the room's slide (1:1 from above) had the plate still off screen, so it played
+where nobody could see. The owner: *"not a pane tilt, rather a shrink-to-appear-on-the-map effect."*
+
+Now `PhotoToPinFlight` is one copy of the photo drawn as an overlay above the shell. It starts on the
+parked card at `v = 0`, shrinks and travels over the whole pull (`PlaceMorph.flightT`, smoothstep)
+and lands on the pin tile's rectangle, which the room reports once and the overlay then derives
+analytically for every `v`. It scales uniformly and narrows a crop window to the pin's square rather
+than squashing the photo. At `v = 0.96` the room's real pin, already opaque underneath, is revealed
+as the flier fades (opaque under fading, not a cross-fade). The card parks with a flat slide while the
+top room is pulled (`ParkStyle` chosen app-side, TRAPS #41), because the flier follows a rectangle.
+
+- **When it does not fly.** A zoomed or turned photo has no honest resting rectangle to lift off from
+  (`photoAtRest` false), so the room plays its own in-plate shrink as before. A pin scrolled out of
+  reach (`PlaceMorph.canFly` false) fades in place. For a video the flier draws the poster, never
+  the live player surface.
+- **Privacy kept.** The overlay draws only the photo. No tile is fetched or pre-warmed, and the
+  connect flavour's single snapshot still waits for the room to settle (160 ms).
+- **Deviations from the plan.** The flight runs over the whole pull rather than a late window
+  computed from the geometry, because as its own overlay the shrink is visible from the first pixel
+  and a late start would have sent the flier off the bottom with the parked card (the flier stays on
+  screen at every `v`, tested). The start rectangle is `PlaceMorph.fitRect` over the *stored*
+  dimensions, the same assumption the minimap and Live Text make; an EXIF-rotated photo whose stored
+  size is the un-rotated one would start from a rectangle of the wrong shape (a device check).
+- **Not matched.** No reference frame exists for any state of the flight; it is judged against the
+  owner's words only.
+
+### C. The unknown-location plate (owner #19, second half)
+
+Before: plain background and a sentence, and (in the picker) a spinning world the owner had asked for
+on 2026-08-18. The owner on the result: *"weird, and not comforting at all."* The spin is removed for
+good (its KDoc says so).
+
+Now `PlaceUnknownPlate` is a still, low-contrast graticule at a neutral coordinate (it carries no
+information, so there is nothing to get wrong), a dimmed ghost pin (a 35% dark overlay with no pointer
+input, so the flier and the room's pin can be identical at hand-off), the words "No location yet" and
+the one explanatory sentence, and an "Add a place" target only where a place may be set by hand. The
+flier lands dimmed in that same state. It has to look right on the graticule alone because the offline
+flavour never has a map behind it.
+
+- **P0-02 still holds**, now tested at room level: a photo whose location could not be *read* never
+  offers "Add a place" or the picker.
+- **A dead-UI gap closed.** After a hand-placed location the picker used to be unreachable (the
+  drawable branch won), so "Remove this location" and "Also write into the photo file" could not be
+  reached. The picker now stays up while editing and a hand-placed plate shows "Placed by you · Change".
+- **Picker fixes found on the way.** The picker used to draw a pin at 0N 0E, was unclipped, and was
+  1.6:1 inside a 1:1 room; it now draws a pin only for a real location, is clipped, and the pin drags
+  only if the touch starts within 36 dp of it (otherwise a drag is left to scroll the room). Typing
+  "17." was rewritten to "17.0" under the caret, and a single typed coordinate produced a (lat, 0)
+  location; both fixed.
+
+
+## Revisions in batch 2 (21 Oct 2026)
+
+Nothing here has run on a device; `docs/device-test/batch-2-checklist.md` lists what only a phone can
+settle, and `docs/TRAPS.md` #63 records the geography as a rule.
+
+### A. The deviation in section A is gone: one geography (owner #26)
+
+Before: details top, actions on the right, settings at the bottom in the viewer, against the gallery's
+settings on top, actions on the right and details at the bottom. The owner's answer: left navigation,
+top details, bottom actions, right view options, everywhere. `ViewerScreen` now builds its rooms with
+`roomSlots(details = PhotoDetailRoom, actions = ViewerActionsRoom, viewOptions = ViewerSettingsRoom)`
+and the viewer has no left room. The pinch shortcuts follow: pinch in opens the details (top), pinch
+out opens the actions (bottom). `ParkStyle` (TRAPS #41) is unchanged: `SLIDE` while the top room is
+pulled, `SWIVEL` otherwise, which is the bottom actions room's case too.
+
+- **The actions room is two-stage.** A short pull up from the bottom stops on a strip of quick actions
+  (Favourite, Share, Edit, Trash; fewer for an externally opened photo or below API 30); a longer one
+  shows every action. The strip is the head of the room, under the shell's 72 dp band.
+- **The bottom pull zone is lifted above the filmstrip (74 dp) and, for a video with the chrome up, the
+  transport (96 dp; 50 when its second row is folded)**, via the shell's `bottomReserve`, so a
+  vertical-first drag that starts on the scrubber scrubs and does not open the room. The pull zone is
+  the 56 dp band above the navigation bar. Pulling up from ON the filmstrip or transport does not open
+  the actions.
+- **The view-options room** keeps the old settings room's content (filmstrip, blur, keep awake, the
+  slideshow's seconds and shuffle, loop animations, autoplay, pinch panels) and adds "Transparent
+  photos". Its GESTURES note now reads, in effect, *drag the photo down for its details, up from the
+  bottom for what you can do with it, in from the right for these view options*; the lift hints name
+  no edge.
+- The actions room's rows are unchanged and still only the icon is clickable (the known defect);
+  the slideshow row now reads "Stop slideshow", since pause and resume live in the bar.
+
+### B. The favourite heart in the chrome row (owner #18)
+
+The chrome row is Close, the position pill, the heart. The heart is at least 48 dp, filled when the
+photo is a favourite and outlined when not (`Outlined.Favorite` against `FavoriteBorder`: the design
+note assumed these were the same hollow heart, and a render showed they are not), with a small pop on
+turning on and a TalkBack state description. It is drawn only while the chrome is, and only for a photo
+the library holds (`ViewerChromePolicy.favouriteShown`: `catalogueActions` and not `isExternal`); it
+works on videos. Not matched: no reference frame exists for it. Check that it does not collide with
+the video "Resume from" chip, which now sits beneath the chrome row.
+
+### C. The slideshow bar (owner #16)
+
+Previous, play or pause, next, on a black bar in the shape of the gallery's selection toolbar
+(`SelectionToolbarShape`, here a taller `SelectionToolbarTallShape` that keeps the same coves and
+lengthens the straight sides by the status-bar inset, so the bar is flush to the top edge and its
+glyphs sit below the status icons). Targets are 48 dp (the toolbar's pitch is 46). The chip row drops
+by the bar's height while it is up (`chipRowDropDp`) so they stack. Pause is real (a paused flag the
+countdown honours); the chrome folds away after three seconds of a running slideshow and comes back on
+a tap; neither happens while paused or over a video, whose transport and the bar stay up. This is the
+least certain item of the batch: the cove against a real status bar, the stacked height on a 360 dp
+phone and in landscape, and the light theme's status icons over black are all unverified on a device.
+
+### D. A backdrop behind transparent photos (owner #17)
+
+`TransparencyBackdrop` is the first child of the zoom layer, so it pans, zooms and turns with the
+picture and fills the picture's own rectangle (an SVG's comes from its decoded size). Choices: the grid
+(default), white, black (`TransparencyBackground`, persisted in `GalleryPreferences`, read by both
+activities). The chrome swatch button appears only while the current photo declares transparency
+(`AlphaSniffer` on the first 64 KiB, read off the main thread and cached per photo and modification
+time; an unknown answer is opaque), and the choice is also a row in the view options. Not drawn behind
+thumbnails or the shrink-to-map flier. A file that declares alpha but is opaque shows the button and
+no visible change.
+
+### Tests added in batch 2
+
+New files: `ViewerRoomGeographyTest` (which room each edge opens, the pinch shortcuts, the captions),
+`ViewerActionsRoomPeekTest`, `ViewerBottomReserveTest` and `ViewerBottomReserveFoldedTest` (the quick
+strip and the pull zone above the filmstrip and transport), `ViewerHeartTest`,
+`ViewerTransparencyPolicyTest`, `TransparencyBackdropTest` (the backdrop, rendered in each mode),
+`BitmapDecodingAlphaTest` (the `ImageDecoder` path keeps alpha), `ViewerSettingsRoomTransparencyTest`,
+`GalleryPreferencesTransparencyBackgroundTest`, `ViewerSlideshowPolicyTest`, `ViewerSlideshowBarTest`,
+`SlideshowBarRenderTest` (frames under `app/build/renders/`) and `SlideshowPausedStateTest`.
+Extended: `ViewerChromePolicyTest`, `ViewerIntegrationTest`. The render baselines are untracked build
+output, regenerated on each run; the shared `ViewerEdgeCaseTest`, `ViewerRenderTest` and
+`ViewerFixtures` were not edited. The BitmapFactory (API 26-27) alpha path is not tested: it cannot
+pass until the `decodeUpright` defect in TRAPS #34 is fixed.

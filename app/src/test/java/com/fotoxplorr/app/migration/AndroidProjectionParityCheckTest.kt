@@ -1,6 +1,9 @@
 package com.fotoxplorr.app.migration
 
+import android.content.SharedPreferences
 import android.database.sqlite.SQLiteDatabase
+import android.util.Base64
+import com.fotoxplorr.app.backup.ImportMode
 import com.fotoxplorr.app.favorites.FavoriteStore
 import com.fotoxplorr.app.formats.AnimationIndex
 import com.fotoxplorr.app.media.MediaAsset
@@ -82,11 +85,20 @@ class AndroidProjectionParityCheckTest {
         FavoriteStore(context).setFavorite(setOf(MediaId(1), MediaId(2)), true)
         SensitiveStore(context).setSensitive(setOf(MediaId(6)), true)
         // LibraryStore is a process-wide singleton that can outlive a Robolectric test, so its
-        // state is replaced wholesale. importJson is also the one real write path that produces
-        // the "auto-tag member not in its tag" anomaly (5 under sunset) MigrationToV2 links anyway.
-        LibraryStore.get(context).importJson(
-            JSONObject("""{"schema":1,"tags":{"trip":[1],"sunset":[2]},"autoTags":{"sunset":[2,5]},"archivedIds":[7]}"""),
+        // state is replaced wholesale (REPLACE). The import no longer produces the "auto-tag member
+        // not in its tag" anomaly (a merge drops it), but libraries written by older builds still
+        // carry it and MigrationToV2 links it anyway, so 5 under sunset is written to the
+        // preferences the way those builds left it, and a no-op prune makes the store re-read them.
+        val store = LibraryStore.get(context)
+        store.importJson(
+            JSONObject("""{"schema":1,"tags":{"trip":[1],"sunset":[2]},"autoTags":{"sunset":[2]},"archivedIds":[7]}"""),
+            ImportMode.REPLACE,
         ).getOrThrow()
+        val strayKey = "auto_tag_media:" +
+            Base64.encodeToString("sunset".toByteArray(Charsets.UTF_8), Base64.NO_WRAP or Base64.URL_SAFE)
+        storePreferences(store).edit()
+            .putStringSet(strayKey, setOf("2", "5")).commit()
+        store.removeMissingMedia(library.mapTo(linkedSetOf()) { it.id })
         assertTrue(PrivateFolderStore(context).protect(vaultKey, "secret-pw".toCharArray()).isSuccess)
         RecognitionStore(context).upsert(
             listOf(
@@ -114,7 +126,7 @@ class AndroidProjectionParityCheckTest {
         val new = check.newFingerprints()
 
         assertEquals(old, new)
-        assertEquals(26 * 2, old.size)
+        assertEquals(25 * 2, old.size)
         assertTrue(old.keys.containsAll(listOf("destination:PHOTOS", "smart:UNTAGGED", "sort:SIZE", "timeline:stops")))
         // The fixture exercises what it claims to. The locked view hides asset 2, and FAVORITES
         // counts 4, the MediaStore-only favourite.
@@ -153,6 +165,13 @@ class AndroidProjectionParityCheckTest {
     }
 
     // ---- fixture helpers -------------------------------------------------------------------
+
+    /** The singleton's own preferences: it can predate this test's Robolectric application. */
+    private fun storePreferences(store: LibraryStore): SharedPreferences {
+        val field = LibraryStore::class.java.getDeclaredField("preferences")
+        field.isAccessible = true
+        return field.get(store) as SharedPreferences
+    }
 
     private suspend fun mismatches(check: AndroidProjectionParityCheck): Set<String> {
         val old = check.oldFingerprints()

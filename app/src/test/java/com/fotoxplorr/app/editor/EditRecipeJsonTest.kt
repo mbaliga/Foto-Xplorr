@@ -55,6 +55,37 @@ class EditRecipeJsonTest {
     }
 
     @Test
+    fun `a luma curve round-trips`() {
+        val recipe = EditRecipe(
+            adjustments = Adjustments(
+                lumaCurve = ToneCurve(listOf(CurvePoint(0f, 0.05f), CurvePoint(0.5f, 0.62f), CurvePoint(1f, 1f))),
+                redCurve = CurvePreset.SOFT_CONTRAST.curve,
+            ),
+        )
+        val back = EditRecipe.fromJson(parseJson(recipe.toJson().stringify())!!)
+        assertEquals(recipe, back)
+        assertEquals(recipe.adjustments.lumaCurve, back.adjustments.lumaCurve)
+    }
+
+    @Test
+    fun `a recipe saved before the luma curve existed loads it as identity`() {
+        val json = parseJson(
+            """{"adjustments":{"exposure":0.5,"rgbCurve":[{"x":0,"y":0},{"x":0.4,"y":0.6},{"x":1,"y":1}]}}""",
+        )!!
+        val adjustments = EditRecipe.fromJson(json).adjustments
+        assertEquals(ToneCurve.IDENTITY, adjustments.lumaCurve)
+        assertEquals(3, adjustments.rgbCurve.points.size)
+    }
+
+    @Test
+    fun `garbage in the luma curve falls back to identity`() {
+        val adjustments = Adjustments.fromJson(parseJson("""{"lumaCurve":[{"x":0.3}]}""")!!)
+        assertEquals(ToneCurve.IDENTITY, adjustments.lumaCurve)
+        val notAnArray = Adjustments.fromJson(parseJson("""{"lumaCurve":"nope"}""")!!)
+        assertEquals(ToneCurve.IDENTITY, notAnArray.lumaCurve)
+    }
+
+    @Test
     fun `the JSON parser round-trips strings, numbers, arrays, booleans and null`() {
         val text = """{"a":1,"b":"two","c":[1,2,3],"d":true,"e":null,"f":-2.5}"""
         val parsed = parseJson(text)!!

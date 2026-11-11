@@ -4,27 +4,44 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.aarso.cellshell.WheelItem
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import kotlin.math.abs
 
 /**
  * The word rail on a real Compose runtime: every destination, the selection at either end of the
- * run, a selection change mid-flight, and the inputs that must not crash it. The fade curve is
- * [DestinationWordRailTest]'s; this is the composable built on it.
+ * run, a selection change mid-flight, the scrub (the emphasis follows the finger, the hovered word
+ * is committed after a pause, and lifting the finger only settles), the hamburger, and the inputs
+ * that must not crash it. The emphasis curve and the pure decisions are [DestinationWordRailTest]'s;
+ * this is the composable built on them, so "emphasised" here is "on the focus line": the curve is
+ * a pure function of the distance from it.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -36,9 +53,14 @@ class DestinationWordRailComposeTest {
 
     private val items = HyleDestination.entries.map { WheelItem(it.name, it.label) }
 
-    private class Host(initial: String) {
+    /**
+     * [follow] makes the host behave like GalleryScreen: a reported selection becomes the
+     * selection. The tests that only watch what the rail reports leave it off.
+     */
+    private class Host(initial: String, val follow: Boolean = false) {
         var selectedId by mutableStateOf(initial)
         val selections = mutableListOf<String>()
+        var reselects = 0
     }
 
     private fun mount(host: Host, items: List<WheelItem> = this.items) {
@@ -46,10 +68,42 @@ class DestinationWordRailComposeTest {
             DestinationRailPanel(
                 items = items,
                 selectedId = host.selectedId,
-                onSelect = { host.selections += it },
+                onSelect = {
+                    host.selections += it
+                    if (host.follow) host.selectedId = it
+                },
+                onReselect = { host.reselects++ },
                 onOpenSettings = {},
                 modifier = Modifier.fillMaxSize(),
             )
+        }
+    }
+
+    private fun pitchPx(): Float = with(compose.density) { RAIL_ROW_PITCH_SP.sp.toPx() }
+
+    private fun centreY(node: SemanticsNodeInteraction): Float {
+        val bounds = node.fetchSemanticsNode().boundsInRoot
+        return (bounds.top + bounds.bottom) / 2f
+    }
+
+    /** The wheel's focus line: its vertical centre. A word there is drawn at the full focus look. */
+    private fun focusLineY() = centreY(compose.onNodeWithTag(RAIL_WHEEL_TAG))
+
+    private fun wordY(destination: HyleDestination) = centreY(compose.onNodeWithText(destination.label))
+
+    /** How [destination]'s word is drawn right now: the curve read at its distance from the line. */
+    private fun emphasisOf(destination: HyleDestination) =
+        destinationRowEmphasis((wordY(destination) - focusLineY()) / pitchPx())
+
+    private fun advance(ms: Long) {
+        var left = ms
+        while (left > 0) {
+            val step = minOf(16L, left)
+            // Writes made by the test's own gestures are applied on the next frame; make that
+            // explicit so a gesture's state change is seen by this frame, not the one after.
+            Snapshot.sendApplyNotifications()
+            compose.mainClock.advanceTimeBy(step)
+            left -= step
         }
     }
 
@@ -73,9 +127,9 @@ class DestinationWordRailComposeTest {
 
     @Test
     fun `selection at the last row`() {
-        val host = Host(HyleDestination.AUDIO.name)
+        val host = Host(HyleDestination.PROTECTED.name)
         mount(host)
-        compose.onNodeWithText("Audio").assertIsSelected()
+        compose.onNodeWithText("Protected").assertIsSelected()
         HyleDestination.entries.forEach { compose.onNodeWithText(it.label).assertExists() }
     }
 
@@ -96,12 +150,217 @@ class DestinationWordRailComposeTest {
     }
 
     @Test
-    fun `a tap on another row selects it and the selected row is inert`() {
+    fun `a tap on another row selects it`() {
         val host = Host(HyleDestination.PHOTOS.name)
         mount(host)
         compose.onNodeWithText("Videos").performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(HyleDestination.VIDEOS.name), host.selections)
+            assertEquals(0, host.reselects)
+        }
+    }
+
+    @Test
+    fun `a tap on a row two rows out still selects it`() {
+        val host = Host(HyleDestination.PHOTOS.name)
+        mount(host)
+        compose.onNodeWithText("Favourites").performClick()
+        compose.runOnIdle { assertEquals(listOf(HyleDestination.FAVOURITES.name), host.selections) }
+    }
+
+    @Test
+    fun `a tap on a row that has faded out is ignored`() {
+        // Pets is four rows from Photos: not drawn (alpha 0), so a tap there is an accident.
+        val host = Host(HyleDestination.PHOTOS.name)
+        mount(host)
+        compose.onNodeWithText("Pets").performClick()
+        compose.runOnIdle {
+            assertEquals(emptyList<String>(), host.selections)
+            assertEquals(0, host.reselects)
+        }
+    }
+
+    @Test
+    fun `a faded row is still a destination for a screen reader`() {
+        // TalkBack keeps every row in the tree and its click action is not gated by the fade.
+        val host = Host(HyleDestination.PHOTOS.name)
+        mount(host)
+        compose.onNodeWithText("Pets").performSemanticsAction(SemanticsActions.OnClick)
+        compose.runOnIdle { assertEquals(listOf(HyleDestination.PETS.name), host.selections) }
+    }
+
+    @Test
+    fun `the light palette draws the same run`() {
+        val host = Host(HyleDestination.PHOTOS.name)
+        compose.setContent {
+            DestinationRailPanel(
+                items = items,
+                selectedId = host.selectedId,
+                onSelect = {},
+                onOpenSettings = {},
+                onClose = {},
+                palette = RailPalette.Light,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        compose.onNodeWithText("Photos").assertIsSelected()
+        compose.onNodeWithText("Settings").assertIsDisplayed()
+        compose.onNodeWithContentDescription(RailCopy.CLOSE_MENU).assertIsDisplayed()
+    }
+
+    @Test
+    fun `a tap on the selected row reselects instead of selecting`() {
+        // Release no longer closes the room, so this tap is how the user closes it.
+        val host = Host(HyleDestination.PHOTOS.name)
+        mount(host)
         compose.onNodeWithText("Photos").performClick()
-        compose.runOnIdle { assertEquals(listOf(HyleDestination.VIDEOS.name), host.selections) }
+        compose.runOnIdle {
+            assertEquals(emptyList<String>(), host.selections)
+            assertEquals(1, host.reselects)
+        }
+    }
+
+    @Test
+    fun `following a tap commits nothing but the tap`() {
+        // The tap's scroll animation passes through every row between; none of them may be read
+        // as a hover, or the debounce would commit one and undo the tap.
+        val host = Host(HyleDestination.PROTECTED.name, follow = true)
+        mount(host)
+        // Two rows out: still tappable (a row three or more out has faded and is ignored).
+        compose.mainClock.autoAdvance = false
+        advance(100)
+        compose.onNodeWithText("Favourites").performClick()
+        advance(1_500)
+        compose.runOnIdle { assertEquals(listOf(HyleDestination.FAVOURITES.name), host.selections) }
+        compose.onNodeWithText("Favourites").assertIsSelected()
+        assertEquals(focusLineY(), wordY(HyleDestination.FAVOURITES), 2f)
+    }
+
+    @Test
+    fun `the selected word sits on the focus line at rest`() {
+        val host = Host(HyleDestination.VIDEOS.name)
+        mount(host)
+        compose.mainClock.autoAdvance = false
+        advance(500)
+        assertEquals(focusLineY(), wordY(HyleDestination.VIDEOS), 2f)
+    }
+
+    @Test
+    fun `the emphasis follows the finger and the pane follows the emphasis`() {
+        val host = Host(HyleDestination.PHOTOS.name, follow = true)
+        mount(host)
+        compose.mainClock.autoAdvance = false
+        advance(100)
+        val pitch = pitchPx()
+
+        // Three rows up: Photos -> Experimental. Finger stays down.
+        compose.onRoot().performTouchInput {
+            down(center)
+            moveBy(Offset(0f, -3 * pitch))
+        }
+        // Still inside the debounce: the focus line has left Photos for the hovered word, so it
+        // is the one drawn large and white, but nothing has been committed yet.
+        advance(RAIL_COMMIT_DEBOUNCE_MS / 2)
+        compose.runOnIdle { assertEquals(emptyList<String>(), host.selections) }
+        val line = focusLineY()
+        assertTrue(abs(wordY(HyleDestination.PLACES) - line) < pitch / 2f)
+        val hovered = emphasisOf(HyleDestination.PLACES)
+        val left = emphasisOf(HyleDestination.PHOTOS)
+        assertTrue("the hovered word is the emphasised one", hovered.scale > left.scale && hovered.alpha > left.alpha)
+        // Three rows back it is past the fade: the rest size, and no longer drawn.
+        assertEquals("the word it left is at the rest size", destinationRowEmphasis(3f).scale, left.scale, 1e-4f)
+        assertEquals("and has faded out", 0f, left.alpha, 0f)
+
+        // After the pause the hovered word is committed, with the finger still down.
+        advance(RAIL_COMMIT_DEBOUNCE_MS * 3)
+        compose.runOnIdle { assertEquals(listOf(HyleDestination.PLACES.name), host.selections) }
+        compose.onNodeWithText("Experimental").assertIsSelected()
+        compose.onNodeWithText("Photos").assertIsNotSelected()
+        // The finger still holds the wheel (less the touch slop), so the word is the one ON the
+        // line, not yet settled exactly on it.
+        assertTrue(abs(wordY(HyleDestination.PLACES) - focusLineY()) < pitch / 2f)
+
+        // Lifting the finger only settles: no further selection, no reselect, word on the line.
+        compose.onRoot().performTouchInput { up() }
+        advance(1_500)
+        compose.runOnIdle {
+            assertEquals(listOf(HyleDestination.PLACES.name), host.selections)
+            assertEquals(0, host.reselects)
+        }
+        assertEquals(focusLineY(), wordY(HyleDestination.PLACES), 2f)
+    }
+
+    @Test
+    fun `rows passed without pausing are never committed`() {
+        val host = Host(HyleDestination.PETS.name, follow = true)
+        mount(host)
+        compose.mainClock.autoAdvance = false
+        advance(100)
+        val pitch = pitchPx()
+
+        compose.onRoot().performTouchInput { down(center) }
+        // Four rows, a row at a time, never resting on one for the debounce.
+        repeat(4) {
+            compose.onRoot().performTouchInput { moveBy(Offset(0f, -pitch)) }
+            advance(RAIL_COMMIT_DEBOUNCE_MS / 3)
+        }
+        compose.runOnIdle { assertEquals(emptyList<String>(), host.selections) }
+
+        advance(RAIL_COMMIT_DEBOUNCE_MS * 3)
+        compose.runOnIdle { assertEquals(listOf(HyleDestination.PHOTOS.name), host.selections) }
+
+        compose.onRoot().performTouchInput { up() }
+        advance(1_500)
+        compose.runOnIdle { assertEquals(listOf(HyleDestination.PHOTOS.name), host.selections) }
+    }
+
+    @Test
+    fun `a scrub brought back to the selected word commits nothing`() {
+        val host = Host(HyleDestination.PHOTOS.name, follow = true)
+        mount(host)
+        compose.mainClock.autoAdvance = false
+        advance(100)
+        val pitch = pitchPx()
+
+        compose.onRoot().performTouchInput {
+            down(center)
+            moveBy(Offset(0f, -2 * pitch))
+        }
+        advance(RAIL_COMMIT_DEBOUNCE_MS / 3)
+        compose.onRoot().performTouchInput { moveBy(Offset(0f, 2 * pitch)) }
+        advance(RAIL_COMMIT_DEBOUNCE_MS * 3)
+        compose.runOnIdle { assertEquals(emptyList<String>(), host.selections) }
+        compose.onRoot().performTouchInput { up() }
+        advance(1_500)
+        compose.runOnIdle { assertEquals(emptyList<String>(), host.selections) }
+        compose.onNodeWithText("Photos").assertIsSelected()
+        assertEquals(focusLineY(), wordY(HyleDestination.PHOTOS), 2f)
+    }
+
+    @Test
+    fun `a turn released before the pause still lands on one word and commits it once`() {
+        val host = Host(HyleDestination.PHOTOS.name, follow = true)
+        mount(host)
+        compose.mainClock.autoAdvance = false
+        advance(100)
+        val pitch = pitchPx()
+
+        compose.onRoot().performTouchInput {
+            down(center)
+            moveBy(Offset(0f, -pitch))
+        }
+        advance(RAIL_COMMIT_DEBOUNCE_MS / 4)
+        compose.onRoot().performTouchInput { up() }
+        advance(2_000)
+
+        compose.runOnIdle {
+            assertEquals(1, host.selections.size)
+            assertEquals(0, host.reselects)
+            assertEquals(host.selections.single(), host.selectedId)
+        }
+        val landed = HyleDestination.valueOf(host.selectedId)
+        compose.onNodeWithText(landed.label).assertIsSelected()
+        assertEquals(focusLineY(), wordY(landed), 2f)
     }
 
     @Test
@@ -110,16 +369,54 @@ class DestinationWordRailComposeTest {
         val host = Host(HyleDestination.PETS.name)
         mount(host)
         compose.mainClock.advanceTimeBy(100)
-        compose.runOnIdle { host.selectedId = HyleDestination.AUDIO.name }
-        // Frame by frame through the 320ms settle and the marker's 420ms travel, with a second
-        // change landing while the first is still in flight.
+        compose.runOnIdle { host.selectedId = HyleDestination.PROTECTED.name }
+        // Frame by frame through the 320ms settle, with a second change
+        // landing while the first is still in flight.
         repeat(12) { compose.mainClock.advanceTimeBy(16) }
         compose.runOnIdle { host.selectedId = HyleDestination.PETS.name }
         repeat(40) { compose.mainClock.advanceTimeBy(16) }
         compose.mainClock.advanceTimeBy(1_000)
         compose.onNodeWithText("Pets").assertIsSelected()
-        compose.onNodeWithText("Audio").assertIsNotSelected()
+        compose.onNodeWithText("Protected").assertIsNotSelected()
         HyleDestination.entries.forEach { compose.onNodeWithText(it.label).assertExists() }
         compose.onRoot().assertExists()
+        // The rail followed two outside changes and reported neither back.
+        compose.runOnIdle { assertEquals(emptyList<String>(), host.selections) }
+        assertEquals(focusLineY(), wordY(HyleDestination.PETS), 2f)
+    }
+
+    @Test
+    fun `the hamburger closes the room and nothing else`() {
+        val host = Host(HyleDestination.PHOTOS.name)
+        var closes = 0
+        compose.setContent {
+            DestinationRailPanel(
+                items = items,
+                selectedId = host.selectedId,
+                onSelect = { host.selections += it },
+                onReselect = { host.reselects++ },
+                onOpenSettings = {},
+                onClose = { closes++ },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        compose.onNodeWithContentDescription(RailCopy.CLOSE_MENU)
+            .assertIsDisplayed()
+            .assertWidthIsAtLeast(48.dp)
+            .assertHeightIsAtLeast(48.dp)
+            .performClick()
+        compose.runOnIdle {
+            assertEquals(1, closes)
+            assertEquals(emptyList<String>(), host.selections)
+            assertEquals(0, host.reselects)
+        }
+    }
+
+    @Test
+    fun `without a close action there is no hamburger`() {
+        // The pinned rail on a wide window is not a room, so it has nothing to close.
+        mount(Host(HyleDestination.PHOTOS.name))
+        compose.onNodeWithContentDescription(RailCopy.CLOSE_MENU).assertDoesNotExist()
+        compose.onNodeWithText("Photos").assertIsSelected()
     }
 }

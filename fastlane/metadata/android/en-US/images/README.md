@@ -14,9 +14,14 @@ Sizes and check commands: `Personal-Tracker/store/ASSET_SPECS.md`.
 1. The timeline grid, dense enough to show the column control matters.
 2. The photo editor mid-edit (curves or HSL open), with a real adjustment visible.
 3. The video editor's trim/export screen.
-4. The Audio destination and player.
-5. The full-screen viewer with EXIF/XMP details showing.
-6. The similarity map or offline compass, if screenshotting the `connect` build.
+4. The full-screen viewer with EXIF/XMP details showing (pull the photo down).
+5. The actions room pulled up a short way, so the quick-action strip shows over
+   the photo, or the destination rail open.
+6. A transparent sticker in the viewer with the background choice visible.
+7. The similarity map or offline compass, if screenshotting the `connect` build.
+
+The listing is for **Fotoz**. There is no Audio destination any more, so none of
+the screenshots should show one; if an old capture does, retake it.
 
 ## Use a prepared library, not your own
 

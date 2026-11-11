@@ -1,0 +1,7 @@
+Audio, background playback and audio tags are gone, with the audio permission.
+
+New: one grid you pinch from 1 to 6 columns to month stamps; a timeline you can turn off or put on any edge; a map toggle and month range; choose what a long press does; a viewer favourite heart, a slideshow bar, backgrounds for transparent photos, shorter help.
+
+Rooms: details top, actions bottom, view options right. Settings is a page.
+
+Replace original is safer. Hidden photos never open from other apps.

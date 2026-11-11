@@ -41,6 +41,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Path
+import androidx.compose.animation.core.snap
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -87,14 +91,23 @@ fun ActivityShade(
     val target = shadeHeight(state, activities.size)
     // The shell's own settle curve, respecified for Dp. SpatialMotion.settleSpec is typed to
     // Float; borrowing the FEEL means copying its duration and easing, not its instance.
+    val reduceMotion = rememberReduceMotion()
     val height by animateDpAsState(
         targetValue = target.dp,
-        animationSpec = tween(
-            durationMillis = SHADE_SETTLE_MILLIS,
-            easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f),
-        ),
+        animationSpec = if (reduceMotion) {
+            snap()
+        } else {
+            tween(
+                durationMillis = SHADE_SETTLE_MILLIS,
+                easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f),
+            )
+        },
         label = "shade-height",
     )
+    // The grid under an open shade is the sheet that slipped down: its top corners round as the
+    // shade opens (the same radius family as the parked card) and a soft shadow falls on it. The
+    // grid itself is never moved (see above); the corners are black fillets drawn over it.
+    val sheetCornerDp = SheetGeometry.shadeSheetCornerDp(height.value)
 
     Box(modifier.fillMaxSize()) {
         // Drawn FIRST and never moved. Everything above it in this Box covers it; nothing
@@ -129,7 +142,11 @@ fun ActivityShade(
                         )
                     }
                     .statusBarsPadding()
-                    .height(height),
+                    .height(height)
+                    .drawWithContent {
+                        drawContent()
+                        drawSheetEdge(sheetCornerDp.dp.toPx())
+                    },
             ) {
                 when (state) {
                     ShadeState.COLLAPSED -> CollapsedStrip(activities)
@@ -211,12 +228,13 @@ private fun KindGlyph(activity: BackgroundActivity) {
 /** One row per activity: glyph, name, and the count, exactly as the mockup draws it. */
 @Composable
 private fun ActivityRows(activities: List<BackgroundActivity>) {
+    val lift = LocalSheetLift.current
     activities.take(MAX_LISTED_ROWS).forEach { activity ->
         Row(
             Modifier
                 .fillMaxWidth()
                 .height(NOTIFICATION_ROW.dp)
-                .padding(horizontal = 14.dp),
+                .sheetInsets(lift, depthDp = 0f, baseDp = 14f),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SpinnerGlyph(activity)
@@ -254,6 +272,7 @@ private fun ActivityRows(activities: List<BackgroundActivity>) {
  */
 @Composable
 private fun HeroPanel(activity: BackgroundActivity) {
+    val lift = LocalSheetLift.current
     Column(Modifier.fillMaxWidth().height(EXPANDED_HERO.dp)) {
         Box(
             Modifier
@@ -266,40 +285,12 @@ private fun HeroPanel(activity: BackgroundActivity) {
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            // A stack of plates standing in for the mockup's stack of photographs: three
-            // rectangles, fanned. Geometry rather than an asset, same as the album stacks.
-            Box(Modifier.size(width = 132.dp, height = 108.dp), contentAlignment = Alignment.Center) {
-                // Drawn back to front, so the accented plate is the one the eye lands on. The two
-                // behind are OUTLINED rather than filled: at 18% white on a black ground they were
-                // invisible and the stack rendered as a single card, which is the whole point of
-                // the illustration lost.
-                listOf(14f, -8f, 0f).forEachIndexed { index, angle ->
-                    val front = index == 2
-                    Box(
-                        Modifier
-                            .size(width = 72.dp, height = 84.dp)
-                            .graphicsLayer { rotationZ = angle }
-                            .clip(RoundedCornerShape(8.dp))
-                            // Fixed on purpose (reference design): the back plate is the sampled
-                            // neutral, the kind colour is the only hue.
-                            .background(if (front) activity.kind.accent else Color(0xFF1C1C22))
-                            .then(
-                                if (front) {
-                                    Modifier
-                                } else {
-                                    Modifier.border(
-                                        1.dp,
-                                        Color.White.copy(alpha = 0.30f),
-                                        RoundedCornerShape(8.dp),
-                                    )
-                                },
-                            ),
-                    )
-                }
-            }
+            // The photos the job is working on, as a deck you can ruffle through. No photo yet
+            // (or a job that does not know its photos) draws the neutral silhouette.
+            PhotoStack(photos = activity.photos, seed = activity.id.hashCode().toLong())
         }
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 18.dp),
+            Modifier.fillMaxWidth().sheetInsets(lift, depthDp = 0f, baseDp = 18f),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -321,6 +312,37 @@ private fun HeroPanel(activity: BackgroundActivity) {
                 .height(TRACK_HEIGHT.dp),
         )
     }
+}
+
+/**
+ * Draws, just below this shade's bottom edge, what makes the grid read as a sheet that slipped
+ * down: black fillets that round its two top corners to [radiusPx], and a soft shadow across it.
+ * Nothing at radius 0, so the collapsed sliver and a shade at rest are drawn exactly as before.
+ */
+private fun DrawScope.drawSheetEdge(radiusPx: Float) {
+    if (radiusPx <= 0.5f) return
+    val y = size.height
+    val w = size.width
+    val left = Path().apply {
+        moveTo(0f, y)
+        lineTo(radiusPx, y)
+        arcTo(Rect(0f, y, 2 * radiusPx, y + 2 * radiusPx), 270f, -90f, false)
+        close()
+    }
+    val right = Path().apply {
+        moveTo(w, y)
+        lineTo(w - radiusPx, y)
+        arcTo(Rect(w - 2 * radiusPx, y, w, y + 2 * radiusPx), 270f, 90f, false)
+        close()
+    }
+    // Fixed on purpose: the shade's own ground is pure black.
+    drawRect(
+        Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent), startY = y, endY = y + 14.dp.toPx()),
+        topLeft = Offset(radiusPx, y),
+        size = Size(w - 2 * radiusPx, 14.dp.toPx()),
+    )
+    drawPath(left, Color.Black)
+    drawPath(right, Color.Black)
 }
 
 /** `4,822 of 12,366` — the count bold, the total muted, as one readout. */

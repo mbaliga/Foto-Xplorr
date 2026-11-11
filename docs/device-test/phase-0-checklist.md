@@ -118,42 +118,50 @@ did before this brief.
   Sandbox coverage: none of process death, a real 20k+ item MediaStore library, or real USB
   keyboard/hub attach events can be produced here.
 
-## P0-10 — Audio permission requested separately, only when needed
+## P0-10 — OBSOLETE: Audio permission requested separately (audio was removed)
 
-- [ ] Android 13+ → open Audio with no prior grant → "Allow access to audio" with a button, not the
-      empty "No audio files found" state, and no permission dialog until the button is tapped. Tap
-      it, grant → voice recordings, podcasts and music all appear, not just files tagged as music; a
-      stock ringtone or notification tone must NOT appear.
-- [ ] Deny instead → the same prompt reappears on returning to Audio, and the photo/video gallery is
-      completely unaffected (still shows whatever it already had permission to show).
-- [ ] On Android 12 and below, opening Audio for the first time → the library shows directly with no
-      separate prompt at all, since `READ_EXTERNAL_STORAGE` was already granted by the photo/video
-      flow.
+**Retired 21 Oct 2026 (batch 2).** Fotoz no longer has an Audio destination, library or player, and
+`READ_MEDIA_AUDIO` is not in the manifest, so the three checks that used to be here (the "Allow access
+to audio" prompt, deny and re-prompt, the pre-Android-13 path) have nothing to test. What replaces
+them is in `docs/device-test/batch-2-checklist.md` ("Audio is gone"). Do not tick the old boxes; they
+are kept out of this file on purpose.
 
-  Sandbox coverage: none of an actual `READ_MEDIA_AUDIO` grant dialog, a real device's mixed
-  ringtone/recording/music library, or the pre-13 code path (this sandbox's one cached Robolectric
-  framework jar is API 34 only) can be produced here.
+## P0-11 — Video conversion correctness (rewritten 21 Oct 2026 for the Media3 pipeline)
 
-## P0-11 — Video transcode correctness
+This section first described the hand-written `MediaCodec` pipeline (HDR refused up front, a "Not
+enough free space" check before progress, HE-AAC audio conversion). That pipeline is deleted
+(`docs/adr/ADR-008-video-transcode-pipeline.md`, revision 2) and so is audio conversion. The checks
+below are for what exists now: Media3 Transformer exports through `VideoExporter`, published to
+MediaStore with `IS_PENDING`. None of this has run on hardware.
 
-- [ ] Convert a portrait phone video to MP4 → the exported file plays upright, not sideways.
-- [ ] Convert a 3-minute 4K clip → completes without an OOM crash or a "not enough space" refusal on
-      a device with reasonable free space; filling the device's free space first (or a very
-      large/long source) should instead show "Not enough free space" BEFORE any progress UI
-      appears, not partway through.
-- [ ] Export at 1.5× speed with sound → the exported audio actually plays back faster and
-      higher-pitched, not silent, corrupted or a failed export.
-- [ ] Convert an HDR source (an HDR10 phone recording, or a downloaded HDR clip) → the app refuses
-      up front with "HDR video conversion isn't supported yet" rather than producing a washed-out or
-      clipped SDR file.
-- [ ] Convert an HE-AAC or parametric-stereo source's audio (uncommon on a phone recording, common
-      on some downloaded/transcoded web video) → the exported AAC audio is not garbled or the wrong
-      pitch.
+- [ ] Convert a portrait phone video to MP4 → the exported file plays upright, not sideways, in the
+      gallery and in another app.
+- [ ] Convert a 3-minute 4K clip → completes without an out-of-memory crash, with progress in the
+      activity strip, on a device with reasonable free space. (There is no up-front free-space
+      refusal any more; a full disk shows up as a failed export. See the next item.)
+- [ ] **Fill the device's storage** during a long export → the export fails with a message, and
+      afterwards there is **no partial file and no pending (`IS_PENDING`) MediaStore row** left in
+      Files or in another gallery. (The Robolectric test only proves the delete call after a mid-copy
+      read failure.)
+- [ ] A successful export **appears in the gallery** after it finishes (the `IS_PENDING` to 0
+      promotion is not unit-tested), in the right folder (`DCIM`/`Movies`/`Pictures` source keeps its
+      folder; a `Download` source lands in `Movies/Fotoz/`; a pre-rename `Movies/Foto Xplorr/` source
+      stays there) and with the source's date taken.
+- [ ] Cancel mid-export → nothing is left behind (no cache file the user can see, no row).
+- [ ] Export at 1.5x speed with sound → the audio plays back faster with its pitch preserved (Sonic),
+      not silent, garbled or a failed export; mute removes the audio track.
+- [ ] Convert an HDR source (an HDR10 or HLG phone recording) → it is **tone-mapped to SDR** (the
+      mode is always requested) and the result is LOOKED AT: not washed out, not clipped. On a device
+      that cannot tone-map, the export fails with "This device could not process this video (it may be
+      HDR content this device cannot tone-map)." rather than producing a wrong-looking file.
+- [ ] A source the device cannot decode, and a target codec the device cannot encode → the specific
+      messages ("This device cannot decode this video's format." / "...cannot encode the exported
+      video."), never a generic crash.
 
-  Sandbox coverage: none of these can be produced in this device-less sandbox (confirmed via `adb
-  devices`/no `emulator` package/no `androidTest` source set, per ADR-008's own standing caveat) —
-  every fix here is verified by unit-testing the pure logic pulled out of the real `MediaCodec`/
-  `MediaExtractor`/`MediaMuxer`/`EGL14` call sites, never by an actual transcode running end to end.
+  Sandbox coverage: the error wording, the HDR mode and the publish step's insert and cleanup are
+  pinned by `VideoExporterMessageTest` and `VideoExporterPublishTest`; the plan resolution by
+  `ResolvedExportPlanTest` and `VideoExportOptionsTest`. No transcode has run end to end in this
+  device-less sandbox (per ADR-008's standing caveat).
 
 ## P0-12 — Recognition: bound retries, stop the full reloads
 
@@ -200,21 +208,46 @@ No device-only concern identified for this item — the migration reads and writ
 `SharedPreferences` directly and is fully covered by `LegacyCatalogMigrationTest`, including a
 genuine second-process-start scenario.
 
-## P0-18 — "Open with" (`ACTION_VIEW`)
+## P0-18 — "Open with" (`ACTION_VIEW`), rewritten 21 Oct 2026
 
-- [ ] In the Files app, browse to a JPEG on external storage (e.g. a USB drive), tap it, and choose
-      "Open with Fotoz" from the system chooser — confirms the app is actually offered by the
-      OS, not just that its manifest declares an intent filter. The photo opens full-screen,
-      zooms/pans, Share and Open-with both work, and Edit/favourite/sensitive/trash/tags/caption/
-      location are all absent from the UI entirely, not merely disabled.
-- [ ] Open a photo that is ALREADY in the library from another app (a shared link, or "Open with" a
-      file the gallery already indexed) → it shows its real favourite/tag/caption state
-      immediately, proving the redirect-to-`FotoXplorrActivity` path actually re-selects the same
-      catalogued asset rather than opening a lookalike, uncatalogued duplicate of it.
+`ExternalViewerActivity` is the single VIEW target (`content://` only). `FotoXplorrActivity` receives
+EDIT (`image/*`) and SEND (`image/*`, `video/*`) only. The old `file://` and audio cases are gone.
 
-  Sandbox coverage: neither the OS's own real chooser UI, nor a genuine already-catalogued external
-  open (as opposed to this sandbox's unit test of the same `awaitLoaded()`/`LaunchedEffect(assets)`
-  redirect logic), can be produced here.
+- [ ] In the Files app, browse to a JPEG on external storage (e.g. a USB drive), tap it, and open it
+      with Fotoz from the system chooser. **Fotoz is listed once**, not twice. The photo opens
+      full-screen, zooms/pans, Share and Open-with both work, and the favourite heart,
+      tags/caption/location and the other library actions are absent from the UI entirely, not
+      merely disabled. A video opens the same way.
+- [ ] Open a photo that is ALREADY in the library from another app (the Files app, or the gallery's
+      own picker) → it opens in the full in-app viewer showing its real favourite/tag/caption state,
+      proving the redirect-to-`FotoXplorrActivity` path re-selects the same catalogued asset rather
+      than a lookalike, uncatalogued duplicate.
+- [ ] **A hidden photo is never opened from outside.** From the Files app or another app's picker, open
+      a photo in a locked folder (still locked), an archived photo, a trashed photo, and a sensitive
+      photo with "Hide sensitive" on → each shows the notice "That photo is hidden or locked in Fotoz,
+      so it was not opened." and the gallery; never the viewer. Unlock the folder in the app and repeat
+      → it now opens.
+- [ ] The same for a photo saved a moment ago into a locked folder (inside the ~0.8 s scan debounce).
+- [ ] A photo-picker Uri (pick through the system photo picker into a VIEW) opens as an external file,
+      not as the wrong library photo.
+- [ ] SEND a photo, and a video, to Fotoz (and a multi-select SEND) → it opens in the viewer as an
+      external asset (no tag/caption/location rows). SEND of a hidden catalogued photo shows the notice.
+      EDIT of an image from another app opens the editor.
+- [ ] The in-app "Open with" chooser does not list Fotoz itself.
+- [ ] Android 14 "selected photos" access: open a `content://media` photo you did not grant → it is
+      refused with "could not be checked against your library" rather than opened (a deliberate
+      trade; judge whether the notice is acceptable).
+- [ ] Hostile intent from `adb` (a custom Parcelable extra Fotoz cannot load, with and without
+      `EXTRA_OPEN_MEDIA_ID`), including relaunching the task from Recents → no crash; the intent is
+      treated as extra-less.
+- [ ] Process death: open a photo from an unlocked folder, background the app, `adb shell am kill
+      com.fotoxplorr.app`, return → the viewer and editor do NOT reopen on a locked photo; a normal
+      photo reopens with its saved run.
+
+  Sandbox coverage: the pure classification and lookups (`classifyIncomingIntent`,
+  `classifyMediaStoreUri`, `lookupOpenRequest`), the manifest routing
+  (`ExternalViewerActivityManifestTest`) and the guard branches are unit-tested; the OS's real chooser
+  and a genuine cross-app grant cannot be produced here.
 
 ## P0-20 (stretch) — Act as a photo picker
 

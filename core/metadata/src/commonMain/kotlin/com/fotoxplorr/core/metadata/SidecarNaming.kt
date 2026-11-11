@@ -49,4 +49,60 @@ object SidecarNaming {
      */
     fun candidateSidecarFileNames(originalFileName: String): List<String> =
         SidecarStyle.entries.map { sidecarFileName(originalFileName, it) }.distinct()
+
+    /**
+     * [candidateSidecarFileNames] with [preferred]'s name first: when BOTH styles exist beside one
+     * photo, the configured (written) style is the one this app keeps current, so it must win a read.
+     */
+    fun candidateSidecarFileNames(originalFileName: String, preferred: SidecarStyle): List<String> =
+        (listOf(sidecarFileName(originalFileName, preferred)) + candidateSidecarFileNames(originalFileName)).distinct()
+
+    /**
+     * [candidateSidecarFileNames] for a photo whose folder holds [siblingFileNames]. Lightroom's
+     * extension-less name is shared by every original with the same base name, and Lightroom
+     * writes it only for a RAW (it embeds into JPEG/TIFF/DNG): beside `IMG_1.CR2` + `IMG_1.JPG`,
+     * `IMG_1.xmp` belongs to the CR2. So for a non-RAW [originalFileName] ([isRaw] false) the
+     * extension-less name is dropped when [hasBaseNamePartner] finds another original with the
+     * same base name, unless the user picked [SidecarStyle.LIGHTROOM] (then sharing is their choice).
+     */
+    fun candidateSidecarFileNames(
+        originalFileName: String,
+        preferred: SidecarStyle,
+        siblingFileNames: Collection<String>,
+        isRaw: Boolean = !isRenderedFormat(originalFileName),
+    ): List<String> {
+        val all = candidateSidecarFileNames(originalFileName, preferred)
+        if (preferred == SidecarStyle.LIGHTROOM || isRaw) return all
+        val shared = sidecarFileName(originalFileName, SidecarStyle.LIGHTROOM)
+        if (shared == sidecarFileName(originalFileName, SidecarStyle.DARKTABLE)) return all
+        return if (hasBaseNamePartner(originalFileName, siblingFileNames)) all - shared else all
+    }
+
+    /**
+     * True for the rendered formats Lightroom embeds XMP into rather than writing a sidecar for
+     * (by extension, for callers that only have a name; the app passes its own RAW decision).
+     */
+    fun isRenderedFormat(fileName: String): Boolean =
+        '.' in fileName && fileName.substringAfterLast('.').lowercase() in RENDERED_EXTENSIONS
+
+    private val RENDERED_EXTENSIONS = setOf(
+        "jpg", "jpeg", "jpe", "jfif", "heic", "heif", "hif", "avif", "png", "webp", "jxl", "gif", "tif", "tiff", "bmp",
+    )
+
+    /**
+     * True when [siblingFileNames] holds another original (not a sidecar, not [originalFileName]
+     * itself) with [originalFileName]'s base name: `IMG_1.CR2` for `IMG_1.JPG`. Case-insensitive,
+     * since the storage that holds RAW+JPEG pairs (SD cards, exFAT) usually is.
+     */
+    fun hasBaseNamePartner(originalFileName: String, siblingFileNames: Collection<String>): Boolean {
+        if ('.' !in originalFileName) return false
+        val base = originalFileName.substringBeforeLast('.')
+        return siblingFileNames.any { name ->
+            '.' in name &&
+                !name.equals(originalFileName, ignoreCase = true) &&
+                !name.endsWith(".xmp", ignoreCase = true) &&
+                !name.endsWith(".tmp", ignoreCase = true) &&
+                name.substringBeforeLast('.').equals(base, ignoreCase = true)
+        }
+    }
 }

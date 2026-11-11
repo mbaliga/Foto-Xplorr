@@ -1,50 +1,43 @@
 package com.fotoxplorr.app.viewer
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.SelectAll
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.toSize
 import com.fotoxplorr.app.recognition.TextBlock
-import com.fotoxplorr.app.ui.HyleGrotesk
+import com.fotoxplorr.app.textselect.FrameMap
+import com.fotoxplorr.app.textselect.Pt
+import com.fotoxplorr.app.textselect.Quad
+import com.fotoxplorr.app.textselect.TextLayout
+import com.fotoxplorr.app.textselect.TextSelection
+import kotlin.math.roundToInt
 
 /**
- * Selecting text off a photograph.
+ * Selecting text off a photograph, the screen half: what the Select text mode draws over the photo
+ * and how a finger on it becomes a selection.
  *
- * The whole feature rests on a decision made earlier, when OCR results were first persisted: text
- * was stored as positioned blocks with boxes normalised to the image, not as one flat string. A
- * string would have made this impossible without re-scanning the entire library, because knowing
- * *that* a photo says "PLATFORM 9" tells you nothing about where to draw the selection.
- *
- * Nothing here runs OCR. The recognition pass already did it, in the background, offline; this
- * draws what it found and lets you take it.
+ * The model underneath is [com.fotoxplorr.app.textselect] (layout, hit-testing, strokes, lassos,
+ * text assembly), all of it pure; the layout comes from the stored whole-block boxes at once and
+ * from a word-level read of the viewed photo a moment later (see [TextSelectState]). Nothing here
+ * runs OCR.
  */
 
 /**
@@ -77,138 +70,180 @@ internal fun TextBlock.toScreenRect(imageRect: Rect): Rect = Rect(
     bottom = imageRect.top + bottom * imageRect.height,
 )
 
-/** Which block, if any, sits under a tap. Later blocks win, so small boxes over large ones work. */
-internal fun blockAt(blocks: List<TextBlock>, imageRect: Rect, point: Offset): Int? {
-    var found: Int? = null
-    blocks.forEachIndexed { index, block ->
-        if (block.toScreenRect(imageRect).contains(point)) found = index
-    }
-    return found
-}
+/** Id of the active overlay, for tests: present exactly while the mode is on. */
+internal const val TEXT_SELECT_OVERLAY_TAG = "textSelectOverlay"
 
 /**
- * The tappable text layer over a photo.
+ * The text layer over a photo, drawn and listened to only while Select text is [active].
  *
- * Placed INSIDE the viewer's own zoom/pan `graphicsLayer`, so the boxes track the image under
- * pinch and drag without this having to know anything about the current transform — the one
- * arrangement that cannot drift out of alignment as the gesture code changes.
+ * Renders NOTHING AT ALL when it is not active: no `Box`, no `pointerInput`, no semantics. That is
+ * the same rule [com.fotoxplorr.app.lift.LiftOverlay] follows and it is what removes the dead zone
+ * the old always-on layer made (TRAPS 50): a photo that is merely being looked at carries no
+ * invisible tap targets, so the viewer's tap-to-hide-chrome, double-tap zoom and long-press Lift all
+ * work on a photo with text. Before the mode there is also no faint box on any word; the outlines
+ * appear on entry.
  *
- * @param blocks positioned text from the recognition pass. Empty renders nothing at all, so a
- *   photo with no text carries no invisible tap targets that would eat the viewer's own gestures.
+ * Placed INSIDE the viewer's zoom/pan/rotate `graphicsLayer`, so the outlines track the image under
+ * pinch and rotation without this knowing the transform. The cost of that arrangement is that
+ * everything measured in pixels grows with the zoom, so strokes, hit slop and the finger radius are
+ * all divided by [scale] (see [TextSelectTouch]).
+ *
+ * Gestures: a tap selects the block under it (tap it again, or bare photo, to let go); a one-finger
+ * stroke selects the words it touched; a stroke that closes into a loop is a lasso. A second finger
+ * hands the touch to the viewer's pinch. See [detectTextSelectGestures] for what is and is not
+ * consumed.
+ *
+ * @param scale the viewer's current zoom, read live (each draw and each gesture), never captured.
  */
 @Composable
-fun LiveTextOverlay(
-    blocks: List<TextBlock>,
-    imageWidth: Int,
-    imageHeight: Int,
+internal fun LiveTextOverlay(
+    state: TextSelectState,
+    active: Boolean,
+    scale: () -> Float,
     modifier: Modifier = Modifier,
 ) {
-    if (blocks.isEmpty()) return
+    if (!active) return
 
-    var selected by remember(blocks) { mutableStateOf(emptySet<Int>()) }
-    var containerSize by remember { mutableStateOf(Size.Zero) }
-    val clipboard = LocalClipboardManager.current
-    // A selected text block is the accent role, so it follows the chosen accent; drawBehind is not
-    // composable, hence resolved here.
-    val selectionFill = MaterialTheme.colorScheme.primary.copy(alpha = SELECTION_ALPHA)
+    val currentScale by rememberUpdatedState(scale)
+    // The accent role follows the chosen accent; drawBehind is not composable, hence resolved here.
+    val accent = MaterialTheme.colorScheme.primary
+    val selectionFill = accent.copy(alpha = SELECTION_ALPHA)
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .pointerInput(blocks, imageWidth, imageHeight) {
-                containerSize = Size(size.width.toFloat(), size.height.toFloat())
-                detectTapGestures(
+            .testTag(TEXT_SELECT_OVERLAY_TAG)
+            // Drawing cannot be done with a screen reader; the toolbar's Select all and Copy are
+            // the way, and this says so instead of leaving a silent photo.
+            .semantics { contentDescription = TextSelectCopy.OVERLAY_DESCRIPTION }
+            .pointerInput(state) {
+                var mark: TextSelectState.Held? = null
+                fun touch() = TextSelectTouch(state.layout, size.toSize(), density, currentScale())
+                detectTextSelectGestures(
+                    scale = { currentScale() },
                     onTap = { point ->
-                        val rect = fittedImageRect(containerSize, imageWidth, imageHeight)
-                        val index = blockAt(blocks, rect, point)
-                        selected = when {
-                            // A tap on bare photo clears, which is what every text selection does
-                            // and what makes the layer feel like it is not in the way.
-                            index == null -> emptySet()
-                            index in selected -> selected - index
-                            else -> selected + index
-                        }
+                        val layout = state.layout
+                        val touch = touch()
+                        state.select(state.selection.tapBlock(layout, touch.frame(point), touch.tapSlop))
                     },
-                    onLongPress = { point ->
-                        // Long-press takes the whole photo's text: the common case is "give me
-                        // all of this", and hunting every block for it would be tedious.
-                        val rect = fittedImageRect(containerSize, imageWidth, imageHeight)
-                        if (blockAt(blocks, rect, point) != null) {
-                            selected = blocks.indices.toSet()
-                        }
+                    onStart = { mark = state.mark() },
+                    onMove = { path ->
+                        state.trail = path
+                        state.select(touch().drawn(state.layout, path))
+                    },
+                    onEnd = { path ->
+                        val drawn = touch().drawn(state.layout, path)
+                        // A stroke that touched no word leaves what was selected as it was.
+                        if (drawn.isEmpty) mark?.let(state::restore) else state.select(drawn)
+                        state.trail = emptyList()
+                        mark = null
+                    },
+                    onCancel = {
+                        mark?.let(state::restore)
+                        state.trail = emptyList()
+                        mark = null
                     },
                 )
             }
             .drawBehind {
-                containerSize = size
-                val rect = fittedImageRect(size, imageWidth, imageHeight)
-                blocks.forEachIndexed { index, block ->
-                    val box = block.toScreenRect(rect)
-                    val isSelected = index in selected
-                    drawRoundRect(
-                        color = if (isSelected) selectionFill else HINT_FILL,
-                        topLeft = Offset(box.left, box.top),
-                        size = Size(box.width, box.height),
-                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(
-                            BOX_RADIUS.dp.toPx(),
-                            BOX_RADIUS.dp.toPx(),
-                        ),
-                    )
+                val layout = state.layout
+                val map = frameMapFor(layout, size)
+                val unit = density / currentScale().coerceAtLeast(TextSelectTouch.MIN_ZOOM)
+                // Selected words first, so the outlines stay legible over them.
+                for (quad in state.selection.highlightQuads(layout)) {
+                    drawPath(quadPath(quad, map), selectionFill)
                 }
+                for (block in layout.blocks) {
+                    val path = quadPath(block.quad, map)
+                    drawPath(path, OUTLINE_SHADOW, style = Stroke(width = OUTLINE_SHADOW_DP * unit, join = StrokeJoin.Round))
+                    drawPath(path, OUTLINE, style = Stroke(width = OUTLINE_DP * unit, join = StrokeJoin.Round))
+                }
+                drawTrail(state.trail, accent, unit)
             },
-    ) {
-        if (selected.isNotEmpty()) {
-            val text = remember(selected, blocks) {
-                selected.sorted().joinToString("\n") { blocks[it].text }
-            }
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 96.dp)
-                    .background(ACTION_FILL, RoundedCornerShape(14.dp))
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ActionButton(
-                    icon = Icons.Outlined.ContentCopy,
-                    label = if (selected.size == 1) "Copy" else "Copy ${selected.size}",
-                ) {
-                    clipboard.setText(AnnotatedString(text))
-                    selected = emptySet()
-                }
-                ActionButton(icon = Icons.Outlined.SelectAll, label = "All") {
-                    selected = blocks.indices.toSet()
-                }
-            }
-        }
+    )
+}
+
+/** The Fit rectangle of [layout]'s frame inside [container], as the map between frame and layer pixels. */
+internal fun frameMapFor(layout: TextLayout, container: Size): FrameMap {
+    val fit = fittedImageRect(container, layout.frameWidth.roundToInt(), layout.frameHeight.roundToInt())
+    return FrameMap(layout.frameWidth, layout.frameHeight, fit.left, fit.top, fit.width, fit.height)
+}
+
+private fun quadPath(quad: Quad, map: FrameMap): Path {
+    val tl = map.toScreen(quad.tl)
+    val tr = map.toScreen(quad.tr)
+    val br = map.toScreen(quad.br)
+    val bl = map.toScreen(quad.bl)
+    return Path().apply {
+        moveTo(tl.x, tl.y)
+        lineTo(tr.x, tr.y)
+        lineTo(br.x, br.y)
+        lineTo(bl.x, bl.y)
+        close()
     }
 }
 
-@Composable
-private fun ActionButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.pointerInput(onClick) { detectTapGestures { onClick() } },
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = label, tint = Color.White)
-        Text(
-            label,
-            color = Color.White,
-            style = TextStyle(fontFamily = HyleGrotesk, fontSize = 15.sp),
-        )
+private fun DrawScope.drawTrail(trail: List<Offset>, color: Color, unit: Float) {
+    if (trail.size < 2) return
+    val path = Path().apply {
+        moveTo(trail[0].x, trail[0].y)
+        for (i in 1 until trail.size) lineTo(trail[i].x, trail[i].y)
+    }
+    drawPath(
+        path,
+        color.copy(alpha = TRAIL_ALPHA),
+        style = Stroke(width = TRAIL_DP * unit, cap = StrokeCap.Round, join = StrokeJoin.Round),
+    )
+}
+
+/**
+ * Screen distances for one gesture, turned into frame distances.
+ *
+ * Built per event from what is true at that moment (the layout in force, the overlay's size, the
+ * current zoom) rather than held, so a word-level layout arriving mid-stroke or a pinch changing
+ * the zoom cannot leave a gesture measuring in a stale frame. Everything is in dp first and
+ * divided by [zoom] because the overlay sits inside the zoom layer: 12 dp of finger is 12 / zoom
+ * layer pixels. The conversion to the frame goes through [FrameMap.frameDistance], which is one
+ * factor for both axes, so a finger is round on a non-square photo (the bug in normalised units).
+ */
+internal class TextSelectTouch(layout: TextLayout, container: Size, density: Float, zoom: Float) {
+    private val map = frameMapFor(layout, container)
+    // Layer pixels in one dp.
+    private val unit = density / zoom.coerceAtLeast(MIN_ZOOM)
+
+    /** A layer-pixel position as a frame point. */
+    fun frame(point: Offset): Pt = map.toFrame(point.x, point.y)
+
+    fun frame(path: List<Offset>): List<Pt> = path.map(::frame)
+
+    /** How far from a block a tap still counts as on it. */
+    val tapSlop: Float get() = map.frameDistance(TAP_SLOP_DP * unit)
+
+    /** Half the width of the finger drawing a stroke. */
+    val fingerRadius: Float get() = map.frameDistance(FINGER_RADIUS_DP * unit)
+
+    /** How close the end of a stroke must come to its start for the stroke to be a loop. */
+    val closeDistance: Float get() = map.frameDistance(LASSO_CLOSE_DP * unit)
+
+    /** What drawing [path] selects: a lasso if it closed on itself, otherwise the words it touched. */
+    fun drawn(layout: TextLayout, path: List<Offset>): TextSelection =
+        TextSelection.NONE.drawSelect(layout, frame(path), fingerRadius, closeDistance)
+
+    companion object {
+        /** Zoom is never read below this, so a zero can not blow a radius up. */
+        const val MIN_ZOOM = 0.1f
+        const val TAP_SLOP_DP = 8f
+        const val FINGER_RADIUS_DP = 12f
+        const val LASSO_CLOSE_DP = 48f
     }
 }
 
-private const val BOX_RADIUS = 3
-
-/** Faint until touched: the text is discoverable without the photo becoming a wall of boxes. */
-private val HINT_FILL = Color(0x22FFFFFF)
+private const val OUTLINE_DP = 1.5f
+private const val OUTLINE_SHADOW_DP = 3f
+private const val TRAIL_DP = 6f
 private const val SELECTION_ALPHA = 0.40f
-// Fixed on purpose: a neutral scrim behind the action pill, no accent role.
-private val ACTION_FILL = Color(0xE6121216)
+private const val TRAIL_ALPHA = 0.55f
+
+/** White over a dark edge, so an outline reads on a white sign and on a dark one. */
+private val OUTLINE = Color(0xCCFFFFFF)
+private val OUTLINE_SHADOW = Color(0x66000000)

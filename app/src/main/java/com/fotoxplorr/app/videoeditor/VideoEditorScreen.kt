@@ -43,7 +43,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.video.CropAspect
@@ -51,6 +50,7 @@ import com.fotoxplorr.app.video.VideoCodec
 import com.fotoxplorr.app.video.VideoExporter
 import com.fotoxplorr.app.video.VideoQuality
 import com.fotoxplorr.app.video.deviceSupportsVideoEncoder
+import com.fotoxplorr.app.viewer.buildViewerPlayer
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -98,7 +98,7 @@ fun VideoEditorScreen(
     val hevcAvailable = remember { deviceSupportsVideoEncoder(VideoCodec.HEVC) }
     val exporter = remember(context) { VideoExporter(context) }
     val player = remember(asset.id) {
-        ExoPlayer.Builder(context).build().apply {
+        buildViewerPlayer(context).apply {
             setMediaItem(MediaItem.fromUri(asset.contentUri))
             prepare()
             playWhenReady = true

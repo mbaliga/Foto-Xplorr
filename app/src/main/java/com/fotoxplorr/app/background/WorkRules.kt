@@ -1,5 +1,7 @@
 package com.fotoxplorr.app.background
 
+import com.fotoxplorr.app.ui.HelpCopy
+
 /**
  * The user's own rules for when indexing, recognition and every other heavy, time-taking pass
  * are allowed to run in the background -- written by them, in Settings, not hard-coded (owner:
@@ -250,8 +252,7 @@ val WorkRules.hasActiveHoursWindow: Boolean
  */
 fun summarize(rules: WorkRules): String {
     if (!rules.enabled) {
-        return "Background rules are off -- indexing and other heavy passes run whenever the " +
-            "system schedules them."
+        return HelpCopy.Hint.WORK_RULES_OFF
     }
     val clauses = buildList {
         if (rules.requireIdle) add("when the phone is idle")

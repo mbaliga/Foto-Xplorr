@@ -99,6 +99,7 @@ object FaceClustering {
                     // the wrapped value. Newest-id-first matches the grid's default order.
                     mediaIds = group.map { it.mediaId }.distinct().sortedByDescending { it.value },
                     faceCount = group.size,
+                    faces = group.map { ClusterFace(it.mediaId, it.faceIndex, it.relativeArea, it.box) },
                 )
             }
     }
@@ -211,6 +212,12 @@ data class RecognitionIndex(
      * 20k-photo library neither copies the palettes nor decodes anything.
      */
     val dominantColoursByMedia: Map<MediaId, Int> = emptyMap(),
+    /**
+     * The people the library holds, with the owner's names and choices applied -- see
+     * [PeopleRoster]. Empty out of [from] (which is pure); [RecognitionStore.reload] fills it in
+     * against what is stored.
+     */
+    val roster: List<Person> = emptyList(),
 ) {
     /** This photo's stored palette, widest share first. Empty until the indexer has sampled it. */
     fun paletteFor(mediaId: MediaId): List<PaletteSwatch> = palettesByMedia[mediaId].orEmpty()

@@ -2,8 +2,12 @@ package com.fotoxplorr.app.viewer
 
 import com.fotoxplorr.core.formats.MediaFormat
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.Period
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -170,4 +174,181 @@ object DetailFormatting {
 
     /** Whether the flash glyph on the EXIF card should be lit. EXIF flash bit 0 = fired. */
     fun flashFired(exifFlash: Int?): Boolean = exifFlash != null && (exifFlash and 0x1) == 1
+
+    /**
+     * The EXIF MeteringMode code in words. Null for 0 ("unknown"), 255 ("other") and any code the
+     * standard does not define: a label like "Other" would be noise, and the row is then omitted.
+     */
+    fun meteringText(code: Int?): String? = when (code) {
+        1 -> "Average"
+        2 -> "Centre-weighted"
+        3 -> "Spot"
+        4 -> "Multi-spot"
+        5 -> "Multi-segment"
+        6 -> "Partial"
+        else -> null
+    }
+
+    /** EXIF WhiteBalance: 0 auto, 1 manual; anything else is nothing to say. */
+    fun whiteBalanceText(code: Int?): String? = when (code) {
+        0 -> "Auto"
+        1 -> "Manual"
+        else -> null
+    }
+
+    /** EXIF ExposureProgram. 0 ("not defined") and unknown codes give null. */
+    fun exposureProgramText(code: Int?): String? = when (code) {
+        1 -> "Manual"
+        2 -> "Normal program"
+        3 -> "Aperture priority"
+        4 -> "Shutter priority"
+        5 -> "Creative"
+        6 -> "Action"
+        7 -> "Portrait"
+        8 -> "Landscape"
+        else -> null
+    }
+
+    /** The EXIF Orientation code (1..8) as how the stored pixels must be turned to be upright. */
+    fun orientationText(code: Int?): String? = when (code) {
+        1 -> "Upright"
+        2 -> "Mirrored"
+        3 -> "Rotated 180°"
+        4 -> "Mirrored upside down"
+        5 -> "Mirrored, rotated 270° clockwise"
+        6 -> "Rotated 90° clockwise"
+        7 -> "Mirrored, rotated 90° clockwise"
+        8 -> "Rotated 270° clockwise"
+        else -> null
+    }
+
+    /** "123 m above sea level" / "5 m below sea level" / "At sea level"; null for NaN or infinity. */
+    fun altitudeText(meters: Double?): String? {
+        if (meters == null || !meters.isFinite()) return null
+        val rounded = meters.roundToInt()
+        return when {
+            rounded == 0 -> "At sea level"
+            rounded > 0 -> "$rounded m above sea level"
+            else -> "${-rounded} m below sea level"
+        }
+    }
+
+    /**
+     * "NE 45°": the eight-wind compass point, then the bearing rounded to a whole degree. A bearing
+     * outside 0..360 (or NaN) is a corrupt tag and gives null. 359.6 rounds to 360 and is shown as
+     * "N 0°", never "N 360°".
+     */
+    fun compassText(degrees: Double?): String? {
+        if (degrees == null || !degrees.isFinite() || degrees < 0.0 || degrees > 360.0) return null
+        val whole = degrees.roundToInt() % 360
+        val points = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+        return "${points[((whole + 22) / 45) % 8]} $whole°"
+    }
+
+    /** "12 km/h"; null for a negative or non-finite speed. */
+    fun speedText(kmh: Double?): String? {
+        if (kmh == null || !kmh.isFinite() || kmh < 0.0) return null
+        return "${kmh.roundToInt()} km/h"
+    }
+
+    /** "12.5 Mbps" / "640 kbps"; null for zero or negative. */
+    fun bitrateText(bitsPerSecond: Long?): String? {
+        if (bitsPerSecond == null || bitsPerSecond <= 0L) return null
+        return if (bitsPerSecond >= 1_000_000L) {
+            "%.1f Mbps".format(Locale.US, bitsPerSecond / 1_000_000.0)
+        } else {
+            "${(bitsPerSecond / 1_000.0).roundToInt().coerceAtLeast(1)} kbps"
+        }
+    }
+
+    /**
+     * "30 fps" / "29.97 fps" / "23.98 fps": whole rates print as integers, others to two decimals
+     * with trailing zeros dropped. Null for a rate that is not positive or not believable (above
+     * 2000 fps, which is a unit mix-up rather than a camera).
+     */
+    fun fpsText(fps: Double?): String? {
+        if (fps == null || !fps.isFinite() || fps <= 0.0 || fps > 2_000.0) return null
+        val hundredths = (fps * 100).roundToInt()
+        val text = if (hundredths % 100 == 0) {
+            (hundredths / 100).toString()
+        } else {
+            "%.2f".format(Locale.US, hundredths / 100.0).trimEnd('0')
+        }
+        return "$text fps"
+    }
+
+    /**
+     * How long ago a photo was taken, in the calendar terms a person uses: "Today", "Yesterday",
+     * "3 days ago", "2 weeks ago", "5 months ago", "1 year ago". Null when the date is unknown
+     * or lies in the future (a camera with a wrong clock is not "-3 days ago").
+     */
+    fun fileAgeText(takenMillis: Long, nowMillis: Long, zoneId: ZoneId = ZoneId.systemDefault()): String? {
+        if (takenMillis <= 0L || nowMillis < takenMillis) return null
+        val taken = Instant.ofEpochMilli(takenMillis).atZone(zoneId).toLocalDate()
+        val now = Instant.ofEpochMilli(nowMillis).atZone(zoneId).toLocalDate()
+        val days = ChronoUnit.DAYS.between(taken, now)
+        if (days <= 0L) return "Today"
+        if (days == 1L) return "Yesterday"
+        val period = Period.between(taken, now)
+        return when {
+            period.years >= 1 -> plural(period.years, "year")
+            period.months >= 1 -> plural(period.months, "month")
+            days >= 14L -> plural((days / 7).toInt(), "week")
+            else -> plural(days.toInt(), "day")
+        }
+    }
+
+    private fun plural(count: Int, unit: String): String = if (count == 1) "1 $unit ago" else "$count ${unit}s ago"
+
+    /**
+     * An EXIF `OffsetTimeOriginal` ("+05:30", "-08:00", "+00:00") as a [ZoneOffset], or null when
+     * the file has none or it does not parse. A malformed offset is "unknown", never "UTC".
+     */
+    fun exifOffset(raw: String?): ZoneOffset? {
+        val text = raw?.trim() ?: return null
+        val match = EXIF_OFFSET.matchEntire(text) ?: return null
+        val sign = if (match.groupValues[1] == "-") -1 else 1
+        val hours = match.groupValues[2].toInt()
+        val minutes = match.groupValues[3].toInt()
+        if (hours > 14 || minutes > 59) return null
+        return runCatching { ZoneOffset.ofTotalSeconds(sign * (hours * 3600 + minutes * 60)) }.getOrNull()
+    }
+
+    private val EXIF_OFFSET = Regex("([+-])(\\d{2}):(\\d{2})")
+
+    /** "UTC+05:30", "UTC-08:00", and plain "UTC" for zero. */
+    fun offsetText(offset: ZoneOffset): String =
+        if (offset.totalSeconds == 0) "UTC" else "UTC$offset"
+
+    /**
+     * EXIF DateTimeOriginal ("2026:08:01 22:33:00") as a wall-clock time, or null if it does not
+     * parse. Cameras write all-zero placeholders ("0000:00:00 00:00:00") when the clock was never
+     * set; those fail to parse and so read as unknown.
+     */
+    fun exifDateTime(raw: String?): LocalDateTime? {
+        val text = raw?.trim() ?: return null
+        return runCatching { LocalDateTime.parse(text, EXIF_DATE_TIME) }.getOrNull()
+    }
+
+    private val EXIF_DATE_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy:MM:dd HH:mm:ss", Locale.ROOT)
+
+    /**
+     * [dateLine] for the File section, with the zone said out loud. When the photo's own [offset]
+     * is known the moment is shown on that clock and labelled ("... (UTC+05:30)"): the time the
+     * photographer saw. When it is not, the line is the device's clock, which can be hours off for a
+     * photo taken in another zone, so it says "(device time)" instead of passing it off as local.
+     */
+    fun takenLine(
+        epochMillis: Long,
+        offset: ZoneOffset?,
+        deviceZone: ZoneId = ZoneId.systemDefault(),
+        locale: Locale = Locale.getDefault(),
+    ): String {
+        if (epochMillis <= 0L) return "Unknown date"
+        return if (offset != null) {
+            "${dateLine(epochMillis, offset, locale)} (${offsetText(offset)})"
+        } else {
+            "${dateLine(epochMillis, deviceZone, locale)} (device time)"
+        }
+    }
 }
