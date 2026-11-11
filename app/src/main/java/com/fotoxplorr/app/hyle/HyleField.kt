@@ -6,12 +6,27 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.error as semanticsError
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -21,6 +36,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -32,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.ui.HyleGrotesk
+import com.fotoxplorr.app.ui.LocalAccentOnLight
 
 /**
  * The five states the Hyle field draws, as the owner's control-sheet lays them out. They are two
@@ -47,8 +65,8 @@ data class HyleFieldStyle(
 
 /**
  * The Hyle field: a text row wearing the language's corner tab. A small leaning **wedge** sits at
- * the top-left, poking above the field and carrying the state's colour — dark when idle, violet
- * when focused, danger-red (with a `!`) when the value is invalid. The field's own top-left corner
+ * the top-left, poking above the field and carrying the state's colour — dark when idle, the chosen
+ * accent when focused, danger-red (with a `!`) when the value is invalid. The field's own top-left corner
  * is cut back to seat it, so the tab reads as *part of* the field rather than a sticker on it.
  *
  * A focused or invalid field also takes a coloured hairline border; a required field shows a `*`
@@ -65,16 +83,19 @@ fun HyleField(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
+    // The focus state is the accent role: the field is a fixed LIGHT control in every theme mode, so
+    // it takes the chosen accent's light-mode form (see LocalAccentOnLight), not a hard-coded violet.
+    val focusAccent = LocalAccentOnLight.current
     val accent = when {
         !style.enabled -> WEDGE_DISABLED
         style.error -> DANGER
-        style.focused -> VIOLET
+        style.focused -> focusAccent
         else -> WEDGE_IDLE
     }
     val border = when {
         !style.enabled -> Color.Transparent
         style.error && style.focused -> DANGER
-        style.focused -> BORDER_BLUE
+        style.focused -> focusAccent
         style.error -> DANGER.copy(alpha = 0.5f)
         else -> Color.Transparent
     }
@@ -87,7 +108,7 @@ fun HyleField(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = WEDGE_RISE.dp)
-                .height(FIELD_H.dp)
+                .heightIn(min = FIELD_H.dp)
                 .background(fill, RoundedCornerShape(FIELD_RADIUS.dp))
                 .then(
                     if (border != Color.Transparent) {
@@ -156,10 +177,28 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBang() {
 }
 
 /**
- * An editable [HyleField]: a single-line text field wearing the Hyle chrome. Focus lights the
- * wedge and border violet; [error] turns them danger-red and shows the `!`; [mandatory] adds the
- * trailing `*`. Optional [leading]/[trailing] slots ride inside the field for a search glyph or a
- * clear button.
+ * An editable [HyleField]: a text field wearing the Hyle chrome, per the edge-control spec's
+ * "Tab field" (Hyle-Design-System `docs/design/flat-edge-controls.md` section 3, commit 40ca614 on
+ * its design branch; the geometry below is that table). Focus lights the wedge and border in the
+ * chosen accent; [error] (or a non-null [errorText]) turns them danger-red and shows the `!`;
+ * [mandatory] adds the trailing `*`. Optional [leading]/[trailing] slots ride inside the field.
+ *
+ * **Focus colour, deliberately not the spec's.** The spec's table gives a violet wedge with a blue
+ * `#6E97E8` hairline; this app draws both in the chosen accent ([LocalAccentOnLight]) so the field
+ * follows the owner's accent setting like every other control. That is the documented rule in
+ * [HyleField] ("the focus state is the accent role"), kept on purpose.
+ *
+ * The one field for the whole app. On top of the chrome it gives:
+ * - an optional [label] above the field and an [errorText] line below it (the error is said in
+ *   words too, never colour alone, and is exposed to TalkBack as the field's error);
+ * - [keyboardOptions]/[keyboardActions] for numeric and decimal keyboards and the IME action;
+ * - a single line that never shows a clipped start: unfocused, a long value is drawn with an
+ *   ellipsis at its END; focused, the line scrolls with the caret as any text field does;
+ * - [clearable]: a 48 dp clear button while there is text and the field is enabled;
+ * - a 48 dp minimum height (the chrome is 52), growing with [minLines] for a multi-line field;
+ * - a disabled state, and a TalkBack name ([contentDescription], else [label], else [placeholder]).
+ *
+ * The first nine parameters are the original signature; every later one has a default.
  */
 @Composable
 fun HyleTextField(
@@ -172,49 +211,126 @@ fun HyleTextField(
     mandatory: Boolean = false,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    label: String? = null,
+    errorText: String? = null,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    singleLine: Boolean = true,
+    minLines: Int = 1,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    clearable: Boolean = false,
+    monospace: Boolean = false,
+    contentDescription: String? = null,
+    /** A test tag for the editable node itself (the tag on [modifier] lands on the wrapping column). */
+    fieldTag: String? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
-    HyleField(
-        style = HyleFieldStyle(focused = focused, error = error, mandatory = mandatory, enabled = enabled),
-        modifier = modifier,
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (leading != null) {
-                leading()
-                Spacer(Modifier.width(8.dp))
-            }
-            Box(Modifier.weight(1f)) {
-                BasicTextField(
-                    value = value,
-                    onValueChange = onValueChange,
-                    enabled = enabled,
-                    singleLine = true,
-                    textStyle = TextStyle(
-                        fontFamily = HyleGrotesk,
-                        fontSize = 17.sp,
-                        color = if (enabled) FIELD_INK else FIELD_INK_FAINT,
-                    ),
-                    cursorBrush = SolidColor(VIOLET),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onFocusChanged { focused = it.isFocused },
-                )
-                if (value.isEmpty() && placeholder.isNotEmpty()) {
-                    Text(
-                        text = placeholder,
-                        color = FIELD_INK_FAINT,
-                        style = TextStyle(fontFamily = HyleGrotesk, fontSize = 17.sp),
-                        maxLines = 1,
+    val ownFocus = remember { FocusRequester() }
+    val invalid = error || errorText != null
+    val name = contentDescription ?: label ?: placeholder.takeIf { it.isNotEmpty() }
+    val fontFamily = if (monospace) FontFamily.Monospace else HyleGrotesk
+    val ink = if (enabled) FIELD_INK else FIELD_INK_FAINT
+    val textStyle = TextStyle(fontFamily = fontFamily, fontSize = 17.sp, color = ink)
+    // Unfocused, a long single line is drawn by a Text that can end in an ellipsis; the real field
+    // sits over it with transparent ink so a tap still focuses it. Password and other transformed
+    // fields keep the real field's own drawing.
+    val ellipsised = singleLine && !focused && value.isNotEmpty() && visualTransformation == VisualTransformation.None
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (!label.isNullOrBlank()) {
+            Text(
+                text = label,
+                color = FIELD_LABEL,
+                style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+            )
+        }
+        HyleField(
+            style = HyleFieldStyle(focused = focused, error = invalid, mandatory = mandatory, enabled = enabled),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (leading != null) {
+                    leading()
+                    Spacer(Modifier.width(8.dp))
+                }
+                Box(Modifier.weight(1f).padding(vertical = if (singleLine) 0.dp else 12.dp)) {
+                    if (ellipsised) {
+                        Text(
+                            text = value,
+                            style = textStyle,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth().clearAndSetSemantics { },
+                        )
+                    }
+                    BasicTextField(
+                        value = value,
+                        onValueChange = onValueChange,
+                        enabled = enabled,
+                        singleLine = singleLine,
+                        minLines = minLines,
+                        textStyle = if (ellipsised) textStyle.copy(color = Color.Transparent) else textStyle,
+                        cursorBrush = SolidColor(LocalAccentOnLight.current),
+                        keyboardOptions = keyboardOptions,
+                        keyboardActions = keyboardActions,
+                        visualTransformation = visualTransformation,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(ownFocus)
+                            .onFocusChanged { focused = it.isFocused }
+                            .then(if (fieldTag != null) Modifier.testTag(fieldTag) else Modifier)
+                            .semantics {
+                                if (name != null) this.contentDescription = name
+                                if (invalid) semanticsError(errorText ?: "Invalid value")
+                            },
                     )
+                    if (value.isEmpty() && placeholder.isNotEmpty()) {
+                        Text(
+                            text = placeholder,
+                            color = FIELD_INK_FAINT,
+                            style = TextStyle(fontFamily = fontFamily, fontSize = 17.sp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.clearAndSetSemantics { },
+                        )
+                    }
+                }
+                if (clearable && enabled && value.isNotEmpty()) {
+                    IconButton(
+                        onClick = {
+                            onValueChange("")
+                            // Clearing is editing: leave the caret in the field, keyboard up.
+                            runCatching { ownFocus.requestFocus() }
+                        },
+                        modifier = Modifier.size(HYLE_FIELD_MIN_TARGET.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.Close,
+                            contentDescription = "Clear" + (label?.let { " $it" } ?: ""),
+                            tint = WEDGE_IDLE,
+                        )
+                    }
+                }
+                if (trailing != null) {
+                    Spacer(Modifier.width(8.dp))
+                    trailing()
                 }
             }
-            if (trailing != null) {
-                Spacer(Modifier.width(8.dp))
-                trailing()
-            }
+        }
+        if (errorText != null) {
+            Text(
+                text = errorText,
+                color = DANGER_INK,
+                style = TextStyle(fontFamily = HyleGrotesk, fontSize = 13.sp),
+                modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+            )
         }
     }
 }
+
+/** The smallest touch target the field's own controls (the clear button) take, in dp. */
+const val HYLE_FIELD_MIN_TARGET = 48
 
 // ---- geometry & palette (from the owner's control-sheet mockup) ----
 private const val FIELD_H = 52
@@ -230,11 +346,14 @@ private const val WEDGE_RISE = 10   // how far the wedge pokes above the field
 private const val WEDGE_INTO = 26   // how far it runs down into/alongside the field
 private const val WEDGE_LEFT = 10
 
+// Fixed on purpose (reference design / semantic): the light control's neutrals and the Hyle danger
+// red. The focus wedge, border and cursor are NOT here; they follow the accent (LocalAccentOnLight).
 private val FIELD_FILL = Color(0xFFF1F1F2)
 private val FIELD_FILL_DISABLED = Color(0xFFF4F4F5)
 private val DANGER = Color(0xFFE5564B)
-private val VIOLET = Color(0xFF8E7BFF)
-private val BORDER_BLUE = Color(0xFF6E97E8)
+// The error line sits on the room (often dark), not on the light field, so it is a lighter red.
+private val DANGER_INK = Color(0xFFFF8A80)
+private val FIELD_LABEL = Color(0xFFB8B8C0)
 private val WEDGE_IDLE = Color(0xFF3A3A44)
 private val WEDGE_DISABLED = Color(0xFFC7C7CC)
 private val FIELD_INK = Color(0xFF2A2A30)

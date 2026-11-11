@@ -1,0 +1,47 @@
+package com.fotoxplorr.app.palette
+
+import android.util.LruCache
+import com.fotoxplorr.core.model.MediaId
+
+/**
+ * The palettes this process has already computed, by photo.
+ *
+ * The recognition index persists every palette the indexer has sampled
+ * (`RecognitionIndex.palettesByMedia`); this memo covers the rest -- a photo the indexer has not
+ * reached yet (and every video, which it never indexes), which the details room reads once itself
+ * (a 100 px decode or one video frame, see `PaletteSampling.readState`) -- and the room drops the
+ * stored palette in here too as it shows it. So this is where a palette outlives the strip that
+ * showed it, and the expanded map can colour a photo's
+ * dot with its own dominant colour *when that colour is already known* and fall back to the
+ * accent otherwise (owner's rule), rather than decoding every located photo in the library to
+ * draw a map of dots.
+ *
+ * Bounded, because a process that has opened ten thousand photos should not hold ten thousand
+ * swatch lists; the memo is a convenience, not a store.
+ */
+object PaletteMemo {
+
+    private val cache = LruCache<Long, List<PaletteSwatch>>(MAX_ENTRIES)
+
+    fun get(id: MediaId): List<PaletteSwatch>? = synchronized(cache) { cache.get(id.value) }
+
+    fun put(id: MediaId, swatches: List<PaletteSwatch>) {
+        if (swatches.isEmpty()) return
+        synchronized(cache) { cache.put(id.value, swatches) }
+    }
+
+    /** The most-represented colour of [id]'s palette as ARGB, or null when it has never been read. */
+    fun dominantArgb(id: MediaId): Int? = get(id)?.maxByOrNull { it.proportion }?.argb
+
+    /** Every memoised dominant colour at once, for a map that colours many dots in one pass. */
+    fun dominantColours(): Map<MediaId, Int> = synchronized(cache) {
+        cache.snapshot().mapNotNull { (id, swatches) ->
+            swatches.maxByOrNull { it.proportion }?.let { MediaId(id) to it.argb }
+        }.toMap()
+    }
+
+    /** Test seam: forget everything, so one test's palettes cannot colour another's map. */
+    fun clear() = synchronized(cache) { cache.evictAll() }
+
+    private const val MAX_ENTRIES = 512
+}

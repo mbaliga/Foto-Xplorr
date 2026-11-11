@@ -1,25 +1,8 @@
 package com.fotoxplorr.app.media
 
 import android.net.Uri
-import com.fotoxplorr.app.formats.MediaFormat
-
-@JvmInline
-value class MediaId(val value: Long) {
-    companion object {
-        /**
-         * The id every ad-hoc asset gets: one built from an incoming `ACTION_VIEW` intent
-         * (P0-18's `viewer.ExternalViewerActivity`) that the catalogue never scanned and never
-         * will, since this app must never write anything about it to any store. Every REAL id
-         * comes from MediaStore's own `_ID` column, which is never negative, so a negative id
-         * already reads as "not really catalogued" everywhere this app checks one --
-         * `favorites.FavoriteIdCodec` filters negative ids on both encode and decode for exactly
-         * this reason. `Long.MIN_VALUE` specifically, not `-1`: `FotoXplorrActivity`'s own
-         * `NO_MEDIA_ID = -1L` already means something else ("no selection") and the two must
-         * never collide.
-         */
-        val EXTERNAL: MediaId = MediaId(Long.MIN_VALUE)
-    }
-}
+import com.fotoxplorr.core.formats.MediaFormat
+import com.fotoxplorr.core.model.MediaId
 
 data class MediaAsset(
     val id: MediaId,
@@ -37,6 +20,19 @@ data class MediaAsset(
     val relativePath: String?,
     val isFavorite: Boolean,
     val isTrashed: Boolean,
+    /**
+     * True for an asset handed over by another app (open-with/share-to) rather than found by
+     * this app's own library scan -- see `com.fotoxplorr.app.openwith.ExternalAssetLoader`.
+     *
+     * A defaulted trailing field rather than a wrapper type: this class already reaches roughly
+     * eighty call sites across the app, and every one of them that never sees an external asset
+     * (which is most of them -- an external asset is opened directly into the viewer or editor,
+     * never scanned into the library, favourited, trashed or filed into a collection) keeps
+     * working unchanged. The few call sites that DO need to know -- the viewer and its actions
+     * room -- read this to hide the actions that make no sense on a file this app does not own a
+     * library record for.
+     */
+    val isExternal: Boolean = false,
 ) {
     val contentUri: Uri
         get() = Uri.parse(contentUriString)

@@ -1,6 +1,10 @@
 package com.fotoxplorr.app.gallery
 
 import android.content.Context
+import com.fotoxplorr.app.adaptive.DEFAULT_ZOOM_RUNG
+import com.fotoxplorr.app.adaptive.ZOOM_RUNG_MIN
+import com.fotoxplorr.app.adaptive.ZOOM_RUNG_STAMPS
+import com.fotoxplorr.app.adaptive.zoomRungFromLegacyColumns
 import com.fotoxplorr.app.editor.EditorSaveMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,15 +35,80 @@ enum class AccentPalette {
     FOREST,
     AMBER,
     MONOCHROME,
+    /** A theme pasted/imported as JSON rather than one of the five bundled ones above -- see
+     *  `ThemeJson.kt`. Its actual colours live in [GalleryPreferencesState.customThemeJson], not
+     *  in this enum, the same way this value's NAME (not a colour) is what gets persisted. */
+    CUSTOM,
+}
+
+/**
+ * The two things a pinch inside the single-photo viewer can mean -- see `ViewerScreen.kt`'s own
+ * gesture arbiter for how each is actually dispatched.
+ *
+ * [OPTICAL_ZOOM] is the default and the viewer's original behaviour, unchanged for anyone who
+ * never touches this setting: pinch zooms the photo, exactly as it always has.
+ *
+ * [PANEL_SHORTCUTS] is the owner's alternate ask (*"pinch in (details/info) and pinch out
+ * (edit/actions)"*): pinch-in opens the photo's details room (the top one), pinch-out opens its
+ * actions room (the bottom one), and neither also moves the photo -- the two meanings are mutually
+ * exclusive within one gesture, which is the entire point of making this selectable rather than
+ * additive.
+ */
+enum class ViewerPinchMode {
+    OPTICAL_ZOOM,
+    PANEL_SHORTCUTS,
+}
+
+/**
+ * What the viewer draws behind a photo that has transparency (a PNG sticker, a WebP cut-out):
+ * the grey-and-white grid that says "see-through", or a flat white or black (owner, #17).
+ * [CHECKERBOARD] is the default; a photo with no transparency never shows any of them.
+ * [next] is the tap-to-cycle order used by the viewer's chrome button and its view-options row.
+ */
+enum class TransparencyBackground {
+    CHECKERBOARD,
+    WHITE,
+    BLACK;
+
+    fun next(): TransparencyBackground = entries[(ordinal + 1) % entries.size]
 }
 
 data class GalleryPreferencesState(
     val sort: GallerySort = GallerySort.NEWEST,
-    val gridColumns: Int = DEFAULT_GRID_COLUMNS,
+    /**
+     * How zoomed the grid is: rungs 1..6 are that many columns and 7 is the stamp view (see
+     * `adaptive/GridZoom.kt`). Replaces the old column count, which is read once as the starting
+     * value when this has never been stored.
+     */
+    val gridZoomRung: Int = DEFAULT_ZOOM_RUNG,
     val blurSensitive: Boolean = true,
     val hideSensitive: Boolean = false,
     val showVideos: Boolean = true,
-    val timelineGrouping: TimelineGrouping = TimelineGrouping.DAY,
+    /**
+     * How the grid's header rows split the photos (on the column rungs, while [timelineOn]; the
+     * stamp view is always months). MONTH for a fresh install, because the owner asked to "group and
+     * separate the photos by month" (#25); a value someone already stored is read back untouched.
+     */
+    val timelineGrouping: TimelineGrouping = TimelineGrouping.MONTH,
+    /**
+     * Whether the timeline is on: the edge strip that scrubs the whole library, the gutter the grid
+     * leaves for it, and the month headers on the column rungs. On by default (the strip has been
+     * there since the scrubber shipped); turning it off gives the plain mosaic.
+     */
+    val timelineOn: Boolean = true,
+    /** Which edge the timeline strip sits on; independent of which way the photos scroll. */
+    val timelinePlacement: TimelinePlacement = TimelinePlacement.RIGHT,
+    /**
+     * Whether the rail is drawn at rest. Only while scrubbing for a fresh install (owner, batch 9
+     * #5); an install that already had the timeline on keeps [TimelineVisibility.ALWAYS].
+     */
+    val timelineVisibility: TimelineVisibility = TimelineVisibility.WHILE_SCRUBBING,
+    /**
+     * Which way the photos scroll: down (the default) or across. Separate from where the timeline
+     * strip sits and from the sort, so any strip can sit beside either grid. The stamp view and
+     * the masonry layout stay vertical whatever this says (see [gridScrollsHorizontally]).
+     */
+    val scrollAxis: ScrollAxis = ScrollAxis.VERTICAL,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val accentPalette: AccentPalette = AccentPalette.VIOLET,
     val slideshowIntervalSeconds: Int = DEFAULT_SLIDESHOW_INTERVAL_SECONDS,
@@ -55,16 +124,23 @@ data class GalleryPreferencesState(
     val keepScreenOn: Boolean = false,
     /** Play a slideshow in a random order rather than in the current sort order. */
     val slideshowShuffle: Boolean = false,
-    /** Start a video as soon as it is opened, rather than waiting for a tap on play. */
-    val autoplayVideos: Boolean = false,
+    /**
+     * Start a video as soon as it is opened, rather than waiting for a tap on play. On by default:
+     * with it off, a freshly opened video was a still frame with no visible way to start it, which
+     * read as "videos do not play". Anyone who turned it off keeps their choice.
+     */
+    val autoplayVideos: Boolean = true,
     /**
      * Show the filmstrip of neighbouring photos along the bottom of an open photo. On by default,
      * which is the behaviour the viewer already had.
      */
     val showFilmstrip: Boolean = true,
     // ---- media behaviour ----
-    /** Peek a photo large on long press, without leaving the grid. */
-    val longPressPreview: Boolean = true,
+    /**
+     * What holding a photo in the grid does -- see [GridLongPress]. Stored under its own key and
+     * seeded from the retired on/off `long_press_preview` switch the first time (see [load]).
+     */
+    val gridLongPress: GridLongPress = GridLongPress.PEEK,
     /** Play GIFs and animated images in the grid rather than showing a still frame. */
     val loopAnimations: Boolean = false,
     /**
@@ -77,6 +153,24 @@ data class GalleryPreferencesState(
      * enough and what replaced it.
      */
     val fitToTile: Boolean = true,
+    /**
+     * Lay the column rungs out as justified rows (each photo at its own shape, every row the full
+     * width) instead of square tiles. Opt-in; the stamps rung and the masonry layout ignore it.
+     * See [JustifiedLayout].
+     */
+    val justifiedLayout: Boolean = false,
+    /**
+     * Culling also writes ratings, flags and labels to an XMP sidecar beside each photo. Off by
+     * default: then they live in memory only and are gone when the app closes.
+     */
+    val cullSidecars: Boolean = false,
+    /**
+     * Show each burst as one stack with a count badge (WP2.8). Purely a presentation: the grid
+     * computes the stacks from the list it draws and nothing is stored, so it is on by default.
+     */
+    val groupBursts: Boolean = true,
+    /** Show a Live Photo's still and movie as one item (WP2.8); a presentation like [groupBursts]. */
+    val pairLivePhotos: Boolean = true,
     /**
      * The nine-destination rail is pinned open by default on a window wide enough to fit it
      * beside the grid (tablet, foldable, desktop/ChromeOS); this lets the user fold it down to
@@ -110,6 +204,20 @@ data class GalleryPreferencesState(
     val shareFrame: String = "NONE",
     /** The user's postmark, drawn on stamp-framed shares. */
     val shareSeal: String = "",
+    /** Which pinch-in-the-viewer meaning is active. See [ViewerPinchMode]'s own doc. Defaults to
+     *  the viewer's original behaviour so nobody who never opens this setting sees any change. */
+    val viewerPinchMode: ViewerPinchMode = ViewerPinchMode.OPTICAL_ZOOM,
+    /** What the viewer shows behind a transparent photo. See [TransparencyBackground]. */
+    val viewerTransparencyBackground: TransparencyBackground = TransparencyBackground.CHECKERBOARD,
+    /**
+     * The full JSON text of the custom theme, when [accentPalette] is
+     * [AccentPalette.CUSTOM] -- see `ThemeJson.kt`'s schema. Empty (never null, so a
+     * `SharedPreferences` round-trip has nothing to distinguish from "absent") whenever a built-in
+     * palette is active; [com.fotoxplorr.app.ui.FotoXplorrTheme] falls back to
+     * [AccentPalette.VIOLET] if this is ever selected while empty or unparsable, rather than
+     * crashing -- see that file's own doc.
+     */
+    val customThemeJson: String = "",
 )
 
 class GalleryPreferences(context: Context) {
@@ -122,10 +230,15 @@ class GalleryPreferences(context: Context) {
         state.value.copy(sort = sort),
     ) { putString(KEY_SORT, sort.name) }
 
-    fun setGridColumns(columns: Int) {
-        val safeColumns = columns.coerceIn(MIN_GRID_COLUMNS, MAX_GRID_COLUMNS)
-        update(state.value.copy(gridColumns = safeColumns)) {
-            putInt(KEY_GRID_COLUMNS, safeColumns)
+    /**
+     * Called when a pinch settles or a button is pressed, not on every step of a pinch. The old
+     * [KEY_GRID_COLUMNS] is never written again (and never removed, so a downgrade keeps what it
+     * last said).
+     */
+    fun setGridZoomRung(rung: Int) {
+        val safeRung = rung.coerceIn(ZOOM_RUNG_MIN, ZOOM_RUNG_STAMPS)
+        update(state.value.copy(gridZoomRung = safeRung)) {
+            putInt(KEY_GRID_ZOOM_RUNG, safeRung)
         }
     }
 
@@ -145,13 +258,43 @@ class GalleryPreferences(context: Context) {
         state.value.copy(timelineGrouping = grouping),
     ) { putString(KEY_TIMELINE_GROUPING, grouping.name) }
 
+    fun setTimelineOn(enabled: Boolean) = update(
+        state.value.copy(timelineOn = enabled),
+    ) { putBoolean(KEY_TIMELINE_ON, enabled) }
+
+    fun setTimelinePlacement(placement: TimelinePlacement) = update(
+        state.value.copy(timelinePlacement = placement),
+    ) { putString(KEY_TIMELINE_PLACEMENT, placement.name) }
+
+    fun setTimelineVisibility(visibility: TimelineVisibility) = update(
+        state.value.copy(timelineVisibility = visibility),
+    ) { putString(KEY_TIMELINE_VISIBILITY, visibility.name) }
+
+    fun setScrollAxis(axis: ScrollAxis) = update(
+        state.value.copy(scrollAxis = axis),
+    ) { putString(KEY_SCROLL_AXIS, axis.name) }
+
     fun setThemeMode(mode: ThemeMode) = update(
         state.value.copy(themeMode = mode),
     ) { putString(KEY_THEME_MODE, mode.name) }
 
-    fun setAccentPalette(palette: AccentPalette) = update(
-        state.value.copy(accentPalette = palette),
-    ) { putString(KEY_ACCENT_PALETTE, palette.name) }
+    /**
+     * Selects a bundled palette (or, given [AccentPalette.CUSTOM] directly, re-activates whatever
+     * custom JSON is already stored). [setCustomTheme] is the normal way into CUSTOM -- it always
+     * carries the JSON that goes with it -- so switching AWAY from CUSTOM here clears
+     * [GalleryPreferencesState.customThemeJson] rather than leaving a stale value behind that a
+     * later, unrelated bug could read back.
+     */
+    fun setAccentPalette(palette: AccentPalette) {
+        if (palette == AccentPalette.CUSTOM) {
+            update(state.value.copy(accentPalette = palette)) { putString(KEY_ACCENT_PALETTE, palette.name) }
+        } else {
+            update(state.value.copy(accentPalette = palette, customThemeJson = "")) {
+                putString(KEY_ACCENT_PALETTE, palette.name)
+                putString(KEY_CUSTOM_THEME_JSON, "")
+            }
+        }
+    }
 
     fun setDefaultDestination(destination: HyleDestination) = update(
         state.value.copy(defaultDestination = destination),
@@ -173,9 +316,9 @@ class GalleryPreferences(context: Context) {
         state.value.copy(showFilmstrip = enabled),
     ) { putBoolean(KEY_SHOW_FILMSTRIP, enabled) }
 
-    fun setLongPressPreview(enabled: Boolean) = update(
-        state.value.copy(longPressPreview = enabled),
-    ) { putBoolean(KEY_LONG_PRESS_PREVIEW, enabled) }
+    fun setGridLongPress(action: GridLongPress) = update(
+        state.value.copy(gridLongPress = action),
+    ) { putString(KEY_GRID_LONG_PRESS, action.name) }
 
     fun setLoopAnimations(enabled: Boolean) = update(
         state.value.copy(loopAnimations = enabled),
@@ -184,6 +327,22 @@ class GalleryPreferences(context: Context) {
     fun setFitToTile(enabled: Boolean) = update(
         state.value.copy(fitToTile = enabled),
     ) { putBoolean(KEY_FIT_TO_TILE, enabled) }
+
+    fun setJustifiedLayout(enabled: Boolean) = update(
+        state.value.copy(justifiedLayout = enabled),
+    ) { putBoolean(KEY_JUSTIFIED_LAYOUT, enabled) }
+
+    fun setGroupBursts(enabled: Boolean) = update(
+        state.value.copy(groupBursts = enabled),
+    ) { putBoolean(KEY_GROUP_BURSTS, enabled) }
+
+    fun setPairLivePhotos(enabled: Boolean) = update(
+        state.value.copy(pairLivePhotos = enabled),
+    ) { putBoolean(KEY_PAIR_LIVE_PHOTOS, enabled) }
+
+    fun setCullSidecars(enabled: Boolean) = update(
+        state.value.copy(cullSidecars = enabled),
+    ) { putBoolean(KEY_CULL_SIDECARS, enabled) }
 
     fun setNavRailCollapsed(collapsed: Boolean) = update(
         state.value.copy(navRailCollapsed = collapsed),
@@ -210,11 +369,48 @@ class GalleryPreferences(context: Context) {
         update(state.value.copy(shareSeal = trimmed)) { putString(KEY_SHARE_SEAL, trimmed) }
     }
 
+    fun setViewerPinchMode(mode: ViewerPinchMode) = update(
+        state.value.copy(viewerPinchMode = mode),
+    ) { putString(KEY_VIEWER_PINCH_MODE, mode.name) }
+
+    fun setViewerTransparencyBackground(background: TransparencyBackground) = update(
+        state.value.copy(viewerTransparencyBackground = background),
+    ) { putString(KEY_VIEWER_TRANSPARENCY_BACKGROUND, background.name) }
+
+    /** Applies a validated custom theme -- see `ThemeJson.kt`. [json] is stored VERBATIM, exactly
+     *  as the user pasted it: the mandatory preview dialog showed them this exact text, and
+     *  reformatting it before saving would make that preview a preview of something else. */
+    fun setCustomTheme(json: String) = update(
+        state.value.copy(accentPalette = AccentPalette.CUSTOM, customThemeJson = json),
+    ) {
+        putString(KEY_ACCENT_PALETTE, AccentPalette.CUSTOM.name)
+        putString(KEY_CUSTOM_THEME_JSON, json)
+    }
+
     fun setSlideshowInterval(seconds: Int) {
         val safeSeconds = seconds.coerceIn(MIN_SLIDESHOW_INTERVAL_SECONDS, MAX_SLIDESHOW_INTERVAL_SECONDS)
         update(state.value.copy(slideshowIntervalSeconds = safeSeconds)) {
             putInt(KEY_SLIDESHOW_INTERVAL, safeSeconds)
         }
+    }
+
+    /**
+     * The migration is decided once and written down at once: a later write of any other key would
+     * otherwise make a fresh install look like an old one on the next launch.
+     *
+     * Known edge, accepted: an old install that never wrote a single gallery preference has an
+     * empty file, so it is indistinguishable from a fresh one and gets the scrubbing-only default
+     * (it never saw anything but the default strip, and the setting is one tap away).
+     */
+    private fun loadTimelineVisibility(): TimelineVisibility {
+        val stored = preferences.getString(KEY_TIMELINE_VISIBILITY, null)
+        val decided = migratedTimelineVisibility(
+            storedName = stored,
+            existingInstall = preferences.all.isNotEmpty(),
+            timelineWasOn = preferences.getBoolean(KEY_TIMELINE_ON, true),
+        )
+        if (decided.name != stored) preferences.edit().putString(KEY_TIMELINE_VISIBILITY, decided.name).apply()
+        return decided
     }
 
     private fun update(
@@ -227,13 +423,17 @@ class GalleryPreferences(context: Context) {
 
     private fun load(): GalleryPreferencesState = GalleryPreferencesState(
         sort = enumValue(KEY_SORT, GallerySort.NEWEST),
-        gridColumns = preferences
-            .getInt(KEY_GRID_COLUMNS, DEFAULT_GRID_COLUMNS)
-            .coerceIn(MIN_GRID_COLUMNS, MAX_GRID_COLUMNS),
+        gridZoomRung = loadGridZoomRung(),
         blurSensitive = preferences.getBoolean(KEY_BLUR_SENSITIVE, true),
         hideSensitive = preferences.getBoolean(KEY_HIDE_SENSITIVE, false),
         showVideos = preferences.getBoolean(KEY_SHOW_VIDEOS, true),
-        timelineGrouping = enumValue(KEY_TIMELINE_GROUPING, TimelineGrouping.DAY),
+        // MONTH only when nothing was ever stored: an existing install keeps the grouping it chose
+        // (or the DAY it was given), since a stored name always wins over this fallback.
+        timelineGrouping = enumValue(KEY_TIMELINE_GROUPING, TimelineGrouping.MONTH),
+        timelineOn = preferences.getBoolean(KEY_TIMELINE_ON, true),
+        timelinePlacement = enumValue(KEY_TIMELINE_PLACEMENT, TimelinePlacement.RIGHT),
+        timelineVisibility = loadTimelineVisibility(),
+        scrollAxis = enumValue(KEY_SCROLL_AXIS, ScrollAxis.VERTICAL),
         themeMode = enumValue(KEY_THEME_MODE, ThemeMode.SYSTEM),
         accentPalette = enumValue(KEY_ACCENT_PALETTE, AccentPalette.VIOLET),
         slideshowIntervalSeconds = preferences
@@ -244,34 +444,68 @@ class GalleryPreferences(context: Context) {
         // stylistic choice: CatalogueCharacterisationTest pins the projections by fingerprint,
         // so a new preference whose default changed what a destination contains would move a
         // golden -- and a golden that needs editing means the refactor changed behaviour.
+        // (autoplayVideos is the one deliberate exception: it touches no projection, only whether
+        // an opened video starts by itself.)
         keepScreenOn = preferences.getBoolean(KEY_KEEP_SCREEN_ON, false),
         slideshowShuffle = preferences.getBoolean(KEY_SLIDESHOW_SHUFFLE, false),
-        autoplayVideos = preferences.getBoolean(KEY_AUTOPLAY_VIDEOS, false),
+        autoplayVideos = preferences.getBoolean(KEY_AUTOPLAY_VIDEOS, true),
         showFilmstrip = preferences.getBoolean(KEY_SHOW_FILMSTRIP, true),
-        longPressPreview = preferences.getBoolean(KEY_LONG_PRESS_PREVIEW, true),
+        // A stored choice wins. Without one (never chosen, or a name this build no longer knows)
+        // the retired peek switch decides, so anyone who had turned peeking off lands on Select
+        // and everyone else on the preview. The old key is only ever read, never rewritten or
+        // removed: downgrading keeps whatever it last said.
+        gridLongPress = enumValueOrNull<GridLongPress>(KEY_GRID_LONG_PRESS)
+            ?: LongPressResolver.fromLegacyPeekFlag(preferences.getBoolean(KEY_LONG_PRESS_PREVIEW, true)),
         loopAnimations = preferences.getBoolean(KEY_LOOP_ANIMATIONS, false),
         fitToTile = preferences.getBoolean(KEY_FIT_TO_TILE, true),
+        justifiedLayout = preferences.getBoolean(KEY_JUSTIFIED_LAYOUT, false),
+        cullSidecars = preferences.getBoolean(KEY_CULL_SIDECARS, false),
+        groupBursts = preferences.getBoolean(KEY_GROUP_BURSTS, true),
+        pairLivePhotos = preferences.getBoolean(KEY_PAIR_LIVE_PHOTOS, true),
         navRailCollapsed = preferences.getBoolean(KEY_NAV_RAIL_COLLAPSED, false),
         editorSaveMode = enumValue(KEY_EDITOR_SAVE_MODE, EditorSaveMode.ASK),
         shareStripMetadata = preferences.getBoolean(KEY_SHARE_STRIP, true),
         shareWatermark = preferences.getBoolean(KEY_SHARE_WATERMARK, false),
         shareFrame = preferences.getString(KEY_SHARE_FRAME, null) ?: "NONE",
         shareSeal = preferences.getString(KEY_SHARE_SEAL, null).orEmpty(),
+        viewerPinchMode = enumValue(KEY_VIEWER_PINCH_MODE, ViewerPinchMode.OPTICAL_ZOOM),
+        viewerTransparencyBackground = enumValue(
+            KEY_VIEWER_TRANSPARENCY_BACKGROUND, TransparencyBackground.CHECKERBOARD,
+        ),
+        customThemeJson = preferences.getString(KEY_CUSTOM_THEME_JSON, null).orEmpty(),
     )
 
+    // A stored rung wins. Without one the old column count decides: 2..6 are the same rung, and a 7
+    // becomes 6 rather than the stamp view, so nobody's grid changes structure under them.
+    private fun loadGridZoomRung(): Int =
+        if (preferences.contains(KEY_GRID_ZOOM_RUNG)) {
+            preferences.getInt(KEY_GRID_ZOOM_RUNG, DEFAULT_ZOOM_RUNG).coerceIn(ZOOM_RUNG_MIN, ZOOM_RUNG_STAMPS)
+        } else {
+            zoomRungFromLegacyColumns(preferences.getInt(KEY_GRID_COLUMNS, DEFAULT_ZOOM_RUNG))
+        }
+
     private inline fun <reified T : Enum<T>> enumValue(key: String, fallback: T): T =
+        enumValueOrNull<T>(key) ?: fallback
+
+    /** The stored constant, or null when the key is absent or names one this build lacks. */
+    private inline fun <reified T : Enum<T>> enumValueOrNull(key: String): T? =
         preferences.getString(key, null)
             ?.let { stored -> enumValues<T>().firstOrNull { it.name == stored } }
-            ?: fallback
 
     private companion object {
         const val PREFERENCES_NAME = "foto_xplorr_gallery"
         const val KEY_SORT = "sort"
+        /** Retired column count; read once as the default for [KEY_GRID_ZOOM_RUNG], never written. */
         const val KEY_GRID_COLUMNS = "grid_columns"
+        const val KEY_GRID_ZOOM_RUNG = "grid_zoom_rung"
         const val KEY_BLUR_SENSITIVE = "blur_sensitive"
         const val KEY_HIDE_SENSITIVE = "hide_sensitive"
         const val KEY_SHOW_VIDEOS = "show_videos"
         const val KEY_TIMELINE_GROUPING = "timeline_grouping"
+        const val KEY_TIMELINE_ON = "timeline_on"
+        const val KEY_TIMELINE_PLACEMENT = "timeline_placement"
+        const val KEY_TIMELINE_VISIBILITY = "timeline_visibility"
+        const val KEY_SCROLL_AXIS = "scroll_axis"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_ACCENT_PALETTE = "accent_palette"
         const val KEY_SLIDESHOW_INTERVAL = "slideshow_interval"
@@ -280,22 +514,28 @@ class GalleryPreferences(context: Context) {
         const val KEY_SLIDESHOW_SHUFFLE = "slideshow_shuffle"
         const val KEY_AUTOPLAY_VIDEOS = "autoplay_videos"
         const val KEY_SHOW_FILMSTRIP = "show_filmstrip"
+        /** Retired on/off switch; read once as the default for [KEY_GRID_LONG_PRESS], never written. */
         const val KEY_LONG_PRESS_PREVIEW = "long_press_preview"
+        const val KEY_GRID_LONG_PRESS = "grid_long_press"
         const val KEY_LOOP_ANIMATIONS = "loop_animations"
         const val KEY_EDITOR_SAVE_MODE = "editor_save_mode"
         const val KEY_FIT_TO_TILE = "fit_to_tile"
         const val KEY_NAV_RAIL_COLLAPSED = "nav_rail_collapsed"
+        const val KEY_JUSTIFIED_LAYOUT = "justified_layout"
+        const val KEY_CULL_SIDECARS = "cull_sidecars"
+        const val KEY_GROUP_BURSTS = "group_bursts"
+        const val KEY_PAIR_LIVE_PHOTOS = "pair_live_photos"
         const val KEY_SHARE_STRIP = "share_strip_metadata"
         const val KEY_SHARE_WATERMARK = "share_watermark"
         const val KEY_SHARE_FRAME = "share_frame"
         const val KEY_SHARE_SEAL = "share_seal"
+        const val KEY_VIEWER_PINCH_MODE = "viewer_pinch_mode"
+        const val KEY_VIEWER_TRANSPARENCY_BACKGROUND = "viewer_transparency_background"
+        const val KEY_CUSTOM_THEME_JSON = "custom_theme_json"
         const val MAX_SEAL_CHARS = 12
     }
 }
 
-const val MIN_GRID_COLUMNS = 2
-const val MAX_GRID_COLUMNS = 7
-const val DEFAULT_GRID_COLUMNS = 3
 const val MIN_SLIDESHOW_INTERVAL_SECONDS = 2
 const val MAX_SLIDESHOW_INTERVAL_SECONDS = 12
 const val DEFAULT_SLIDESHOW_INTERVAL_SECONDS = 4

@@ -45,4 +45,24 @@ class OutputFormatTest {
         assertNull(overwriteFormatFor("application/octet-stream"))
         assertNull(overwriteFormatFor(null))
     }
+
+    /**
+     * [OutputFormat.HEIC] joined the enum for explicit export (see its own doc), but overwrite
+     * re-encodes with a plain byte stream over the existing file descriptor -- it has no path
+     * that could ever honour a HEIC source, unlike JPEG/PNG/WebP. This pins that HEIC's addition
+     * to the enum did not silently change [overwriteFormatFor]'s answer for a HEIC source, which
+     * a naive `OutputFormat.entries.firstOrNull { ... }` implementation would have done.
+     */
+    @Test
+    fun `HEIC never becomes an overwrite target even though it is now a valid OutputFormat`() {
+        assertNull(overwriteFormatFor(OutputFormat.HEIC.mimeType))
+    }
+
+    @Test
+    fun `a copy never defaults to HEIC even when the source already is one`() {
+        // outputFormatFor answers "the fallback format for a fresh copy", never a device/runtime
+        // capability check -- HEIC needs androidx.heifwriter and a real HEVC encoder
+        // (isHeicExportSupported), neither of which this pure function can or should know about.
+        assertEquals(OutputFormat.JPEG, outputFormatFor(OutputFormat.HEIC.mimeType))
+    }
 }

@@ -27,7 +27,7 @@ import okio.Path.Companion.toOkioPath
 class FotoXplorrApplication : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
-        CrashRecovery.install(this, appLabel = "Foto Xplorr")
+        CrashRecovery.install(this, appLabel = "Fotoz")
         startBackgroundWork()
     }
 

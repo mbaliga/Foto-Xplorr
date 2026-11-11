@@ -18,7 +18,7 @@ import dev.aarso.hyle.tokens.HyleTokens
  * Bridges dev.aarso:hyle's platform-neutral tokens/contract into Compose. `:hyle` is
  * deliberately Compose-free (its own build.gradle.kts: "pure data + contract ... no
  * Compose, no colour committed") so every consumer needs this tiny adapter layer; this
- * is Foto Xplorr's copy of it, not something that belongs upstream in `:hyle` itself.
+ * is Fotoz's copy of it, not something that belongs upstream in `:hyle` itself.
  */
 
 /** [Argb] is `0xAARRGGBB` as a `Long` -- exactly the format `androidx.compose.ui.graphics.Color`'s

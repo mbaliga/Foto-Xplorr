@@ -5,8 +5,40 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** [MetadataEdit.merge] (P0-08 item 6): pure, no Android in sight. */
+/**
+ * [MetadataEdit] -- pure, no Android in sight.
+ *
+ * - [MetadataEdit.isEmpty], field by field: the check both [MetadataWriter.write] (skip opening
+ *   the file at all) and [applyMetadataEdit] (skip touching bytes) rely on to make a no-op edit
+ *   genuinely free rather than merely harmless.
+ * - [MetadataEdit.merge] (P0-08 item 6): how two edits queued against the same photo before the
+ *   first has been written combine.
+ */
 class MetadataEditTest {
+
+    @Test
+    fun `the default edit is empty`() {
+        assertTrue(MetadataEdit().isEmpty)
+    }
+
+    @Test
+    fun `any single field being set makes the edit non-empty`() {
+        assertFalse(MetadataEdit(caption = "x").isEmpty)
+        assertFalse(MetadataEdit(caption = "").isEmpty) // blank still means "clear this field"
+        assertFalse(MetadataEdit(creator = "x").isEmpty)
+        assertFalse(MetadataEdit(copyright = "x").isEmpty)
+        assertFalse(MetadataEdit(rating = 0).isEmpty) // 0 still means "clear the rating"
+        assertFalse(MetadataEdit(rating = 4).isEmpty)
+        assertFalse(MetadataEdit(keywordsToAdd = listOf("a")).isEmpty)
+        assertFalse(MetadataEdit(keywordsToRemove = listOf("a")).isEmpty)
+        assertFalse(MetadataEdit(setLocation = GpsCoordinate(1.0, 2.0)).isEmpty)
+        assertFalse(MetadataEdit(clearLocation = true).isEmpty)
+    }
+
+    @Test
+    fun `an explicit empty list for keywords is still an empty edit`() {
+        assertTrue(MetadataEdit(keywordsToAdd = emptyList(), keywordsToRemove = emptyList()).isEmpty)
+    }
 
     @Test
     fun `a later edit's non-null fields win over an earlier one's`() {
@@ -100,5 +132,38 @@ class MetadataEditTest {
         val merged = earlier.merge(MetadataEdit())
 
         assertEquals(earlier, merged)
+    }
+
+    @Test
+    fun `keywordsToRemove unions across two edits`() {
+        val earlier = MetadataEdit(keywordsToRemove = listOf("beach", "sunset"))
+        val later = MetadataEdit(keywordsToRemove = listOf("sunset", "family"))
+
+        val merged = earlier.merge(later)
+
+        assertEquals(listOf("beach", "sunset", "family"), merged.keywordsToRemove)
+        assertEquals(emptyList<String>(), merged.keywordsToAdd)
+    }
+
+    @Test
+    fun `a later removal of a keyword an earlier edit added cancels that add and still removes it`() {
+        val earlier = MetadataEdit(keywordsToAdd = listOf("beach", "sunset"))
+        val later = MetadataEdit(keywordsToRemove = listOf("sunset"))
+
+        val merged = earlier.merge(later)
+
+        assertEquals(listOf("beach"), merged.keywordsToAdd)
+        assertEquals(listOf("sunset"), merged.keywordsToRemove)
+    }
+
+    @Test
+    fun `a later add of a keyword an earlier edit removed cancels that removal and adds it`() {
+        val earlier = MetadataEdit(keywordsToRemove = listOf("beach", "sunset"))
+        val later = MetadataEdit(keywordsToAdd = listOf("sunset"))
+
+        val merged = earlier.merge(later)
+
+        assertEquals(listOf("sunset"), merged.keywordsToAdd)
+        assertEquals(listOf("beach"), merged.keywordsToRemove)
     }
 }

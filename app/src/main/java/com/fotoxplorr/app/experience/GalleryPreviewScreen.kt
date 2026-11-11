@@ -79,6 +79,7 @@ fun GalleryPreviewScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // Fixed on purpose (reference design): neutral preview grounds, no accent role.
             .background(Color(0xFF08080B))
             .focusRequester(focusRequester)
             .focusable()

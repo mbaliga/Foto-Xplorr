@@ -3,9 +3,10 @@ package com.fotoxplorr.app.background
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
- * What Foto Xplorr's one background job is doing right now, for the settings screen's "right
+ * What Fotoz's one background job is doing right now, for the settings screen's "right
  * now" status line (SettingsTabs.kt's BACKGROUND tab).
  *
  * Deliberately a DIFFERENT shape from [com.fotoxplorr.app.recognition.RecognitionProgress] and
@@ -59,7 +60,7 @@ sealed interface BackgroundWorkStatus {
 fun BackgroundWorkStatus.describe(): String = when (this) {
     BackgroundWorkStatus.Unknown -> "Not checked yet."
     BackgroundWorkStatus.Unrestricted ->
-        "Background rules are off -- indexing runs whenever the system schedules it, with nothing held back."
+        HelpCopy.Hint.STATUS_RULES_OFF
     BackgroundWorkStatus.Pending -> "Scheduled. Waiting for the system to give it a turn."
     BackgroundWorkStatus.Running -> "Running now."
     is BackgroundWorkStatus.Blocked -> reason

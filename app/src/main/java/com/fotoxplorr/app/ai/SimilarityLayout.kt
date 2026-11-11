@@ -100,7 +100,7 @@ object SimilarityLayout {
     }
 
     private data class MutablePoint(
-        val mediaId: com.fotoxplorr.app.media.MediaId,
+        val mediaId: com.fotoxplorr.core.model.MediaId,
         val cluster: Int,
         var x: Float,
         var y: Float,

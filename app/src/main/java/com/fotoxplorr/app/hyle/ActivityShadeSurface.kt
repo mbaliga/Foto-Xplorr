@@ -13,33 +13,44 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Path
+import androidx.compose.animation.core.snap
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -80,14 +91,23 @@ fun ActivityShade(
     val target = shadeHeight(state, activities.size)
     // The shell's own settle curve, respecified for Dp. SpatialMotion.settleSpec is typed to
     // Float; borrowing the FEEL means copying its duration and easing, not its instance.
+    val reduceMotion = rememberReduceMotion()
     val height by animateDpAsState(
         targetValue = target.dp,
-        animationSpec = tween(
-            durationMillis = SHADE_SETTLE_MILLIS,
-            easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f),
-        ),
+        animationSpec = if (reduceMotion) {
+            snap()
+        } else {
+            tween(
+                durationMillis = SHADE_SETTLE_MILLIS,
+                easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f),
+            )
+        },
         label = "shade-height",
     )
+    // The grid under an open shade is the sheet that slipped down: its top corners round as the
+    // shade opens (the same radius family as the parked card) and a soft shadow falls on it. The
+    // grid itself is never moved (see above); the corners are black fillets drawn over it.
+    val sheetCornerDp = SheetGeometry.shadeSheetCornerDp(height.value)
 
     Box(modifier.fillMaxSize()) {
         // Drawn FIRST and never moved. Everything above it in this Box covers it; nothing
@@ -102,6 +122,8 @@ fun ActivityShade(
                     // Opaque, because it is the app's own background coming forward rather than a
                     // translucent overlay. A scrim here would show the photographs through the
                     // progress bar and make both harder to read.
+                    // Fixed on purpose (reference design): the strip ground is the pure black
+                    // sampled from the owner's screenshots.
                     .background(Color.Black)
                     .draggable(
                         orientation = Orientation.Vertical,
@@ -120,7 +142,11 @@ fun ActivityShade(
                         )
                     }
                     .statusBarsPadding()
-                    .height(height),
+                    .height(height)
+                    .drawWithContent {
+                        drawContent()
+                        drawSheetEdge(sheetCornerDp.dp.toPx())
+                    },
             ) {
                 when (state) {
                     ShadeState.COLLAPSED -> CollapsedStrip(activities)
@@ -136,52 +162,92 @@ fun ActivityShade(
 }
 
 /**
- * The collapsed state: one coloured sliver per activity, side by side, no words.
+ * The collapsed state, to the owner's screenshots (2026-10): one slot per activity, side by side
+ * on a black band, each slot a thin grey track with the kind's colour run along it as far as its
+ * progress, and the kind's white mark at the slot's right end.
  *
- * Each takes an equal share of the width rather than a share proportional to anything, so the
- * number of running jobs is countable at a glance — which is the only thing this state is for.
+ * Equal slots rather than shares proportional to anything, so the number of running jobs is
+ * countable at a glance — which is what this state is for. With one job the track runs the whole
+ * width and carries no mark, exactly as the one-job screenshot draws it: the colour alone says
+ * which job it is, and a mark beside a bar that spans the screen would be labelling the obvious.
+ *
+ * Geometry, in dp, measured off the three-job screenshot: 12 in from either edge, slots 28 apart,
+ * 4 between a track and its 12 mark; tracks 8 tall with the fill inset 2 all round.
  */
 @Composable
 private fun CollapsedStrip(activities: List<BackgroundActivity>) {
+    val shown = activities.take(MAX_COLLAPSED_SLIVERS)
     Row(
         Modifier
             .fillMaxWidth()
             .height(COLLAPSED_HEIGHT.dp)
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(horizontal = STRIP_INSET.dp),
+        horizontalArrangement = Arrangement.spacedBy(SLOT_GAP.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        activities.take(MAX_COLLAPSED_SLIVERS).forEach { activity ->
-            ProgressTrack(
-                activity = activity,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(COLLAPSED_BAR.dp),
-            )
+        shown.forEach { activity ->
+            // Keyed by id so a job finishing does not hand its half-animated bar to whichever job
+            // shifts into its index — see BackgroundActivity.id.
+            key(activity.id) {
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    ProgressTrack(
+                        activity = activity,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(TRACK_HEIGHT.dp),
+                    )
+                    if (shown.size > 1) {
+                        Spacer(Modifier.width(GLYPH_GAP.dp))
+                        KindGlyph(activity)
+                    }
+                }
+            }
         }
+    }
+}
+
+/**
+ * The kind's mark, at the reference's 12dp.
+ *
+ * The vector is drawn at [GLYPH_DP] (16) because its ink sits in the middle 12 units of its
+ * viewport — see [ActivityGlyphs] — so the layout box is 12 and the drawing overhangs it by the
+ * vector's own 2 units of air on each side. Nothing else in the slot is near enough to care.
+ */
+@Composable
+private fun KindGlyph(activity: BackgroundActivity) {
+    Box(Modifier.size(GLYPH_SLOT.dp), contentAlignment = Alignment.Center) {
+        Icon(
+            imageVector = activity.kind.glyph,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.requiredSize(GLYPH_DP.dp),
+        )
     }
 }
 
 /** One row per activity: glyph, name, and the count, exactly as the mockup draws it. */
 @Composable
 private fun ActivityRows(activities: List<BackgroundActivity>) {
+    val lift = LocalSheetLift.current
     activities.take(MAX_LISTED_ROWS).forEach { activity ->
         Row(
             Modifier
                 .fillMaxWidth()
                 .height(NOTIFICATION_ROW.dp)
-                .padding(horizontal = 14.dp),
+                .sheetInsets(lift, depthDp = 0f, baseDp = 14f),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SpinnerGlyph(activity)
             Text(
                 text = activity.error ?: activity.kind.label,
-                color = if (activity.error != null) Color(0xFFFFB4AB) else Color.White,
+                color = if (activity.error != null) ERROR_ACCENT else Color.White,
                 style = TextStyle(fontSize = 16.sp),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(start = 10.dp).weight(1f),
             )
             if (activity.error == null) CountReadout(activity)
+            activity.onCancel?.let { CancelGlyph(it) }
         }
     }
     if (activities.size > MAX_LISTED_ROWS) {
@@ -206,6 +272,7 @@ private fun ActivityRows(activities: List<BackgroundActivity>) {
  */
 @Composable
 private fun HeroPanel(activity: BackgroundActivity) {
+    val lift = LocalSheetLift.current
     Column(Modifier.fillMaxWidth().height(EXPANDED_HERO.dp)) {
         Box(
             Modifier
@@ -218,58 +285,64 @@ private fun HeroPanel(activity: BackgroundActivity) {
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            // A stack of plates standing in for the mockup's stack of photographs: three
-            // rectangles, fanned. Geometry rather than an asset, same as the album stacks.
-            Box(Modifier.size(width = 132.dp, height = 108.dp), contentAlignment = Alignment.Center) {
-                // Drawn back to front, so the accented plate is the one the eye lands on. The two
-                // behind are OUTLINED rather than filled: at 18% white on a black ground they were
-                // invisible and the stack rendered as a single card, which is the whole point of
-                // the illustration lost.
-                listOf(14f, -8f, 0f).forEachIndexed { index, angle ->
-                    val front = index == 2
-                    Box(
-                        Modifier
-                            .size(width = 72.dp, height = 84.dp)
-                            .graphicsLayer { rotationZ = angle }
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (front) activity.kind.accent else Color(0xFF1C1C22))
-                            .then(
-                                if (front) {
-                                    Modifier
-                                } else {
-                                    Modifier.border(
-                                        1.dp,
-                                        Color.White.copy(alpha = 0.30f),
-                                        RoundedCornerShape(8.dp),
-                                    )
-                                },
-                            ),
-                    )
-                }
-            }
+            // The photos the job is working on, as a deck you can ruffle through. No photo yet
+            // (or a job that does not know its photos) draws the neutral silhouette.
+            PhotoStack(photos = activity.photos, seed = activity.id.hashCode().toLong())
         }
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 18.dp),
+            Modifier.fillMaxWidth().sheetInsets(lift, depthDp = 0f, baseDp = 18f),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = activity.error ?: activity.kind.label,
-                color = if (activity.error != null) Color(0xFFFFB4AB) else Color.White,
+                color = if (activity.error != null) ERROR_ACCENT else Color.White,
                 style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Medium),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
             if (activity.error == null) CountReadout(activity, large = true)
+            activity.onCancel?.let { CancelGlyph(it) }
         }
         ProgressTrack(
             activity = activity,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 18.dp, vertical = 14.dp)
-                .height(EXPANDED_BAR.dp),
+                .height(TRACK_HEIGHT.dp),
         )
     }
+}
+
+/**
+ * Draws, just below this shade's bottom edge, what makes the grid read as a sheet that slipped
+ * down: black fillets that round its two top corners to [radiusPx], and a soft shadow across it.
+ * Nothing at radius 0, so the collapsed sliver and a shade at rest are drawn exactly as before.
+ */
+private fun DrawScope.drawSheetEdge(radiusPx: Float) {
+    if (radiusPx <= 0.5f) return
+    val y = size.height
+    val w = size.width
+    val left = Path().apply {
+        moveTo(0f, y)
+        lineTo(radiusPx, y)
+        arcTo(Rect(0f, y, 2 * radiusPx, y + 2 * radiusPx), 270f, -90f, false)
+        close()
+    }
+    val right = Path().apply {
+        moveTo(w, y)
+        lineTo(w - radiusPx, y)
+        arcTo(Rect(w - 2 * radiusPx, y, w, y + 2 * radiusPx), 270f, 90f, false)
+        close()
+    }
+    // Fixed on purpose: the shade's own ground is pure black.
+    drawRect(
+        Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent), startY = y, endY = y + 14.dp.toPx()),
+        topLeft = Offset(radiusPx, y),
+        size = Size(w - 2 * radiusPx, 14.dp.toPx()),
+    )
+    drawPath(left, Color.Black)
+    drawPath(right, Color.Black)
 }
 
 /** `4,822 of 12,366` — the count bold, the total muted, as one readout. */
@@ -301,46 +374,95 @@ private fun CountReadout(activity: BackgroundActivity, large: Boolean = false) {
  * An indeterminate bar rather than a bar stuck at zero: a scan that has not counted its files yet
  * genuinely does not know how far along it is, and a motionless empty track reads as a job that has
  * hung rather than one that has started.
+ *
+ * The track is the screenshots' (2026-10): a pill whose grey lightens very slightly from top to
+ * bottom, with the colour inset 2dp inside it as a thinner pill of its own. Every per-frame value
+ * — the eased progress, the sweep — is read inside the draw lambda, so a moving bar never
+ * recomposes anything.
  */
 @Composable
 private fun ProgressTrack(activity: BackgroundActivity, modifier: Modifier = Modifier) {
     val fraction = activity.fraction
+    val failed = activity.error != null
     val animated by animateFloatAsState(
         targetValue = fraction ?: 0f,
         animationSpec = tween(SHADE_SETTLE_MILLIS, easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)),
         label = "shade-progress",
     )
-    val sweep by rememberIndeterminateSweep(enabled = fraction == null && activity.error == null)
+    val sweep by rememberIndeterminateSweep(enabled = fraction == null && !failed)
+    // One brush per track, not one per frame: a shader brush caches its shader by size, so a
+    // remembered instance is one allocation for the life of the bar.
+    val trackBrush = remember { Brush.verticalGradient(listOf(TRACK_TOP, TRACK_BOTTOM)) }
 
     Canvas(modifier) {
-        val radius = CornerRadius(size.height / 2f, size.height / 2f)
-        drawRoundRect(color = Color.White.copy(alpha = 0.14f), cornerRadius = radius)
-        val accent = if (activity.error != null) Color(0xFFFFB4AB) else activity.kind.accent
-        if (fraction != null) {
-            if (animated > 0f) {
-                drawRoundRect(
-                    color = accent,
-                    size = Size(size.width * animated, size.height),
-                    cornerRadius = radius,
-                )
-            }
-        } else {
-            // A short block travelling the track, clipped to it at both ends so it slides in and
-            // out rather than appearing and vanishing whole.
-            val blockWidth = size.width * INDETERMINATE_BLOCK
-            val leadingEdge = (size.width + blockWidth) * sweep
-            val left = (leadingEdge - blockWidth).coerceIn(0f, size.width)
-            val right = leadingEdge.coerceIn(0f, size.width)
-            if (right > left) {
-                drawRoundRect(
-                    color = accent,
-                    topLeft = Offset(left, 0f),
-                    size = Size(width = right - left, height = size.height),
-                    cornerRadius = radius,
-                )
+        drawRoundRect(brush = trackBrush, cornerRadius = CornerRadius(size.height / 2f))
+        val inset = FILL_INSET.dp.toPx()
+        val innerWidth = size.width - inset * 2f
+        val innerHeight = size.height - inset * 2f
+        if (innerWidth <= 0f || innerHeight <= 0f) return@Canvas
+        val radius = CornerRadius(innerHeight / 2f)
+        val accent = if (failed) ERROR_ACCENT else activity.kind.accent
+        when {
+            // A failed job's bar stops where it was. One that never learnt its total has no
+            // honest width to stop at, so the failure shows as a full run of the error colour.
+            failed -> drawFill(accent, inset, innerWidth * (fraction ?: 1f), innerHeight, radius)
+            fraction != null -> drawFill(accent, inset, innerWidth * animated, innerHeight, radius)
+            else -> {
+                // A short block travelling the track, clipped to it at both ends so it slides in
+                // and out rather than appearing and vanishing whole.
+                val blockWidth = innerWidth * INDETERMINATE_BLOCK
+                val leadingEdge = (innerWidth + blockWidth) * sweep
+                val left = (leadingEdge - blockWidth).coerceIn(0f, innerWidth)
+                val right = leadingEdge.coerceIn(0f, innerWidth)
+                if (right > left) {
+                    drawRoundRect(
+                        color = accent,
+                        topLeft = Offset(inset + left, inset),
+                        size = Size(right - left, innerHeight),
+                        cornerRadius = radius,
+                    )
+                }
             }
         }
     }
+}
+
+/** The colour inside the track: a pill from its left end, [width] long, or nothing at zero. */
+private fun DrawScope.drawFill(
+    color: Color,
+    inset: Float,
+    width: Float,
+    height: Float,
+    radius: CornerRadius,
+) {
+    if (width <= 0f) return
+    drawRoundRect(
+        color = color,
+        topLeft = Offset(inset, inset),
+        size = Size(width, height),
+        cornerRadius = radius,
+    )
+}
+
+/**
+ * The one destructive control a shade row can carry: stop this job.
+ *
+ * A plain glyph rather than a full `IconButton` (whose default size claims more of the row's
+ * cramped horizontal space than the count and the name can spare), but padded out to a real
+ * 48dp target -- see `minimumInteractiveComponentSize` elsewhere in this task for the same
+ * reasoning applied to the room controls.
+ */
+@Composable
+private fun CancelGlyph(onCancel: () -> Unit) {
+    Text(
+        text = "✕",
+        color = Color.White.copy(alpha = 0.6f),
+        style = TextStyle(fontSize = 15.sp),
+        modifier = Modifier
+            .clickable(onClickLabel = "Cancel", onClick = onCancel)
+            .padding(start = 10.dp)
+            .minimumInteractiveComponentSize(),
+    )
 }
 
 /** The small turning disc beside an activity's name. */
@@ -349,7 +471,7 @@ private fun SpinnerGlyph(activity: BackgroundActivity) {
     val sweep by rememberIndeterminateSweep(enabled = activity.error == null && !activity.isFinished)
     Canvas(Modifier.size(GLYPH.dp)) {
         drawCircle(color = Color.White.copy(alpha = 0.16f), radius = size.minDimension / 2f)
-        val accent = if (activity.error != null) Color(0xFFFFB4AB) else activity.kind.accent
+        val accent = if (activity.error != null) ERROR_ACCENT else activity.kind.accent
         drawArc(
             color = accent,
             startAngle = -90f + sweep * 360f,
@@ -387,8 +509,25 @@ internal fun grouped(value: Int): String {
 }
 
 private const val MAX_COLLAPSED_SLIVERS = 6
-private const val COLLAPSED_BAR = 6
-private const val EXPANDED_BAR = 6
+
+/** The collapsed strip's geometry, in dp, measured off the owner's screenshots (2026-10). */
+private const val STRIP_INSET = 12
+private const val SLOT_GAP = 28
+private const val TRACK_HEIGHT = 8
+private const val FILL_INSET = 2
+private const val GLYPH_SLOT = 12
+private const val GLYPH_GAP = 4
+
+// Fixed on purpose (reference design): the track greys are sampled from the strip screenshots.
+/** The track's grey, lightening a little from top to bottom, as the screenshots draw it. */
+private val TRACK_TOP = Color(0xFF383838)
+private val TRACK_BOTTOM = Color(0xFF4D4D4D)
+
+// Fixed on purpose (semantic): the error salmon, the same value as the Material dark error, never
+// the accent.
+/** What a failed job's bar and name turn. Nothing in [ActivityKind] may use it. */
+private val ERROR_ACCENT = Color(0xFFFFB4AB)
+
 private const val GLYPH = 20
 private const val INDETERMINATE_BLOCK = 0.35f
 

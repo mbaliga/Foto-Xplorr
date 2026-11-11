@@ -1,0 +1,12 @@
+A real photo and video editor: exposure, HSL, curves, crop, spot heal, presets
+and undo history, with Save a copy, Save As, or replace the original.
+
+Read and write EXIF/XMP metadata (rating, creator, copyright, keywords,
+location). Convert video to MP4 and audio to AAC, and edit MP3/MP4/FLAC tags.
+
+A new Audio destination: browse and play your device's audio with background
+playback and lock-screen controls. Video playback gained variable speed,
+subtitles, audio-track selection, gestures and Picture-in-Picture.
+
+Long-running jobs (conversion, export, copy/move) now show progress and can be
+cancelled, and the app survives rotation without losing your place.

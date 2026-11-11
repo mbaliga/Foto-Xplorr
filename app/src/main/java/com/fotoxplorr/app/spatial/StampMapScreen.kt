@@ -23,11 +23,13 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -46,11 +49,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.basemap.BasemapCanvas
+import com.fotoxplorr.app.basemap.MapMath
+import com.fotoxplorr.app.basemap.MapViewport
+import com.fotoxplorr.app.basemap.mapGestures
+import com.fotoxplorr.app.basemap.rememberImportedTiles
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.ui.FotoStamp
+import com.fotoxplorr.app.viewer.PlaceMorph
+import com.fotoxplorr.app.viewer.PlacePin
+import com.fotoxplorr.core.model.MediaId
 import kotlin.math.roundToInt
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * Photos on a map, as postage stamps on a stylized field.
@@ -68,6 +79,10 @@ import kotlin.math.roundToInt
  * The field is deliberately not pretending to be geography. It carries a graticule so position
  * reads as position, and nothing else -- inventing coastlines the app does not have data for would
  * be worse than admitting there are none.
+ *
+ * It is also the offline build's map pane inside the browser (`embedded`): the same field with no
+ * header, no close glyph and no Back handling, drawn in place of the grid and fed the photos the
+ * grid was showing. See [PhotoMapPane].
  */
 @Composable
 fun StampMapScreen(
@@ -77,16 +92,56 @@ fun StampMapScreen(
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Opened from one photo's details room: that photo is drawn as its white-bordered tile, and
+     * every other located photo as a filled colour dot rather than a stamp -- see [MapFocus].
+     * Null is the whole-view map.
+     */
+    focus: MapFocus? = null,
+    /**
+     * Drawn as a pane of the browser rather than as a screen: no header and no close glyph, and
+     * -- the part that matters -- no [BackHandler], because the browser owns the Back order and a
+     * handler registered here would outrank it. Leaving the map is the browser's to do.
+     */
+    embedded: Boolean = false,
+    /**
+     * What the field is framed to. The projection is fitted to the bounds of the located photos,
+     * so if it were fitted to [assets] alone, narrowing them (a time range) would re-fit it and
+     * every stamp that stayed would jump. Fitting to this list (and [assets], so nothing is ever
+     * placed off the field) keeps the field still while stamps come and go. Must already pass
+     * the browser's visibility filter, or the bounds would leak where hidden photos were taken.
+     */
+    frameAssets: List<MediaAsset> = assets,
 ) {
-    BackHandler(onBack = onClose)
+    if (!embedded) BackHandler(onBack = onClose)
 
-    val located = remember(assets, geoState.metadataById) {
-        assets.mapNotNull { asset ->
+    val located = remember(assets, geoState.metadataById, focus) {
+        val fromIndex = assets.mapNotNull { asset ->
             if (asset.isTrashed) null else geoState.metadataById[asset.id]?.let { asset to it }
         }
+        // The focused photo may be located by its own EXIF and absent from the geo index (the
+        // index is built on demand); it is still the one place this map is about, so it is
+        // added -- never duplicated -- from the focus itself.
+        if (focus != null && fromIndex.none { it.first.id == focus.assetId }) {
+            val self = assets.firstOrNull { it.id == focus.assetId }
+            if (self != null && PlaceMorph.isDrawable(focus.latitude, focus.longitude)) {
+                fromIndex + (self to GeoMetadata(self.id, focus.latitude, focus.longitude, null, null))
+            } else {
+                fromIndex
+            }
+        } else {
+            fromIndex
+        }
     }
-    val bounds = remember(located) {
-        StampMapProjection.boundsOf(located.map { it.second.latitude to it.second.longitude })
+    val bounds = remember(located, assets, frameAssets, geoState.metadataById) {
+        val framed = if (frameAssets === assets) {
+            located
+        } else {
+            (frameAssets + assets).mapNotNull { asset ->
+                if (asset.isTrashed) null else geoState.metadataById[asset.id]?.let { asset to it }
+            }
+        }
+        StampMapProjection.boundsOf(framed.map { it.second.latitude to it.second.longitude })
     }
     // Thinned to one stamp per grid cell. A library with thousands of located photos would
     // otherwise compose thousands of overlapping stamps -- slow to lay out and unreadable, since
@@ -100,58 +155,94 @@ fun StampMapScreen(
     }
 
     var selected by remember { mutableStateOf<MediaId?>(null) }
-    var zoom by remember { mutableFloatStateOf(1f) }
-    var panX by remember { mutableFloatStateOf(0f) }
-    var panY by remember { mutableFloatStateOf(0f) }
+    val tiles = rememberImportedTiles()
+    val maxLevel = if (tiles != null) IMPORTED_MAX_LEVEL else MapMath.MAX_LEVEL
 
     if (stamps.isEmpty() || bounds == null) {
-        EmptyMap(
-            geoState = geoState,
-            onIndexLocations = onIndexLocations,
-            onClose = onClose,
-            modifier = modifier,
-        )
+        if (embedded && bounds != null) {
+            // The library has places but this view has none of them (a time range, a search):
+            // still the field, saying so, rather than the "nothing is indexed" screen.
+            NothingLocatedHere(modifier)
+        } else {
+            EmptyMap(
+                geoState = geoState,
+                onIndexLocations = onIndexLocations,
+                onClose = onClose,
+                modifier = modifier,
+                embedded = embedded,
+            )
+        }
         return
     }
 
     Box(modifier.fillMaxSize().background(FIELD)) {
-        BoxWithConstraints(
-            Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, gestureZoom, _ ->
-                        zoom = (zoom * gestureZoom).coerceIn(MIN_ZOOM, MAX_ZOOM)
-                        panX += pan.x
-                        panY += pan.y
-                    }
-                },
-        ) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
             val density = LocalDensity.current
             val widthPx = with(density) { maxWidth.toPx() }
             val heightPx = with(density) { maxHeight.toPx() }
             val stampPx = with(density) { STAMP_SIZE.dp.toPx() }
+            val viewport = MapViewport(widthPx.toDouble(), heightPx.toDouble())
+            // Framed to the photos' bounds as before, but as a real Web Mercator camera so the
+            // basemap under the stamps lines up with them; pan and pinch move the camera.
+            fun framing() = MapMath.fitted(bounds.minLongitude, bounds.minLatitude, bounds.maxLongitude, bounds.maxLatitude, viewport, maxLevel = maxLevel)
+            // A single state object, so the gesture layer never writes into an orphan when the
+            // bounds or the size change; the new framing is applied to it.
+            var camera by remember { mutableStateOf(framing()) }
+            LaunchedEffect(bounds, viewport) { camera = framing() }
 
-            // The graticule, so a position reads as a position. Drawn under everything and
-            // scaled with the map so it acts like a real reference grid rather than screen
-            // furniture that happens to sit on top.
-            Box(
-                Modifier
+            // The bundled world under everything: land, coastlines, borders and the largest city
+            // names, plus the imported raster map file when there is one. Gestures sit on this
+            // layer; a stamp's own tap wins over them.
+            BasemapCanvas(
+                camera = { camera },
+                modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = zoom
-                        scaleY = zoom
-                        translationX = panX
-                        translationY = panY
-                    }
-                    .background(
-                        Brush.linearGradient(listOf(FIELD, FIELD_DEEP)),
+                    .mapGestures(
+                        camera = { camera },
+                        viewport = { viewport },
+                        onCamera = { camera = it },
+                        maxLevel = { maxLevel },
                     ),
-            ) {
-                Graticule()
+                tiles = tiles,
+            )
+
+            if (focus != null) {
+                // Every located photo as one filled dot in its own colour, drawn in a single
+                // Canvas pass: thousands of dots are one draw call each, no composables, and the
+                // pan/zoom state is read inside the draw lambda so a drag re-draws without
+                // recomposing. The focused photo is left out of the dots -- it is the tile.
+                val dotRadiusPx = with(density) { FOCUS_DOT_DP.dp.toPx() }
+                val dots = remember(located, bounds, focus) {
+                    located.filter { it.first.id != focus.assetId }.map { (asset, geo) ->
+                        Triple(geo.latitude, geo.longitude, Color(focus.colorFor(asset.id)))
+                    }
+                }
+                Canvas(Modifier.fillMaxSize()) {
+                    val cam = camera
+                    dots.forEach { (lat, lon, color) ->
+                        val p = MapMath.toScreen(cam, viewport, lon, lat)
+                        drawCircle(color = color, radius = dotRadiusPx, center = Offset(p.x.toFloat(), p.y.toFloat()))
+                    }
+                }
+                val self = located.firstOrNull { it.first.id == focus.assetId }
+                if (self != null) {
+                    val point = MapMath.toScreen(camera, viewport, self.second.longitude, self.second.latitude)
+                    val pinWidthPx = with(density) { PlaceMorph.PIN_SIZE_DP.dp.toPx() }
+                    val pinHeightPx = with(density) { PlaceMorph.PIN_GROUP_HEIGHT_DP.dp.toPx() }
+                    PlacePin(
+                        asset = self.first,
+                        modifier = Modifier.offset {
+                            IntOffset(
+                                x = (point.x - pinWidthPx / 2f).roundToInt(),
+                                y = (point.y - pinHeightPx / 2f).roundToInt(),
+                            )
+                        },
+                    )
+                }
             }
 
-            stamps.forEach { (asset, geo) ->
-                val point = StampMapProjection.project(geo.latitude, geo.longitude, bounds)
+            if (focus == null) stamps.forEach { (asset, geo) ->
+                val point = MapMath.toScreen(camera, viewport, geo.longitude, geo.latitude)
                 val isSelected = selected == asset.id
                 val scale by animateFloatAsState(
                     targetValue = if (isSelected) 1.35f else 1f,
@@ -163,15 +254,11 @@ fun StampMapScreen(
                             // Placement offset, not a layer translation: a stamp has to answer
                             // touches where it is drawn, and the whole map pans underneath.
                             //
-                            // Scaled about the centre of the viewport, matching the pivot
-                            // `graphicsLayer` uses for the graticule below. Scaling these about
-                            // the top-left instead -- the obvious reading of the arithmetic --
-                            // slides the pins off the grid the moment you pinch.
+                            // The camera's own projection, the one the basemap is drawn with, so a
+                            // stamp stays on its place through every pan and pinch.
                             IntOffset(
-                                x = ((point.x - 0.5f) * widthPx * zoom + widthPx / 2f -
-                                    stampPx / 2f + panX).roundToInt(),
-                                y = ((point.y - 0.5f) * heightPx * zoom + heightPx / 2f -
-                                    stampPx / 2f + panY).roundToInt(),
+                                x = (point.x - stampPx / 2f).roundToInt(),
+                                y = (point.y - stampPx / 2f).roundToInt(),
                             )
                         }
                         .size(STAMP_SIZE.dp)
@@ -192,7 +279,8 @@ fun StampMapScreen(
             }
         }
 
-        Row(
+        // Embedded, the browser says how many are on the map in the pill, so there is no header.
+        if (!embedded) Row(
             Modifier
                 .align(Alignment.TopStart)
                 .statusBarsPadding()
@@ -207,15 +295,15 @@ fun StampMapScreen(
             )
             Column(Modifier.padding(start = 4.dp)) {
                 Text(
-                    "PLACES",
+                    if (focus != null) "WHERE THIS WAS TAKEN" else "MAP",
                     color = Color.White.copy(alpha = 0.6f),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
                     // Says both numbers when they differ, so a thinned map never looks like it
-                    // silently lost photos.
-                    if (stamps.size == located.size) "${located.size} located"
+                    // silently lost photos. In focus mode nothing is thinned: every dot is real.
+                    if (focus != null || stamps.size == located.size) "${located.size} located"
                     else "${stamps.size} of ${located.size} located",
                     color = Color.White,
                     style = MaterialTheme.typography.titleMedium,
@@ -225,7 +313,7 @@ fun StampMapScreen(
 
         // The immersive half of the reference: selecting a stamp opens it as a poster with the
         // rest of that place's photos beneath it.
-        selected?.let { id ->
+        if (focus == null) selected?.let { id ->
             val asset = stamps.firstOrNull { it.first.id == id }?.first
             if (asset != null) {
                 val nearby = remember(stamps) { stamps.map { it.first } }
@@ -234,7 +322,11 @@ fun StampMapScreen(
                     nearby = nearby,
                     onOpen = { onOpenAsset(asset, nearby) },
                     onDismiss = { selected = null },
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                    // Embedded, the browser's pill and discs float along the bottom edge; the
+                    // poster rises above them rather than under.
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = if (embedded) EMBEDDED_CHROME_CLEARANCE.dp else 0.dp),
                 )
             }
         }
@@ -344,6 +436,7 @@ private fun EmptyMap(
     onIndexLocations: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    embedded: Boolean = false,
 ) {
     // Still a map, still turning (owner, 2026-08-18: *"when there is no location data, you must
     // still show me the map, but keep it slowly spinning to indicate no location yet"*). A blank
@@ -352,7 +445,7 @@ private fun EmptyMap(
     Box(modifier.fillMaxSize().background(FIELD)) {
         SpinningField(Modifier.fillMaxSize())
 
-        Text(
+        if (!embedded) Text(
             "✕",
             color = Color.White.copy(alpha = 0.75f),
             style = MaterialTheme.typography.titleMedium,
@@ -364,7 +457,12 @@ private fun EmptyMap(
         )
 
         Column(
-            Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(24.dp),
+            Modifier
+                .align(Alignment.BottomStart)
+                .navigationBarsPadding()
+                // Embedded, the map toggle and the pill sit along the bottom edge.
+                .padding(bottom = if (embedded) EMBEDDED_CHROME_CLEARANCE.dp else 0.dp)
+                .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
@@ -381,11 +479,9 @@ private fun EmptyMap(
                     geoState.isIndexing ->
                         "Checked ${geoState.scannedCount} of ${geoState.totalCount} so far."
                     geoState.scannedCount == 0 ->
-                        "Foto Xplorr reads each photo's own GPS tag on this device. Nothing is uploaded."
+                        HelpCopy.Hint.READS_GPS_LOCALLY
                     else ->
-                        "Photos saved from messaging apps and websites usually have their location " +
-                            "removed before they reach your phone. Open a photo and drag up for its " +
-                            "details to place one by hand."
+                        HelpCopy.Hint.ADD_BY_HAND
                 },
                 color = Color.White.copy(alpha = 0.6f),
                 style = MaterialTheme.typography.bodyMedium,
@@ -400,6 +496,23 @@ private fun EmptyMap(
                 )
             }
         }
+    }
+}
+
+/**
+ * The embedded map's answer when the view has no located photo but the library has: the same
+ * field, still, with one line. Not [EmptyMap], whose copy is about locations not having been read.
+ */
+@Composable
+private fun NothingLocatedHere(modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxSize().background(FIELD)) {
+        Graticule()
+        Text(
+            "Nothing in this view has a location",
+            color = Color.White.copy(alpha = 0.7f),
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.align(Alignment.Center).padding(24.dp),
+        )
     }
 }
 
@@ -422,10 +535,20 @@ private fun SpinningField(modifier: Modifier = Modifier) {
     }
 }
 
+// Fixed on purpose (reference design): the offline stamp map's own ground and paper, not an accent
+// role.
 private val FIELD = Color(0xFF11141C)
 private val FIELD_DEEP = Color(0xFF0A0C12)
 private val STAMP_PAPER = Color(0xFFF5F1E8)
 private const val STAMP_SIZE = 64
+
+/**
+ * How far an embedded map's own bottom-anchored content rises above the edge, to clear the
+ * browser's pill and corner discs (a 48dp disc 20dp up, plus a gap).
+ */
+private const val EMBEDDED_CHROME_CLEARANCE = 80
+/** Radius of one located photo's dot in focus mode: filled, no stroke, its own colour. */
+private const val FOCUS_DOT_DP = 5
 private const val GRATICULE_ROWS = 8
 
 /**
@@ -437,5 +560,5 @@ private const val THIN_CELLS = 12
 
 /** One turn of the empty field. Slow enough to read as "still looking", not as an animation. */
 private const val EMPTY_SPIN_MILLIS = 30_000
-private const val MIN_ZOOM = 0.6f
-private const val MAX_ZOOM = 6f
+/** Levels the map may zoom to when an imported tile file supplies the detail (the bundled data stops at 8). */
+private const val IMPORTED_MAX_LEVEL = 12.0

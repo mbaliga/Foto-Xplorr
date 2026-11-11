@@ -91,7 +91,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          name: Foto Xplorr ${{ github.event.inputs.tag || github.ref_name }}
+          name: Fotoz ${{ github.event.inputs.tag || github.ref_name }}
           prerelease: ${{ github.event.inputs.prerelease || false }}
           generate_release_notes: true
           body: |

@@ -18,18 +18,17 @@ import org.junit.Test
 class ShareOptionsTest {
 
     @Test
-    fun `the default is private and marked, on the free tier`() {
+    fun `the default is private and unmarked`() {
         val defaults = ShareOptions()
         // Stripping is the DEFAULT, on owner direction: the safe thing has to be what happens
         // when nobody thinks about it.
         assertTrue("metadata stripping must default to on", defaults.stripMetadata)
         assertEquals(ShareFrame.NONE, defaults.frame)
-        // The watermark flipped to on-by-default (owner, 2026-08-21): the free tier's whole shape
-        // is that a share carries the mark unless Pro removed it, so the raw field has to start
-        // true or a caller that forgets to resolve it against Pro status would silently ship a
-        // clean, unmarked free share.
-        assertTrue("watermark must default to on", defaults.watermark)
-        assertTrue("a default share now has something to draw", defaults.requiresRender)
+        // Phase 1 owner decision 3 (24 Sep 2026): the watermark is off by default for everyone,
+        // superseding the 2026-08-21 on-by-default-for-the-free-tier decision this default used
+        // to encode.
+        assertFalse("watermark must default to off", defaults.watermark)
+        assertFalse("a default share has nothing to draw", defaults.requiresRender)
     }
 
     @Test
@@ -56,31 +55,25 @@ class ShareOptionsTest {
 
     // ---- Pro resolution: ShareOptions.resolveWatermark / resolvedFor ----
     //
-    // This is the actual gate the free tier depends on, so it is worth pinning independently of
-    // the sheet UI (which merely locks a switch) and of SharePreparer (which is android.graphics
-    // and cannot run on the plain JVM). See SharePreparer's own KDoc for why it calls resolvedFor
-    // rather than trusting ShareOptions.watermark as handed in.
+    // Phase 1 owner decision 3 (24 Sep 2026): the watermark is off for everyone, gating nothing on
+    // Pro status until a monetization model is chosen. Worth pinning independently of the sheet UI
+    // (which merely disables a switch) and of SharePreparer (which is android.graphics and cannot
+    // run on the plain JVM). See SharePreparer's own KDoc for why it calls resolvedFor rather than
+    // trusting ShareOptions.watermark as handed in -- that pattern survives this decision even
+    // though what it resolves TO has changed.
 
     @Test
-    fun `a non-Pro sharer gets the watermark regardless of the raw flag`() {
-        // Not just "true stays true" -- the whole point is that a non-Pro caller cannot opt out
-        // by passing watermark = false, because nothing in the UI is wired to let them.
-        assertTrue(ShareOptions(watermark = true).resolveWatermark(isPro = false))
-        assertTrue(
-            "a non-Pro sharer must be watermarked even if watermark=false reached this call " +
-                "(defence against a bad caller, not an expected input)",
-            ShareOptions(watermark = false).resolveWatermark(isPro = false),
-        )
-    }
-
-    @Test
-    fun `a Pro sharer never gets the watermark, regardless of the raw flag`() {
+    fun `nobody gets the watermark, regardless of Pro status or the raw flag`() {
+        // Not just "false stays false" -- the point is that raising the raw flag changes nothing
+        // in either direction, for either account state.
+        assertFalse(ShareOptions(watermark = true).resolveWatermark(isPro = false))
+        assertFalse(ShareOptions(watermark = false).resolveWatermark(isPro = false))
         assertFalse(ShareOptions(watermark = true).resolveWatermark(isPro = true))
         assertFalse(ShareOptions(watermark = false).resolveWatermark(isPro = true))
     }
 
     @Test
-    fun `resolvedFor carries the resolved watermark and leaves everything else untouched`() {
+    fun `resolvedFor always clears the watermark and leaves everything else untouched`() {
         val requested = ShareOptions(
             frame = ShareFrame.STAMP,
             stripMetadata = false,
@@ -89,7 +82,7 @@ class ShareOptionsTest {
         )
 
         val forFreeUser = requested.resolvedFor(isPro = false)
-        assertTrue(forFreeUser.watermark)
+        assertFalse(forFreeUser.watermark)
         assertEquals(ShareFrame.STAMP, forFreeUser.frame)
         assertEquals("MB", forFreeUser.seal)
         assertFalse(forFreeUser.stripMetadata)
@@ -101,19 +94,18 @@ class ShareOptionsTest {
     }
 
     @Test
-    fun `a Pro share with no frame requires no render, so it takes the cheap copy path`() {
+    fun `a share with no frame requires no render, for either account state`() {
         // The regression this guards: resolving the watermark LATE (after requiresRender has
-        // already been read from the raw, pre-entitlement options) would charge a Pro user's
-        // plain share for a decode-draw-encode cycle it does not need. Resolving first, via
-        // resolvedFor, is what SharePreparer actually does.
-        val resolved = ShareOptions(frame = ShareFrame.NONE, watermark = true).resolvedFor(isPro = true)
-        assertFalse("a Pro share with no frame must not force a render", resolved.requiresRender)
-    }
-
-    @Test
-    fun `a non-Pro share with no frame still requires a render, for the watermark`() {
-        val resolved = ShareOptions(frame = ShareFrame.NONE, watermark = true).resolvedFor(isPro = false)
-        assertTrue(resolved.requiresRender)
+        // already been read from the raw, pre-entitlement options) would charge a share for a
+        // decode-draw-encode cycle it does not need. Resolving first, via resolvedFor, is what
+        // SharePreparer actually does -- and since the watermark is now always cleared, this must
+        // hold regardless of Pro status, not just for a Pro sharer.
+        assertFalse(
+            ShareOptions(frame = ShareFrame.NONE, watermark = true).resolvedFor(isPro = true).requiresRender,
+        )
+        assertFalse(
+            ShareOptions(frame = ShareFrame.NONE, watermark = true).resolvedFor(isPro = false).requiresRender,
+        )
     }
 
     @Test

@@ -44,4 +44,16 @@ class KeyboardShortcutsTest {
             galleryShortcutFor(GalleryShortcutKey.ESCAPE, ctrlPressed = true),
         )
     }
+
+    @Test
+    fun `Ctrl with plus zooms in and Ctrl with minus zooms out`() {
+        assertEquals(GalleryShortcut.ZoomIn, galleryShortcutFor(GalleryShortcutKey.PLUS, ctrlPressed = true))
+        assertEquals(GalleryShortcut.ZoomOut, galleryShortcutFor(GalleryShortcutKey.MINUS, ctrlPressed = true))
+    }
+
+    @Test
+    fun `bare plus and minus are left alone for typing into search`() {
+        assertNull(galleryShortcutFor(GalleryShortcutKey.PLUS, ctrlPressed = false))
+        assertNull(galleryShortcutFor(GalleryShortcutKey.MINUS, ctrlPressed = false))
+    }
 }

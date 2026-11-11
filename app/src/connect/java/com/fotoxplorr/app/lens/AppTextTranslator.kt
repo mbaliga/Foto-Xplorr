@@ -47,7 +47,7 @@ class AppTextTranslator : TextTranslator {
             val badTag = if (targetCode == null) targetLanguageTag else sourceLanguageTag
             return Result.failure(
                 TranslatorUnavailableException(
-                    "Foto Xplorr's on-device translator has no model for \"$badTag\".",
+                    "Fotoz's on-device translator has no model for \"$badTag\".",
                 ),
             )
         }
@@ -56,7 +56,14 @@ class AppTextTranslator : TextTranslator {
             .setSourceLanguage(sourceCode)
             .setTargetLanguage(targetCode)
             .build()
-        val translator = MlKitTranslation.getClient(options)
+        // Creating the client can itself throw (ML Kit not initialised, Play services missing): a
+        // failure like any other, so the caller falls back to the hand-off instead of the exception
+        // escaping the coroutine and taking the viewer with it.
+        val translator = try {
+            MlKitTranslation.getClient(options)
+        } catch (error: Exception) {
+            return Result.failure(error)
+        }
         return try {
             withTimeout(TRANSLATE_TIMEOUT_MILLIS) {
                 // Deliberately NO requireWifi()/requireCharging() on these DownloadConditions:

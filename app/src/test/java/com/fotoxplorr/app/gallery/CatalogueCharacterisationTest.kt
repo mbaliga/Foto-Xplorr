@@ -87,11 +87,26 @@ class CatalogueCharacterisationTest {
         compare(mapOf("timeline:stops" to "${stops.size}:${joined.hashCode()}"))
     }
 
-    private fun describe(projected: List<com.fotoxplorr.app.media.MediaAsset>): String {
-        val first = projected.firstOrNull()?.id?.value ?: -1L
-        val last = projected.lastOrNull()?.id?.value ?: -1L
-        return "${projected.size}:${SyntheticCatalogue.fingerprint(projected)}:$first:$last"
+    /**
+     * ADR-011's migration VERIFY runs [projectionFingerprints] (production code) over real data.
+     * This pins that enumerator to the same goldens as the four hand-written loops above, so the
+     * migration gate provably computes exactly what this suite characterises.
+     */
+    @Test
+    fun `the production projection enumerator reproduces every golden`() {
+        val actual = projectionFingerprints(
+            state = state,
+            nowMillis = SyntheticCatalogue.NOW_MILLIS,
+            zoneId = java.time.ZoneOffset.UTC,
+            locale = java.util.Locale.UK,
+        )
+        assertEquals(GOLDENS.keys, actual.keys)
+        compare(actual)
     }
+
+    // Moved to production code (ProjectionFingerprint.kt) for ADR-011's migration VERIFY step.
+    private fun describe(projected: List<com.fotoxplorr.app.media.MediaAsset>): String =
+        describeProjection(projected)
 
     private fun compare(actual: Map<String, String>) {
         // An env var, not a -D property: Gradle forks the test JVM, and a -D on the CLI
@@ -125,9 +140,6 @@ class CatalogueCharacterisationTest {
          * the regeneration rule.
          */
         val GOLDENS: Map<String, String> = mapOf(
-            // AUDIO has no MediaAsset behind it at all (see destinationAssets' own comment) --
-            // always the empty projection, same fingerprint as PLACES/PROTECTED below.
-            "destination:AUDIO" to "0:cbf29ce484222325:-1:-1",
             "destination:FAVOURITES" to "1178:d2ef98cb77ff9028:7:9996",
             "destination:IDENTITY" to "258:989689564c45ee63:58:9860",
             "destination:PEOPLE" to "2999:395a1ed18e4a86c2:3:9996",

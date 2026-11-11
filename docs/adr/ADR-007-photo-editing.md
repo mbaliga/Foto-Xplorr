@@ -2,6 +2,15 @@
 
 **Status:** accepted (interim, reversible)
 **Date:** 2026-08-14
+**Updated:** 2026-09-16 — full-resolution export, drag crop, per-channel curves, HSL, presets,
+undo/redo, persisted recipes, spot heal and export controls landed; see "Where this stands now"
+below. The decision and the licence/dependency analysis are unchanged from the original text.
+**Updated:** 2026-10-21 — the Simple/Pro tier split described below was removed (one scrollable
+tool strip, Curves reachable) and the curves editor became a drawn graph with a histogram backdrop
+and a luma curve; see "Where this stands now" and `docs/TRAPS.md` #44, #52 to #54.
+**Updated:** 2026-10-21 (batch 2) — Replace the original is now guarded and recoverable, Save As
+strips location, exports no longer derive their size from memory class, and HEIC copies are
+documented as pixels only; see "Where this stands now" and `docs/TRAPS.md` #17, #31, #59, #66.
 **Owner request:** *"I think some basic photo editing is required. I know Snapseed is free, is it
 open-source as well? If yes, get me their features. If not, build in editing features from some
 open-source repo."*
@@ -28,7 +37,7 @@ permission reaches the offline merged manifest, and `verifyOfflineRuntimeClasspa
 networking library reaches the offline runtime classpath. The allowlist holds exactly one entry,
 by exact coordinate. There is no escape hatch for the classpath gate.
 
-**2. Licence.** Foto Xplorr is not a GPL application. A GPL-3.0 dependency would make it one.
+**2. Licence.** Fotoz is not a GPL application. A GPL-3.0 dependency would make it one.
 
 | Candidate | Licence | Verdict |
 |---|---|---|
@@ -50,34 +59,122 @@ arises.
 
 ### Shape
 
-- `EditRecipe` — the edit as **data**, never pixels. Non-destructive by construction.
-- `CropGeometry` (in `EditRecipe.kt`) — normalised crop rects and aspect presets, so a crop
-  survives the preview→export resolution change.
-- `EditRenderer` — recipe → bitmap. Fixed order: orient, crop, colour.
+- `EditRecipe` — the edit as **data**, never pixels. Non-destructive by construction. Holds
+  `adjustments` (colour/tone/HSL/detail), `crop`, rotation/flip/straighten, and `heals` (spot
+  healing, see below).
+- `CropRect` / `AspectPreset` / `CropInteraction.kt` (in `EditRecipe.kt` and `CropInteraction.kt`)
+  — normalised crop rects, aspect presets, and the pure per-handle drag maths an interactive crop
+  box needs (`CropRect.dragged`), so a crop survives the preview→export resolution change and a
+  drag never has to know a bitmap's actual pixel dimensions.
+- `Adjustments` — the colour/tone/HSL/detail stack, compiled to per-channel lookup tables plus a
+  few genuinely per-pixel passes (`applyColour`, `applyHsl`, `applyVignette`,
+  `applyUnsharpMask`/`applyDenoise`). `HslAdjustments` (`Hsl.kt`) adds eight hue-band
+  hue/saturation/luminance controls on top of the original tone/colour fields.
+- `SpotHeal` — classic best-patch spot healing (ported from a prior branch's PR #9, unit-tested
+  there and again here): scans a ring of candidate donors, scores them against the blemish's own
+  clean context band, clones the best one in with a feathered edge. Deterministic, pure `IntArray`
+  arithmetic, no model and no network.
+- `EditRenderer` — recipe → bitmap. Fixed order: orient/flip, straighten (auto-cropping the
+  exposed corners), the user's own crop, colour (LUTs, HSL, vignette, denoise, sharpen/clarity),
+  heals last (in the final image's own coordinates).
 - `EditedCopyWriter` — writes a **new** file by default (`save`), in the source's own format or an
-  explicit `OutputFormat` (JPEG/PNG/WebP) the user picked — this is Save As. `overwrite` is the one
-  place this class *does* open the original for writing, gated on the same per-file consent dance
-  `FotoXplorrActivity` already runs for rename and metadata, and only for a source already in one
-  of those three formats — see `overwriteFormatFor`.
-- `EditorScreen` — the UI, split into a Simple tier (fewer, coarser sliders) and an on-demand Pro
-  tier (the rest, plus Curves) — see `EditorTier`.
+  explicit `OutputFormat` (JPEG/PNG/WebP/HEIC) and quality the user picked. `saveTo` writes to an
+  arbitrary SAF destination picked via `ActivityResultContracts.CreateDocument`, hosted inside
+  `EditorScreen`. `overwrite` is the one place this class *does* open the original for writing,
+  gated on the same per-file consent dance `FotoXplorrActivity` already runs for rename and
+  metadata, and only for a source already in one of the three `Bitmap`-encodable formats — see
+  `overwriteFormatFor`. `save` and `overwrite` carry the source's own EXIF/XMP camera facts and GPS
+  through `metadata/ExifCopier` (`COPIED_TAGS` / `EXCLUDED_TAGS`, `copy(keepLocation)`,
+  `copiedXmpValue`) and reset orientation to upright, since the pixels themselves are already
+  re-oriented on decode. (This text used to name `EXIF_PRESERVED_TAGS` in `editor/ExifOrientation.kt`;
+  both were dead and are deleted.) `saveTo` passes `keepLocation = false`, strips every location
+  field and re-reads the staged file to prove it. A HEIC output is pixels only. See "Replace the
+  original, as built" below for what `overwrite` refuses and how it recovers.
+- `RecipeStore` — autosaves the in-progress recipe per photo (JSON, keyed by `MediaId` +
+  `dateModifiedSeconds`, under `filesDir/edits/`), offered back as "Continue editing / Start over"
+  the next time the same photo (same bytes) is opened here, with an explicit "Revert to original".
+- `PresetStore` / `BuiltInPreset` — named looks (partial recipes: `Adjustments` only, never crop or
+  rotation), built-in (Vivid/Warm/Cool/Fade/Mono/Portrait) and user-saved (JSON under
+  `filesDir/presets/`, one file per preset).
+- `EditHistory` — an in-session undo/redo stack over `EditRecipe` snapshots, committed on a
+  settle-debounce so a slider drag produces one entry, not one per frame.
+- `EditorScreen` — the UI: one scrollable strip of tools (Light, Colour, Curves, Presets, Detail,
+  HSL, Crop, Rotate, Heal), all always offered. *(It was originally split into a Simple tier and an
+  on-demand Pro tier, `EditorTier`; the tier switch was removed on 2026-10-21 because its layout
+  starved the Pro toggle to zero width, which hid Curves entirely — `docs/TRAPS.md` #44.)* A
+  press-and-hold on the preview shows the untouched original for comparison.
 
-### Consequences and honest limits
+### Where this stands now
 
-- **Save currently exports at preview resolution**, not full resolution. Full-resolution export
-  needs a second decode and a memory budget for it, and is the next step. This is a real
-  limitation, not a rounding error, and it is why this ADR is marked interim.
-- **The crop tool offers presets only.** Dragging the crop box directly is not implemented.
-- `EditRecipe.toColorMatrix()` is **not unit-tested**: `android.graphics.ColorMatrix` throws
-  "not mocked" under JVM unit tests, and this module has neither Robolectric nor an instrumented
-  suite. Its coefficients are a look and belong on the device checklist.
+- **Save exports at full resolution**, up to 8192 px on the long edge and 64 MP
+  (`MAX_EXPORT_EDGE`, `MAX_EXPORT_PIXELS`). The earlier memory-derived ceiling (`maxExportEdge`,
+  from `ActivityManager.memoryClass`) was removed: on a 256 MB heap it silently turned "Original"
+  into roughly 2.8k px. A device that truly cannot hold the buffers finds out from an actual
+  `OutOfMemoryError`, and the export steps down 8192, 4096, 2048, 1536 (`exportEdgeLadder`),
+  saying "at reduced size"; a replace tries one rung only, so an out-of-memory error writes
+  nothing. The export controls also let a user choose a smaller long edge explicitly (Original/
+  4096/2048/1024) and a JPEG/WebP/HEIC quality (50–100).
+- **The crop tool is a real drag box**: 8 handles, drag-to-move, aspect lock (the same presets as
+  before, now also constraining the drag), a rule-of-thirds grid while dragging. Straighten still
+  applies before the crop, unchanged.
+- **Curves are a drawn, draggable graph**, per RGB/Luma/R/G/B channel, over a histogram of the
+  photo, with the original named-shape presets kept as chips and Reset / Reset all. `CurvesEditor`
+  edits the same monotone-Hermite `ToneCurve` `ToneCurveTest` already covered, through the
+  index-based `moveTo`/`insertAt`/`removeAt` (not `withPoint`, which merges by x — `docs/TRAPS.md`
+  #53). The luma curve is applied per pixel after the three channel tables, scaling RGB to keep hue
+  (`ChannelLuts.luma`), so the export path picks it up with no renderer change.
+- **HSL, presets, undo/redo, persisted recipes and spot healing** are implemented as described
+  above under Shape.
+- **Denoise** (`Adjustments.denoise`) is implemented as a simple blend between the original and a
+  small-radius box blur of itself — a stated simplification, not a true bilateral or median
+  filter; see `applyDenoise`'s own doc for the reasoning and the honest cost (some edge softness
+  at the top of the slider, in exchange for a pass cheap enough to run at export resolution).
+- `EditRecipe.toColorMatrix()` no longer exists — the colour pipeline is `Adjustments`' own LUTs
+  and per-pixel passes, all pure `IntArray` functions, all unit-tested on the JVM (no
+  `android.graphics.ColorMatrix` anywhere in this module).
 - `Intent.ACTION_EDIT` survives as "Open with", so a user who prefers a real editor still has one.
   Note that on the offline flavour this hands the file to an arbitrary installed app — which is
   the user's explicit choice, made per use, rather than something the app does on their behalf.
+  Fotoz also *receives* EDIT for `image/*` (and SEND for images and videos) on
+  `FotoXplorrActivity`, `content://` only; it has no VIEW filter, which is
+  `ExternalViewerActivity`'s alone (`docs/TRAPS.md` #57).
+
+### Replace the original, as built (2026-10-21)
+
+Replace is best effort, not atomic (MediaStore cannot replace a file in place), so it is guarded
+rather than promised:
+
+- **Refused, original untouched** (`OverwriteException.Refused`) for: a format with no in-place path
+  (HEIC, GIF, RAW); an animation (animated WebP or APNG), an Ultra HDR gain map, a Motion Photo's
+  video, a depth map or extra embedded images; transparency a WebP re-encode would flatten (API 30+)
+  or lossless WebP quality; metadata `ExifInterface` cannot carry (IPTC-IIM, extended XMP, PNG text
+  with real content, other WebP chunks) or a location Android redacted (API 29+, photo-location
+  access off); a file that cannot be read for these scans, or cannot be backed up. MakerNote and the
+  embedded thumbnail are deliberately not gated. The scans fail open for variants nobody taught
+  them.
+- **Written with a way back.** A private safety copy in `filesDir/overwrite-recovery` (flushed, with a
+  sidecar naming the photo), then the truncating write, a flush and a read-back; a failure restores the
+  copy (`FailedAfterWrite(restored, recoveryFile)`). The copy is deleted when the write verifies. If the
+  process dies or the put-back fails, the copy is kept and the next start's dialog names the photo
+  and offers to share it. There is no in-app Restore.
+- **Locked while it runs:** Save, Cancel and Back are off and a second edit is refused, and the
+  outcome is recorded by code that outlives activity recreation.
+- **Save as to a chosen destination is a different promise:** it never touches the original and it
+  removes location.
+
+The consequences for the product text (the listing, the README, the save sheet) are in `docs/TRAPS.md`
+#59 and #66: say what is refused and what is kept; never "safe", never "always restored".
+- HEIC export uses `androidx.heifwriter` (API 28+, and only when a real HEVC encoder is present —
+  see `isHeicExportSupported`), the one new dependency this ADR's original decision did not
+  anticipate. It needed `tools:overrideLibrary` in the manifest (the library's own minSdk is 28;
+  this app's stays 26) — the same escape hatch already used for `dev.aarso:hyle`, and gated at
+  every call site so no code path below API 28 can reach it regardless.
 
 ### Reversal
 
-If the editor grows past what the 2D canvas can serve — curves, healing, selective masks — the
+Curves, healing and HSL all landed on plain `IntArray` arithmetic — no GL needed after all. If the
+editor grows past what that can serve at export resolution in reasonable time — real-time
+selective masks, generative inpainting beyond what `SpotHeal`'s best-patch search can do — the
 next step is `android-gpuimage` (Apache-2.0, no network) or the app's existing hand-written GLES
 pipeline, not a GPL gallery. `EditRecipe` is deliberately renderer-agnostic so that swap does not
 touch the UI or the writer.

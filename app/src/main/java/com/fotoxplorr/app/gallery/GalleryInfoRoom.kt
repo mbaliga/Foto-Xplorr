@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,20 +17,29 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.ScanState
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.app.hyle.sheetInsets
 import com.fotoxplorr.app.ui.RoomEyebrow
+import com.fotoxplorr.app.ui.RoomGeography
 import com.fotoxplorr.app.ui.RoomRule
 import com.fotoxplorr.app.ui.RoomStyle
+import com.fotoxplorr.app.ui.clearSystemBarsFor
 import com.fotoxplorr.app.viewer.DetailFormatting
+import com.fotoxplorr.core.model.MediaId
 import java.util.Calendar
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
- * The gallery's BOTTOM room: what the view you are looking at actually *is*.
+ * The gallery's TOP room, the details: what the view you are looking at actually *is*, pulled down
+ * over it.
  *
- * Exactly where the viewer puts one photo's EXIF, because the model is the edge, not the content
- * (owner, 2026-08-18: *"the info would be different as well as actions, but the model needs to
- * remain the same"*). Drag up from an open photo and you get that photo's facts; drag up from a
- * grid and you get the grid's.
+ * The counterpart of the viewer's details room, which says the same kind of thing about one open
+ * photo from the same edge, because the model is the edge, not the content (owner, 2026-08-18:
+ * *"the info would be different as well as actions, but the model needs to remain the same"*).
+ * It was the bottom room here while the viewer's details were on top, which is the inconsistency
+ * [RoomGeography] now ends: details are always the top room.
+ *
+ * While a background job's shade is up it owns the strip it covers (the gallery's `topReserve`), so
+ * this room is pulled from just below it.
  *
  * The numbers are counted from the assets actually on screen rather than from the whole library,
  * so the room describes the destination, album or search result you are in — a "Videos" that said
@@ -43,6 +51,14 @@ fun GalleryInfoRoom(
     assets: List<MediaAsset>,
     state: GalleryUiState,
     modifier: Modifier = Modifier,
+    /**
+     * How far the room is pulled open, 0..1, read lazily. The parked card slips over the room's
+     * edge with a corner of [SheetGeometry.sheetCornerDp] of it, and the room's text keeps clear.
+     */
+    lift: () -> Float = { 1f },
+    /** The timeline strip's gutter on the left / right edge, in dp: it is drawn over that edge. */
+    gutterStartDp: Int = 0,
+    gutterEndDp: Int = 0,
 ) {
     // One pass over the list rather than six. At 22,000 assets the difference between counting
     // once and calling count{} per statistic is the difference between opening instantly and
@@ -53,16 +69,21 @@ fun GalleryInfoRoom(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
-            // The shell parks the card upward for a bottom room and insets this one at its top,
-            // so the system bar to clear here is the navigation bar.
-            .navigationBarsPadding()
+            // The shell parks the card downward for a top room and insets this one at its bottom,
+            // so the system bar to clear here is the status bar.
+            .clearSystemBarsFor(RoomGeography.Details)
             .verticalScroll(rememberScrollState())
-            .padding(
-                start = RoomStyle.GutterStart,
-                end = RoomStyle.GutterEnd,
-                top = 26.dp,
-                bottom = 26.dp,
-            ),
+            // The corner and the strip both reach over the room's edges (the card is drawn over
+            // the room), so the text is inset past whichever is wider. Depth 0: any row may be the
+            // one by the corner. Read in layout, not composition: see sheetInsets.
+            .sheetInsets(
+                lift = lift,
+                depthDp = 0f,
+                baseDp = RoomStyle.GutterStart.value,
+                gutterStartDp = gutterStartDp.toFloat(),
+                gutterEndDp = gutterEndDp.toFloat(),
+            )
+            .padding(top = 26.dp, bottom = 26.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         RoomEyebrow("THIS VIEW")
@@ -98,8 +119,7 @@ fun GalleryInfoRoom(
         }
 
         Text(
-            text = "Counted from what is on screen, so it follows whichever destination, album " +
-                "or search you are in.",
+            text = HelpCopy.Caption.COUNTS_VIEWING,
             color = RoomStyle.InkFaint,
             style = RoomStyle.Caption,
             modifier = Modifier.padding(top = 16.dp),

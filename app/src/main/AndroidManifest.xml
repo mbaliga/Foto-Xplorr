@@ -12,8 +12,15 @@
       Modifiers/AGSL shaders (still unreleased per its own README) end up calling any
       API gated above 26, that would need to be caught by lint/testing on a real device
       or emulator running API below 31, which this change could not do.
+
+      androidx.heifwriter declares minSdk=28 (its whole surface is a thin wrapper over the
+      MediaCodec HEIC encoder, which does not exist before API 28) for the same "keep the
+      app's own floor" reason: HEIC export itself is gated at the call site on
+      Build.VERSION.SDK_INT >= 28 AND a real HEVC encoder being present (see
+      isHeicExportSupported), so no code path below API 28 can reach it regardless of what
+      the manifest merger would otherwise refuse to build.
     -->
-    <uses-sdk tools:overrideLibrary="dev.aarso.hyle" />
+    <uses-sdk tools:overrideLibrary="dev.aarso.hyle,androidx.heifwriter" />
 
     <!--
       Lets the background work job survive a reboot (JobInfo.setPersisted, in
@@ -26,8 +33,9 @@
     <!-- No network permissions here. INTERNET lives in src/connect/AndroidManifest.xml:
          the offline flavor is the app's local-first identity, and the verifyOfflineManifest
          gate fails the build if any network permission reaches its merged manifest — from
-         this file OR from a library AAR's manifest. ACCESS_NETWORK_STATE was dropped
-         entirely: nothing in the app reads ConnectivityManager. -->
+         this file OR from a library AAR's manifest. ACCESS_NETWORK_STATE is declared in the
+         connect manifest only, for the offline-map pane's "no connection / mobile data" check;
+         the offline flavor strips it, and nothing in its source reads ConnectivityManager. -->
     <!-- Current location is optional and used only by the explicitly opened relative
          spatial-compass scene. ACCESS_MEDIA_LOCATION is separate: Android 10+ redacts
          GPS embedded in the user's media unless it is granted. -->
@@ -37,14 +45,30 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
-    <!-- Requested separately from the three above, only when the user opens the Audio library
-         (P0-10): granting it must never count as "media access granted" for the photo/video
-         gallery, and asking for it up front would show a permission the photo/video flow does
-         not need. Below API 33, READ_EXTERNAL_STORAGE already covers MediaStore.Audio queries. -->
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!-- MediaStore writes (trash/restore/rename/metadata/overwrite, and every insert this app
+         makes for a conversion or an edited copy) need this below API 29, which replaced it
+         with scoped storage and per-file consent, which is why it stops at 28. Without this an
+         Android 8-9 device fails every one of those writes with no explanation. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <!-- The job-progress notification, required from Android 13 onward or the system silently
+         drops it with no error. Asked for once, the first time a job runs. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- JobForegroundService's own manifest declaration, below, plus the two service types it
+         switches between depending on API level; see that class's own doc. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
+    <!-- Held only while the encrypted backup (or its check) runs, so the copy goes on with the screen
+         off. A normal permission, no prompt; released when the job ends, and by its own timeout. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Asked for only inside the Chroma ID experiment, when it is opened (never at app start). The
+         pictures it takes stay in memory; the experiment saves and sends nothing. -->
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <uses-feature
         android:glEsVersion="0x00030000"
@@ -54,6 +78,17 @@
         android:required="false" />
     <uses-feature
         android:name="android.hardware.location.gps"
+        android:required="false" />
+    <!-- The CAMERA permission would otherwise imply a required camera and autofocus, and the store
+         would hide the app from phones without one. The camera is only for the Chroma ID experiment. -->
+    <uses-feature
+        android:name="android.hardware.camera.any"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
         android:required="false" />
 
     <!--
@@ -87,7 +122,7 @@
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:label="Foto Xplorr"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.FotoXplorr">
         <provider
@@ -115,36 +150,76 @@
             android:permission="android.permission.BIND_JOB_SERVICE"
             android:exported="false" />
 
+        <!-- Keeps a conversion/export/copy-move job visible (and cancellable) while the app is
+             not in the foreground. Both types are declared; JobForegroundService picks
+             mediaProcessing on API 35+ and falls back to dataSync below that, at startForeground
+             call time; see that class's own doc for why a manifest declaration cannot itself be
+             conditional on API level. -->
+        <service
+            android:name="com.fotoxplorr.app.jobs.JobForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|mediaProcessing" />
+
         <activity
             android:name=".FotoXplorrActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density">
+            android:launchMode="singleTop"
+            android:supportsPictureInPicture="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density|locale|layoutDirection|fontScale|colorMode">
             <layout android:defaultWidth="960dp" android:defaultHeight="640dp" android:minWidth="360dp" android:minHeight="360dp" />
             <!-- P0-09: Compose reacts to every one of these through LocalConfiguration without
                  needing the Activity recreated: confirmed no values-night/values-land/locale-
                  qualified resource directories exist in res/ (only density-qualified mipmaps,
                  resolved per request regardless of recreation) and onCreate() itself reads no
                  resource directly outside setContent {}. This covers rotation, folding, external
-                 keyboards/hubs and desktop mode; it does NOT cover process death, which
+                 keyboards/hubs and desktop mode, and also locale, layout direction, font scale
+                 and colour mode, so changing one of those mid-save does not recreate the
+                 Activity under a write (AppStateViewModel.launchWrite is the real guard for any
+                 recreation that still happens); it does NOT cover process death, which
                  FotoXplorrActivity.kt's own rememberSaveable viewer/editor state (P0-09 item 6)
-                 handles separately. -->
+                 handles separately. singleTop + supportsPictureInPicture come from the media3
+                 viewer work (onNewIntent for open-with / share-to, and in-app video PiP). -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!--
+              Receive-only targets: media handed over for editing (EDIT) or shared in (SEND).
+              There is deliberately NO VIEW filter here: ExternalViewerActivity is the single
+              VIEW target (content:// only), so another app's chooser lists this app once, not
+              twice, and nothing reaches the viewer by a path that skips its checks. The SEND
+              filter carries no scheme because a share names its Uri in EXTRA_STREAM, not in the
+              intent data; classifyIncomingIntent therefore enforces content:// itself.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
         </activity>
 
         <!--
-          "Open with" (P0-18): the only entry point besides the launcher. A photo or video tapped
-          in another app — the Files app, including on a USB drive — reaches this instead of
-          FotoXplorrActivity, since it needs no gallery, no permission grant beyond what the
-          incoming content:// URI already carries, and never touches this app's own catalogue.
+          "Open with" (P0-18): the single VIEW target (FotoXplorrActivity only receives EDIT and
+          SEND). A photo or video tapped in another app — the Files app, including on a USB drive —
+          reaches this, since it needs no gallery, no permission grant beyond what the incoming
+          content:// URI already carries, and never touches this app's own catalogue. Every <data>
+          here names scheme="content": a file:// Uri would have this app read any path it can.
           Same configChanges as FotoXplorrActivity, per P0-09, and for the identical reason: every
-          value here is one Compose already reacts to on its own.
+          value here is one Compose already reacts to on its own. supportsPictureInPicture because
+          the video player offers PiP wherever it is hosted (and arms auto-enter while playing);
+          without it the button did nothing here and auto-enter was silently ignored.
         -->
         <activity
             android:name=".viewer.ExternalViewerActivity"
             android:exported="true"
+            android:supportsPictureInPicture="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density">
             <layout android:defaultWidth="960dp" android:defaultHeight="640dp" android:minWidth="360dp" android:minHeight="360dp" />
             <intent-filter>

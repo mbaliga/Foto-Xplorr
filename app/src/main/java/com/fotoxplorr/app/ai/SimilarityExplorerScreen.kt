@@ -62,16 +62,23 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+import com.fotoxplorr.app.ui.HelpCopy
 
 @Composable
 fun SimilarityExplorerScreen(
     assets: List<MediaAsset>,
+    /** Every image the similarity indexer should actually cover, trashed included (Phase 1 owner
+     *  decision 1, 24 Sep 2026, reversing this screen's own former `isTrashed` exclusion) -- NOT
+     *  the same list as [assets]: [assets] is browsable-filtered for display, so a trashed asset
+     *  indexed from here is deliberately never looked up via `assetById` below and so never
+     *  rendered, exactly matching that decision's "display filtering stays in the UI" half. */
+    indexInput: List<MediaAsset>,
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -90,9 +97,12 @@ fun SimilarityExplorerScreen(
     var neighbours by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
     var indexJob by remember { mutableStateOf<Job?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    var showModels by remember { mutableStateOf(false) }
 
     val assetById = remember(assets) { assets.associateBy { it.id } }
-    val imageAssets = remember(assets) { assets.filterNot { it.isVideo || it.isTrashed } }
+    // From indexInput, not assets: images only (similarity/embeddings never cover video), but
+    // otherwise everything -- trashed included, per this parameter's own doc comment above.
+    val imageAssets = remember(indexInput) { indexInput.filterNot { it.isVideo } }
     val readyModel = modelState as? LocalModelState.Ready
 
     val modelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -113,6 +123,12 @@ fun SimilarityExplorerScreen(
         }
     }
 
+    // "Model missing" opens the model catalogue right here; back returns to this screen.
+    if (showModels) {
+        com.fotoxplorr.app.services.ModelsPane(onBack = { showModels = false })
+        return
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -125,7 +141,7 @@ fun SimilarityExplorerScreen(
             Column(modifier = Modifier.weight(1f)) {
                 Text("Organise by similarity", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "Local model neighbourhoods, not a definitive semantic taxonomy",
+                    HelpCopy.Hint.SIMILARITY_SUBTITLE,
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -143,6 +159,7 @@ fun SimilarityExplorerScreen(
                     }
                 },
                 onImport = { modelPicker.launch(arrayOf("application/octet-stream", "*/*")) },
+                onOpenModels = { showModels = true },
             )
             is LocalModelState.Downloading -> {
                 LinearProgressIndicator(
@@ -153,7 +170,7 @@ fun SimilarityExplorerScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    "Downloading local embedding model… ${formatBytes(model.bytesRead)}",
+                    "${HelpCopy.Hint.SIMILARITY_DOWNLOADING} ${formatBytes(model.bytesRead)}",
                     modifier = Modifier.padding(12.dp),
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -163,6 +180,7 @@ fun SimilarityExplorerScreen(
                 error = model.message,
                 onInstall = { scope.launch { modelManager.installRecommendedModel() } },
                 onImport = { modelPicker.launch(arrayOf("application/octet-stream", "*/*")) },
+                onOpenModels = { showModels = true },
             )
             is LocalModelState.Ready -> {
                 SimilarityToolbar(
@@ -240,6 +258,7 @@ private fun ModelRequiredPanel(
     error: String? = null,
     onInstall: () -> Unit,
     onImport: () -> Unit,
+    onOpenModels: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(28.dp),
@@ -247,14 +266,14 @@ private fun ModelRequiredPanel(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(42.dp))
-        Text("Install the local image model", style = MaterialTheme.typography.titleLarge)
+        Text(HelpCopy.Hint.SIMILARITY_SETUP_TITLE, style = MaterialTheme.typography.titleLarge)
         Text(
             if (downloadAvailable) {
-                "The recommended MediaPipe model is downloaded once into app-private storage. Photos are embedded on-device and are not uploaded."
+                HelpCopy.Hint.SIMILARITY_DOWNLOAD
             } else {
                 // The offline build downloads nothing, by design. Saying so beats a button
                 // that can only fail — and the import path works identically in both builds.
-                "This offline build downloads nothing. Import a compatible .tflite embedding model; photos are embedded on-device and are not uploaded."
+                HelpCopy.Note.SIMILARITY_OFFLINE
             },
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -262,7 +281,8 @@ private fun ModelRequiredPanel(
         if (downloadAvailable) {
             Button(onClick = onInstall) { Text("Install recommended model") }
         }
-        OutlinedButton(onClick = onImport) { Text("Import compatible .tflite model") }
+        OutlinedButton(onClick = onImport) { Text(HelpCopy.Hint.IMPORT_MODEL) }
+        OutlinedButton(onClick = onOpenModels) { Text(com.fotoxplorr.app.services.ServicesCopy.OPEN_MODELS) }
     }
 }
 
@@ -311,7 +331,7 @@ private fun SimilarityToolbar(
             is SimilarityIndexingState.LayingOut -> {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 Text(
-                    "Arranging ${indexingState.indexedCount} embeddings…",
+                    "Arranging ${indexingState.indexedCount} photos…",
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp),
                     style = MaterialTheme.typography.labelSmall,
                 )
@@ -334,9 +354,9 @@ private fun EmptySimilarityState(indexed: Int, onIndex: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         CircularProgressIndicator(progress = { if (indexed == 0) 0f else 1f })
-        Text("No similarity layout yet", style = MaterialTheme.typography.titleMedium)
-        Text("Index the permitted image library to create an offline visual-neighbourhood map.")
-        Button(onClick = onIndex) { Text("Start local indexing") }
+        Text(HelpCopy.Hint.SIMILARITY_EMPTY_TITLE, style = MaterialTheme.typography.titleMedium)
+        Text(HelpCopy.Hint.SIMILARITY_EMPTY_BODY)
+        Button(onClick = onIndex) { Text(HelpCopy.Hint.SIMILARITY_START) }
     }
 }
 
@@ -495,6 +515,8 @@ private fun formatBytes(bytes: Long): String = when {
     else -> "$bytes B"
 }
 
+// Fixed on purpose (semantic): categorical data colours, clusters must stay distinct from each
+// other.
 private val CLUSTER_COLORS = listOf(
     Color(0xFF65D1FF), Color(0xFFFF6B9A), Color(0xFFFFCC66), Color(0xFF7BE495),
     Color(0xFFB897FF), Color(0xFFFF8C69), Color(0xFF48D1CC), Color(0xFFF38BA8),

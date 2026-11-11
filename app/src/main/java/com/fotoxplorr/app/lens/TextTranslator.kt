@@ -39,8 +39,10 @@ interface TextTranslator {
      * this feature is `com.google.mlkit:translate` alone, not a second library that would need
      * its own offline-classpath justification. Text photographed in a language other than the
      * default will therefore often translate wrong, or not at all; that is a real, KNOWN
-     * limitation of the default, not a silently wrong guess -- a caller with a better idea of the
-     * source language (a future language-tagged OCR result, say) should simply pass one.
+     * limitation of the default, not a silently wrong guess. A caller that knows better passes
+     * one: the Select text toolbar hands over the language the text recogniser tagged the
+     * selected words with ([sourceTagFor]); the details card has only the flattened string and
+     * keeps the default.
      */
     suspend fun translate(
         text: String,
@@ -50,6 +52,24 @@ interface TextTranslator {
 
     companion object {
         const val DEFAULT_SOURCE_LANGUAGE_TAG: String = "en"
+
+        /**
+         * The source tag to translate [recognised] text from: the language the recogniser tagged
+         * the text with (a BCP 47 tag; blank and "und", its word for undetermined, count as no
+         * answer), else [DEFAULT_SOURCE_LANGUAGE_TAG].
+         */
+        fun sourceTagFor(recognised: String?): String = recognisedTag(recognised) ?: DEFAULT_SOURCE_LANGUAGE_TAG
+
+        /** [recognised] as a usable language tag, or null for blank and "und". */
+        fun recognisedTag(recognised: String?): String? =
+            recognised?.trim()?.takeIf { it.isNotEmpty() && !it.equals("und", ignoreCase = true) }
+
+        /** Whether [a] and [b] name the same language, ignoring region and script ("en-US" is "en"). */
+        fun sameLanguage(a: String, b: String): Boolean {
+            val first = java.util.Locale.forLanguageTag(a).language
+            val second = java.util.Locale.forLanguageTag(b).language
+            return first.isNotEmpty() && first == second
+        }
     }
 }
 

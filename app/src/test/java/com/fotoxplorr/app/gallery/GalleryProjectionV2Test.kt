@@ -1,7 +1,7 @@
 package com.fotoxplorr.app.gallery
 
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.core.model.MediaId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -229,6 +229,42 @@ class GalleryProjectionV2Test {
         )
 
         assertEquals(listOf(c, a, b), visible)
+    }
+
+    @Test
+    fun `turning off Show videos hides videos everywhere except the Videos destination itself`() {
+        val video = asset(1, 100, mime = "video/mp4", name = "clip.mp4")
+        val photo = asset(2, 200)
+        val all = listOf(video, photo)
+        val videosOff = preferences.copy(showVideos = false)
+
+        val recent = smartAlbumAssets(
+            smartAlbum = SmartAlbum.RECENT,
+            assets = all,
+            favoriteIds = emptySet(),
+            sensitiveIds = emptySet(),
+            archivedIds = emptySet(),
+            tagsByMediaId = emptyMap(),
+            lockedFolders = emptySet(),
+            unlockedFolders = emptySet(),
+            preferences = videosOff,
+            nowMillis = 1_000_000,
+        )
+        val videos = smartAlbumAssets(
+            smartAlbum = SmartAlbum.VIDEOS,
+            assets = all,
+            favoriteIds = emptySet(),
+            sensitiveIds = emptySet(),
+            archivedIds = emptySet(),
+            tagsByMediaId = emptyMap(),
+            lockedFolders = emptySet(),
+            unlockedFolders = emptySet(),
+            preferences = videosOff,
+            nowMillis = 1_000_000,
+        )
+
+        assertEquals(listOf(photo), recent)
+        assertEquals(listOf(video), videos)
     }
 
     private fun smart(

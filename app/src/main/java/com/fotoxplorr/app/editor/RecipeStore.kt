@@ -1,0 +1,89 @@
+package com.fotoxplorr.app.editor
+
+import android.content.Context
+import com.fotoxplorr.app.media.MediaAsset
+import java.io.File
+
+/**
+ * Autosaves an [EditRecipe] per photo, non-destructively, so re-opening the editor on a photo
+ * with unsaved-but-not-abandoned changes offers to pick up where it left off instead of starting
+ * blank — the actual persistence [Adjustments]'s own class doc always claimed and, before this
+ * class existed, did not have.
+ *
+ * Keyed by [MediaAsset.id] AND `dateModifiedSeconds` TOGETHER, not the id alone: if the file's
+ * own bytes have changed since this recipe was saved — replaced by a sync client, edited in
+ * another app, or overwritten by this app's own "Replace the original" — the old recipe describes
+ * pixels that no longer exist, and silently applying it to whatever is there now would be a
+ * second, unrelated photograph. A changed `dateModifiedSeconds` simply looks like "no stored
+ * recipe" rather than something this class has to detect and invalidate.
+ *
+ * One JSON file per asset under `filesDir/edits/` rather than one shared index: a half-written
+ * save (the process dying mid-write) can then never corrupt any recipe but the one being written,
+ * and forgetting one (see [revert]) is a single file delete.
+ */
+class RecipeStore(context: Context) {
+    private val directory = File(context.filesDir, "edits").apply { mkdirs() }
+
+    /** The stored recipe for [asset] at its CURRENT `dateModifiedSeconds`, or null when there is
+     *  none — either nothing was ever saved, or the file has changed since the last one was. */
+    fun load(asset: MediaAsset): EditRecipe? {
+        val file = fileFor(asset)
+        if (!file.exists()) return null
+        return runCatching { parseJson(file.readText())?.let { EditRecipe.fromJson(it) } }.getOrNull()
+    }
+
+    /** What [EditorScreen] checks to decide whether to offer "Continue editing / Start over" at
+     *  all, without paying for a full parse just to answer a yes/no question. */
+    fun has(asset: MediaAsset): Boolean = fileFor(asset).exists()
+
+    /** Call on every committed change. An identity recipe deletes the autosave rather than
+     *  writing one: a since-reverted edit must not go on offering "continue editing" for changes
+     *  that no longer exist. */
+    fun save(asset: MediaAsset, recipe: EditRecipe) {
+        val file = fileFor(asset)
+        if (recipe.isIdentity) {
+            file.delete()
+            return
+        }
+        file.writeText(recipe.toJson().stringify())
+    }
+
+    /** "Revert to original": forgets the autosave. Returns a fresh identity [EditRecipe] so the
+     *  caller has, in one call, both the side effect and the value to reset the on-screen recipe
+     *  to. */
+    fun revert(asset: MediaAsset): EditRecipe {
+        fileFor(asset).delete()
+        return EditRecipe()
+    }
+
+    /** Every stored recipe with the photo and file revision it belongs to, for the encrypted backup. */
+    fun stored(): List<StoredRecipe> = directory.listFiles().orEmpty().mapNotNull { file ->
+        val match = FILE_NAME.matchEntire(file.name) ?: return@mapNotNull null
+        val json = runCatching { file.readText() }.getOrNull() ?: return@mapNotNull null
+        StoredRecipe(match.groupValues[1].toLong(), match.groupValues[2].toLong(), json)
+    }.sortedWith(compareBy({ it.mediaId }, { it.dateModifiedSeconds }))
+
+    class StoredRecipe(val mediaId: Long, val dateModifiedSeconds: Long, val json: String)
+
+    /**
+     * Puts back a recipe from an encrypted backup, for photo [mediaId] at file revision
+     * [dateModifiedSeconds]. Additive: a recipe the person already has for that photo and revision
+     * is never replaced, and text that is not a recipe, or is the identity (nothing to continue),
+     * is refused. Returns whether a file was written.
+     */
+    fun importStored(mediaId: Long, dateModifiedSeconds: Long, json: String): Boolean {
+        if (mediaId < 0 || dateModifiedSeconds <= 0) return false
+        val parsed = parseJson(json) as? JsonValue.JsonObject ?: return false
+        if (EditRecipe.fromJson(parsed).isIdentity) return false
+        val file = File(directory, "$mediaId-$dateModifiedSeconds.json")
+        if (file.exists()) return false
+        return runCatching { file.writeText(json) }.isSuccess
+    }
+
+    private fun fileFor(asset: MediaAsset): File =
+        File(directory, "${asset.id.value}-${asset.dateModifiedSeconds}.json")
+
+    private companion object {
+        val FILE_NAME = Regex("^(\\d{1,18})-(\\d{1,18})\\.json$")
+    }
+}

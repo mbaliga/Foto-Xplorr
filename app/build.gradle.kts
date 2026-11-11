@@ -1,3 +1,4 @@
+import java.io.File
 import com.android.build.api.artifact.SingleArtifact
 import org.gradle.api.artifacts.result.ResolvedComponentResult
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
@@ -17,8 +18,8 @@ android {
         applicationId = "com.fotoxplorr.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0-ai-spatial"
+        versionCode = 4
+        versionName = "0.4.0-pro-media"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -51,6 +52,22 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("sideload")
+        }
+        // WP1.8 (FX-005): OPT-IN via `-Pfotoz.benchmarks`, matching `-Pfotoz.native`'s own
+        // pattern -- see benchmarks/README.md for the full story. Kept out of the default variant
+        // matrix so the everyday offline/connect x debug/release grid stays exactly as small as
+        // it's always been; only present at all when :benchmarks itself is (settings.gradle.kts
+        // gates that module on the same property), so a plain build never even sees this build
+        // type declared. Macrobenchmark refuses a debuggable target -- its numbers lie -- so this
+        // initializes from release (minified, shrunk) but signs with the same debug-backed
+        // "sideload" config release itself uses, so it installs on any device with no release
+        // keys present.
+        if (providers.gradleProperty("fotoz.benchmarks").isPresent) {
+            create("benchmark") {
+                initWith(getByName("release"))
+                signingConfig = signingConfigs.getByName("sideload")
+                matchingFallbacks += listOf("release")
+            }
         }
     }
 
@@ -112,10 +129,23 @@ android {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
 
+    // WP1.8: the synthetic format corpus (testdata/formats, see docs/testdata-formats.md) ships as
+    // androidTest ASSETS only -- the instrumented FormatCorpusDecodeTest reads it there; the
+    // app APK never carries it. JVM tests read the same folder straight from disk.
+    sourceSets.getByName("androidTest").assets.srcDir("$rootDir/testdata/formats")
+
     lint {
         // Locale-dependent String.format is used throughout for EXIF/size readouts that are
         // numeric-only; the app has no translations, so this is noise rather than a defect.
         disable += "DefaultLocale"
+        // WP1.1 (ADR-009) added gradle/libs.versions.toml so the new :core:* modules share one
+        // pinned version each -- the moment ANY catalog file exists, this check starts flagging
+        // every OTHER already-existing hardcoded dependency coordinate in this file (35 of them,
+        // none touched by that work package) as "should use the catalog too". Migrating this
+        // module's whole existing dependency block into the catalog is real, unplanned scope
+        // Phase 1 never asked for; disabling this one check keeps the signal that IS actionable
+        // (GradleDependency's "a newer version exists") without that unrelated noise.
+        disable += "UseTomlInstead"
     }
 
     testOptions {
@@ -172,6 +202,22 @@ configurations.all {
 }
 
 dependencies {
+    // ADR-010 (WP1.2): the shared KMP core. :app -> :core:* only -- these modules never depend
+    // back on :app (enforced by the WP1.9 governance check).
+    implementation(project(":core:model"))
+    implementation(project(":core:formats"))
+    implementation(project(":core:metadata"))
+    implementation(project(":core:search"))
+    implementation(project(":core:organize"))
+    implementation(project(":core:db"))
+    implementation(project(":core:index"))
+
+    // WP1.3 (ADR-011): :core:db declares Room as `implementation`, not `api`, so it doesn't leak
+    // transitively -- :app needs its own direct dependency to construct FotozDatabase/
+    // FotozVectorsDatabase via Room.databaseBuilder itself (LibraryRuntime).
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.sqlite.bundled)
+
     // Screenshot rendering of the real composables, on the JVM, no emulator. Test-only, so it
     // never reaches the runtime classpath the offline gate guards.
     testImplementation("org.robolectric:robolectric:4.14.1")
@@ -193,9 +239,48 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.1")
+    // ---- WS-D: app-shell state survival (rotation + process death) and background jobs ----
+    // ViewModel + its Compose accessor (`viewModel()`) and SavedStateHandle, so navigation state
+    // (the viewer's selection/asset list, the editor's open asset, pending operations, the job
+    // runner) survives rotation, and the ids that must survive process death round-trip through
+    // SavedStateHandle. Same 2.9.1 line as the lifecycle artifacts already above.
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.1")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.1")
+    implementation("androidx.lifecycle:lifecycle-service:2.9.1")
+    // ---- end WS-D block ----
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
+    // Encrypted backup (docs/adr/ADR-014): Tink's streaming AEAD (AES-256-GCM, HKDF per file,
+    // chunked with a final-segment flag) seals the pack and manifest files. Used through ONE
+    // small interface (backup/ChunkedAead.kt), so it can be swapped for plain JCA without
+    // touching the format. Pure JVM code, no network or Play Services dependency. 1.22.0 bundles a
+    // relocated protobuf, so it does not meet mediapipe's protobuf-javalite 4.26.1.
+    implementation("com.google.crypto.tink:tink-android:1.22.0")
+    // HEIC export
+    implementation("androidx.heifwriter:heifwriter:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+
+    // Media3 (ADR-008 rev. 2): ExoPlayer for the viewer and the editor's live preview,
+    // Transformer + Effect for exports (trim/speed/rotate/crop/mute, HDR tone-mapping) -- see
+    // docs/adr/ADR-008-video-transcode-pipeline.md for why this replaces the hand-written
+    // MediaCodec/EGL pipeline entirely rather than sitting beside it. All four AndroidX,
+    // Apache-2.0, no native code of our own, no networking: media3-common/media3-exoplayer
+    // declare ACCESS_NETWORK_STATE in their own manifests (for adaptive-streaming bandwidth
+    // signals this app never exercises, since every source here is a local content:// file),
+    // which src/offline/AndroidManifest.xml already strips with tools:node="remove" -- the
+    // verifyOfflineManifest gate passes on the MERGED manifest, not on what a library declares.
+    // media3-ui-compose is deliberately NOT used: at 1.9.0 it still requires an ExoPlayer
+    // instance driven by Compose state hoisting patterns this codebase does not otherwise use,
+    // and PlayerView inside AndroidView is one fewer moving part for a first Media3 landing --
+    // same reasoning that keeps the rest of this file's interop views (VideoView before this,
+    // PlayerView now) as thin AndroidView wrappers rather than reaching for a Compose-native
+    // widget the moment one exists.
+    val media3Version = "1.9.0"
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-ui:$media3Version")
+    implementation("androidx.media3:media3-transformer:$media3Version")
+    implementation("androidx.media3:media3-effect:$media3Version")
+    implementation("androidx.media3:media3-common:$media3Version")
 
     implementation("io.coil-kt.coil3:coil-compose:3.5.0")
     implementation("io.coil-kt.coil3:coil-gif:3.5.0")
@@ -266,6 +351,9 @@ dependencies {
     implementation("dev.aarso:cell-shell:0.1.0")
 
     testImplementation("junit:junit:4.13.2")
+    // WS-D: JobRunner's state transitions run real coroutines (progress callbacks, cancellation)
+    // and need a deterministic test dispatcher rather than a real one.
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     // FX-005 JVM perf baseline only: times the catalogue read against a real SQLite file
     // without a device. android.database.* cannot run on the JVM, so the harness replicates
     // the media-table schema/queries over JDBC. Never shipped — test classpath only.
@@ -435,4 +523,86 @@ tasks.register("verifyOfflineManifest") {
 tasks.register("verifyOfflineRuntimeClasspath") {
     group = "verification"
     dependsOn(tasks.matching { it.name.startsWith("verifyOfflineRuntimeClasspathOffline") })
+}
+
+/**
+ * WP1.9 licence inventory: writes build/reports/licences/<flavor>.tsv, one line per component on the
+ * flavor's RESOLVED release runtime classpath (what ships): "group:name:version<TAB>licence names
+ * joined by ' | '" ("-" when no POM, nor any parent POM, declares one; "?" when the POM could not be fetched). Uses Gradle's own artifact
+ * resolution query for the POMs, so it adds no plugin and no dependency. scripts/verify-licences.sh
+ * applies the policy (fail on GPL/AGPL, warn on LGPL/CDDL/unknown) to these files; the policy lives
+ * in the script so that its --self-test can exercise it without Gradle. Resolves at execution time
+ * (the project does not use the configuration cache). Needs the repositories reachable the first
+ * time (a POM is a different artifact from the module metadata a normal build downloads, so
+ * `--offline` fails on a cold cache); after that the POMs are in Gradle's cache and the task takes seconds.
+ */
+tasks.register("reportRuntimeLicences") {
+    group = "verification"
+    description = "Writes the resolved runtime classpath's POM licences, per flavor, for scripts/verify-licences.sh."
+    val outDir = layout.buildDirectory.dir("reports/licences")
+    doLast {
+        fun pomLicences(file: File): Pair<List<String>, Triple<String, String, String>?> {
+            val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance().apply {
+                isNamespaceAware = false
+                setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+            }.newDocumentBuilder().parse(file)
+            val root = doc.documentElement
+            fun child(parent: org.w3c.dom.Element, tag: String) =
+                (0 until parent.childNodes.length).map { parent.childNodes.item(it) }
+                    .filterIsInstance<org.w3c.dom.Element>().filter { it.tagName == tag }
+            val names = child(root, "licenses").flatMap { child(it, "license") }
+                .mapNotNull { child(it, "name").firstOrNull()?.textContent?.trim()?.replace(Regex("\\s+"), " ") }
+                .filter { it.isNotEmpty() }
+            val parent = child(root, "parent").firstOrNull()?.let { p ->
+                fun t(tag: String) = child(p, tag).firstOrNull()?.textContent?.trim().orEmpty()
+                Triple(t("groupId"), t("artifactId"), t("version"))
+            }
+            return names to parent
+        }
+
+        fun pomFor(group: String, name: String, version: String): File? {
+            var failure: Throwable? = null
+            repeat(3) { attempt ->
+                if (attempt > 0) Thread.sleep(3000) // a repository hiccup (e.g. HTTP 429) is not a missing POM
+                val result = dependencies.createArtifactResolutionQuery()
+                    .forModule(group, name, version)
+                    .withArtifacts(
+                        org.gradle.maven.MavenModule::class.java,
+                        org.gradle.maven.MavenPomArtifact::class.java,
+                    )
+                    .execute()
+                val arts = result.resolvedComponents.firstOrNull()
+                    ?.getArtifacts(org.gradle.maven.MavenPomArtifact::class.java).orEmpty()
+                arts.filterIsInstance<org.gradle.api.artifacts.result.ResolvedArtifactResult>().firstOrNull()
+                    ?.let { return it.file }
+                failure = arts.filterIsInstance<org.gradle.api.artifacts.result.UnresolvedArtifactResult>().firstOrNull()?.failure
+            }
+            logger.lifecycle("reportRuntimeLicences: no POM for $group:$name:$version (${failure?.message ?: "not found"})")
+            return null
+        }
+
+        val cache = HashMap<String, List<String>>()
+        fun licencesOf(group: String, name: String, version: String, depth: Int = 0): List<String> =
+            cache.getOrPut("$group:$name:$version") {
+                val pom = runCatching { pomFor(group, name, version) }.getOrNull() ?: return@getOrPut listOf("?")
+                val (own, parent) = runCatching { pomLicences(pom) }.getOrDefault(emptyList<String>() to null)
+                if (own.isNotEmpty() || parent == null || depth >= 5 || parent.third.isEmpty()) own
+                else licencesOf(parent.first, parent.second, parent.third, depth + 1)
+            }
+
+        val out = outDir.get().asFile.also { it.mkdirs() }
+        for (flavor in listOf("offline", "connect")) {
+            val config = configurations.getByName("${flavor}ReleaseRuntimeClasspath")
+            val lines = config.incoming.resolutionResult.allComponents
+                .map { it.id }
+                .filterIsInstance<org.gradle.api.artifacts.component.ModuleComponentIdentifier>()
+                .sortedBy { "${it.group}:${it.module}:${it.version}" }
+                .map { id ->
+                    val names = licencesOf(id.group, id.module, id.version)
+                    "${id.group}:${id.module}:${id.version}\t${if (names.isEmpty()) "-" else names.joinToString(" | ")}"
+                }
+            File(out, "$flavor.tsv").writeText(lines.joinToString("\n") + "\n")
+            logger.lifecycle("reportRuntimeLicences: $flavor ${lines.size} components")
+        }
+    }
 }

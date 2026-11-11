@@ -6,7 +6,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import androidx.core.database.sqlite.transaction
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
+import com.fotoxplorr.app.palette.PaletteSwatch
+import com.fotoxplorr.core.model.MediaId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,6 +35,10 @@ import java.nio.ByteOrder
  * verdict. What it does not do is leave the device — this database is app-private, and in the
  * `offline` flavour the process holds no INTERNET permission at all, so there is no path off the
  * phone even for code that wanted one.
+ *
+ * **Palettes are persisted too** (v5): up to five dominant colours per photo, each a packed ARGB
+ * int and a share of the image. That is the whole of what `colour:` search and the details room's
+ * tappable swatches need, and it says nothing about the photo a thumbnail does not already say.
  */
 class RecognitionStore(context: Context) {
     private val helper = RecognitionOpenHelper(context.applicationContext)
@@ -49,14 +54,51 @@ class RecognitionStore(context: Context) {
     fun observeProgress(): StateFlow<RecognitionProgress> = progress.asStateFlow()
 
     internal fun publishProgress(update: RecognitionProgress) {
-        progress.value = update
+        // A pass's own updates do not know how many photos are indexed (reload() fills that in), so
+        // an update that says 0 keeps the figure already there rather than wiping it.
+        progress.value = if (update.indexedCount > 0) update else update.copy(indexedCount = progress.value.indexedCount)
     }
 
     /** Loads everything from disk and republishes the derived index. Safe to call repeatedly. */
     suspend fun reload() = withContext(Dispatchers.IO) {
         val rows = helper.readAll()
-        index.value = RecognitionIndex.from(rows)
+        val base = RecognitionIndex.from(rows)
+        // The roster is resolved here, against what is stored, rather than inside `from`: it has
+        // to WRITE (a new person's record, a person's grown witness list), and `from` is pure.
+        val roster = mutex.withLock {
+            val resolution = PeopleRoster.resolve(base.people, helper.readBook())
+            helper.writeRecords(resolution.insert + resolution.update)
+            resolution.people
+        }
+        index.value = base.copy(roster = roster)
         progress.value = progress.value.copy(indexedCount = rows.size)
+    }
+
+    /** Gives [personId] a name; blank clears it. */
+    suspend fun renamePerson(personId: Long, name: String) = changePeople { book -> listOfNotNull(book.rename(personId, name)) }
+
+    /** Hides a person from the People destination (their photos stay in the library), or shows them again. */
+    suspend fun hidePerson(personId: Long, hidden: Boolean) = changePeople { book -> listOfNotNull(book.setHidden(personId, hidden)) }
+
+    /** Folds [sourceId] into [targetId]: one person from then on, wherever the clusters fall. */
+    suspend fun mergePeople(sourceId: Long, targetId: Long) = changePeople { book -> book.merge(sourceId, targetId) }
+
+    /** "Not this person": takes [mediaId] out of [personId]'s photos. */
+    suspend fun excludeFromPerson(personId: Long, mediaId: MediaId) = excludeFromPerson(personId, setOf(mediaId))
+
+    /** [excludeFromPerson] for a whole selection: one transaction and ONE reload, not one per photo. */
+    suspend fun excludeFromPerson(personId: Long, mediaIds: Set<MediaId>) = withContext(Dispatchers.IO) {
+        if (mediaIds.isEmpty()) return@withContext
+        mutex.withLock {
+            val book = helper.readBook()
+            helper.writeExclusions(mediaIds.mapNotNull { book.exclude(personId, it) })
+        }
+        reload()
+    }
+
+    private suspend fun changePeople(change: (PeopleBook) -> List<PersonRecord>) = withContext(Dispatchers.IO) {
+        mutex.withLock { helper.writeRecords(change(helper.readBook())) }
+        reload()
     }
 
     /**
@@ -68,10 +110,41 @@ class RecognitionStore(context: Context) {
     suspend fun pendingAssets(assets: List<MediaAsset>): List<MediaAsset> = withContext(Dispatchers.IO) {
         val revisions = helper.revisions()
         val failures = helper.failures()
+        // Photos indexed before face boxes were stored (v6) are read again, once, and FIRST: they are
+        // what the People cards wait on. This is NOT cheap -- each is a full pass of all three
+        // detectors, the same cost as a new photo -- it is only bounded (photos with a clear face,
+        // a fraction of the library) and one-off: a face whose box was tried and could not be used
+        // is stored as such (frame_aspect -1) and is not asked again.
+        val boxless = helper.mediaIdsWithoutFaceBox()
         assets.filter { asset ->
             if (asset.isVideo || asset.isTrashed) return@filter false
             val revision = asset.recognitionRevision()
-            if (revisions[asset.id] == revision) return@filter false
+            if (revisions[asset.id] == revision && asset.id !in boxless) return@filter false
+            val failure = failures[asset.id]
+            !(failure != null && failure.revision == revision && failure.attempts >= MAX_FAILURE_ATTEMPTS)
+        }.sortedByDescending { it.id in boxless }
+    }
+
+    /**
+     * Assets already recognised at their current revision whose palette has never been sampled --
+     * in practice, every photo indexed before palettes were stored (v5). They need one cheap
+     * decode each, not a second run of the three detectors, which is why this is a separate
+     * question from [pendingAssets] and the indexer answers it in a separate pass.
+     *
+     * "Never sampled" means no row at all in the palette table: a photo whose sample turned out
+     * to contain nothing visible is still recorded (see the helper's `writePalette`), so it is
+     * asked once, not on every pass. The same bounded-retry rule as [pendingAssets] applies, so a
+     * file that cannot be decoded for its palette is also given up on after
+     * [MAX_FAILURE_ATTEMPTS].
+     */
+    suspend fun pendingPaletteOnly(assets: List<MediaAsset>): List<MediaAsset> = withContext(Dispatchers.IO) {
+        val revisions = helper.revisions()
+        val sampled = helper.paletteMediaIds()
+        val failures = helper.failures()
+        assets.filter { asset ->
+            if (asset.isVideo || asset.isTrashed) return@filter false
+            val revision = asset.recognitionRevision()
+            if (revisions[asset.id] != revision || asset.id in sampled) return@filter false
             val failure = failures[asset.id]
             !(failure != null && failure.revision == revision && failure.attempts >= MAX_FAILURE_ATTEMPTS)
         }
@@ -112,10 +185,29 @@ class RecognitionStore(context: Context) {
         if (rows.isEmpty()) return@withContext
         val dueForReload = mutex.withLock {
             helper.upsert(rows)
-            val now = System.currentTimeMillis()
-            (now - lastReloadAtMs >= RELOAD_THROTTLE_MS).also { due -> if (due) lastReloadAtMs = now }
+            reloadDue()
         }
         if (dueForReload) reload()
+    }
+
+    /**
+     * Writes palettes for photos whose recognition rows already exist -- the palette-only pass's
+     * own upsert. Replaces whatever palette rows those photos had; touches nothing else about
+     * them. Throttled exactly as [upsert] is, for exactly the same reason.
+     */
+    suspend fun upsertPalettes(palettes: Map<MediaId, List<PaletteSwatch>>) = withContext(Dispatchers.IO) {
+        if (palettes.isEmpty()) return@withContext
+        val dueForReload = mutex.withLock {
+            helper.upsertPalettes(palettes)
+            reloadDue()
+        }
+        if (dueForReload) reload()
+    }
+
+    /** Guarded by [mutex]: has [RELOAD_THROTTLE_MS] passed since the last reload this allowed? */
+    private fun reloadDue(): Boolean {
+        val now = System.currentTimeMillis()
+        return (now - lastReloadAtMs >= RELOAD_THROTTLE_MS).also { due -> if (due) lastReloadAtMs = now }
     }
 
     suspend fun removeMissing(availableIds: Set<MediaId>) = withContext(Dispatchers.IO) {
@@ -146,7 +238,37 @@ data class RecognitionProgress(
     val indexedCount: Int = 0,
     val failed: Int = 0,
     val message: String? = null,
-)
+    /**
+     * The ids of the last few photos the detector pass finished, newest first (at most
+     * [RecentIds.LIMIT]; ids only). The activity shade's photo stack shows these, intersected with
+     * the browsable list, so it is the photos actually being worked on. Empty outside that pass.
+     */
+    val recentIds: List<MediaId> = emptyList(),
+) {
+    /**
+     * A pass has run to its end over everything it was given and nothing failed. False on a fresh
+     * install (nothing indexed), while running, after a failure, and when some photos could not be
+     * read -- the only state in which "every photo has been checked" is a true sentence.
+     */
+    val passFinished: Boolean
+        get() = !running && message == null && failed == 0 && indexedCount > 0 && completed == total
+}
+
+/** A bounded ring of the most recent ids, newest first. Pure, so the bound is testable. */
+class RecentIds(private val limit: Int = LIMIT) {
+    private val ids = ArrayDeque<MediaId>()
+
+    fun add(id: MediaId) {
+        ids.addFirst(id)
+        while (ids.size > limit) ids.removeLast()
+    }
+
+    fun newestFirst(): List<MediaId> = ids.toList()
+
+    companion object {
+        const val LIMIT = 8
+    }
+}
 
 /**
  * Cheap change-detector for a media file. Two different files essentially never collide on
@@ -182,6 +304,11 @@ private class RecognitionOpenHelper(context: Context) :
                 face_index INTEGER NOT NULL,
                 relative_area REAL NOT NULL,
                 vector BLOB NOT NULL,
+                box_left REAL NOT NULL DEFAULT -1,
+                box_top REAL NOT NULL DEFAULT -1,
+                box_right REAL NOT NULL DEFAULT -1,
+                box_bottom REAL NOT NULL DEFAULT -1,
+                frame_aspect REAL NOT NULL DEFAULT 0,
                 PRIMARY KEY (media_id, face_index)
             )
             """.trimIndent(),
@@ -204,6 +331,8 @@ private class RecognitionOpenHelper(context: Context) :
         // looks up, so it gets the one index.
         db.execSQL("CREATE INDEX ${TABLE_TEXT}_media ON $TABLE_TEXT (media_id)")
         createFailureTable(db)
+        createPaletteTable(db)
+        createPeopleTables(db)
     }
 
     /**
@@ -213,6 +342,14 @@ private class RecognitionOpenHelper(context: Context) :
      * additive: it only adds the new table, keeping every existing asset/face/text row. An
      * upgrade from further back (pre-v3) still drops and rebuilds those three, exactly as
      * before, since that policy predates and is unrelated to this task.
+     *
+     * v5 added [TABLE_PALETTE], and is additive for a different reason: the palette IS a derived
+     * cache, but dropping the asset/face/text rows to get it would cost every photo a second run
+     * of three detectors it already sat through, when all a palette needs is one 100px decode.
+     * So the step creates the (empty) palette table and keeps every existing row; the indexer's
+     * palette-only pass then fills the table in without touching anything else -- see
+     * [RecognitionStore.pendingPaletteOnly]. Both `CREATE TABLE IF NOT EXISTS` calls are
+     * idempotent, so any v3+ start version lands on the same v5 schema.
      */
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 3) {
@@ -220,10 +357,153 @@ private class RecognitionOpenHelper(context: Context) :
             db.execSQL("DROP TABLE IF EXISTS $TABLE_TEXT")
             db.execSQL("DROP TABLE IF EXISTS $TABLE_FACES")
             db.execSQL("DROP TABLE IF EXISTS $TABLE_ASSETS")
+            db.execSQL("DROP TABLE IF EXISTS $TABLE_PALETTE")
             onCreate(db)
             return
         }
         createFailureTable(db)
+        createPaletteTable(db)
+        if (oldVersion < 6) {
+            // v6: where each face sat (for the People cards) and the people the owner has named.
+            // Additive, and for the strongest reason of all the steps: the person tables hold
+            // names the owner typed, which no re-index can bring back, and the face rows are what
+            // the next clustering reads. Existing faces get "no box" (-1 / aspect 0); the indexer
+            // re-reads exactly those photos first -- see RecognitionStore.pendingAssets.
+            addFaceBoxColumns(db)
+            createPeopleTables(db)
+        }
+    }
+
+    /** `ALTER TABLE ... ADD COLUMN` has no IF NOT EXISTS, so each column asks first. */
+    private fun addFaceBoxColumns(db: SQLiteDatabase) {
+        val have = HashSet<String>()
+        db.rawQuery("PRAGMA table_info($TABLE_FACES)", null).use { cursor ->
+            while (cursor.moveToNext()) have += cursor.getString(1)
+        }
+        listOf(
+            "box_left" to "REAL NOT NULL DEFAULT -1",
+            "box_top" to "REAL NOT NULL DEFAULT -1",
+            "box_right" to "REAL NOT NULL DEFAULT -1",
+            "box_bottom" to "REAL NOT NULL DEFAULT -1",
+            "frame_aspect" to "REAL NOT NULL DEFAULT 0",
+        ).forEach { (column, type) ->
+            if (column !in have) db.execSQL("ALTER TABLE $TABLE_FACES ADD COLUMN $column $type")
+        }
+    }
+
+    /**
+     * People the owner has met: `merged_into` is 0 for "not merged"; `witnesses` is
+     * `mediaId:faceIndex` pairs joined by commas (see [PersonRecord]); `name` is '' for unnamed.
+     */
+    private fun createPeopleTables(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_PEOPLE (
+                person_id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                hidden INTEGER NOT NULL DEFAULT 0,
+                merged_into INTEGER NOT NULL DEFAULT 0,
+                witnesses TEXT NOT NULL DEFAULT ''
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_EXCLUSIONS (
+                person_id INTEGER NOT NULL,
+                media_id INTEGER NOT NULL,
+                PRIMARY KEY (person_id, media_id)
+            )
+            """.trimIndent(),
+        )
+    }
+
+    fun readBook(): PeopleBook {
+        val records = buildList {
+            readableDatabase.query(
+                TABLE_PEOPLE, arrayOf("person_id", "name", "hidden", "merged_into", "witnesses"),
+                null, null, null, null, "person_id ASC",
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    add(
+                        PersonRecord(
+                            id = cursor.getLong(0),
+                            name = cursor.getString(1)?.takeIf { it.isNotBlank() },
+                            hidden = cursor.getInt(2) != 0,
+                            mergedInto = cursor.getLong(3).takeIf { it > 0L },
+                            witnesses = decodeWitnesses(cursor.getString(4)),
+                        ),
+                    )
+                }
+            }
+        }
+        val exclusions = buildSet {
+            readableDatabase.query(TABLE_EXCLUSIONS, arrayOf("person_id", "media_id"), null, null, null, null, null)
+                .use { cursor -> while (cursor.moveToNext()) add(Exclusion(cursor.getLong(0), cursor.getLong(1))) }
+        }
+        return PeopleBook(records, exclusions)
+    }
+
+    fun writeRecords(records: List<PersonRecord>) {
+        if (records.isEmpty()) return
+        writableDatabase.transaction {
+            records.forEach { record ->
+                insertWithOnConflict(
+                    TABLE_PEOPLE, null,
+                    ContentValues().apply {
+                        put("person_id", record.id)
+                        put("name", record.name.orEmpty())
+                        put("hidden", if (record.hidden) 1 else 0)
+                        put("merged_into", record.mergedInto ?: 0L)
+                        put("witnesses", encodeWitnesses(record.witnesses))
+                    },
+                    SQLiteDatabase.CONFLICT_REPLACE,
+                )
+            }
+        }
+    }
+
+    fun writeExclusions(exclusions: List<Exclusion>) {
+        if (exclusions.isEmpty()) return
+        writableDatabase.transaction {
+            exclusions.forEach { exclusion ->
+                insertWithOnConflict(
+                    TABLE_EXCLUSIONS, null,
+                    ContentValues().apply {
+                        put("person_id", exclusion.personId)
+                        put("media_id", exclusion.mediaId)
+                    },
+                    SQLiteDatabase.CONFLICT_IGNORE,
+                )
+            }
+        }
+    }
+
+    /** Photos with a stored face whose box was never tried (frame_aspect 0): indexed before v6. */
+    fun mediaIdsWithoutFaceBox(): Set<MediaId> = buildSet {
+        readableDatabase.rawQuery("SELECT DISTINCT media_id FROM $TABLE_FACES WHERE frame_aspect = 0", null).use { cursor ->
+            while (cursor.moveToNext()) add(MediaId(cursor.getLong(0)))
+        }
+    }
+
+    /**
+     * One row per stored colour. `argb` is the packed opaque colour, `proportion` its share of
+     * the sampled image in 0..1. A photo that was sampled and found to have nothing visible gets
+     * a single row with `proportion = 0` -- the "asked, nothing there" marker that keeps it out of
+     * the palette-only pass; see [paletteMediaIds] and [writePalette].
+     */
+    private fun createPaletteTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_PALETTE (
+                media_id INTEGER NOT NULL,
+                swatch_index INTEGER NOT NULL,
+                argb INTEGER NOT NULL,
+                proportion REAL NOT NULL,
+                PRIMARY KEY (media_id, swatch_index)
+            )
+            """.trimIndent(),
+        )
     }
 
     private fun createFailureTable(db: SQLiteDatabase) {
@@ -281,7 +561,95 @@ private class RecognitionOpenHelper(context: Context) :
         writableDatabase.delete(TABLE_FAILURES, "media_id = ?", arrayOf(mediaId.value.toString()))
     }
 
+    /** Every photo with ANY palette row -- including the "sampled, nothing visible" marker row. */
+    fun paletteMediaIds(): Set<MediaId> = buildSet {
+        readableDatabase.query(
+            true, TABLE_PALETTE, arrayOf("media_id"),
+            null, null, null, null, null, null,
+        ).use { cursor ->
+            while (cursor.moveToNext()) add(MediaId(cursor.getLong(0)))
+        }
+    }
+
+    /**
+     * Every stored palette by media id, in swatch order. Omits photos whose only row is the
+     * nothing-visible marker.
+     *
+     * Never throws on a bad row. A photo whose rows cannot be read as a palette -- a NULL where a
+     * number belongs, a share that is not finite or is above 1 -- comes back with no palette at
+     * all, rather than a half-garbage one or an exception that takes the whole index down with
+     * it. A share of zero or less is skipped silently: that is the marker row, and it is also what
+     * SQLite hands back for text that is not a number, which is the right answer for both.
+     */
+    private fun readPalettes(): Map<Long, List<PaletteSwatch>> {
+        val palettes = HashMap<Long, MutableList<PaletteSwatch>>()
+        val malformed = HashSet<Long>()
+        readableDatabase.query(
+            TABLE_PALETTE, arrayOf("media_id", "argb", "proportion"),
+            null, null, null, null, "media_id ASC, swatch_index ASC",
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val mediaId = cursor.getLong(0)
+                if (cursor.isNull(1) || cursor.isNull(2)) {
+                    malformed += mediaId
+                    continue
+                }
+                val proportion = cursor.getFloat(2)
+                if (proportion.isNaN() || proportion > MAX_PROPORTION) {
+                    malformed += mediaId
+                    continue
+                }
+                if (proportion <= 0f) continue
+                palettes.getOrPut(mediaId) { mutableListOf() } +=
+                    PaletteSwatch(argb = cursor.getInt(1) or OPAQUE, proportion = proportion)
+            }
+        }
+        malformed.forEach(palettes::remove)
+        return palettes
+    }
+
+    fun upsertPalettes(palettes: Map<MediaId, List<PaletteSwatch>>) {
+        writableDatabase.transaction {
+            palettes.forEach { (mediaId, palette) -> writePalette(mediaId, palette) }
+        }
+    }
+
+    /**
+     * Replaces [mediaId]'s palette rows. An empty palette still writes one marker row (share 0),
+     * so "sampled, nothing visible" is told apart from "never sampled" -- without it every fully
+     * transparent PNG in the library would be decoded again on every pass, forever.
+     */
+    private fun SQLiteDatabase.writePalette(mediaId: MediaId, palette: List<PaletteSwatch>) {
+        delete(TABLE_PALETTE, "media_id = ?", arrayOf(mediaId.value.toString()))
+        if (palette.isEmpty()) {
+            insertWithOnConflict(
+                TABLE_PALETTE, null,
+                ContentValues().apply {
+                    put("media_id", mediaId.value)
+                    put("swatch_index", 0)
+                    put("argb", 0)
+                    put("proportion", 0f)
+                },
+                SQLiteDatabase.CONFLICT_REPLACE,
+            )
+            return
+        }
+        palette.forEachIndexed { index, swatch ->
+            insertWithOnConflict(
+                TABLE_PALETTE, null,
+                ContentValues().apply {
+                    put("media_id", mediaId.value)
+                    put("swatch_index", index)
+                    put("argb", swatch.argb)
+                    put("proportion", swatch.proportion)
+                },
+                SQLiteDatabase.CONFLICT_REPLACE,
+            )
+        }
+    }
+
     fun readAll(): List<AssetRecognition> {
+        val palettes = readPalettes()
         val blocks = HashMap<Long, MutableList<TextBlock>>()
         readableDatabase.query(
             TABLE_TEXT, arrayOf("media_id", "text", "left", "top", "right", "bottom"),
@@ -300,7 +668,11 @@ private class RecognitionOpenHelper(context: Context) :
         }
         val faces = HashMap<Long, MutableList<FaceDescriptor>>()
         readableDatabase.query(
-            TABLE_FACES, arrayOf("media_id", "face_index", "relative_area", "vector"),
+            TABLE_FACES,
+            arrayOf(
+                "media_id", "face_index", "relative_area", "vector",
+                "box_left", "box_top", "box_right", "box_bottom", "frame_aspect",
+            ),
             null, null, null, null, "media_id ASC, face_index ASC",
         ).use { cursor ->
             while (cursor.moveToNext()) {
@@ -310,6 +682,10 @@ private class RecognitionOpenHelper(context: Context) :
                     faceIndex = cursor.getInt(1),
                     relativeArea = cursor.getFloat(2),
                     vector = decodeVector(cursor.getBlob(3)),
+                    box = FaceBox(
+                        cursor.getFloat(4), cursor.getFloat(5), cursor.getFloat(6), cursor.getFloat(7),
+                        cursor.getFloat(8),
+                    ).takeIf { it.isUsable },
                 )
             }
         }
@@ -339,6 +715,7 @@ private class RecognitionOpenHelper(context: Context) :
                             categories = decodeCategories(cursor.getString(6)),
                             caption = cursor.getString(7).orEmpty(),
                             hashtags = decodeLabels(cursor.getString(8)),
+                            palette = palettes[mediaId].orEmpty(),
                         ),
                     )
                 }
@@ -389,10 +766,23 @@ private class RecognitionOpenHelper(context: Context) :
                             put("face_index", face.faceIndex)
                             put("relative_area", face.relativeArea)
                             put("vector", encodeVector(face.vector))
+                            val box = face.box?.takeIf { it.isUsable }
+                            if (box != null) {
+                                put("box_left", box.left)
+                                put("box_top", box.top)
+                                put("box_right", box.right)
+                                put("box_bottom", box.bottom)
+                                put("frame_aspect", box.frameAspect)
+                            } else {
+                                // Tried, and there is no usable box: -1, so the boxless re-read
+                                // (frame_aspect = 0) does not pick this photo up on every pass.
+                                put("frame_aspect", -1f)
+                            }
                         },
                         SQLiteDatabase.CONFLICT_REPLACE,
                     )
                 }
+                writePalette(row.mediaId, row.palette)
             }
         }
     }
@@ -409,8 +799,11 @@ private class RecognitionOpenHelper(context: Context) :
                 val args = arrayOf(id.value.toString())
                 delete(TABLE_TEXT, "media_id = ?", args)
                 delete(TABLE_FACES, "media_id = ?", args)
+                delete(TABLE_PALETTE, "media_id = ?", args)
                 delete(TABLE_ASSETS, "media_id = ?", args)
                 delete(TABLE_FAILURES, "media_id = ?", args)
+                // A "not this person" about a photo that is gone is dead weight; people themselves stay.
+                delete(TABLE_EXCLUSIONS, "media_id = ?", args)
             }
         }
     }
@@ -419,8 +812,13 @@ private class RecognitionOpenHelper(context: Context) :
         writableDatabase.apply {
             delete(TABLE_TEXT, null, null)
             delete(TABLE_FACES, null, null)
+            delete(TABLE_PALETTE, null, null)
             delete(TABLE_ASSETS, null, null)
             delete(TABLE_FAILURES, null, null)
+            // A reset of recognition is a reset of people: their witnesses name faces that no
+            // longer exist, so a kept name could only ever attach to the wrong cluster.
+            delete(TABLE_PEOPLE, null, null)
+            delete(TABLE_EXCLUSIONS, null, null)
         }
     }
 
@@ -431,17 +829,39 @@ private class RecognitionOpenHelper(context: Context) :
         // Recognition data in the first three tables is a derived cache, so bumping across THOSE
         // is a version bump and a wider CREATE TABLE, not a migration; TABLE_FAILURES itself is
         // not a derived cache (a failure needs to survive a process restart), which is exactly
-        // why its own arrival is additive rather than another drop-and-recreate.
-        const val DATABASE_VERSION = 4
+        // why its own arrival is additive rather than another drop-and-recreate. v5 added
+        // TABLE_PALETTE, also additively -- see onUpgrade for why a derived cache still earns an
+        // additive step this time.
+        const val DATABASE_VERSION = 6
         const val TABLE_ASSETS = "asset_recognition"
         const val TABLE_FACES = "face_descriptor"
         const val TABLE_FAILURES = "recognition_failure"
+        const val TABLE_PALETTE = "asset_palette"
         const val TABLE_TEXT = "asset_text_block"
+        const val TABLE_PEOPLE = "person_record"
+        const val TABLE_EXCLUSIONS = "person_exclusion"
+
+        /** A share above this cannot have come from the quantiser; the row is garbage. */
+        const val MAX_PROPORTION = 1.0001f
+        const val OPAQUE = 0xFF shl 24
 
         fun <T : Enum<T>> enumOrNone(stored: String?, values: List<T>, fallback: T): T =
             values.firstOrNull { it.name == stored } ?: fallback
     }
 }
+
+/** `mediaId:faceIndex` pairs, comma-joined; digits and colons only, so nothing to escape. */
+internal fun encodeWitnesses(witnesses: Set<FaceKey>): String =
+    witnesses.joinToString(",") { "${it.mediaId}:${it.faceIndex}" }
+
+/** Tolerant: a malformed pair is skipped, not fatal -- a bad cell must not hide every person. */
+internal fun decodeWitnesses(stored: String?): Set<FaceKey> =
+    stored?.split(',')?.mapNotNullTo(linkedSetOf()) { pair ->
+        val parts = pair.split(':')
+        val media = parts.getOrNull(0)?.toLongOrNull()
+        val index = parts.getOrNull(1)?.toIntOrNull()
+        if (parts.size == 2 && media != null && index != null) FaceKey(media, index) else null
+    }.orEmpty()
 
 internal fun encodeVector(vector: FloatArray): ByteArray {
     val buffer = ByteBuffer.allocate(vector.size * Float.SIZE_BYTES).order(ByteOrder.LITTLE_ENDIAN)

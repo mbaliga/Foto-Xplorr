@@ -1,5 +1,7 @@
 package com.fotoxplorr.app.lift
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -49,9 +51,9 @@ class StickerExporter(context: Context) {
     private val authority = fileProviderAuthority(appContext)
 
     /**
-     * Save [bitmap] as a new PNG in the device's Pictures, alongside where every other saved
-     * output of this app lands -- see [com.fotoxplorr.app.editor.EditedCopyWriter], which this
-     * mirrors. A sticker is a new artefact derived from a photo, not an edit of one, so unlike the
+     * Save [bitmap] as a new PNG in the device's Pictures, in this app's own `Fotoz/Stickers`
+     * album ([GALLERY_RELATIVE_PATH]) -- see [com.fotoxplorr.app.editor.EditedCopyWriter], which
+     * this mirrors. Runs only from the explicit Save sticker button. A sticker is a new artefact derived from a photo, not an edit of one, so unlike the
      * editor there is no "original" this could ever be mistaken for overwriting.
      */
     suspend fun saveToGallery(bitmap: Bitmap, baseName: String): Result<Uri> = withContext(Dispatchers.IO) {
@@ -113,18 +115,47 @@ class StickerExporter(context: Context) {
      * directory is the bug; a directory each feature owns outright is what removes it.
      */
     suspend fun prepareForShare(bitmap: Bitmap): Result<Uri> = withContext(Dispatchers.IO) {
+        runCatching { writeToShareCache(bitmap) }
+    }
+
+    /**
+     * Put [bitmap] on the system clipboard as an `image/png` content URI, so it can be pasted
+     * into a chat or a note with its transparency intact. A clipboard cannot carry pixels, only a
+     * URI, so the PNG goes to the same private cache directory a share uses and the clip points
+     * at it through the [FileProvider]; the system grants the pasting app read access to exactly
+     * that one URI when the clip is read.
+     *
+     * Always a user action (the Copy button): nothing here runs on its own.
+     */
+    suspend fun copyToClipboard(bitmap: Bitmap): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            val directory = File(appContext.cacheDir, SHARE_DIRECTORY).apply {
-                check(mkdirs() || isDirectory) { "Could not prepare sticker share storage" }
-            }
-            val target = File(directory, "${UUID.randomUUID()}.png")
-            target.outputStream().buffered().use { out ->
-                check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
-                    "Could not encode the sticker"
-                }
-            }
-            FileProvider.getUriForFile(appContext, authority, target)
+            val uri = writeToShareCache(bitmap)
+            val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newUri(appContext.contentResolver, CLIP_LABEL, uri))
         }
+    }
+
+    /**
+     * Delete sticker files in this feature's cache directory older than [maxAgeMillis], so copying
+     * and sharing -- each of which writes a fresh file -- cannot grow the cache without bound.
+     * A day by default: long enough that a chooser the person left open, or a clip they have not
+     * pasted yet, still resolves; short enough that nothing lingers. Returns how many were removed.
+     */
+    suspend fun pruneCache(maxAgeMillis: Long = CACHE_MAX_AGE_MILLIS): Int = withContext(Dispatchers.IO) {
+        pruneStaleFiles(File(appContext.cacheDir, SHARE_DIRECTORY), System.currentTimeMillis(), maxAgeMillis)
+    }
+
+    private fun writeToShareCache(bitmap: Bitmap): Uri {
+        val directory = File(appContext.cacheDir, SHARE_DIRECTORY).apply {
+            check(mkdirs() || isDirectory) { "Could not prepare sticker share storage" }
+        }
+        val target = File(directory, "${UUID.randomUUID()}.png")
+        target.outputStream().buffered().use { out ->
+            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                "Could not encode the sticker"
+            }
+        }
+        return FileProvider.getUriForFile(appContext, authority, target)
     }
 
     /**
@@ -151,8 +182,20 @@ class StickerExporter(context: Context) {
          */
         const val SHARE_DIRECTORY = "lift-stickers"
 
-        /** Where saved stickers land in the device's own gallery, alongside Pictures. */
-        const val GALLERY_RELATIVE_PATH = "Pictures/"
+        /**
+         * Where saved stickers land in the device's own gallery: their own album, so a pile of
+         * transparent cut-outs does not interleave with the camera roll. Only ever written to by
+         * the Save sticker button.
+         */
+        const val GALLERY_RELATIVE_PATH = "Pictures/Fotoz/Stickers/"
+
+        /** The longest edge of an exported sticker, in pixels; the source is never upscaled to reach it. */
+        const val EXPORT_LONG_EDGE_PX = 2048
+
+        const val CLIP_LABEL = "Sticker"
+
+        /** See [StickerExporter.pruneCache]. */
+        const val CACHE_MAX_AGE_MILLIS = 24L * 60 * 60 * 1000
     }
 }
 
@@ -170,4 +213,19 @@ internal fun stickerFileName(displayName: String, marker: String = "sticker"): S
     val stem = if (dot > 0) trimmed.substring(0, dot) else trimmed
     val base = stem.removeSuffix("-$marker")
     return "$base-$marker.png"
+}
+
+/**
+ * Delete the regular files directly inside [directory] whose last-modified time is more than
+ * [maxAgeMillis] before [nowMillis]; returns how many went. A missing directory is not an error
+ * (nothing was ever shared), and a file that refuses to delete is skipped rather than aborting the
+ * sweep. Pure `java.io`, separate from the exporter so it can be tested without a [Context].
+ */
+internal fun pruneStaleFiles(directory: File, nowMillis: Long, maxAgeMillis: Long): Int {
+    val files = directory.listFiles() ?: return 0
+    var removed = 0
+    for (file in files) {
+        if (file.isFile && nowMillis - file.lastModified() > maxAgeMillis && file.delete()) removed++
+    }
+    return removed
 }

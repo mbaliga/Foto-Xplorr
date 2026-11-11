@@ -1,7 +1,8 @@
 package com.fotoxplorr.app.media
 
-import com.fotoxplorr.app.formats.MediaFormat
-import com.fotoxplorr.app.formats.RawVariant
+import com.fotoxplorr.core.formats.MediaFormat
+import com.fotoxplorr.core.formats.RawVariant
+import com.fotoxplorr.core.model.MediaId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test

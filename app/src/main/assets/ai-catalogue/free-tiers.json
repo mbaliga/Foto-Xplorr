@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "lastUpdated": "2026-07-12",
+  "_note": "Canonical, periodically-updated catalog of cloud LLM providers' free tiers, for the constellation of apps that consume it (aarso/Workbench today; others later). These are external facts that drift — each entry carries its own sourceUrl; always verify on the provider's site before relying on a number. This file does not assert these numbers as nooz's own (never present external numbers as ours). Refreshed by .github/scripts/ai_catalogue_sentry.py (see .github/workflows/ai-catalogue-sentry.yml), which flags staleness but never auto-overwrites a figure — a human (or a future agent, per that script's own docstring) verifies each change against sourceUrl. Primary upstream cross-reference: github.com/cheahjs/free-llm-api-resources. This file's content originates from aarso's app/src/main/assets/free_tiers.json (2026-06-21), consolidated here as the canonical copy per the constellation's 'apps consume from nooz' data-sharing model; aarso now fetches this file directly rather than hand-maintaining its own (see D16). 2026-07-12: a full verification pass re-checked every entry's sourceUrl (or, where the page itself withheld numbers or returned an access error, the best corroborating evidence available); groq/openrouter/cerebras/github_models figures reconfirmed or refined against their own docs, cohere/deepseek figures corrected to what those providers publish today, anthropic/openai sourceUrls updated to the pages their old URLs now redirect to, and one new entry (Cloudflare Workers AI) added with a primary-source-verified number. google_gemini/mistral/together/anthropic/openai's headline figures were left unchanged this pass — either the page no longer publishes a hard number (gemini defers to a live per-account dashboard) or the only fresh evidence available was secondary/conflicting, which does not clear this file's own bar for overwriting a figure.",
+  "providers": [
+    {
+      "id": "google_gemini",
+      "name": "Google Gemini (AI Studio)",
+      "providerKind": "gemini",
+      "kind": "ONGOING_FREE",
+      "summary": "Free tier in Google AI Studio. Gemini 2.5 Flash ~1,500 req/day; 2.5 Pro ~50 req/day. No card. (2026-07-12: Google's own docs page no longer publishes these as fixed numbers — it now points to a live per-account dashboard in AI Studio — so this figure is carried over unconfirmed rather than replaced with a guess.)",
+      "requestsPerDay": 1500,
+      "requiresCard": false,
+      "sourceUrl": "https://ai.google.dev/gemini-api/docs/rate-limits"
+    },
+    {
+      "id": "groq",
+      "name": "Groq",
+      "providerKind": "openai",
+      "kind": "ONGOING_FREE",
+      "summary": "Fast inference free tier. llama-3.3-70b-versatile: 30 req/min, 1K req/day, 12K tokens/min, 100K tokens/day. No card. (reconfirmed 2026-07-12 against Groq's own docs)",
+      "requestsPerDay": 1000,
+      "tokensPerDay": 100000,
+      "requiresCard": false,
+      "sourceUrl": "https://console.groq.com/docs/rate-limits"
+    },
+    {
+      "id": "cerebras",
+      "name": "Cerebras",
+      "providerKind": "openai",
+      "kind": "ONGOING_FREE",
+      "summary": "Free Trial tier: 5 req/min, 30K tokens/min, 1M tokens/hour, 1M tokens/day — across models like gpt-oss-120b, zai-glm-4.7, gemma-4-31b. No card. (2026-07-12: model lineup on the free tier has changed since this was last checked — no longer Llama 3.3 70B.)",
+      "tokensPerDay": 1000000,
+      "requiresCard": false,
+      "sourceUrl": "https://inference-docs.cerebras.ai/support/rate-limits"
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter (free models)",
+      "providerKind": "openai",
+      "kind": "ONGOING_FREE",
+      "summary": "28+ free models. 20 req/min, 50 req/day (raised to 1,000/day permanently after a one-time $10+ top-up — reconfirmed 2026-07-12 as an account-lifetime, not one-time, boost).",
+      "requestsPerDay": 50,
+      "requiresCard": false,
+      "sourceUrl": "https://openrouter.ai/docs/api-reference/limits"
+    },
+    {
+      "id": "mistral",
+      "name": "Mistral (Experiment tier)",
+      "providerKind": "openai",
+      "kind": "ONGOING_FREE",
+      "summary": "Experiment tier ~1B tokens/month — generous, but requests may be used to train Mistral's models unless you opt out (evaluation only, not for production). Mistral no longer publishes an exact free-tier number on this page; check Admin Console → Limits for your account's live figure.",
+      "tokensPerMonth": 1000000000,
+      "requiresCard": false,
+      "sourceUrl": "https://docs.mistral.ai/deployment/laplateforme/tier/"
+    },
+    {
+      "id": "github_models",
+      "name": "GitHub Models",
+      "providerKind": "openai",
+      "kind": "ONGOING_FREE",
+      "summary": "Free during preview; rate-limited per model tier, using your GitHub token. Low-tier models: 15 req/min, 150 req/day; high-tier models: 10 req/min, 50 req/day; embeddings: 15 req/min, 150 req/day (reconfirmed 2026-07-12).",
+      "requestsPerDay": 150,
+      "requiresCard": false,
+      "sourceUrl": "https://docs.github.com/github-models/prototyping-with-ai-models"
+    },
+    {
+      "id": "cohere",
+      "name": "Cohere",
+      "providerKind": "openai",
+      "kind": "TRIAL_CREDIT",
+      "summary": "Trial API key: 20 req/min on Chat, capped at ~1,000 API calls/month overall. No card. Production keys are paid. (corrected 2026-07-12 — previously listed as a flat ~100 req/day, which understated the real monthly-cap structure.)",
+      "trialCredit": "trial key (20 req/min, ~1,000 calls/month)",
+      "requiresCard": false,
+      "sourceUrl": "https://docs.cohere.com/docs/rate-limits"
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "providerKind": "openai",
+      "kind": "TRIAL_CREDIT",
+      "summary": "One-time new-account grant of ~5M tokens (~$8.40 of usage), valid 30 days, no card. OpenAI-compatible endpoint. (corrected 2026-07-12 from ~10M — DeepSeek's own pricing page returned an access error to this pass's probe, so this figure is corroborated by several independent secondary sources rather than the primary page directly; re-verify against sourceUrl when it's reachable.)",
+      "trialCredit": "~5M tokens (30-day validity)",
+      "requiresCard": false,
+      "sourceUrl": "https://platform.deepseek.com"
+    },
+    {
+      "id": "together",
+      "name": "Together AI",
+      "providerKind": "openai",
+      "kind": "TRIAL_CREDIT",
+      "summary": "Small trial credit to evaluate; OpenAI-compatible. (2026-07-12: secondary sources disagree on the exact amount — reports this pass ranged from $1 to $50, and one claims the original signup credit was retired mid-2025 — so this figure is left unchanged rather than replaced with an unreliable number; re-verify against sourceUrl / an actual signup.)",
+      "trialCredit": "~$1 credit",
+      "requiresCard": false,
+      "sourceUrl": "https://docs.together.ai"
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic (Claude)",
+      "providerKind": "anthropic",
+      "kind": "TRIAL_CREDIT",
+      "summary": "No ongoing free tier; new accounts get a small one-time evaluation credit. Paid usage tiers (Start/Build/Scale) carry monthly spend caps of $500/$1,000/$200,000 respectively rather than any free allowance. (sourceUrl updated 2026-07-12 — the old docs.anthropic.com link now redirects here.)",
+      "trialCredit": "one-time eval credit",
+      "requiresCard": false,
+      "sourceUrl": "https://platform.claude.com/docs/en/api/rate-limits"
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "providerKind": "openai",
+      "kind": "TRIAL_CREDIT",
+      "summary": "No meaningfully free tier: the account tier literally named \"Free\" is a spend-cap rung ($100/month max), not a grant of free tokens — a card is still required and usage is still billed. Limited free daily tokens have separately been offered via data-sharing opt-in in the past. (sourceUrl updated 2026-07-12 — the old platform.openai.com link now redirects here.)",
+      "trialCredit": "varies / data-sharing",
+      "requiresCard": true,
+      "sourceUrl": "https://developers.openai.com/api/docs/guides/rate-limits"
+    },
+    {
+      "id": "cloudflare_workers_ai",
+      "name": "Cloudflare Workers AI",
+      "providerKind": null,
+      "kind": "ONGOING_FREE",
+      "summary": "10,000 Neurons/day at no charge, on both the Free and Paid Workers plans — usage above that is billed at $0.011/1,000 Neurons. Not a general OpenAI-compatible endpoint (Cloudflare's own REST API; some models expose an OpenAI-compatible route), so providerKind is left unmapped rather than guessed. Added 2026-07-12, verified against Cloudflare's own pricing docs.",
+      "requiresCard": false,
+      "sourceUrl": "https://developers.cloudflare.com/workers-ai/platform/pricing/"
+    }
+  ]
+}

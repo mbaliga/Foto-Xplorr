@@ -1,0 +1,72 @@
+A gallery for the photos and videos already on your phone. It opens fast, it does
+not want an account, and it never uploads anything on its own.
+
+BROWSE
+• Nine destinations: Pets, People, Identity, Screenshots, Photos, Videos,
+  Favourites, Experimental and Protected, plus a Map button that shows the current
+  view on a map.
+• Drag from an edge: left to go, top for details, bottom for actions, right
+  for view options.
+• A timeline scrubber for the whole library: it appears when you touch the edge
+  and bends away from your finger (or is always visible, your choice), on any
+  edge or off.
+• Search by filename, folder, media type, tag, date range or camera.
+• Sort by newest, oldest, name or size. Pinch through 1 to 6 columns to a
+  sheet of tiny month stamps; scroll down or sideways; narrow it to a range
+  of months.
+• A full-screen viewer with EXIF/XMP details, swipe, zoom, pan, a favourite
+  heart, and a slideshow with its own play, pause and skip bar.
+• A full video player: speed, subtitles, audio tracks, gestures, resume,
+  Picture-in-Picture. RAW (best effort), SVG, animated GIF, WebP and AVIF.
+• Light and dark themes, accent palettes, tablet and ChromeOS layouts.
+
+EDIT
+• A real photo editor: exposure, contrast, highlights/shadows, white balance,
+  HSL, per-channel curves, crop, straighten, spot heal, vignette, sharpen,
+  presets, and undo/redo with a saved edit history.
+• Save a copy, Save As to a chosen format and place (location removed), or
+  replace the original behind Android's own confirmation. Replacing is refused
+  when it would lose something (animation, HDR, a motion photo's video).
+• A video editor: trim, speed, rotate, mirror, mute, crop and colour filters.
+• Read and write EXIF/XMP: rating, creator, copyright, keywords, location.
+• Convert a video to MP4.
+
+ORGANISE, REVERSIBLY
+• Favourites, an archive, a sensitive flag and your own tags, all persistent.
+• On-device recognition (no network) for pets, people and identity documents.
+  Name people, merge or hide them.
+• Collections that group media without moving the source files.
+• Bulk selection, multi-share and bulk organisation, with visible progress.
+• Copy to any folder; a safe move copies first, then asks Android to trash.
+
+DISCOVER
+• Smart albums: favourites, recents, videos, screenshots, animated, large
+  files, duplicates, sensitive, archive, trash, untagged.
+• Location metadata extracted from your own files, on demand, on device.
+• A real world map that works offline, built in, with room for your own
+  raster map file (.mbtiles). An optional on-device compass view.
+• Experimental extras: draw a fish and watch it swim, and hang pictures on a
+  photo of your wall at real print sizes.
+• Stitch a panorama, make a reel, a GIF or a mood board, build a palette,
+  check colours for colour blindness. New files only.
+• Chroma ID reads a surface's colour with the camera and flash. The camera is
+  used only there; its pictures are never saved or sent.
+• No music library. A reel can carry one sound file you pick.
+• Settings > Services: your own AI keys (optional), models on this phone, sync.
+• Optional sync sends copies to a folder you pick, and in the connect build to
+  Nextcloud/WebDAV, S3-compatible storage, Google Drive or Dropbox (you register
+  your own app for the last two). It only copies, never deletes, starts when you
+  tap, and skips protected photos.
+• In the connect build only: save small map areas for use offline. Nothing is
+  downloaded until you tap Download; the provider then sees the area and your IP.
+
+QUIET BY DESIGN
+• No ads, no accounts, no analytics, no tracking, and the default build has no
+  network permission at all.
+• Fotoz never uploads your photos on its own, or uses them to train anything.
+• Recognition and similarity run on your phone.
+• Photos you hide or lock in Fotoz are never shown to other apps that ask to
+  open them.
+
+Fotoz (formerly Foto Xplorr) is source-available and free for noncommercial
+use.

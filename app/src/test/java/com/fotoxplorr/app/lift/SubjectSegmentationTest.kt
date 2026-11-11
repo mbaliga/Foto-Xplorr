@@ -2,6 +2,7 @@ package com.fotoxplorr.app.lift
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -206,5 +207,64 @@ class SubjectSegmentationTest {
         val mask = SubjectSegmentation.grow(pixels, 2, 2, seedX = 0, seedY = 0, tolerance = 0, featherRadius = 0)
         assertTrue(mask.isIncluded(0))
         assertFalse("one level off must be excluded at tolerance 0", mask.isIncluded(1))
+    }
+
+    // ---- seed colour: a disc, not one pixel ----
+
+    @Test
+    fun `a hot pixel under the tap does not become the whole selection`() {
+        val size = 20
+        val pixels = IntArray(size * size) { argb(100, 100, 100) }
+        pixels[10 * size + 10] = argb(200, 50, 50) // the speck the finger happened to land on
+
+        val mask = SubjectSegmentation.grow(pixels, size, size, seedX = 10, seedY = 10, tolerance = 20, featherRadius = 0)
+
+        // Seeded from the single pixel (the old behaviour) only the speck itself qualified, and the
+        // opening then erased even that. Seeded from the disc, the surrounding grey is the seed.
+        assertTrue("the surrounding region must be selected", mask.isIncluded(2 * size + 2))
+        assertTrue("and so must the tapped pixel", mask.isIncluded(10 * size + 10))
+        assertNotNull(SubjectSegmentation.boundingBox(mask))
+    }
+
+    @Test
+    fun `a tap on a thin line seeds from the line, not from the background behind it`() {
+        val size = 30
+        val line = argb(20, 20, 20)
+        val pixels = IntArray(size * size) { index ->
+            val x = index % size
+            if (x == 14 || x == 15) line else argb(200, 200, 200)
+        }
+
+        val mask = SubjectSegmentation.grow(pixels, size, size, seedX = 14, seedY = 15, tolerance = 20, featherRadius = 0)
+
+        assertTrue(mask.isIncluded(15 * size + 14))
+        assertTrue("the whole line", mask.isIncluded(2 * size + 15))
+        assertFalse("not the background", mask.isIncluded(5 * size + 5))
+    }
+
+    // ---- the opening never empties a region ----
+
+    @Test
+    fun `a region thinner than the cleanup kernel survives it`() {
+        val size = 30
+        val pixels = IntArray(size * size) { index ->
+            val x = index % size
+            if (x == 14 || x == 15) argb(20, 20, 20) else argb(200, 200, 200)
+        }
+
+        // A 2px-wide line is erased outright by a 3x3 erosion; the old pipeline therefore returned
+        // an empty mask -- "couldn't find a clear subject" -- for a tap that had found it exactly.
+        val mask = SubjectSegmentation.grow(pixels, size, size, seedX = 15, seedY = 10, tolerance = 20, featherRadius = 0)
+
+        val box = SubjectSegmentation.boundingBox(mask)
+        assertNotNull("a non-empty fill must never be opened away to nothing", box)
+        assertEquals(14, box?.left)
+        assertEquals(16, box?.right)
+    }
+
+    @Test
+    fun `the seed colour of a flat patch is that patch's colour`() {
+        val pixels = IntArray(100) { argb(40, 80, 120) }
+        assertEquals(argb(40, 80, 120), SubjectSegmentation.seedColour(pixels, 10, 10, 5, 5))
     }
 }

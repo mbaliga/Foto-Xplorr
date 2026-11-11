@@ -49,15 +49,18 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fotoxplorr.app.LibraryRuntime
 import com.fotoxplorr.app.ScanState
+import com.fotoxplorr.app.openwith.withSafeExtras
 import com.fotoxplorr.app.gallery.GalleryPreferences
+import com.fotoxplorr.app.adaptive.pickerColumnsFor
 import com.fotoxplorr.app.gallery.MediaGridScreen
 import com.fotoxplorr.app.gallery.browsableAssets
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.organize.LibraryStore
 import com.fotoxplorr.app.privacy.PrivateFolderStore
 import com.fotoxplorr.app.privacy.SensitiveStore
 import com.fotoxplorr.app.ui.FotoXplorrTheme
+import com.fotoxplorr.core.model.MediaId
+import com.fotoxplorr.app.ui.HelpCopy
 
 /**
  * P0-20 (stretch): lets another app pick photos/videos from this library via
@@ -78,7 +81,9 @@ class PhotoPickerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val allowMultiple = intent?.getBooleanExtra(Intent.EXTRA_ALLOW_MULTIPLE, false) ?: false
+        // Any app can start this picker; a hostile extra reads as "no extras", not a crash.
+        intent?.withSafeExtras()
+        val allowMultiple = intent?.let { runCatching { it.getBooleanExtra(Intent.EXTRA_ALLOW_MULTIPLE, false) }.getOrNull() } ?: false
         val requestedMimeType = intent?.type
 
         setContent {
@@ -89,7 +94,8 @@ class PhotoPickerActivity : ComponentActivity() {
                     PhotoPickerScreen(
                         allowMultiple = allowMultiple,
                         requestedMimeType = requestedMimeType,
-                        gridColumns = preferences.gridColumns,
+                        // The picker has no stamp view: a stored Stamps rung shows as the sparsest column grid.
+                        gridColumns = pickerColumnsFor(preferences.gridZoomRung),
                         onResult = ::finishWithSelection,
                         onCancel = ::finishCancelled,
                     )
@@ -117,7 +123,7 @@ class PhotoPickerActivity : ComponentActivity() {
         val resultIntent = Intent().apply {
             data = uris.first()
             if (uris.size > 1) {
-                clipData = ClipData.newUri(contentResolver, "Foto Xplorr selection", uris.first()).also { clip ->
+                clipData = ClipData.newUri(contentResolver, "Fotoz selection", uris.first()).also { clip ->
                     uris.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
                 }
             }
@@ -195,7 +201,7 @@ private fun PickerBody(
         PickerTopBar(allowMultiple = false, selectedCount = 0, onCancel = onCancel, onConfirm = null)
         PickerMessage(
             title = "Choose the photos and videos to allow",
-            message = "Foto Xplorr needs access to your media library before you can pick from it.",
+            message = HelpCopy.Hint.PICKER_PERMISSION,
             actionLabel = "Grant access",
             onAction = onGrantPermission,
         )

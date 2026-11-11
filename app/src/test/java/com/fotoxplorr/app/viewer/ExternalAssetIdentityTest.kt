@@ -1,7 +1,15 @@
 package com.fotoxplorr.app.viewer
 
+import android.net.Uri
+import com.fotoxplorr.core.model.MediaId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 
 /**
  * The pure part of building an ad-hoc [com.fotoxplorr.app.media.MediaAsset] from an incoming
@@ -108,5 +116,41 @@ class ExternalAssetIdentityTest {
             )
             assertEquals("extension in '$name'", expectedMime, identity.mimeType)
         }
+    }
+}
+
+/**
+ * What [buildExternalAsset] stamps on the asset it hands the viewer. The ids matter: the resume
+ * store and the key-moment store both key on [com.fotoxplorr.app.media.MediaAsset.id], and every
+ * external asset used to carry the one shared [MediaId.EXTERNAL].
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class ExternalAssetBuildTest {
+
+    private val context get() = RuntimeEnvironment.getApplication()
+
+    @Test
+    fun `an external video is flagged external with a negative per-uri id`() {
+        val asset = buildExternalAsset(context, Uri.parse("content://example.test/videos/1"), "video/mp4")
+        assertTrue(asset.isExternal)
+        assertTrue("synthetic ids are negative", asset.id.value < 0L)
+        assertNotEquals(MediaId.EXTERNAL, asset.id)
+    }
+
+    @Test
+    fun `two different uris get different ids and the same uri gets the same id`() {
+        val first = buildExternalAsset(context, Uri.parse("content://example.test/videos/1"), "video/mp4")
+        val again = buildExternalAsset(context, Uri.parse("content://example.test/videos/1"), "video/mp4")
+        val other = buildExternalAsset(context, Uri.parse("content://example.test/videos/2"), "video/mp4")
+        assertEquals(first.id, again.id)
+        assertNotEquals(first.id, other.id)
+    }
+
+    @Test
+    fun `an external image is flagged external too`() {
+        val asset = buildExternalAsset(context, Uri.parse("content://example.test/images/9"), "image/jpeg")
+        assertTrue(asset.isExternal)
+        assertNotEquals(MediaId.EXTERNAL, asset.id)
     }
 }

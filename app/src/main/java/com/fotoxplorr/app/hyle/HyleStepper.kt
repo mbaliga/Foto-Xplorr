@@ -37,7 +37,7 @@ import com.fotoxplorr.app.ui.HyleGrotesk
  * The Hyle stepper: one light track carrying a black cell at each end and the value waiting
  * between them in ink.
  *
- * It exists because the settings room's steppers were the last Material chrome left on a screen
+ * It exists because the Settings pane's steppers were the last Material chrome left on a screen
  * whose every other control is Hyle — two `IconButton`s holding bare `+` / `-` glyphs floating in
  * space (owner, 2026-09-01: *"As for the internals like the binary toggles, please use Hyle and do
  * not invent buttons."*). The answer to that is not a new button, so this control invents nothing:
@@ -266,6 +266,8 @@ private const val HIT_H = 48
 private const val GLYPH_BAR = 12
 private const val GLYPH_STROKE = 2.6f   // the weight HyleField draws its `!` at, so marks match
 
+// Fixed on purpose (reference design): control-sheet neutrals, the value is carried by the digits
+// and not by a hue.
 private val HYLE_TRACK = Color(0xFFD7D7D9)
 private val HYLE_TRACK_DISABLED = Color(0xFFE6E6E8)
 private val HYLE_KNOB = Color(0xFF0B0B0D)

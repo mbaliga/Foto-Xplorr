@@ -1,8 +1,8 @@
 package com.fotoxplorr.app.viewer
 
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.moments.MomentSource
 import com.fotoxplorr.app.moments.VideoMoment
+import com.fotoxplorr.core.model.MediaId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test

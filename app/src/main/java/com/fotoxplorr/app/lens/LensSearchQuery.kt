@@ -14,7 +14,7 @@ object LensSearchQuery {
      * [com.fotoxplorr.app.recognition.RecognitionIndex.textOf] joins every OCR block with a
      * newline -- one run per line of a sign, one row per line of a receipt -- so a busy photo's
      * text can run to hundreds of characters across a dozen lines. Handed to
-     * [com.fotoxplorr.app.search.parseSearchQuery] unchanged, the newlines themselves would cost
+     * [com.fotoxplorr.core.search.parseSearchQuery] unchanged, the newlines themselves would cost
      * nothing (that parser tokenises on whitespace generically, so a line break already behaves
      * like a space to it) -- but a search field showing a dozen-line block of receipt text is not
      * something a person would ever type themselves, and [com.fotoxplorr.app.search] ANDs bare

@@ -10,25 +10,25 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Layers
-import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text as ComposeText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -38,16 +38,27 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.media.MediaId
 import com.fotoxplorr.app.media.MediaImage
+import com.fotoxplorr.app.spatial.offline.GeoBox
+import com.fotoxplorr.app.spatial.offline.GeoPoint
+import com.fotoxplorr.app.spatial.offline.OfflineMapsPill
+import com.fotoxplorr.app.spatial.offline.ViewArea
+import com.fotoxplorr.app.viewer.PlaceMorph
+import com.fotoxplorr.app.viewer.PlacePin
+import com.fotoxplorr.core.model.MediaId
 import com.google.gson.JsonObject
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
@@ -83,87 +94,140 @@ import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
 import kotlin.math.ln
 import kotlin.math.max
-
-private enum class MapTimeFilter(val label: String, val windowMillis: Long?) {
-    ALL("All time", null),
-    THIRTY_DAYS("30 days", 30L * 24L * 60L * 60L * 1_000L),
-    ONE_YEAR("1 year", 365L * 24L * 60L * 60L * 1_000L),
-}
+import kotlin.math.roundToInt
 
 @Composable
 fun RichPhotoMapScreen(
     assets: List<MediaAsset>,
     geoState: GeoIndexState,
-    tagsByMediaId: Map<MediaId, Set<String>> = emptyMap(),
     onIndexLocations: () -> Unit,
     onOpenAsset: (MediaAsset, List<MediaAsset>) -> Unit,
     onClose: () -> Unit,
+    /**
+     * Opened from one photo's details room: the camera starts on that photo at street zoom, it is
+     * drawn as its white-bordered tile riding the map, and every other located photo is a filled
+     * dot in its own colour with no clustering -- see [MapFocus]. Null is the map of the whole view,
+     * which is only ever drawn [embedded] now (Map mode).
+     */
+    focus: MapFocus? = null,
+    modifier: Modifier = Modifier,
+    /**
+     * Drawn as a pane of the browser rather than as a screen: no header, no close button, no
+     * search, filter chips or footer (the browser has its own search and time range, and they
+     * would be two of each), and no [BackHandler] -- the browser owns the Back order, and a
+     * handler here would outrank it. The map's own attribution and compass are kept, and moved
+     * clear of the browser's controls.
+     */
+    embedded: Boolean = false,
+    /**
+     * Where the person's own browsable photos were taken, read only when the Offline maps sheet is
+     * opened from the embedded map's pill (TRAPS #33: from `browsableAssets`, never the whole
+     * library). Empty offers no suggested places there, only the current view.
+     */
+    offlinePlacePoints: () -> List<GeoPoint> = { emptyList() },
 ) {
-    BackHandler(onBack = onClose)
+    if (!embedded) BackHandler(onBack = onClose)
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    var query by remember { mutableStateOf("") }
-    var timeFilter by remember { mutableStateOf(MapTimeFilter.ALL) }
-    var selectedAlbum by remember { mutableStateOf<String?>(null) }
     var selectedId by remember { mutableStateOf<MediaId?>(null) }
 
     val assetsById = remember(assets) { assets.associateBy { it.id } }
     val selectedAsset = selectedId?.let(assetsById::get)
-    val albums = remember(assets) {
-        assets.mapNotNull { it.bucketName?.trim()?.takeIf(String::isNotEmpty) }
-            .distinct()
-            .sortedBy(String::lowercase)
-            .take(MAX_ALBUM_FILTERS)
+    val filtered = remember(assets, geoState.metadataById) {
+        assets.filter { asset -> asset.id in geoState.metadataById && !asset.isTrashed }
     }
-    val now = System.currentTimeMillis()
-    val filtered = remember(assets, geoState.metadataById, tagsByMediaId, query, timeFilter, selectedAlbum) {
-        val normalized = query.trim().lowercase()
-        assets.filter { asset ->
-            val afterCutoff = timeFilter.windowMillis?.let { asset.dateTakenMillis >= now - it } ?: true
-            val matchesQuery = normalized.isEmpty() ||
-                asset.displayName.lowercase().contains(normalized) ||
-                asset.bucketName?.lowercase()?.contains(normalized) == true ||
-                tagsByMediaId[asset.id].orEmpty().any { it.lowercase().contains(normalized) }
-            asset.id in geoState.metadataById &&
-                !asset.isTrashed &&
-                afterCutoff &&
-                (selectedAlbum == null || asset.bucketName == selectedAlbum) &&
-                matchesQuery
-        }
-    }
+    // The focused photo may be located by its own EXIF and absent from the geo index (the index
+    // is built on demand); it is still what this map is about, so its coordinate comes from the
+    // focus itself.
+    val focusAsset = focus?.let { assetsById[it.assetId] }
 
-    val controller = remember {
-        RichPhotoMapController { mediaId -> selectedId = mediaId }
+    // The cluster bubbles are the accent role, so they take the chosen accent. Read once, as the
+    // controller is made: the accent cannot change while this full-screen map is open.
+    val accentArgb = MaterialTheme.colorScheme.primary.toArgb()
+    // Embedded, the browser's pill and corner discs float along the bottom edge: the attribution
+    // and logo (bottom left) are lifted clear of them, and the compass (top right) keeps a gap
+    // below the status bar. Read once, as the controller is made, like the accent.
+    val chromeDensity = LocalDensity.current
+    val lowerChromePx = if (embedded) {
+        with(chromeDensity) { EMBEDDED_LOWER_CHROME_DP.dp.roundToPx() } +
+            WindowInsets.navigationBars.getBottom(chromeDensity)
+    } else {
+        0
+    }
+    val upperChromePx = if (embedded) {
+        with(chromeDensity) { EMBEDDED_UPPER_CHROME_DP.dp.roundToPx() } +
+            WindowInsets.statusBars.getTop(chromeDensity)
+    } else {
+        0
+    }
+    // The ground the embedded map shows, for the Offline maps pill. Updated when the camera comes to
+    // rest, never while it moves, and only from the camera's centre, zoom and bearing (see ViewArea).
+    var viewBox by remember { mutableStateOf<GeoBox?>(null) }
+    val mapViewHolder = remember { arrayOfNulls<MapView>(1) }
+    val controller = remember(focus, embedded) {
+        RichPhotoMapController(
+            focus = focus,
+            accentArgb = accentArgb,
+            lowerChromePx = lowerChromePx,
+            upperChromePx = upperChromePx,
+            onCameraIdle = if (embedded) {
+                { latitude, longitude, zoom, bearing ->
+                    val view = mapViewHolder[0]
+                    val density = view?.resources?.displayMetrics?.density ?: 0f
+                    viewBox = if (view == null || density <= 0f) {
+                        null
+                    } else {
+                        ViewArea.boxOf(
+                            latitude, longitude, zoom,
+                            widthDp = view.width / density.toDouble(),
+                            heightDp = view.height / density.toDouble(),
+                            bearingDegrees = bearing,
+                        )
+                    }
+                }
+            } else {
+                null
+            },
+        ) { mediaId -> selectedId = mediaId }
     }
     val mapView = remember(context) {
         MapLibre.getInstance(context.applicationContext)
         MapView(context).also { view ->
+            mapViewHolder[0] = view
             view.onCreate(Bundle())
             view.getMapAsync(controller::attach)
         }
     }
 
     DisposableEffect(lifecycleOwner, mapView) {
+        // One gate for every path that stops the map (the lifecycle owner and this composable's own
+        // disposal both used to destroy it, the first while it was still on screen): see MapViewLifecycle.
+        val gate = MapViewLifecycle(
+            start = mapView::onStart,
+            resume = mapView::onResume,
+            pause = mapView::onPause,
+            stop = mapView::onStop,
+            detach = { (mapView.parent as? android.view.ViewGroup)?.removeView(mapView) },
+            destroy = mapView::onDestroy,
+        )
         val observer = object : DefaultLifecycleObserver {
-            override fun onStart(owner: LifecycleOwner) = mapView.onStart()
-            override fun onResume(owner: LifecycleOwner) = mapView.onResume()
-            override fun onPause(owner: LifecycleOwner) = mapView.onPause()
-            override fun onStop(owner: LifecycleOwner) = mapView.onStop()
-            override fun onDestroy(owner: LifecycleOwner) = mapView.onDestroy()
+            override fun onStart(owner: LifecycleOwner) = gate.onStart()
+            override fun onResume(owner: LifecycleOwner) = gate.onResume()
+            override fun onPause(owner: LifecycleOwner) = gate.onPause()
+            override fun onStop(owner: LifecycleOwner) = gate.onStop()
+            override fun onDestroy(owner: LifecycleOwner) = gate.onDestroy()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        mapView.onStart()
-        mapView.onResume()
+        gate.onStart()
+        gate.onResume()
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            mapView.onPause()
-            mapView.onStop()
-            mapView.onDestroy()
+            gate.onDestroy()
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Row(
+    Column(modifier.fillMaxSize()) {
+        if (!embedded) Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -186,50 +250,52 @@ fun RichPhotoMapScreen(
 
         if (geoState.isIndexing) LinearProgressIndicator(Modifier.fillMaxWidth())
 
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-            singleLine = true,
-            leadingIcon = { Icon(Icons.Outlined.Map, contentDescription = null) },
-            placeholder = { ComposeText("Search filename, album or tag") },
-        )
-
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(MapTimeFilter.entries, key = { it.name }) { filter ->
-                FilterChip(
-                    selected = filter == timeFilter,
-                    onClick = { timeFilter = filter },
-                    label = { ComposeText(filter.label) },
-                )
-            }
-            item {
-                FilterChip(
-                    selected = selectedAlbum == null,
-                    onClick = { selectedAlbum = null },
-                    label = { ComposeText("All albums") },
-                )
-            }
-            items(albums, key = { it }) { album ->
-                FilterChip(
-                    selected = selectedAlbum == album,
-                    onClick = { selectedAlbum = if (selectedAlbum == album) null else album },
-                    label = { ComposeText(album) },
-                )
-            }
-        }
-
         Box(Modifier.weight(1f)) {
             AndroidView(
                 factory = { mapView },
                 update = { controller.update(filtered, geoState.metadataById) },
                 modifier = Modifier.fillMaxSize(),
             )
-            if (geoState.scannedCount == 0 && !geoState.isIndexing) {
+            // Embedded only: the browser's other chrome floats along the bottom and the compass sits
+            // top right, so the pill takes the top left, clear of the status bar.
+            if (embedded) {
+                OfflineMapsPill(
+                    view = viewBox,
+                    placePoints = offlinePlacePoints,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(start = 12.dp, top = 8.dp),
+                )
+            }
+            // The focused photo's tile rides the map: its screen position is re-projected on
+            // every camera move by the controller and read here as a placement offset, so the
+            // tile answers touches where it is drawn and the map pans underneath it.
+            if (focus != null && focusAsset != null) {
+                val density = LocalDensity.current
+                val pinWidthPx = with(density) { PlaceMorph.PIN_SIZE_DP.dp.toPx() }
+                val pinHeightPx = with(density) { PlaceMorph.PIN_GROUP_HEIGHT_DP.dp.toPx() }
+                PlacePin(
+                    asset = focusAsset,
+                    modifier = Modifier
+                        // The projected point is read inside the placement and layer lambdas,
+                        // not in composition: a camera move then re-places and re-draws the tile
+                        // without recomposing it (or anything else) per frame.
+                        .offset {
+                            val point = controller.focusScreenPoint.value
+                            if (point == null) {
+                                IntOffset.Zero
+                            } else {
+                                IntOffset(
+                                    x = (point.x - pinWidthPx / 2f).roundToInt(),
+                                    y = (point.y - pinHeightPx / 2f).roundToInt(),
+                                )
+                            }
+                        }
+                        .graphicsLayer { alpha = if (controller.focusScreenPoint.value == null) 0f else 1f },
+                )
+            }
+            if (focus == null && geoState.scannedCount == 0 && !geoState.isIndexing) {
                 Column(
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -245,6 +311,8 @@ fun RichPhotoMapScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    // Embedded, the card rises above the browser's pill and corner discs.
+                    .padding(bottom = if (embedded) EMBEDDED_LOWER_CHROME_DP.dp else 0.dp)
                     .height(116.dp)
                     .padding(8.dp)
                     .combinedClickable(
@@ -272,7 +340,7 @@ fun RichPhotoMapScreen(
             }
         }
 
-        ComposeText(
+        if (!embedded) ComposeText(
             "Pitched vector map with clustered media, hillshade and 3D building extrusion. MapLibre Android currently provides hillshade rather than a raised terrain mesh.",
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
             style = MaterialTheme.typography.labelSmall,
@@ -282,6 +350,14 @@ fun RichPhotoMapScreen(
 }
 
 private class RichPhotoMapController(
+    private val focus: MapFocus? = null,
+    private val accentArgb: Int,
+    /** Px to lift the attribution and logo off the bottom edge; 0 leaves them where MapLibre puts them. */
+    private val lowerChromePx: Int = 0,
+    /** Px to push the compass down from the top edge; 0 leaves it where MapLibre puts it. */
+    private val upperChromePx: Int = 0,
+    /** Embedded only: the camera came to rest at (latitude, longitude, zoom) turned by bearing degrees. */
+    private val onCameraIdle: ((Double, Double, Double, Double) -> Unit)? = null,
     private val onSelected: (MediaId) -> Unit,
 ) {
     private var map: MapLibreMap? = null
@@ -292,6 +368,9 @@ private class RichPhotoMapController(
     private var cameraFitted = false
     private var clickListenerInstalled = false
 
+    /** Where the focused photo's coordinate currently falls on screen, in px; null off-map or unfocused. */
+    val focusScreenPoint = mutableStateOf<Offset?>(null)
+
     fun attach(map: MapLibreMap) {
         this.map = map
         map.uiSettings.apply {
@@ -300,19 +379,64 @@ private class RichPhotoMapController(
             isRotateGesturesEnabled = true
             isAttributionEnabled = true
             isLogoEnabled = true
+            // Moved, never hidden: the attribution is owed to the data's owners.
+            if (lowerChromePx > 0) {
+                setLogoMargins(logoMarginLeft, logoMarginTop, logoMarginRight, lowerChromePx)
+                setAttributionMargins(
+                    attributionMarginLeft, attributionMarginTop, attributionMarginRight, lowerChromePx,
+                )
+            }
+            if (upperChromePx > 0) {
+                setCompassMargins(compassMarginLeft, upperChromePx, compassMarginRight, compassMarginBottom)
+            }
         }
-        map.setStyle(Style.Builder().fromUri(OPEN_FREE_MAP_STYLE)) { style ->
-            addTerrainStyling(style)
-            addPhotoLayers(style)
+        onCameraIdle?.let { report ->
+            map.addOnCameraIdleListener {
+                val camera = map.cameraPosition
+                camera.target?.let { centre -> report(centre.latitude, centre.longitude, camera.zoom, camera.bearing) }
+            }
+        }
+        val style = if (focus != null) FOCUS_STYLE else OPEN_FREE_MAP_STYLE
+        map.setStyle(Style.Builder().fromUri(style)) { loaded ->
+            addTerrainStyling(loaded)
+            addPhotoLayers(loaded)
             if (!clickListenerInstalled) {
                 clickListenerInstalled = true
                 map.addOnMapClickListener { location -> handleMapClick(map, location) }
+            }
+            if (focus != null && !cameraFitted) {
+                // One photo's place: start ON it at street zoom, flat, rather than fitting the
+                // whole library's spread -- that fit is the Places map's opening move, not this one's.
+                cameraFitted = true
+                map.moveCamera(
+                    CameraUpdateFactory.newCameraPosition(
+                        CameraPosition.Builder()
+                            .target(LatLng(focus.latitude, focus.longitude))
+                            .zoom(FOCUS_ZOOM)
+                            .tilt(0.0)
+                            .bearing(0.0)
+                            .build(),
+                    ),
+                )
+                map.addOnCameraMoveListener { projectFocus(map) }
+                map.addOnCameraIdleListener { projectFocus(map) }
+                projectFocus(map)
             }
             refreshSource()
         }
     }
 
+    private fun projectFocus(map: MapLibreMap) {
+        val target = focus ?: return
+        val point = runCatching { map.projection.toScreenLocation(LatLng(target.latitude, target.longitude)) }
+            .getOrNull()
+        focusScreenPoint.value = point?.let { Offset(it.x, it.y) }
+    }
+
     fun update(assets: List<MediaAsset>, metadata: Map<MediaId, GeoMetadata>) {
+        // AndroidView.update runs on every recomposition of the screen, and a refresh rebuilds a
+        // GeoJSON feature for every located photo. The same two lists mean nothing has changed.
+        if (assets === this.assets && metadata === this.metadata) return
         this.assets = assets
         this.metadata = metadata
         refreshSource()
@@ -323,11 +447,13 @@ private class RichPhotoMapController(
     }
 
     private fun addPhotoLayers(style: Style) {
+        // Focus mode draws EVERY located photo as its own dot (owner: "every located photo drawn
+        // as a filled colour dot"), so clustering is off there; the Places map keeps its clusters.
         val source = GeoJsonSource(
             PHOTO_SOURCE,
             FeatureCollection.fromFeatures(emptyArray()),
             GeoJsonOptions()
-                .withCluster(true)
+                .withCluster(focus == null)
                 .withClusterRadius(56)
                 .withClusterMaxZoom(14),
         )
@@ -337,7 +463,7 @@ private class RichPhotoMapController(
         val clusters: Layer = CircleLayer(CLUSTER_LAYER, PHOTO_SOURCE).apply {
             setFilter(Expression.has("point_count"))
             setProperties(
-                circleColor(Color.rgb(94, 77, 176)),
+                circleColor(accentArgb),
                 circleRadius(22f),
                 circleOpacity(0.88f),
                 circleStrokeColor(Color.WHITE),
@@ -348,13 +474,26 @@ private class RichPhotoMapController(
 
         val points: Layer = CircleLayer(POINT_LAYER, PHOTO_SOURCE).apply {
             setFilter(Expression.not(Expression.has("point_count")))
-            setProperties(
-                circleColor(Color.rgb(255, 171, 64)),
-                circleRadius(8.5f),
-                circleOpacity(0.94f),
-                circleStrokeColor(Color.WHITE),
-                circleStrokeWidth(2f),
-            )
+            if (focus != null) {
+                // Filled, strokeless, each in the colour its feature carries -- the photo's own
+                // dominant palette colour when known, the accent otherwise (see refreshSource).
+                setProperties(
+                    circleColor(Expression.toColor(Expression.get(COLOR_PROPERTY))),
+                    circleRadius(6.5f),
+                    circleOpacity(0.96f),
+                    circleStrokeWidth(0f),
+                )
+            } else {
+                setProperties(
+                    // Fixed on purpose (semantic): map style colours (point, selection ring,
+                    // terrain, extrusion) are not accent roles.
+                    circleColor(Color.rgb(255, 171, 64)),
+                    circleRadius(8.5f),
+                    circleOpacity(0.94f),
+                    circleStrokeColor(Color.WHITE),
+                    circleStrokeWidth(2f),
+                )
+            }
         }
         style.addLayer(points)
 
@@ -432,6 +571,8 @@ private class RichPhotoMapController(
         val map = map ?: return
         val source = photoSource ?: return
         val features = assets.mapNotNull { asset ->
+            // The focused photo is the tile riding the map, not a dot under it.
+            if (focus != null && asset.id == focus.assetId) return@mapNotNull null
             val geo = metadata[asset.id] ?: return@mapNotNull null
             Feature.fromGeometry(
                 Point.fromLngLat(geo.longitude, geo.latitude),
@@ -441,6 +582,9 @@ private class RichPhotoMapController(
                     addProperty("album", asset.bucketName.orEmpty())
                     addProperty("is_video", asset.isVideo)
                     addProperty("captured_at", asset.dateTakenMillis)
+                    if (focus != null) {
+                        addProperty(COLOR_PROPERTY, "#%06X".format(0xFFFFFF and focus.colorFor(asset.id)))
+                    }
                 },
             )
         }
@@ -513,6 +657,10 @@ private class RichPhotoMapController(
 
     private companion object {
         const val OPEN_FREE_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
+        /** The dark style the plate's snapshot uses, so the expanded map is the plate grown, not a different map. */
+        const val FOCUS_STYLE = "https://tiles.openfreemap.org/styles/dark"
+        const val FOCUS_ZOOM = 15.4
+        const val COLOR_PROPERTY = "color"
         const val PHOTO_SOURCE = "foto-xplorr-media"
         const val CLUSTER_LAYER = "foto-xplorr-clusters"
         const val POINT_LAYER = "foto-xplorr-points"
@@ -527,4 +675,11 @@ private class RichPhotoMapController(
     }
 }
 
-private const val MAX_ALBUM_FILTERS = 16
+/** Clears a 48dp disc raised 20dp from the bottom edge, plus a gap. */
+private const val EMBEDDED_LOWER_CHROME_DP = 80
+
+/**
+ * The gap kept under the status bar at the top right. It cleared the browser's view switcher,
+ * which no longer exists; the value stays until the compass's place is checked on a device.
+ */
+private const val EMBEDDED_UPPER_CHROME_DP = 56

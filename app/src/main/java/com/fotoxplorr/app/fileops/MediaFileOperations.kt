@@ -9,6 +9,8 @@ import android.os.Build
 import android.provider.MediaStore
 import androidx.documentfile.provider.DocumentFile
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.core.organize.BulkRenamePlanner
+import com.fotoxplorr.core.organize.RenameSubject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException

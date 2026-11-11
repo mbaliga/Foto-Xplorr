@@ -96,6 +96,10 @@ class ZipExporter(
                 }
             }
 
+            // The authority comes from fileProviderAuthority() (== "<package>.files", the one the
+            // manifest's FileProvider declares). #12 fixed the ZIP share crash caused by the
+            // never-declared ".fileprovider" authority; main already routes through the shared
+            // helper, which keeps that fix and keeps every exporter on one authority string.
             ZipExport(FileProvider.getUriForFile(appContext, fileProviderAuthority(appContext), archive), failed)
         }
     }
@@ -117,7 +121,7 @@ data class ZipExport(val uri: Uri, val failed: List<PreparedItem.Failed>)
 internal fun archiveName(count: Int, includesVideo: Boolean): String {
     val singular = if (includesVideo) "item" else "photo"
     val noun = if (count == 1) singular else "${singular}s"
-    return "Foto Xplorr $count $noun.zip"
+    return "Fotoz $count $noun.zip"
 }
 
 /**

@@ -7,8 +7,12 @@ import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
+import android.provider.OpenableColumns
 import androidx.annotation.RequiresApi
 import androidx.exifinterface.media.ExifInterface
+import com.fotoxplorr.core.formats.FormatResolution
+import com.fotoxplorr.core.formats.FormatSniffer
+import com.fotoxplorr.core.formats.MediaFormat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.max
@@ -35,6 +39,8 @@ data class DecodedBitmap(
     val sourceWidth: Int,
     val sourceHeight: Int,
     val downscaled: Boolean,
+    /** The pixels are a RAW's embedded preview, not the sensor image ([downscaled] is then true too). */
+    val fromPreview: Boolean = false,
 )
 
 /**
@@ -59,12 +65,59 @@ data class DecodedBitmap(
  */
 suspend fun decodeUpright(context: Context, uri: Uri, limits: DecodeLimits): DecodedBitmap? =
     withContext(Dispatchers.IO) {
-        val orientation = readOrientation(context, uri)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            runCatching { decodeWithImageDecoder(context, uri, limits) }.getOrNull()?.let { return@withContext it }
-        }
-        decodeWithBitmapFactory(context, uri, limits, orientation)
+        // The format by name and mime costs no read of the file; only when that says nothing
+        // (Other) and the platform has failed is the header sniffed, for an extension-less RAW/TIFF.
+        val labelled = labelledFormat(context, uri)
+        runSteps(context, uri, limits, labelled, DecodeRoutes.forUpright(labelled))?.let { return@withContext it }
+        if (!FormatResolution.shouldSniff(labelled)) return@withContext null
+        val sniffed = sniffFormat(context, uri) ?: return@withContext null
+        runSteps(context, uri, limits, sniffed, DecodeRoutes.forUpright(sniffed) - DecodeStep.Platform)
     }
+
+private fun runSteps(context: Context, uri: Uri, limits: DecodeLimits, format: MediaFormat, steps: List<DecodeStep>): DecodedBitmap? {
+    for (step in steps) {
+        val decoded = when (step) {
+            DecodeStep.RawPreview -> RawPreviewReader.decode(context, uri, limits) { DecodeRoutes.acceptsPreview(format, it) }
+            DecodeStep.SimpleFormat -> SimpleFormatReader.decode(context, uri, limits)
+            DecodeStep.Platform -> decodeWithPlatform(context, uri, limits)
+        }
+        if (decoded != null) return decoded
+    }
+    return null
+}
+
+private fun decodeWithPlatform(context: Context, uri: Uri, limits: DecodeLimits): DecodedBitmap? {
+    val orientation = readOrientation(context, uri)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        runCatching { decodeWithImageDecoder(context, uri, limits) }.getOrNull()?.let { return it }
+    }
+    return decodeWithBitmapFactory(context, uri, limits, orientation)
+}
+
+/** [MediaFormat.classify] from the resolver's mime and display name (no file read). */
+private fun labelledFormat(context: Context, uri: Uri): MediaFormat {
+    val resolver = context.contentResolver
+    val name = runCatching {
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        }
+    }.getOrNull() ?: uri.lastPathSegment.orEmpty()
+    val mime = runCatching { resolver.getType(uri) }.getOrNull().orEmpty()
+    return MediaFormat.classify(mime, name)
+}
+
+private fun sniffFormat(context: Context, uri: Uri): MediaFormat? = runCatching {
+    context.contentResolver.openInputStream(uri)?.use { stream ->
+        val header = ByteArray(FormatSniffer.REQUIRED_HEADER_BYTES)
+        var n = 0
+        while (n < header.size) {
+            val r = stream.read(header, n, header.size - n)
+            if (r <= 0) break
+            n += r
+        }
+        FormatSniffer.sniff(header.copyOf(n))
+    }
+}.getOrNull()
 
 private fun readOrientation(context: Context, uri: Uri): Int =
     context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -101,7 +154,10 @@ private fun decodeWithBitmapFactory(
 ): DecodedBitmap? {
     val resolver = context.contentResolver
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+    // A bounds-only decode returns null by design; its answer is in `bounds`, so only a missing
+    // stream (not a null bitmap) ends the decode here.
+    val stream = resolver.openInputStream(uri) ?: return null
+    stream.use { BitmapFactory.decodeStream(it, null, bounds) }
     val rawW = bounds.outWidth
     val rawH = bounds.outHeight
     if (rawW <= 0 || rawH <= 0) return null
@@ -137,7 +193,7 @@ private fun decodeWithBitmapFactory(
     )
 }
 
-private fun applyOrientation(bitmap: Bitmap, ops: OrientationOps): Bitmap {
+internal fun applyOrientation(bitmap: Bitmap, ops: OrientationOps): Bitmap {
     if (ops.rotationDegrees == 0 && !ops.flipHorizontal) return bitmap
     val matrix = Matrix()
     if (ops.rotationDegrees != 0) matrix.setRotate(ops.rotationDegrees.toFloat())

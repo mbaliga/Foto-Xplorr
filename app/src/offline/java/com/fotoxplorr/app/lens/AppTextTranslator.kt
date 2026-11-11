@@ -33,7 +33,7 @@ class AppTextTranslator : TextTranslator {
         sourceLanguageTag: String,
     ): Result<Translation> = Result.failure(
         TranslatorUnavailableException(
-            "This is the offline build of Foto Xplorr — translation models are fetched over " +
+            "This is the offline build of Fotoz — translation models are fetched over " +
                 "the network the first time a language is used, and this build has no network " +
                 "capability at all to fetch one. Use \"Translate with…\" instead.",
         ),

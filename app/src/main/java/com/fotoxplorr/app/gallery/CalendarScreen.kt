@@ -46,6 +46,9 @@ import java.util.Calendar
  *
  * The stamp is [FotoStamp], the same silhouette the share frame and the map pins use, so a day
  * tile here and a shared photo are visibly the same family.
+ *
+ * Not a zoom rung any more: the grid's own stamp view (see `ZoomGrid`) is the month-by-month scroll,
+ * and this one-month-at-a-time pager survives only as the Settings > Library pane that opens it.
  */
 @Composable
 fun CalendarScreen(
@@ -164,6 +167,7 @@ private fun DayCell(cell: DayCellData, onOpen: () -> Unit) {
                         // The stamp is a real clip, so the photo itself is stamp-shaped against
                         // the black rather than having notches painted over it.
                         .clip(FotoStamp)
+                        // Fixed on purpose (reference design): a neutral surface, no accent role.
                         .background(Color(0xFF101010))
                         .clickable(onClick = onOpen),
                 ) {

@@ -45,14 +45,46 @@ const val TOOLBAR_DESIGN_H = 50.7891f
  * a flat-bottomed trapezoid. Path is the mockup's `filter1` shape, origin-shifted by (-8, 0).
  */
 val SelectionToolbarShape: Shape = notchShape(TOOLBAR_DESIGN_W, TOOLBAR_DESIGN_H) { sx, sy ->
+    toolbarPath(sx, sy, 0f)
+}
+
+/**
+ * [SelectionToolbarShape] taller than its design height: the two top coves keep their designed
+ * radius and meet the top edge exactly as they do on the original, and every extra dp goes into
+ * the straight run of the sides, which only lengthens (a little steeper). For a bar that hangs
+ * from a screen edge with something drawn over that edge, such as a status bar, which the bar's
+ * glyphs must sit below; at the design height it is the same shape as [SelectionToolbarShape].
+ *
+ * Drawn into a box [TOOLBAR_DESIGN_W] dp wide, so one dp of box is one dp of design. A box
+ * shorter than the design height is clamped to it.
+ */
+val SelectionToolbarTallShape: Shape = GenericShape { size: Size, _ ->
+    val scale = size.width / TOOLBAR_DESIGN_W
+    val extra = (size.height / scale - TOOLBAR_DESIGN_H).coerceAtLeast(0f)
+    toolbarPath(scale, scale, extra)
+}
+
+/**
+ * The toolbar's outline in design units scaled by [sx] and [sy]. [extra] design dp are added to
+ * the straight run of the sides: everything below the two top coves moves down by it.
+ */
+private fun Path.toolbarPath(sx: Float, sy: Float, extra: Float) {
     moveTo(209.076f * sx, 0f)
     lineTo(0f, 0f)
     lineTo(7.6056f * sx, 0f)
     cubicTo(14.1794f * sx, 0f, 20.0842f * sx, 4.02094f * sy, 22.4929f * sx, 10.1376f * sy)
-    lineTo(34.5088f * sx, 40.6515f * sy)
-    cubicTo(36.9175f * sx, 46.7682f * sy, 42.8223f * sx, 50.7891f * sy, 49.3961f * sx, 50.7891f * sy)
-    lineTo(161.308f * sx, 50.7891f * sy)
-    cubicTo(167.854f * sx, 50.7891f * sy, 173.739f * sx, 46.8025f * sy, 176.167f * sx, 40.7241f * sy)
+    lineTo(34.5088f * sx, (40.6515f + extra) * sy)
+    cubicTo(
+        36.9175f * sx, (46.7682f + extra) * sy,
+        42.8223f * sx, (50.7891f + extra) * sy,
+        49.3961f * sx, (50.7891f + extra) * sy,
+    )
+    lineTo(161.308f * sx, (50.7891f + extra) * sy)
+    cubicTo(
+        167.854f * sx, (50.7891f + extra) * sy,
+        173.739f * sx, (46.8025f + extra) * sy,
+        176.167f * sx, (40.7241f + extra) * sy,
+    )
     lineTo(188.413f * sx, 10.065f * sy)
     cubicTo(190.841f * sx, 3.98662f * sy, 196.726f * sx, 0f, 203.272f * sx, 0f)
     lineTo(209.076f * sx, 0f)
