@@ -45,6 +45,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.pointerInput
@@ -55,6 +66,11 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.fotoxplorr.app.adaptive.ViewerShortcut
+import com.fotoxplorr.app.adaptive.ViewerShortcutKey
+import com.fotoxplorr.app.adaptive.viewerShortcutFor
+import com.fotoxplorr.app.adaptive.viewerWheelZoomFactor
+import com.fotoxplorr.app.adaptive.viewerZoomFactorFor
 import com.fotoxplorr.app.lift.LiftOverlay
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
@@ -225,6 +241,21 @@ fun ViewerScreen(
     // Disabled at home so the activity's own handler still closes the viewer.
     BackHandler(enabled = !shell.atHome) { shell.closeAll() }
 
+    // Hardware-keyboard and mouse-wheel zoom/paging for desktop windowing. Key events only reach
+    // a FOCUSED node, so the photo Box below holds focus (same reasoning as the gallery's
+    // galleryFocusRequester). Zoom goes through this one function so keys and wheel clamp and
+    // re-centre exactly as the pinch does.
+    val viewerFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { viewerFocusRequester.requestFocus() }
+    fun zoomBy(factor: Float) {
+        val next = (scale * factor).coerceIn(MIN_SCALE, MAX_SCALE)
+        if (next <= 1.001f && rotation == 0f) {
+            offsetX = 0f
+            offsetY = 0f
+        }
+        scale = next
+    }
+
     // Cleared on dispose, not just toggled off: leaving FLAG_KEEP_SCREEN_ON set behind a closed
     // viewer would hold the whole app awake for as long as it stayed in the foreground.
     val view = LocalView.current
@@ -332,6 +363,50 @@ fun ViewerScreen(
                 .fillMaxSize()
                 .background(Color.Black)
                 .onSizeChanged { containerSize = it }
+                .focusRequester(viewerFocusRequester)
+                .focusable()
+                .onKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                    val shortcutKey = when (event.key) {
+                        Key.DirectionLeft -> ViewerShortcutKey.ARROW_LEFT
+                        Key.DirectionRight -> ViewerShortcutKey.ARROW_RIGHT
+                        Key.Plus, Key.Equals, Key.NumPadAdd -> ViewerShortcutKey.PLUS
+                        Key.Minus, Key.NumPadSubtract -> ViewerShortcutKey.MINUS
+                        Key.Zero, Key.NumPad0 -> ViewerShortcutKey.ZERO
+                        Key.Escape -> ViewerShortcutKey.ESCAPE
+                        else -> null
+                    } ?: return@onKeyEvent false
+                    val shortcut = viewerShortcutFor(shortcutKey) ?: return@onKeyEvent false
+                    when (shortcut) {
+                        is ViewerShortcut.Page ->
+                            if (shortcut.forward && hasNext) onNext()
+                            else if (!shortcut.forward && hasPrevious) onPrevious()
+                        ViewerShortcut.Close -> if (!shell.atHome) shell.closeAll() else onClose()
+                        ViewerShortcut.ResetZoom -> if (!asset.isVideo) {
+                            scale = 1f
+                            rotation = 0f
+                            offsetX = 0f
+                            offsetY = 0f
+                        }
+                        else -> viewerZoomFactorFor(shortcut)?.let { if (!asset.isVideo) zoomBy(it) }
+                    }
+                    true
+                }
+                // Ctrl+wheel zoom. Initial pass, and consumes ONLY a Ctrl-held wheel tick, so taps,
+                // drags and an unmodified scroll reach the gesture detectors below untouched.
+                .pointerInput(asset.id) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.type != PointerEventType.Scroll) continue
+                            val change = event.changes.firstOrNull() ?: continue
+                            if (!event.keyboardModifiers.isCtrlPressed || asset.isVideo) continue
+                            change.consume()
+                            val scrollY = change.scrollDelta.y
+                            if (scrollY != 0f) zoomBy(viewerWheelZoomFactor(scrollY))
+                        }
+                    }
+                }
                 // ONE gesture handler, not three stacked ones.
                 //
                 // This screen used to layer detectHorizontalDragGestures, detectTapGestures and
