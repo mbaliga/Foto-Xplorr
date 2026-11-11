@@ -135,6 +135,7 @@ import dev.aarso.cellshell.ParkStyle
 import dev.aarso.cellshell.SpatialShell
 import dev.aarso.cellshell.rememberSpatialController
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.sources.gallery.SourceActionGate
 import androidx.activity.compose.BackHandler
 import com.fotoxplorr.app.organize.LibraryState
 import com.fotoxplorr.app.recognition.RecognitionIndex
@@ -433,7 +434,9 @@ fun GalleryScreen(
         ),
     ) {
         when {
-            !state.permissionGranted -> GalleryEmptyState(
+            // Media access denied is only an empty state when there is nothing else to show: folders
+            // and drives the person added do not need it.
+            showPermissionEmptyState(state.permissionGranted, state.assets) -> GalleryEmptyState(
                 title = "Your gallery stays on this device",
                 message = if (state.mediaPermissionPermanentlyDenied) {
                     HelpCopy.Hint.PERMISSION_DENIED
@@ -464,6 +467,13 @@ fun GalleryScreen(
         }
     }
 }
+
+/**
+ * The permission empty state ("Choose media") shows only when media access is missing AND the list
+ * holds no file from an added folder or drive: those are read through their own grants.
+ */
+internal fun showPermissionEmptyState(permissionGranted: Boolean, assets: List<MediaAsset>): Boolean =
+    !permissionGranted && assets.none { it.isSource }
 
 /**
  * Drill-down routes *below* a destination. The nine top-level destinations are not routes:
@@ -1391,7 +1401,7 @@ private fun GalleryBrowser(
                         renderedAssets.filter { it.id in selection.selectedIds }
                     } else {
                         renderedAssets
-                    }
+                    }.filterNot { it.isSource } // culling writes marks (and sidecars): not for source files in v1
                     if (photos.isNotEmpty()) cullAssets = photos
                 },
                 onTogglePreviewPane = if (previewPaneAvailable) {
@@ -2350,8 +2360,11 @@ internal fun BoxScope.SelectionOverlay(
                 SelectionGlyph(R.drawable.ic_action_zip, "Export as zip") {
                     actions.onExportZip(selectedAssets)
                 }
-                SelectionGlyph(R.drawable.ic_action_move, "Move to folder") {
-                    actions.onMoveToFolder(selectedAssets)
+                // Moving deletes the original: not offered while a source file is selected (ADR-020).
+                if (SourceActionGate.writesAllowed(selectedAssets)) {
+                    SelectionGlyph(R.drawable.ic_action_move, "Move to folder") {
+                        actions.onMoveToFolder(selectedAssets)
+                    }
                 }
                 SelectionGlyph(R.drawable.ic_action_copy, "Copy to folder") {
                     actions.onCopyToFolder(selectedAssets)
@@ -2427,7 +2440,7 @@ internal fun BoxScope.SelectionOverlay(
             .background(SELECTION_TRASH_RED, SelectionTrashShape)
             .size(width = TRASH_BOX_W.dp, height = TRASH_DESIGN_H.dp)
             .clickable(
-                enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SourceActionGate.writesAllowed(selectedAssets),
                 onClickLabel = if (inTrash) "Delete permanently" else "Move to trash",
                 onClick = {
                     if (inTrash) actions.onDeletePermanently(selectedAssets) else actions.onMoveToTrash(selectedAssets)

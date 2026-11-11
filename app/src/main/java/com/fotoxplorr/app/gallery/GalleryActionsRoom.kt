@@ -33,6 +33,8 @@ import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.fileops.BulkRenameOutcome
 import com.fotoxplorr.app.fileops.MediaFileOperations
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.sources.gallery.SourceActionGate
+import com.fotoxplorr.app.sources.gallery.SourceGateCopy
 import com.fotoxplorr.app.ui.ActionsRoomFrame
 import com.fotoxplorr.app.ui.QuickActionItem
 import com.fotoxplorr.app.ui.RoomEyebrow
@@ -191,6 +193,9 @@ fun GalleryActionsRoom(
     // it is built from the same handlers the rows below use: browsing, the room's own entry
     // points; with a selection, the selection's actions through the same finish{} the rows use.
     val selectedCount = selection.count
+    // A file from an added folder is read-only in v1 (ADR-020): the rows that write are disabled
+    // and say why, rather than doing nothing when tapped.
+    val selectionWrites = SourceActionGate.writesAllowed(selectedAssets)
     val markFavourite = bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK
     val favouritesOn = galleryFavouriteStripOn(selectedCount, markFavourite)
     val quickActions = galleryQuickActions(selectionActive, inTrash).map { action ->
@@ -228,7 +233,8 @@ fun GalleryActionsRoom(
                     }
                 })
             },
-            enabled = galleryQuickActionEnabled(action, selectedCount, Build.VERSION.SDK_INT),
+            enabled = galleryQuickActionEnabled(action, selectedCount, Build.VERSION.SDK_INT) &&
+                (selectionWrites || action !in SOURCE_BLOCKED_QUICK_ACTIONS),
             // Favourite reads as "on" when every chosen photo already is one: tapping removes,
             // so the word says "Unfavourite" and a screen reader is told the state it is in.
             highlighted = stripFavouriteOn,
@@ -398,6 +404,8 @@ private fun SelectionActions(
     // result of an action landing behind the panel that triggered it is the classic way to make a
     // control feel like it did nothing.
     fun finish(block: () -> Unit) = finishSelectionAction(selection, onSelectionChange, onCloseRoom, block)
+    val writes = SourceActionGate.writesAllowed(selectedAssets)
+    fun caption(normal: String?): String? = if (writes) normal else SourceGateCopy.WRITES_UNAVAILABLE
 
     RoomRow(
         label = "Select all",
@@ -443,8 +451,8 @@ private fun SelectionActions(
     if (onCull != null) {
         RoomRow(
             label = "Cull",
-            caption = CullingCopy.CULL_SELECTION,
-            enabled = selection.count > 0,
+            caption = caption(CullingCopy.CULL_SELECTION),
+            enabled = selection.count > 0 && writes,
             onClick = { onCloseRoom(); onCull() },
         )
     }
@@ -454,6 +462,8 @@ private fun SelectionActions(
         } else {
             "Remove from favourites"
         },
+        caption = caption(null),
+        enabled = writes,
         onClick = {
             val mark = bulkMarkAction(selection.selectedIds, state.favoriteIds) == BulkMarkAction.MARK
             finish { actions.onSetFavorite(selection.selectedIds, mark) }
@@ -465,7 +475,8 @@ private fun SelectionActions(
         } else {
             "Unmark sensitive"
         },
-        caption = HelpCopy.Caption.BLUR_OR_HIDE,
+        caption = caption(HelpCopy.Caption.BLUR_OR_HIDE),
+        enabled = writes,
         onClick = {
             val mark = bulkMarkAction(selection.selectedIds, state.sensitiveIds) == BulkMarkAction.MARK
             finish { actions.onSetSensitive(selection.selectedIds, mark) }
@@ -473,7 +484,8 @@ private fun SelectionActions(
     )
     RoomRow(
         label = if (inArchive) "Unarchive" else "Archive",
-        caption = "Out of the main grid, still in your library.",
+        caption = caption("Out of the main grid, still in your library."),
+        enabled = writes,
         onClick = { finish { actions.onSetArchived(selection.selectedIds, !inArchive) } },
     )
 
@@ -481,18 +493,22 @@ private fun SelectionActions(
 
     RoomRow(
         label = "Add to collection",
+        caption = caption(null),
+        enabled = writes,
         onClick = { onCloseRoom(); onAddToCollection(selection.selectedIds) },
     )
-    RoomRow(label = "Add tag", onClick = { onCloseRoom(); onAddTag(selection.selectedIds) })
+    RoomRow(label = "Add tag", caption = caption(null), enabled = writes, onClick = { onCloseRoom(); onAddTag(selection.selectedIds) })
     tagRoute?.let { tag ->
         RoomRow(
             label = "Remove #${tag.tag}",
+            enabled = writes,
             onClick = { finish { actions.onRemoveTag(selection.selectedIds, tag.tag) } },
         )
     }
     collectionRoute?.let { collection ->
         RoomRow(
             label = "Remove from this collection",
+            enabled = writes,
             onClick = { finish { actions.onRemoveFromCollection(collection.id, selection.selectedIds) } },
         )
     }
@@ -503,23 +519,33 @@ private fun SelectionActions(
     if (selectedAssets.size == 1) {
         RoomRow(
             label = "Rename",
+            caption = caption(null),
+            enabled = writes,
             onClick = { onCloseRoom(); onRenameAsset(selectedAssets.first()) },
         )
     } else if (selectedAssets.isNotEmpty()) {
         RoomRow(
             label = "Rename ${selectedAssets.size} photos",
-            caption = "One naming pattern, applied to all of them.",
+            caption = caption("One naming pattern, applied to all of them."),
+            enabled = writes,
             onClick = { onBulkRename(selectedAssets) },
         )
     }
 
     RoomRow(
         label = "Move to trash",
-        caption = HelpCopy.Caption.TRASH_ALSO,
-        enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+        caption = caption(HelpCopy.Caption.TRASH_ALSO),
+        enabled = writes && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
         onClick = { finish { actions.onMoveToTrash(selectedAssets) } },
     )
 }
+
+/** The strip cells that write; disabled (not hidden) while the selection holds a source file. */
+private val SOURCE_BLOCKED_QUICK_ACTIONS = setOf(
+    GalleryQuickAction.ADD_TO_COLLECTION,
+    GalleryQuickAction.FAVOURITE,
+    GalleryQuickAction.MOVE_TO_TRASH,
+)
 
 /**
  * Finish a selection action: run it, clear the selection, close the room. The rows of the full
