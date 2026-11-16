@@ -45,6 +45,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -88,7 +89,10 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.sources.gallery.SourceActionGate
 import com.fotoxplorr.app.sources.gallery.SourceAssetsProvider
 import com.fotoxplorr.app.sources.gallery.SourceGateCopy
-import com.fotoxplorr.app.sources.gallery.mergeSourceAssets
+import com.fotoxplorr.app.sources.gallery.MergedCatalogue
+import com.fotoxplorr.app.sources.gallery.SourceMergeProtection
+import com.fotoxplorr.app.sources.gallery.mergedCatalogueFlow
+import com.fotoxplorr.app.sources.gallery.mustWaitForSources
 import com.fotoxplorr.app.sources.runtime.SourcesRuntime
 import com.fotoxplorr.app.sources.ui.SourcesLifecycleHook
 import com.fotoxplorr.app.metadata.GpsCoordinate
@@ -260,17 +264,25 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // only once a source exists, so a phone with no sources gets an empty list and no file.
     val sourceAssetsProvider: SourceAssetsProvider = remember { SourcesRuntime.get(applicationContext).provider }
     SourcesLifecycleHook(viewModel.jobRunner)
-    val sourceEntries by remember(sourceAssetsProvider) { sourceAssetsProvider.assets() }
-        .collectAsStateWithLifecycle(initialValue = emptyList())
-    // Display and id lookups only: the grid, the viewer's run, open-with and restore lookups. The
-    // merge happens before browsableAssets, so the lock / archive / sensitive filter (TRAPS #33)
-    // applies to a source photo unchanged. With no sources this is the very same list instance.
-    val assets = remember(libraryAssets, sourceEntries) { mergeSourceAssets(libraryAssets, sourceEntries) }
     val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val sensitiveIds by sensitiveStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val lockedFolders by privateFolderStore.observeLockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
     val unlockedFolders by privateFolderStore.observeUnlockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
     val library by libraryStore.observe().collectAsStateWithLifecycle()
+    // Display and id lookups only: the grid, the viewer's run, open-with and restore lookups. The
+    // merge happens before browsableAssets, so the lock / archive / sensitive filter (TRAPS #33)
+    // applies to a source photo unchanged, and the protection state also decides which source twins
+    // of a protected library photo are dropped. It runs off the main thread (a big library is real
+    // work); with no sources `assets` IS `libraryAssets`, the same instance, with no hop at all.
+    val catalogue by remember(sourceAssetsProvider) {
+        mergedCatalogueFlow(
+            library = snapshotFlow { libraryAssets },
+            sources = sourceAssetsProvider.assets(),
+            protection = snapshotFlow { SourceMergeProtection(library.archivedIds, sensitiveIds, lockedFolders) },
+        )
+    }.collectAsStateWithLifecycle(initialValue = MergedCatalogue.pending(emptyList()))
+    val assets = if (catalogue.sourceFiles == 0) libraryAssets else catalogue.assets
+    val sourcesSeen = catalogue.sourcesSeen
     val recognition by recognitionStore.observe().collectAsStateWithLifecycle()
     val recognitionProgress by recognitionStore.observeProgress().collectAsStateWithLifecycle()
     // P0-14: which ids actually animate, kept fresh by LibraryRuntime itself after every scan --
@@ -614,11 +626,12 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // Restored through browsableNow: the unlocked folders live in memory, so after process death a
     // locked folder is locked again, and a photo trashed / archived / hidden in the meantime is
     // simply not reopened.
-    LaunchedEffect(assets) {
+    LaunchedEffect(assets, sourcesSeen) {
         if (assets.isEmpty()) return@LaunchedEffect
         val browsable = browsableNow(assets)
         viewModel.selectedAssetId?.let { id ->
-            if (viewerAssets.isEmpty()) {
+            // A source photo's id is not in the list until the provider has answered once.
+            if (viewerAssets.isEmpty() && !mustWaitForSources(id, sourcesSeen)) {
                 // The whole run that was being paged through; just the open photo if that list
                 // did not survive.
                 val restored = restoreViewerRun(browsable, savedViewerAssetIds.asList(), id.value)
@@ -1712,6 +1725,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 geoRepository = geoRepository,
                 state = GalleryUiState(
                     assets = assets,
+                    libraryAssets = libraryAssets,
                     favoriteIds = favoriteIds,
                     sensitiveIds = sensitiveIds,
                     lockedFolders = lockedFolders,

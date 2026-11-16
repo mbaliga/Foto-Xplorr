@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
@@ -243,6 +244,14 @@ fun rememberGeoRepository(): GeoMetadataRepository {
 
 data class GalleryUiState(
     val assets: List<MediaAsset>,
+    /**
+     * The MediaStore library alone, no file of an added folder or drive ([assets] is the merged
+     * list, for display and id lookups). Everything keyed to the library or its stores reads THIS:
+     * the cloud-sync feed, the location index, the Tidy up queue. The default derives it from
+     * [assets] (the very same instance when no source file is in it), so a caller that forgets to
+     * pass it still cannot hand a source photo to those consumers.
+     */
+    val libraryAssets: List<MediaAsset> = libraryOnly(assets),
     val favoriteIds: Set<MediaId>,
     val sensitiveIds: Set<MediaId>,
     val lockedFolders: Set<String>,
@@ -396,7 +405,7 @@ fun GalleryScreen(
     // own. Display filtering (what the Experimental section/the map/the 3D scenes actually draw) stays entirely in
     // `spatialDisplayAssets` below, per the same decision's own "display filtering stays in the
     // UI" instruction -- this list is never rendered directly.
-    val spatialIndexInput = state.assets
+    val spatialIndexInput = state.libraryAssets
     // Display list: what the Experimental section, the map, the compass and the 3D scenes actually draw. Must go
     // through the one visibility filter, or a locked, archived or hidden photo leaks onto them.
     val spatialDisplayAssets = remember(
@@ -427,7 +436,7 @@ fun GalleryScreen(
                     geoRepository.indexMissing(spatialIndexInput)
                     // Trashed included (pruneTo's own contract): a trashed-but-not-yet-purged
                     // photo is still in the catalogue and must keep its location row.
-                    geoRepository.pruneTo(state.assets.mapTo(mutableSetOf()) { it.id })
+                    geoRepository.pruneTo(state.libraryAssets.mapTo(mutableSetOf()) { it.id })
                 }
             },
             onOpenAsset = actions.onOpenAsset,
@@ -468,12 +477,20 @@ fun GalleryScreen(
     }
 }
 
+/** The MediaStore library among [assets]: the very same list when it holds no source file. */
+internal fun libraryOnly(assets: List<MediaAsset>): List<MediaAsset> =
+    if (assets.none { it.isSource }) assets else assets.filterNot { it.isSource }
+
 /**
  * The permission empty state ("Choose media") shows only when media access is missing AND the list
  * holds no file from an added folder or drive: those are read through their own grants.
  */
 internal fun showPermissionEmptyState(permissionGranted: Boolean, assets: List<MediaAsset>): Boolean =
     !permissionGranted && assets.none { it.isSource }
+
+/** The small prompt that replaces the empty state once added folders keep the gallery from being empty. */
+internal fun showMediaPermissionStrip(permissionGranted: Boolean, assets: List<MediaAsset>): Boolean =
+    !permissionGranted && assets.any { it.isSource }
 
 /**
  * Drill-down routes *below* a destination. The nine top-level destinations are not routes:
@@ -1724,7 +1741,20 @@ private fun GalleryBrowser(
                                             // notice they could add more without this strip naming it
                                             // right where the gap actually shows up.
                                             if (state.partialMediaAccess && destination != HyleDestination.PROTECTED) {
-                                                PartialAccessStrip(onChooseMore = actions.onManageSelectedMedia)
+                                                PartialAccessStrip(
+                                                    message = HelpCopy.Hint.PICKED_ONLY,
+                                                    actionLabel = "Choose more",
+                                                    onAction = actions.onManageSelectedMedia,
+                                                )
+                                            }
+                                            // Media access denied but the drives the person added still show: the
+                                            // full-screen "Choose media" prompt is gone, so keep a small one here.
+                                            if (showMediaPermissionStrip(state.permissionGranted, state.assets) && destination != HyleDestination.PROTECTED) {
+                                                PartialAccessStrip(
+                                                    message = HelpCopy.Hint.PERMISSION_STRIP,
+                                                    actionLabel = if (state.mediaPermissionPermanentlyDenied) "Open app settings" else "Choose media",
+                                                    onAction = actions.onRequestPermission,
+                                                )
                                             }
                                             DestinationContent(
                                                 destination = destination,
@@ -2666,24 +2696,25 @@ private fun GalleryEmptyState(
  * without already suspecting something is wrong.
  */
 @Composable
-private fun PartialAccessStrip(onChooseMore: () -> Unit) {
+private fun PartialAccessStrip(message: String, actionLabel: String, onAction: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF1C1C22))
-            .clickable(onClick = onChooseMore)
+            .clickable(onClick = onAction)
+            .heightIn(min = 48.dp)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            HelpCopy.Hint.PICKED_ONLY,
+            message,
             color = Color.White.copy(alpha = 0.8f),
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.weight(1f),
         )
         Text(
-            "Choose more",
+            actionLabel,
             color = MaterialTheme.colorScheme.primary,
             style = MaterialTheme.typography.labelLarge,
         )

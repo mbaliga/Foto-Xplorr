@@ -590,7 +590,7 @@ fun LegacyScreenHost(
                 // library for duplicates, and this host recomposes on every recognition-progress
                 // tick -- several a second while indexing -- which is a full O(n) pass per frame
                 // on a 22k library without it.
-                items = remember(state.assets, state.favoriteIds, state.library, state.lockedFolders, state.unlockedFolders) {
+                items = remember(state.libraryAssets, state.favoriteIds, state.library, state.lockedFolders, state.unlockedFolders) {
                     archiveReviewItems(state)
                 },
                 onAccept = { ids -> actions.onSetArchived(ids, true) },
@@ -615,10 +615,13 @@ fun LegacyScreenHost(
  * somewhere to cache a score per photo, so the background pass can fill it in over time instead of
  * this screen computing it all at once.
  */
-private fun archiveReviewItems(state: GalleryUiState): List<ArchiveReviewItem> {
-    val assetsById = state.assets.associateBy { it.id }
+internal fun archiveReviewItems(state: GalleryUiState): List<ArchiveReviewItem> {
+    // The library only: archive and dismissal are catalogue writes a source file cannot take (the
+    // gate would refuse the Accept), and a source twin of a library photo is not a redundant copy.
+    val library = libraryOnly(state.libraryAssets)
+    val assetsById = library.associateBy { it.id }
     val now = System.currentTimeMillis()
-    val candidates = state.assets
+    val candidates = library
         .filterNot { it.isTrashed || it.isVideo }
         // The same privacy rule every other surface applies. Without it the queue listed a
         // locked folder's old screenshots and duplicates with their thumbnails and filenames,

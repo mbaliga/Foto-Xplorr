@@ -126,7 +126,8 @@ fun GalleryActionsRoom(
     var renameProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var renameOutcome by remember { mutableStateOf<BulkRenameOutcome?>(null) }
 
-    fun runBulkRename(request: BulkRenameRequest) {
+    fun runBulkRename(asked: BulkRenameRequest) {
+        val request = bulkRenameRequestOrNull(asked.assets, asked.pattern, asked.startAt) ?: return
         coroutineScope.launch {
             renameProgress = 0 to request.assets.size
             renameOutcome = fileOperations.renameBatch(
@@ -159,8 +160,9 @@ fun GalleryActionsRoom(
         }
     }
 
-    fun startBulkRename(assets: List<MediaAsset>, pattern: String, startAt: Int) {
-        val request = BulkRenameRequest(assets, pattern, startAt)
+    fun startBulkRename(selected: List<MediaAsset>, pattern: String, startAt: Int) {
+        val request = bulkRenameRequestOrNull(selected, pattern, startAt) ?: return
+        val assets = request.assets
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             // Ask up front for every file this app does not own, in one dialog, rather than
             // discovering the need file-by-file mid-batch the way a bare ContentResolver.update
@@ -361,11 +363,21 @@ fun GalleryActionsRoom(
 }
 
 /** One bulk-rename request, from the moment the pattern dialog is confirmed to the moment it runs. */
-private data class BulkRenameRequest(
+internal data class BulkRenameRequest(
     val assets: List<MediaAsset>,
     val pattern: String,
     val startAt: Int,
 )
+
+/**
+ * The request for the library photos among [assets], or null when none is left. A source file is
+ * never renamed (the row is disabled for it, and this is the lock behind the row): MediaStore
+ * does not own it, and a rename would write into the person's drive.
+ */
+internal fun bulkRenameRequestOrNull(assets: List<MediaAsset>, pattern: String, startAt: Int): BulkRenameRequest? {
+    val own = SourceActionGate.libraryOnly(assets)
+    return if (own.isEmpty()) null else BulkRenameRequest(own, pattern, startAt)
+}
 
 /**
  * What can be done to the photos currently chosen.

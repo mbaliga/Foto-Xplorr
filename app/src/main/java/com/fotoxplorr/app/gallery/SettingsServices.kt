@@ -51,8 +51,9 @@ internal fun SettingsServicesHost(
     }
     // Strictest reading of the browsable list (TRAPS #33), derived once per change of its inputs
     // so the service gets the same instance until the library or the protection state changes.
-    val library = remember(state.assets, state.library.archivedIds, state.sensitiveIds, state.lockedFolders) {
-        SyncCandidates.browsableForSync(state.assets, state.library.archivedIds, state.sensitiveIds, state.lockedFolders)
+    // From the library-only list: sources never sync, and this feed must agree with the activity's.
+    val library = remember(state.libraryAssets, state.library.archivedIds, state.sensitiveIds, state.lockedFolders) {
+        SyncCandidates.browsableForSync(state.libraryAssets, state.library.archivedIds, state.sensitiveIds, state.lockedFolders)
     }
     val service = remember(context, library, runner) { SyncServices.obtain(context, library, runner) }
     val folders = remember(library) { syncFolderChoices(library) }

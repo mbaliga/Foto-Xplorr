@@ -137,6 +137,7 @@ internal object HelpCopy {
 
         const val PERMISSION_DENIED = "Fotoz can't see your photos. Allow it in Android settings."
         const val PERMISSION_ASK = "Choose the photos Fotoz may use. Nothing is uploaded."
+        const val PERMISSION_STRIP = "Your phone's photos are off. Choose which ones Fotoz may use."
         const val SCANNING = "Scanning…"
         const val NOTHING_FOUND = "No photos or videos found."
         const val PICKED_ONLY = "Showing only the photos you picked."
