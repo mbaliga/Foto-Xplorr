@@ -46,13 +46,36 @@ class IngestRunner(
     private val source: IngestSource,
     private val targets: List<IngestTarget>,
     private val journal: IngestJournal,
+    /**
+     * Names this import (one card, one session). Item ids are only stable within a card, so lines of another
+     * scope are never read; pass the same value to [plannedPaths] when re-planning a resume.
+     */
+    private val scope: String = "",
 ) {
+    /** The journal's latest line per (item, destination), read ONCE and kept current by [append]. */
+    private inner class Ledger {
+        val latest: MutableMap<String, JournalEntry> = journal.latest(scope)
+
+        fun get(itemId: String, dest: Int): JournalEntry? = latest["$itemId|$dest"]
+
+        fun append(e: JournalEntry) {
+            val tagged = if (e.scope == scope) e else e.copy(scope = scope)
+            journal.append(tagged)
+            latest["${tagged.itemId}|${tagged.destIndex}"] = tagged
+        }
+    }
+
+    /** A VERIFIED line counts for [f] only when it recorded the same fingerprint key and size (not just the same id). */
+    private fun trusted(e: JournalEntry?, f: PlannedFile): Boolean =
+        e != null && (e.state == JournalState.VERIFIED || e.state == JournalState.CARD_DELETED) &&
+            e.fingerprint == f.fingerprint.key && e.size == f.fingerprint.size
+
     fun run(plan: IngestPlan, options: IngestOptions = IngestOptions()): IngestReport {
         require(plan.destinationCount == targets.size)
-        val done = journal.latest()
+        val ledger = Ledger()
         for (f in plan.toCopy) {
-            if (done["${f.item.id}|-1"]?.relPath != f.relPath) {
-                journal.append(JournalEntry(f.item.id, -1, JournalState.PLANNED, f.relPath))
+            if (ledger.get(f.item.id, -1)?.relPath != f.relPath) {
+                ledger.append(JournalEntry(f.item.id, -1, JournalState.PLANNED, f.relPath))
             }
         }
         var verified = 0
@@ -64,13 +87,13 @@ class IngestRunner(
 
         for (f in plan.toCopy) {
             for (d in targets.indices) {
-                val prev = journal.latest()["${f.item.id}|$d"]
-                if (prev?.state == JournalState.VERIFIED || prev?.state == JournalState.CARD_DELETED) {
+                val prev = ledger.get(f.item.id, d)
+                if (trusted(prev, f)) {
                     verified++; perItemOk[f.item.id] = (perItemOk[f.item.id] ?: 0) + 1; present++
                     continue
                 }
                 try {
-                    val outcome = copyOne(f, d, prev)
+                    val outcome = copyOne(f, d, prev, ledger)
                     when (outcome) {
                         is Outcome.Verified -> {
                             verified++; perItemOk[f.item.id] = (perItemOk[f.item.id] ?: 0) + 1
@@ -81,7 +104,7 @@ class IngestRunner(
                         is Outcome.Bad -> failed.add(FailedCopy(f.item.id, d, outcome.why))
                     }
                 } catch (e: Exception) {
-                    journal.append(JournalEntry(f.item.id, d, JournalState.FAILED, f.relPath, e.message ?: "error"))
+                    ledger.append(JournalEntry(f.item.id, d, JournalState.FAILED, f.relPath, e.message ?: "error"))
                     failed.add(FailedCopy(f.item.id, d, e.message ?: "error"))
                 }
             }
@@ -108,7 +131,7 @@ class IngestRunner(
         data class Bad(val why: String) : Outcome
     }
 
-    private fun copyOne(f: PlannedFile, d: Int, prev: JournalEntry?): Outcome {
+    private fun copyOne(f: PlannedFile, d: Int, prev: JournalEntry?, ledger: Ledger): Outcome {
         val target = targets[d]
         val reader = source.open(f.item)
         try {
@@ -120,20 +143,20 @@ class IngestRunner(
             var renamed = false
             if (target.exists(path)) {
                 if (matches(target, path, srcSize, srcHash)) {
-                    journal.append(JournalEntry(f.item.id, d, JournalState.VERIFIED, path, "already present"))
+                    ledger.append(JournalEntry(f.item.id, d, JournalState.VERIFIED, path, "already present", f.fingerprint.key, srcSize))
                     return Outcome.Verified(0, false)
                 }
                 path = freeName(target, f.relPath)
                 renamed = true
             }
             val n = target.write(path, reader)
-            journal.append(JournalEntry(f.item.id, d, JournalState.COPIED, path))
+            ledger.append(JournalEntry(f.item.id, d, JournalState.COPIED, path))
             if (!matches(target, path, srcSize, srcHash)) {
                 target.discardOwnUnverified(path)
-                journal.append(JournalEntry(f.item.id, d, JournalState.FAILED, path, "verify mismatch"))
+                ledger.append(JournalEntry(f.item.id, d, JournalState.FAILED, path, "verify mismatch"))
                 return Outcome.Bad("The copy did not match the original.")
             }
-            journal.append(JournalEntry(f.item.id, d, JournalState.VERIFIED, path))
+            ledger.append(JournalEntry(f.item.id, d, JournalState.VERIFIED, path, "", f.fingerprint.key, srcSize))
             return Outcome.Verified(n, renamed)
         } finally {
             reader.close()
@@ -162,30 +185,56 @@ class IngestRunner(
 
     /**
      * Removes the given items from the card, the one place this package touches the source. Each id
-     * is re-checked against the journal: it must be a COPY item of [plan] and EVERY destination's
-     * latest entry must be VERIFIED. Anything else is refused untouched. Call it only after the
-     * person confirmed; [IngestOptions.offerDeleteFromCard] must have been on for [run].
+     * is re-checked: it must be a COPY item of [plan], EVERY destination's latest journal line must be a
+     * VERIFIED one recorded for this item's fingerprint and size, and right before the delete the card
+     * item is re-fingerprinted and every destination copy is re-opened and compared (size and full hash)
+     * with the card's CURRENT bytes. Anything else is refused untouched. Call it only after the person
+     * confirmed; [IngestOptions.offerDeleteFromCard] must have been on for [run].
      */
     fun deleteFromCard(plan: IngestPlan, ids: List<String>, options: IngestOptions): DeleteResult {
         val deleted = ArrayList<String>()
         val refused = ArrayList<String>()
-        val latest = journal.latest()
+        val ledger = Ledger()
         val byId = plan.toCopy.associateBy { it.item.id }
         for (id in ids) {
             val f = byId[id]
-            val allVerified = f != null && targets.indices.all {
-                val s = latest["$id|$it"]?.state
-                s == JournalState.VERIFIED || s == JournalState.CARD_DELETED
-            }
-            if (!options.offerDeleteFromCard || !source.canDelete || f == null || !allVerified) {
+            val entries = f?.let { targets.indices.map { d -> ledger.get(id, d) } }
+            val allVerified = f != null && entries!!.all { trusted(it, f) }
+            if (!options.offerDeleteFromCard || !source.canDelete || f == null || !allVerified ||
+                !stillIdentical(f, entries!!.map { it!!.relPath })
+            ) {
                 refused.add(id); continue
             }
             if (source.delete(f.item)) {
-                journal.append(JournalEntry(id, -1, JournalState.CARD_DELETED, f.relPath))
-                for (d in targets.indices) journal.append(JournalEntry(id, d, JournalState.CARD_DELETED, latest["$id|$d"]?.relPath ?: f.relPath))
+                val marked = entries.first()!!
+                ledger.append(JournalEntry(id, -1, JournalState.CARD_DELETED, f.relPath, "", marked.fingerprint, marked.size))
+                for (d in targets.indices) {
+                    val e = entries[d]!!
+                    ledger.append(JournalEntry(id, d, JournalState.CARD_DELETED, e.relPath, "", e.fingerprint, e.size))
+                }
                 deleted.add(id)
             } else refused.add(id)
         }
         return DeleteResult(deleted, refused)
+    }
+
+    /** The card item still has the planned fingerprint and every destination copy equals its current bytes. */
+    private fun stillIdentical(f: PlannedFile, copyPaths: List<String>): Boolean = try {
+        val r = source.open(f.item)
+        try {
+            if (Fingerprints.cheap(r, f.item.captureMillis).key != f.fingerprint.key) {
+                false
+            } else {
+                val hash = Fingerprints.full(r)
+                targets.indices.all { d ->
+                    val c = targets[d].open(copyPaths[d])
+                    c != null && try { c.size == r.size && Fingerprints.full(c) == hash } finally { c.close() }
+                }
+            }
+        } finally {
+            r.close()
+        }
+    } catch (e: Exception) {
+        false
     }
 }

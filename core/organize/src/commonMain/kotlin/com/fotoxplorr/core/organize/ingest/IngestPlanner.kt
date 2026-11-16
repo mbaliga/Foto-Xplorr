@@ -110,8 +110,8 @@ class IngestPlanner(
                 chosen = copying.associate { it.id to prior.getValue(it.id) }
             } else {
                 for (n in 1..9999) {
-                    val s = if (n == 1) stem else "$stem ($n)"
-                    val paths = copying.associate { it.id to path(dir, NameSanitizer.fileName(s, it.extension)) }
+                    val suffix = if (n == 1) "" else " ($n)"
+                    val paths = copying.associate { it.id to path(dir, NameSanitizer.fileName(stem, it.extension, suffix = suffix)) }
                     val free = paths.values.all { p ->
                         p.lowercase() !in taken && targets.none { t -> t.exists(p) }
                     }

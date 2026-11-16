@@ -9,12 +9,21 @@ enum class JournalState {
     CARD_DELETED,
 }
 
+/**
+ * One journal line. [fingerprint] and [size] pin a VERIFIED / CARD_DELETED entry to the exact bytes it verified
+ * (the plan item's [CheapFingerprint.key] and size): item ids are only stable within one card, so an entry
+ * is trusted for a plan item only when both match. [scope] names the import session (card) the entry belongs
+ * to, so two cards that reuse the same item ids never read each other's lines. Old lines have all three empty.
+ */
 data class JournalEntry(
     val itemId: String,
     val destIndex: Int,
     val state: JournalState,
     val relPath: String,
     val detail: String = "",
+    val fingerprint: String = "",
+    val size: Long = -1L,
+    val scope: String = "",
 )
 
 /** Append-only; the LAST entry for an (item, destination) wins. */
@@ -47,15 +56,21 @@ object JournalCodec {
     private const val END = "#"
 
     fun encode(e: JournalEntry): String =
-        listOf(e.itemId, e.destIndex.toString(), e.state.name, e.relPath, e.detail)
+        listOf(e.itemId, e.destIndex.toString(), e.state.name, e.relPath, e.detail, e.fingerprint, e.size.toString(), e.scope)
             .joinToString("\t") { esc(it) } + "\t" + END
 
+    /** Reads the current 9-field line and the older 6-field one (no fingerprint, size or scope). */
     fun decode(line: String): JournalEntry? {
         val parts = line.split('\t')
-        if (parts.size != 6 || parts[5] != END) return null
+        if (parts.size != 6 && parts.size != 9) return null
+        if (parts.last() != END) return null
         val state = JournalState.entries.firstOrNull { it.name == parts[2] } ?: return null
         val dest = parts[1].toIntOrNull() ?: return null
-        return JournalEntry(unesc(parts[0]), dest, state, unesc(parts[3]), unesc(parts[4]))
+        if (parts.size == 6) return JournalEntry(unesc(parts[0]), dest, state, unesc(parts[3]), unesc(parts[4]))
+        val size = parts[6].toLongOrNull() ?: return null
+        return JournalEntry(
+            unesc(parts[0]), dest, state, unesc(parts[3]), unesc(parts[4]), unesc(parts[5]), size, unesc(parts[7]),
+        )
     }
 
     private fun esc(s: String) = s.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
@@ -74,13 +89,13 @@ object JournalCodec {
     }
 }
 
-/** The last state per (item, destination), keyed `itemId|dest`. */
-internal fun IngestJournal.latest(): Map<String, JournalEntry> {
+/** The last state per (item, destination) of one import [scope], keyed `itemId|dest`. */
+internal fun IngestJournal.latest(scope: String = ""): MutableMap<String, JournalEntry> {
     val m = HashMap<String, JournalEntry>()
-    for (e in entries()) m["${e.itemId}|${e.destIndex}"] = e
+    for (e in entries()) if (e.scope == scope) m["${e.itemId}|${e.destIndex}"] = e
     return m
 }
 
-/** Paths a previous run planned, to be reused verbatim when re-planning after a kill. */
-fun IngestJournal.plannedPaths(): Map<String, String> =
-    entries().filter { it.state == JournalState.PLANNED }.associate { it.itemId to it.relPath }
+/** Paths a previous run of the same import [scope] planned, to be reused verbatim when re-planning after a kill. */
+fun IngestJournal.plannedPaths(scope: String = ""): Map<String, String> =
+    entries().filter { it.state == JournalState.PLANNED && it.scope == scope }.associate { it.itemId to it.relPath }

@@ -1,12 +1,14 @@
 package com.fotoxplorr.core.organize.ingest
 
+import com.fotoxplorr.core.organize.fileops.Sha256
+
 /**
  * The cheap duplicate key: size + capture time + a hash of the first and of the last [Fingerprints.SAMPLE]
  * bytes. Reading 128 KiB per file is what makes a 500-photo card plan in seconds even over MTP;
  * two files that agree on all four are DUPLICATES ONLY AFTER [Fingerprints.full] agrees as well
- * (the full hash is computed only on such a tie). Not cryptographic: both hashes are plain
- * non-keyed mixers, fine against accidents, not against an adversary, which is why a tie is
- * confirmed by reading everything and verification compares the full hash of source and copy.
+ * (the full hash is computed only on such a tie). The cheap key is NOT cryptographic (plain non-keyed
+ * mixers over 128 KiB): fine for screening, which is why a tie is confirmed by [Fingerprints.full], a real
+ * SHA-256 over every byte, and copy verification and the delete-from-card gate compare that full hash.
  *
  * The [key] text is stable across runs and platforms (no hashCode, no locale).
  */
@@ -33,10 +35,21 @@ object Fingerprints {
         return CheapFingerprint(size, captureMillis, head.first, tail.first)
     }
 
-    /** 32 hex characters (two independent 64-bit lanes) over every byte, plus the size. */
+    /** SHA-256 (64 hex characters) over every byte; the same [Sha256] the file-ops engine verifies copies with. */
     fun full(reader: IngestReader): String {
-        val (a, b) = hashRange(reader, 0, reader.size)
-        return hex(a) + hex(b)
+        val h = Sha256()
+        val buf = ByteArray(CHUNK)
+        var pos = 0L
+        val size = reader.size
+        while (pos < size) {
+            val n = reader.read(pos, buf, 0, minOf(size - pos, CHUNK.toLong()).toInt())
+            if (n <= 0) break
+            h.update(buf, 0, n)
+            pos += n
+        }
+        // A short read must never equal the complete file's hash, even when the bytes read are a prefix of it.
+        if (pos < size) h.update("short:$pos/$size".encodeToByteArray())
+        return h.digestHex()
     }
 
     private fun hashRange(reader: IngestReader, start: Long, length: Long): Pair<Long, Long> {

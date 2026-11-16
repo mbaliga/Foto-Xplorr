@@ -45,11 +45,15 @@ object NameSanitizer {
         return s
     }
 
-    /** Sanitises a file name keeping its extension; the stem is shortened first when too long. */
-    fun fileName(stem: String, extension: String, maxBytes: Int = MAX_BYTES): String {
+    /**
+     * Sanitises a file name keeping its extension; the stem is shortened first when too long. A conflict
+     * [suffix] such as ` (2)` is appended AFTER the stem was shortened, so it survives for any stem length
+     * (cutting `stem (2)` as a whole would drop the number again and every attempt would collide).
+     */
+    fun fileName(stem: String, extension: String, maxBytes: Int = MAX_BYTES, suffix: String = ""): String {
         val ext = extensionOf(extension)
-        val room = maxBytes - (if (ext.isEmpty()) 0 else utf8Length(ext) + 1)
-        val s = segment(stem, room.coerceAtLeast(8))
+        val room = maxBytes - (if (ext.isEmpty()) 0 else utf8Length(ext) + 1) - utf8Length(suffix)
+        val s = segment(stem, room.coerceAtLeast(8)) + suffix
         return if (ext.isEmpty()) s else "$s.$ext"
     }
 

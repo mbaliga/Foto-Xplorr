@@ -65,8 +65,8 @@ class DestinationTemplate private constructor(
         Part.Ext -> ctx.extension.lowercase()
         is Part.Seq -> ctx.seq.toString().padStart(p.width, '0')
         is Part.Date -> {
-            val dt = Instant.fromEpochMilliseconds(ctx.captureMillis).toLocalDateTime(ctx.zone)
-            p.pieces.joinToString("") {
+            val dt = localOrNull(ctx.captureMillis, ctx.zone)
+            if (dt == null) UNKNOWN_DATE else p.pieces.joinToString("") {
                 when (it) {
                     "yyyy" -> dt.year.toString().padStart(4, '0')
                     "yy" -> (dt.year % 100).toString().padStart(2, '0')
@@ -82,6 +82,19 @@ class DestinationTemplate private constructor(
     }
 
     companion object {
+        /** Capture times outside 1900..2200 (a garbage EXIF or MTP date) have no meaningful folder. */
+        private const val MIN_SANE_MS = -2_208_988_800_000L
+        private const val MAX_SANE_MS = 7_258_118_400_000L
+        const val UNKNOWN_DATE = "Unknown date"
+
+        private fun localOrNull(ms: Long, zone: TimeZone) =
+            if (ms < MIN_SANE_MS || ms >= MAX_SANE_MS) null
+            else try {
+                Instant.fromEpochMilliseconds(ms).toLocalDateTime(zone)
+            } catch (e: Exception) {
+                null
+            }
+
         private const val ILLEGAL_LITERAL = "\\:*?\"<>|"
         private val dateFields = setOf("yyyy", "yy", "MM", "dd", "HH", "mm", "ss")
 

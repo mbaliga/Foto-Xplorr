@@ -16,7 +16,7 @@ class FingerprintTest {
     @Test fun knownVectorsDoNotDrift() {
         // Pinned so a refactor of the mixer is noticed: a changed hash would orphan every stored fingerprint.
         assertEquals("10-1234-7aad489e5db90ae8-7aad489e5db90ae8", Fingerprints.cheap(MemReader(ByteArray(10) { it.toByte() }), 1234).key)
-        assertEquals("7aad489e5db90ae86e44f1292530209e", Fingerprints.full(MemReader(ByteArray(10) { it.toByte() })))
+        assertEquals("1f825aa2f0020ef7cf91dfa30da4668d791c5d4824fc8e41354b89ec05795ab3", Fingerprints.full(MemReader(ByteArray(10) { it.toByte() })))
     }
 
     @Test fun sensitiveToSizeTimeHeadAndTail() {
