@@ -94,6 +94,7 @@ import com.fotoxplorr.app.sources.gallery.SourceMergeProtection
 import com.fotoxplorr.app.sources.gallery.mergedCatalogueFlow
 import com.fotoxplorr.app.sources.gallery.mustWaitForSources
 import com.fotoxplorr.app.sources.runtime.SourcesRuntime
+import com.fotoxplorr.app.sources.ui.DriveConnectedHost
 import com.fotoxplorr.app.sources.ui.SourcesLifecycleHook
 import com.fotoxplorr.app.metadata.GpsCoordinate
 import com.fotoxplorr.app.metadata.MetadataEdit
@@ -1860,6 +1861,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             )
         }
     }
+    // Drives that come and go (U6): keeps their sources offline or online and offers a new one. Last, so it draws over the content.
+    DriveConnectedHost(viewModel.jobRunner)
 }
 
 private fun FotoXplorrActivity.hasMediaPermission(): Boolean =

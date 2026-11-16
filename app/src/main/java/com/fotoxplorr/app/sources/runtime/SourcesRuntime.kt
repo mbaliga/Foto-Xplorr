@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.room.Room
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import com.fotoxplorr.app.sources.drives.DriveIds
 import com.fotoxplorr.app.sources.gallery.SourceAssetEntry
 import com.fotoxplorr.app.sources.gallery.SourceAssetsProvider
 import com.fotoxplorr.app.sources.saf.GrantOutcome
@@ -230,6 +231,27 @@ class SourcesRuntime(
                 held && state == SourceState.REVOKED -> dao.setState(rec.sourceRow, SourceState.ONLINE.wire)
             }
         }
+    }
+
+    /**
+     * A drive went away or came back (U6): its sources turn OFFLINE, or ONLINE again if the grant is
+     * still held (REVOKED otherwise). Only the state column changes; no row, file or grant is touched,
+     * so a replug finds everything as it was. Returns the rows of every source on that volume.
+     */
+    suspend fun setVolumeReachable(volumeUuid: String, reachable: Boolean): List<Long> {
+        if (!opened.value) return emptyList()
+        val wanted = DriveIds.normalise(volumeUuid) ?: return emptyList()
+        val dao = database.sourcesDao()
+        val mine = dao.getAll().filter { DriveIds.normalise(it.volumeUuid) == wanted }
+        for (rec in mine) {
+            val state = SourceState.fromWire(rec.state) ?: continue
+            when {
+                !reachable && state == SourceState.ONLINE -> dao.setState(rec.sourceRow, SourceState.OFFLINE.wire)
+                reachable && state == SourceState.OFFLINE ->
+                    dao.setState(rec.sourceRow, (if (grants.isHeld(rec.rootLocator)) SourceState.ONLINE else SourceState.REVOKED).wire)
+            }
+        }
+        return mine.map { it.sourceRow }
     }
 
     /** Sources the person asked to be read again whenever they are there. */

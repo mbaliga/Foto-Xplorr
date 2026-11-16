@@ -71,6 +71,7 @@ import com.fotoxplorr.app.services.ServicesButton
 import com.fotoxplorr.app.services.ServicesCardBox
 import com.fotoxplorr.app.services.ServicesHeader
 import com.fotoxplorr.app.shell.AppStateViewModel
+import com.fotoxplorr.app.sources.drives.DriveRuntime
 import com.fotoxplorr.app.sources.runtime.AddResult
 import com.fotoxplorr.app.sources.runtime.SourceJobs
 import com.fotoxplorr.app.sources.runtime.SourcesRuntime
@@ -103,6 +104,7 @@ fun SourcesScreen(
     cards: List<SourceCard>,
     message: String?,
     actions: SourcesActions,
+    footer: @Composable () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = actions.onBack)
@@ -124,6 +126,7 @@ fun SourcesScreen(
             if (cards.isEmpty()) EmptyState() else cards.forEach { card ->
                 SourceCardView(card, actions, onAskRemove = { confirmRemove = card.row })
             }
+            footer()
         }
     }
     val asking = confirmRemove?.let { row -> cards.firstOrNull { it.row == row } }
@@ -306,7 +309,10 @@ fun SourcesHost(onBack: () -> Unit, modifier: Modifier = Modifier) {
             onDismissMessage = { message = null },
         )
     }
-    SourcesScreen(cards, message, actions, modifier)
+    val drives = remember(context) { DriveRuntime.controller(context) }
+    val ignored by remember(drives) { drives.ignored() }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val panel = remember(statuses, ignored) { StoragePanelModel.build(statuses, ::formatTime, ignored = ignored) }
+    SourcesScreen(cards, message, actions, modifier, footer = { StoragePanel(panel, onAskAgain = drives::askAgain) })
 }
 
 private fun formatTime(ms: Long): String = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(ms))
