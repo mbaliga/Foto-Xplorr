@@ -85,11 +85,12 @@ import com.fotoxplorr.app.jobs.humanMessage
 import com.fotoxplorr.app.jobs.notificationPromptWasAnswered
 import com.fotoxplorr.app.jobs.shouldAskForJobNotifications
 import com.fotoxplorr.app.media.MediaAsset
-import com.fotoxplorr.app.sources.gallery.EmptySourceAssetsProvider
 import com.fotoxplorr.app.sources.gallery.SourceActionGate
 import com.fotoxplorr.app.sources.gallery.SourceAssetsProvider
 import com.fotoxplorr.app.sources.gallery.SourceGateCopy
 import com.fotoxplorr.app.sources.gallery.mergeSourceAssets
+import com.fotoxplorr.app.sources.runtime.SourcesRuntime
+import com.fotoxplorr.app.sources.ui.SourcesLifecycleHook
 import com.fotoxplorr.app.metadata.GpsCoordinate
 import com.fotoxplorr.app.metadata.MetadataEdit
 import com.fotoxplorr.app.metadata.MetadataWriter
@@ -255,10 +256,10 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // list (the sites are marked "libraryAssets" below): the permanent-delete purge, the metadata
     // backup, recognition and auto-curation, the cloud-sync feed.
     val libraryAssets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
-    // Files of folders and drives the person added (ADR-020). U3 wires the EMPTY provider, so
-    // nothing changes for anyone and fotoz-sources.db is not opened here; U4's SourcesRuntime
-    // replaces this one line.
-    val sourceAssetsProvider: SourceAssetsProvider = remember { EmptySourceAssetsProvider }
+    // Files of folders and drives the person added (ADR-020). The runtime opens fotoz-sources.db
+    // only once a source exists, so a phone with no sources gets an empty list and no file.
+    val sourceAssetsProvider: SourceAssetsProvider = remember { SourcesRuntime.get(applicationContext).provider }
+    SourcesLifecycleHook(viewModel.jobRunner)
     val sourceEntries by remember(sourceAssetsProvider) { sourceAssetsProvider.assets() }
         .collectAsStateWithLifecycle(initialValue = emptyList())
     // Display and id lookups only: the grid, the viewer's run, open-with and restore lookups. The

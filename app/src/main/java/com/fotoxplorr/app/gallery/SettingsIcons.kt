@@ -39,6 +39,7 @@ import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.SdStorage
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Shuffle
 import androidx.compose.material.icons.outlined.Slideshow
@@ -119,6 +120,7 @@ enum class SettingsIcon(val vector: ImageVector) {
     WEB(Icons.Outlined.Language),
     BURST(Icons.Outlined.BurstMode),
     MOTION(Icons.Outlined.MotionPhotosOn),
+    SD_STORAGE(Icons.Outlined.SdStorage),
 }
 
 /** The glyph of a Settings tab. Exhaustive, so a new tab does not compile without one. */
@@ -185,6 +187,7 @@ enum class SettingsRow(val label: String, val icon: SettingsIcon) {
     AI_KEYS("AI keys", SettingsIcon.KEY),
     MODELS("Models on this phone", SettingsIcon.CHIP),
     SYNC("Sync", SettingsIcon.CLOUD_SYNC),
+    SOURCES("Folders and drives", SettingsIcon.SD_STORAGE),
 }
 
 /** Section headings of Settings, with the glyph that goes in the heading's chip. */
@@ -208,4 +211,5 @@ enum class SettingsSection(val label: String, val icon: SettingsIcon) {
     MAP_DATA("MAP DATA", SettingsIcon.MAP),
     REACH("WHAT THIS BUILD CAN REACH", SettingsIcon.WEB),
     OPEN_SOURCE("OPEN SOURCE", SettingsIcon.INFO),
+    SOURCES("SOURCES", SettingsIcon.SD_STORAGE),
 }

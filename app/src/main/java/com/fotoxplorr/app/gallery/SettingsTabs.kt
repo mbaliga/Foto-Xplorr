@@ -156,6 +156,12 @@ fun SettingsTabsRoom(
         ).firstOrNull { !it.isVideo }
     }
 
+    // Folders and drives (ADR-020): a pane of its own, like the Services hub, saved so a rotation keeps it.
+    var sourcesOpen by rememberSaveable { mutableStateOf(false) }
+    if (sourcesOpen) {
+        com.fotoxplorr.app.sources.ui.SourcesHost(onBack = { sourcesOpen = false }, modifier = modifier)
+        return
+    }
     val openHub = hubAt
     if (openHub != null) {
         SettingsServicesHost(
@@ -369,6 +375,8 @@ fun SettingsTabsRoom(
                     LegacyScreen.entries.forEach { screen ->
                         RoomRow(label = screen.label, leadingIcon = SettingsIcon.BROWSE.vector, onClick = { onOpenLegacyScreen(screen) })
                     }
+                    SectionLabel(SettingsSection.SOURCES, "SOURCES")
+                    ServicesDoor(SettingsRow.SOURCES, com.fotoxplorr.app.sources.ui.SourcesCopy.ROW_CAPTION) { sourcesOpen = true }
                 }
 
                 SettingsTab.PRIVACY -> {
