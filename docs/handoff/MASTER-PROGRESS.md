@@ -1757,7 +1757,7 @@ Everything in the checklist. Above all:
 
 Branch `claude/friendly-lovelace-06dito` (PR #18), 21 commits on top of `94dfadf` (the Phase 3 design, `docs/handoff/PHASE-3-DESIGN.md`
 and ADR-020 to ADR-023). **Nothing in this batch has run on a device.** Tests prove pure logic, wiring and file effects on the
-JVM (about 395 new tests in the unit reports, counted by `@Test`, plus the tests that came with the two review rounds);
+JVM (about 408 new tests in the unit reports and 467 `@Test` lines added over the whole range (counted by `@Test`), including the tests that came with the two review rounds);
 Roborazzi is in record mode, so nothing visual is proven. Checklist: `docs/device-test/batch-11-checklist.md`. Traps: #153 to
 #162. **No new Gradle dependency and no native code.** No existing database was touched: `fotoz.db` and `fotoz-vectors.db`
 and their schemas are unchanged (a test pins this). The sources code never writes to a drive; the only writes are the
@@ -1806,14 +1806,14 @@ keeps every write action (favourite, sensitive, archive, tag, collection, trash,
   `GalleryActions` (a reflection test fails when a new callback is not classified). The activity, grid and viewer are wired:
   the merge runs before `browsableAssets`, store-keyed consumers stay on `libraryAssets`, writing rows are disabled with a
   reason sentence, the permission empty state yields to sources, cull skips sources and the viewer still exports them.
-- **U4 `SourcesRuntime`, indexing job, Sources screen** (c40eb0a; 61 tests). A lazy `fotoz-sources.db` that is never
+- **U4 `SourcesRuntime`, indexing job, Sources screen** (c40eb0a; 71 tests). A lazy `fotoz-sources.db` that is never
   created until a source exists, the gallery provider, add (refusing duplicates and nested trees), remove (index rows only;
   the grant goes back only if this source took it and nothing else uses it), include and index-on-connect flags in a new
   `fotoz-sources-meta` prefs file, a resumable indexer (each slice and its cursor in one Room transaction, guarded sweep
   only after an exhaustive completed walk, a run left RUNNING resumes if under 7 days old), a bounded sizing pass
   (4 files at a time, 256 MiB per pass, retried up to 3 times, cloud providers listed but never opened), the job on
   `JobRunner` as SCANNING with progress and Stop, and Settings > Library > Folders and drives with a card per source.
-- **U5 Offline previews store** (0083567; 36 tests). A persistent per-source 256 px WebP store in
+- **U5 Offline previews store** (0083567; 37 tests). A persistent per-source 256 px WebP store in
   `noBackupFilesDir/source-previews/<source>/`, outside Coil's cache, with an exact size ledger, least-recently-used eviction
   under a per-source cap (default 1 GB, 0 is off), atomic writes, a rebuildable index and a Clear previews action that
   deletes only its own files. A source asset whose drive is offline draws its stored preview greyed with a cloud-off glyph
@@ -1831,7 +1831,7 @@ keeps every write action (favourite, sensitive, archive, tag, collection, trash,
   `Movies/Fotoz`, unique names, pending rows on Android 10 and up, cancel leaves no row, a later run skips saved items and
   retries failed ones). A pure `ReceivePlan` drops unreadable and non-media uris, collapses repeats and caps at 500; a
   `content://media` uri is held to the browsable list before it is shown or copied. The one manifest change is the filter.
-- **Integration** (56c1e3d, bcd3704, f43857a; 22 tests in the last). The merged list is used only for display and id lookups;
+- **Integration** (56c1e3d, bcd3704, f43857a; 24 tests in the last). The merged list is used only for display and id lookups;
   cloud sync, the location index, Tidy up and bulk rename read library photos only (see the review fixes). The merge runs off
   the main thread. The preview store is wired into the storage panel, the bounded background pass runs from the activity with
   the browsable list only and only while a source is online, removing a source forgets its previews, and each card has a Keep

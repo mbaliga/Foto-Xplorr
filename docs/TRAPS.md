@@ -2228,7 +2228,7 @@ RAW named NEF, ARW or DNG, and never reads the head of a virtual (cloud-backed) 
 same reason the sizing pass opens only `com.android.externalstorage.documents` files. Test fixtures must not use a document
 id as a display name: a `/` in a name is correctly rejected as hostile.
 
-## 156. A walk cursor stays small: hashes, one megabyte, and an unreadable cursor restarts the walk
+## 156. A walk cursor stays small: hashes, 600,000 characters, and an unreadable cursor restarts the walk
 
 The checkpoint in `index_run.cursor` used to hold every queued folder id: over 2 MB of text for 30k folders, past the
 2 MB Android `CursorWindow`, so the resume `SELECT *` failed, and it was rewritten per 64-directory slice. Format

@@ -132,8 +132,8 @@ Prepare:
       one group. (unverified)
 - [ ] **Storage panel.** Online or offline word and glyph, files, bytes, preview cost, last read and errors read correctly,
       totals add up, "Protected on N places" shows the placeholder line, and the ignored-drives list works. (unverified)
-- [ ] **Drive preview policy.** A drive set to All gets previews after reconnect, None evicts them, and the default (As
-      viewed) turns keep off for a drive source on first reconnect. (unverified)
+- [ ] **Drive preview policy.** Only the default (As viewed) can be tested: it keeps previews off for a drive source on
+      first reconnect. The All and None policies cannot be set on a device yet, because no screen for them is built. (unverified)
 - [ ] **Empty phone.** Behaviour on a phone with no `fotoz-sources.db`: no file is created and no strip appears for the
       internal volume. (unverified)
 
