@@ -104,22 +104,34 @@ object FilePaths {
     }
 }
 
-/** Reads everything (small files only: manifests, journals). */
-internal fun FileSystem.readAllBytes(path: String): ByteArray {
+/**
+ * Reads everything (small files only: manifests, journals). A file bigger than [maxBytes] is refused with
+ * [FileOpsError.IO] (checked up front via stat and again while reading, so a lying stat cannot defeat it);
+ * the buffer doubles instead of being re-copied per chunk.
+ */
+internal fun FileSystem.readAllBytes(path: String, maxBytes: Int = MAX_SMALL_FILE_BYTES): ByteArray {
+    val declared = stat(path)?.size
+    if (declared != null && declared > maxBytes) throw FileOpsException(FileOpsError.IO, "The file is too large to read.")
     val src = openRead(path)
     try {
-        var out = ByteArray(0)
+        var out = ByteArray(minOf(maxOf(declared?.toInt() ?: 0, 8192), maxBytes))
+        var len = 0
         val buf = ByteArray(8192)
         while (true) {
             val n = src.read(buf)
             if (n < 0) break
-            out += buf.copyOf(n)
+            if (len.toLong() + n > maxBytes) throw FileOpsException(FileOpsError.IO, "The file is too large to read.")
+            if (len + n > out.size) out = out.copyOf(minOf(maxOf(out.size * 2, len + n), maxBytes))
+            buf.copyInto(out, len, 0, n)
+            len += n
         }
-        return out
+        return if (len == out.size) out else out.copyOf(len)
     } finally {
         src.close()
     }
 }
+
+internal const val MAX_SMALL_FILE_BYTES = 8 * 1024 * 1024
 
 /** Streaming SHA-256 of a file; the same hash U8a's ingest planner uses for its verify step. */
 fun FileSystem.sha256Hex(path: String, chunk: Int = 64 * 1024): String {

@@ -65,12 +65,15 @@ interface Journal {
 
 /** One tab-separated line per entry in `<dir>/<planId>.journal`. A torn last line (a crash mid-append) is ignored. */
 class FileJournal(private val fs: FileSystem, private val dir: String) : Journal {
+    /** Plans whose file end was checked for a torn last line since this instance started appending. */
+    private val boundaryChecked = HashSet<String>()
+
     private fun path(planId: String) = FilePaths.join(dir, "$planId.journal")
 
     override fun load(planId: String): JournalState {
         val p = path(planId)
         if (fs.stat(p) == null) return JournalState(emptyList())
-        val text = fs.readAllBytes(p).decodeToString()
+        val text = fs.readAllBytes(p, MAX_JOURNAL_BYTES).decodeToString()
         val lines = text.split('\n')
         // The final element is either empty (clean end) or a torn line without its newline: drop it either way.
         val entries = lines.dropLast(1).mapNotNull { parse(it) }
@@ -79,13 +82,27 @@ class FileJournal(private val fs: FileSystem, private val dir: String) : Journal
 
     override fun append(planId: String, entry: JournalEntry) {
         fs.mkdirs(dir)
-        val sink = fs.openAppend(path(planId))
+        val p = path(planId)
+        // A crash mid-append leaves a last line without its newline; the next entry must not be glued onto it.
+        val repair = if (planId in boundaryChecked) "" else if (endsTorn(p)) TORN_FILLER else ""
+        val sink = fs.openAppend(p)
         try {
-            val bytes = (format(entry) + "\n").encodeToByteArray()
+            val bytes = (repair + format(entry) + "\n").encodeToByteArray()
             sink.write(bytes, 0, bytes.size)
+            boundaryChecked += planId
+        } catch (e: FileOpsException) {
+            boundaryChecked -= planId
+            throw e
         } finally {
             sink.close()
         }
+    }
+
+    private fun endsTorn(p: String): Boolean {
+        val size = fs.stat(p)?.size ?: return false
+        if (size == 0L) return false
+        val bytes = fs.readAllBytes(p, MAX_JOURNAL_BYTES)
+        return bytes.isNotEmpty() && bytes[bytes.size - 1] != '\n'.code.toByte()
     }
 
     override fun clear(planId: String) {
@@ -132,5 +149,15 @@ class FileJournal(private val fs: FileSystem, private val dir: String) : Journal
         }
     } catch (e: Exception) {
         null
+    }
+
+    private companion object {
+        const val MAX_JOURNAL_BYTES = 64 * 1024 * 1024
+
+        /**
+         * Ends a torn line with MORE tab-separated fields than any real entry has (6), so the torn line can never
+         * parse as a (truncated, wrong) entry; real fields never hold a raw tab because [esc] escapes it.
+         */
+        const val TORN_FILLER = "\t\t\t\t\t\t\t\t\n"
     }
 }

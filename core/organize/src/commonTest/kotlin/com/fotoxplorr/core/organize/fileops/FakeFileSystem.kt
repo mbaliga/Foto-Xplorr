@@ -23,7 +23,13 @@ class FakeFileSystem(roots: Map<String, Long?> = mapOf("/phone" to null, "/usb" 
 
     /** Deletes that are not the engine's own bookkeeping (temp files, the superseded trash manifest). */
     fun deletedOriginals(): List<String> =
-        deleted.filter { !it.endsWith(".fotoz-part") && !it.endsWith("manifest.json") && !it.endsWith("manifest.json.new") }
+        deleted.filter { !it.endsWith(".fotoz-part") && !it.endsWith(".journal") && !it.endsWith("manifest.json") && !it.endsWith("manifest.json.new") }
+
+    /** Model a case-insensitive volume (FAT/exFAT): stat and rename match names ignoring case. */
+    var caseInsensitive = false
+
+    private fun key(path: String): String =
+        if (caseInsensitive) files.keys.firstOrNull { it.equals(path, ignoreCase = true) } ?: path else path
 
     var reportFree = true
     private var clock = 1L
@@ -97,7 +103,7 @@ class FakeFileSystem(roots: Map<String, Long?> = mapOf("/phone" to null, "/usb" 
 
     override fun stat(path: String): FileStat? {
         alive(path)
-        files[path]?.let { return FileStat(it.bytes.size.toLong(), false, it.modifiedMs) }
+        files[key(path)]?.let { return FileStat(it.bytes.size.toLong(), false, it.modifiedMs) }
         return if (path in dirs) FileStat(0, true, 0) else null
     }
 
@@ -186,11 +192,12 @@ class FakeFileSystem(roots: Map<String, Long?> = mapOf("/phone" to null, "/usb" 
     override fun rename(from: String, to: String) {
         alive(from); alive(to)
         tick("rename", "$from -> $to")
-        val node = files[from] ?: throw FileOpsException(FileOpsError.NOT_FOUND, from)
-        if (to in files || to in dirs) throw FileOpsException(FileOpsError.EXISTS, to)
+        val fromKey = key(from)
+        val node = files[fromKey] ?: throw FileOpsException(FileOpsError.NOT_FOUND, from)
+        if ((key(to) in files && key(to) != fromKey) || to in dirs) throw FileOpsException(FileOpsError.EXISTS, to)
         if (rootOf(from) != rootOf(to)) throw FileOpsException(FileOpsError.IO, "cross-volume rename")
         mkdirs(FilePaths.parent(to))
-        files.remove(from)
+        files.remove(fromKey)
         files[to] = node
     }
 

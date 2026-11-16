@@ -23,6 +23,9 @@ internal object MiniJson {
         return sb.append('"').toString()
     }
 
+    /** Containers nested deeper than this are refused (a hostile file must not blow the stack). */
+    const val MAX_DEPTH = 8
+
     /** Parses to Map<String, Any?>, List<Any?>, String, Long, Boolean or null. Throws IllegalArgumentException. */
     fun parse(text: String): Any? {
         val p = Parser(text)
@@ -34,6 +37,7 @@ internal object MiniJson {
 
     private class Parser(val s: String) {
         var pos = 0
+        var depth = 0
 
         fun skipWs() {
             while (pos < s.length && s[pos].isWhitespace()) pos++
@@ -43,14 +47,21 @@ internal object MiniJson {
             skipWs()
             require(pos < s.length) { "unexpected end" }
             return when (val c = s[pos]) {
-                '{' -> obj()
-                '[' -> arr()
+                '{' -> nested { obj() }
+                '[' -> nested { arr() }
                 '"' -> str()
                 't' -> lit("true", true)
                 'f' -> lit("false", false)
                 'n' -> lit("null", null)
                 else -> if (c == '-' || c.isDigit()) num() else throw IllegalArgumentException("bad char")
             }
+        }
+
+        private inline fun <T> nested(block: () -> T): T {
+            require(++depth <= MAX_DEPTH) { "nested too deeply" }
+            val v = block()
+            depth--
+            return v
         }
 
         private fun lit(word: String, v: Any?): Any? {

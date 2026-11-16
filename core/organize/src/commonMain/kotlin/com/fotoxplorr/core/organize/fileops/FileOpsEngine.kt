@@ -156,10 +156,20 @@ class FileOpsEngine(
                 )
             }
         }
-        return RunReport(plan.id, results, cancelled, aborted, copied)
+        val report = RunReport(plan.id, results, cancelled, aborted, copied)
+        // A fully finished plan has nothing left to resume. Keeping its journal would serve a LATER run of the same
+        // op list (same plan id) as already done, even when the files are back; so it goes, best effort.
+        if (report.completed) {
+            try {
+                journal.clear(plan.id)
+            } catch (e: FileOpsException) {
+                // A stale journal only means a later identical plan is treated as resumed; the caller may discard it.
+            }
+        }
+        return report
     }
 
-    /** Forget a finished plan's journal (the caller decides when; a finished journal makes a re-run a no-op). */
+    /** Forget a plan's journal. A run that completes already does this; use it to drop an abandoned, partly done plan. */
     fun discardJournal(plan: FileOpsPlan) = journal.clear(plan.id)
 
     // ---- steps ----
@@ -180,10 +190,20 @@ class FileOpsEngine(
     }
 
     private fun trashStep(plan: FileOpsPlan, step: PlanStep, index: Int, ctx: StepCtx): StepResult {
-        val trashId = "${plan.id}-${step.id}"
+        val wanted = "${plan.id}-${step.id}"
+        val store = TrashStore(fs, fs.sourceRoot(step.source), clock, zone)
+        if (side(Side.SOURCE) { fs.stat(step.source) } == null) {
+            // Resume: the file reached the trash right before the crash, the journal never heard of it.
+            if (side(Side.SOURCE) { store.list() }.any { it.id == wanted }) {
+                ctx.trashId = wanted
+                ctx.resumed = true
+                j(plan, JournalEntry.Finished(step.id, StepStatus.DONE, null, null, wanted))
+                return StepResult(step.id, index, step.source, null, StepStatus.DONE, resumed = true, trashId = wanted)
+            }
+        }
         requireFile(step.source)
-        j(plan, JournalEntry.Started(step.id, trashId, null))
-        TrashStore(fs, fs.sourceRoot(step.source), clock, zone).add(step.source, trashId)
+        j(plan, JournalEntry.Started(step.id, wanted, null))
+        val trashId = store.add(step.source, wanted).id
         ctx.trashId = trashId
         j(plan, JournalEntry.Finished(step.id, StepStatus.DONE, null, null, trashId))
         return StepResult(step.id, index, step.source, null, StepStatus.DONE, trashId = trashId)
@@ -194,7 +214,21 @@ class FileOpsEngine(
     ): StepResult {
         val desired = step.target!!
         if (desired == step.source) return skipped(plan, step, index, desired, "Name unchanged.")
-        val src = fs.stat(step.source)
+        val caseOnly = desired.equals(step.source, ignoreCase = true)
+        val caseTemp = step.source + CASE_TEMP
+        var src = fs.stat(step.source)
+        if (caseOnly && src == null && fs.stat(caseTemp) != null) {
+            // Resume: a case-only rename died after the first hop. Finish it, or put the file back when the name is really taken.
+            if (fs.stat(desired) == null) {
+                fs.rename(caseTemp, desired)
+                ctx.target = desired
+                ctx.resumed = true
+                j(plan, JournalEntry.Finished(step.id, StepStatus.DONE, desired, null, null))
+                return StepResult(step.id, index, step.source, desired, StepStatus.DONE, resumed = true)
+            }
+            fs.rename(caseTemp, step.source)
+            src = fs.stat(step.source)
+        }
         if (src == null) {
             // Resume: the rename may have happened right before the crash.
             val st = state.started(step.id)
@@ -208,6 +242,19 @@ class FileOpsEngine(
             throw FileOpsException(FileOpsError.SOURCE_GONE, "The file is gone.")
         }
         if (src.isDirectory) throw FileOpsException(FileOpsError.UNSUPPORTED, "Folders are not handled.")
+        if (caseOnly) {
+            // Only the capitalisation changes. On a case-insensitive volume the desired name IS the source, so it must
+            // not be treated as a clash with itself: hop through a temp name, then check whether the name is free.
+            j(plan, JournalEntry.Started(step.id, desired, null))
+            fs.rename(step.source, caseTemp)
+            if (fs.stat(desired) == null) {
+                fs.rename(caseTemp, desired)
+                ctx.target = desired
+                j(plan, JournalEntry.Finished(step.id, StepStatus.DONE, desired, null, null))
+                return StepResult(step.id, index, step.source, desired, StepStatus.DONE)
+            }
+            fs.rename(caseTemp, step.source) // a different file really owns that name (case-sensitive volume): normal conflict rules
+        }
         val resolved = resolveTarget(plan, step, desired, state, resolver, ctx)
         if (resolved is Resolved.Skip) return skipped(plan, step, index, desired, "Name taken, skipped.")
         resolved as Resolved.Use
@@ -286,8 +333,7 @@ class FileOpsEngine(
                 throw FileOpsException(FileOpsError.VERIFY_MISMATCH, "The original changed; it was kept.")
             }
             if (still.size != size) throw FileOpsException(FileOpsError.VERIFY_MISMATCH, "The original changed; it was kept.")
-            TrashStore(fs, fs.sourceRoot(step.source), clock, zone).add(step.source, trashId)
-            ctx.trashId = trashId
+            ctx.trashId = TrashStore(fs, fs.sourceRoot(step.source), clock, zone).add(step.source, trashId).id
         } else if (resumed) {
             // Crash after the original reached the trash but before the journal heard of it.
             val store = TrashStore(fs, fs.sourceRoot(step.source), clock, zone)
@@ -335,10 +381,10 @@ class FileOpsEngine(
             ConflictChoice.REPLACE -> {
                 // Never overwrite in place: the existing file goes to the trash so it can be restored.
                 val id = "${plan.id}-${step.id}-r"
-                side(Side.DESTINATION) { TrashStore(fs, fs.sourceRoot(desired), clock, zone).add(desired, id) }
-                j(plan, JournalEntry.Trashed(step.id, id))
-                ctx.replacedTrashId = id
-                Resolved.Use(desired, id)
+                val trashed = side(Side.DESTINATION) { TrashStore(fs, fs.sourceRoot(desired), clock, zone).add(desired, id).id }
+                j(plan, JournalEntry.Trashed(step.id, trashed))
+                ctx.replacedTrashId = trashed
+                Resolved.Use(desired, trashed)
             }
         }
     }
@@ -431,6 +477,7 @@ class FileOpsEngine(
 
     private companion object {
         const val PART = ".fotoz-part"
+        const val CASE_TEMP = ".fotoz-case"
         val ABORTING = setOf(FileOpsError.DESTINATION_GONE, FileOpsError.NO_SPACE, FileOpsError.JOURNAL_UNWRITABLE)
     }
 }

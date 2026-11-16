@@ -203,7 +203,7 @@ class FaultInjectionTest {
         val h = Harness()
         h.fs.put("/usb/a.jpg", "A")
         val plan = h.plan(listOf(FileOp.Copy("/usb/a.jpg", "/phone/out")))
-        assertOk(h.engine.run(plan))
+        h.journal.append(plan.id, JournalEntry.Finished("0", StepStatus.DONE, "/phone/out/a.jpg", null, null))
         val path = "/app/journal/${plan.id}.journal"
         h.fs.files[path]!!.bytes += "F\t0\tDON".encodeToByteArray()
         val state = h.journal.load(plan.id)

@@ -30,27 +30,31 @@ class TrashStore(
     private val newManifestPath = FilePaths.join(trashDir, "$MANIFEST.new")
 
     /**
-     * Move [path] into the trash. A caller-chosen [id] makes the call idempotent (the engine derives it
-     * from the plan, so a resumed run finds its own earlier work); otherwise one is generated.
+     * Move [path] into the trash. A caller-chosen [id] makes the call idempotent for crash-resume (the engine
+     * derives it from the plan): the earlier entry is returned only when [path] is really gone. When the file
+     * is still there the id belongs to an older trashing (a repeated plan, a restored file), so a fresh id is
+     * used; callers must take the id from the RETURNED entry.
      */
     fun add(path: String, id: String? = null): TrashEntry {
         val entries = loadRaw()
         val existing = id?.let { want -> entries.firstOrNull { it.id == want } }
-        if (existing != null && fs.stat(FilePaths.join(trashDir, existing.storedName)) != null) return existing
+        val stat = fs.stat(path)
+        if (existing != null && stat == null && fs.stat(FilePaths.join(trashDir, existing.storedName)) != null) return existing
 
-        val stat = fs.stat(path) ?: throw FileOpsException(FileOpsError.SOURCE_GONE, "File is gone: $path")
+        if (stat == null) throw FileOpsException(FileOpsError.SOURCE_GONE, "File is gone: $path")
         if (stat.isDirectory) throw FileOpsException(FileOpsError.UNSUPPORTED, "Folders cannot be trashed.")
         fs.mkdirs(trashDir)
         ensureNoMedia()
 
         val now = clock.nowMs()
-        val useId = id ?: freshId(now, entries)
+        val useId = if (id != null && !idTaken(id, entries)) id else freshId(now, entries)
         val name = FilePaths.name(path)
         val entry = TrashEntry(
             id = useId,
             originalPath = path,
             name = name,
-            storedName = "$useId-$name",
+            // A backslash in a real file name is legal; the stored name must stay one plain path segment.
+            storedName = "$useId-${name.replace('\\', '_')}",
             size = stat.size,
             trashedAtMs = now,
             expiresAtMs = TrashExpiry.expiresAtMs(now, retentionDays, zone),
@@ -76,7 +80,7 @@ class TrashStore(
         val entries = loadRaw()
         val entry = entries.firstOrNull { it.id == id }
             ?: throw FileOpsException(FileOpsError.NOT_FOUND, "Not in the trash.")
-        val stored = FilePaths.join(trashDir, entry.storedName)
+        val stored = storedPath(entry) ?: throw FileOpsException(FileOpsError.NOT_FOUND, "Not in the trash.")
         if (fs.stat(stored) == null) throw FileOpsException(FileOpsError.SOURCE_GONE, "The trashed file is gone.")
         fs.mkdirs(FilePaths.parent(entry.originalPath))
         val target = if (fs.stat(entry.originalPath) == null) entry.originalPath
@@ -90,8 +94,8 @@ class TrashStore(
     fun purge(id: String) {
         val entries = loadRaw()
         val entry = entries.firstOrNull { it.id == id } ?: return
-        val stored = FilePaths.join(trashDir, entry.storedName)
-        if (fs.stat(stored) != null) fs.delete(stored)
+        val stored = storedPath(entry)
+        if (stored != null && fs.stat(stored) != null) fs.delete(stored)
         writeManifest(entries.filter { it.id != id })
     }
 
@@ -100,7 +104,7 @@ class TrashStore(
         val entries = loadRaw()
         var n = 0
         for (e in entries) {
-            val stored = FilePaths.join(trashDir, e.storedName)
+            val stored = storedPath(e) ?: continue
             if (fs.stat(stored) != null) {
                 fs.delete(stored)
                 n++
@@ -110,6 +114,10 @@ class TrashStore(
         return n
     }
 
+    /** An id is taken when an entry has it and its stored file exists (an entry without its file is a stale crash leftover). */
+    private fun idTaken(id: String, entries: List<TrashEntry>): Boolean =
+        entries.any { it.id == id && fs.stat(FilePaths.join(trashDir, it.storedName)) != null }
+
     private fun freshId(now: Long, entries: List<TrashEntry>): String {
         var n = 0
         while (true) {
@@ -118,6 +126,9 @@ class TrashStore(
             n++
         }
     }
+
+    /** The stored file of [e], or null when it is not a direct child of [trashDir] (a hostile manifest). */
+    private fun storedPath(e: TrashEntry): String? = if (e.isSafe()) FilePaths.join(trashDir, e.storedName) else null
 
     private fun ensureNoMedia() {
         val p = FilePaths.join(trashDir, ".nomedia")
@@ -145,7 +156,8 @@ class TrashStore(
     private fun parseManifest(path: String): List<TrashEntry> {
         try {
             val root = MiniJson.parse(fs.readAllBytes(path).decodeToString()) as Map<*, *>
-            return (root["entries"] as List<*>).map { TrashEntry.fromMap(it as Map<*, *>) }
+            // Entries that could point outside the trash (a hand-edited or hostile manifest) are dropped, never acted on.
+            return (root["entries"] as List<*>).map { TrashEntry.fromMap(it as Map<*, *>) }.filter { it.isSafe() }
         } catch (e: FileOpsException) {
             throw e
         } catch (e: Exception) {
@@ -195,6 +207,19 @@ data class TrashEntry(
     val expiresAtMs: Long,
 ) {
     fun isExpired(nowMs: Long): Boolean = nowMs >= expiresAtMs
+
+    /**
+     * False for an entry that could make the trash touch anything but its own direct children: a stored name
+     * with a separator, `.`/`..`, empty or not starting with `<id>-`, or an original path that is empty or climbs with `..`.
+     */
+    internal fun isSafe(): Boolean {
+        if (id.isEmpty() || id.contains('/') || id.contains('\\')) return false
+        if (storedName.isEmpty() || storedName == "." || storedName == "..") return false
+        if (storedName.contains('/') || storedName.contains('\\')) return false
+        if (!storedName.startsWith("$id-")) return false
+        if (originalPath.isEmpty()) return false
+        return originalPath.split('/').none { it == ".." }
+    }
 
     internal fun toJson(): String =
         "{\"id\":${MiniJson.quote(id)},\"originalPath\":${MiniJson.quote(originalPath)},\"name\":${MiniJson.quote(name)}," +
