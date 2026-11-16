@@ -28,11 +28,16 @@ data class WalkCounters(
  * (the loop guard) and the counters. Immutable; [encode] and [decode] round-trip it as text so it
  * can sit in a database column. A walk resumed from a cursor visits exactly the directories the
  * uninterrupted walk would still have visited.
+ *
+ * The loop guard is kept as 64-bit hashes of the document ids ([idHash]), not the ids: 30,000 folders
+ * are about 0.5 MB as hashes against several MB as ids, which matters because the text is rewritten at
+ * every checkpoint and an Android cursor window holds about 2 MB per row. A collision (about 1 in 10^11
+ * for 30,000 folders) would treat one directory as already seen, never visit one twice.
  */
 class WalkCursor internal constructor(
     val rootDocumentId: String,
     val pending: List<PendingDirectory>,
-    internal val queued: Set<String>,
+    internal val queued: Set<Long>,
     val counters: WalkCounters,
 ) {
     val isDrained: Boolean get() = pending.isEmpty()
@@ -52,24 +57,55 @@ class WalkCursor internal constructor(
         for (p in pending) {
             sb.append("P\t").append(p.depth).append('\t').append(esc(p.documentId)).append('\t').append(esc(p.path)).append('\n')
         }
-        for (q in queued) sb.append("Q\t").append(esc(q)).append('\n')
+        // One line per 512 hashes, sorted so equal cursors encode equally; each hash is exactly 16 hex digits.
+        val sorted = queued.sorted()
+        var i = 0
+        while (i < sorted.size) {
+            sb.append("V\t")
+            for (k in i until minOf(i + HASHES_PER_LINE, sorted.size)) hex16(sb, sorted[k])
+            sb.append('\n')
+            i += HASHES_PER_LINE
+        }
         return sb.toString()
     }
 
     companion object {
-        private const val MAGIC = "fotoz-walk-1"
+        private const val MAGIC = "fotoz-walk-2"
+
+        /** The first format (the whole id of every queued directory, `Q` lines); still read, never written. */
+        private const val MAGIC_V1 = "fotoz-walk-1"
+        private const val HASHES_PER_LINE = 512
+
+        /** 64-bit FNV-1a over the UTF-16 units with a final avalanche; stable across runs and platforms. */
+        internal fun idHash(id: String): Long {
+            var h = -3750763034362895579L // 0xcbf29ce484222325
+            for (ch in id) {
+                h = (h xor ch.code.toLong()) * 0x100000001b3L
+            }
+            h = h xor (h ushr 33)
+            h *= -49064778989728563L // 0xff51afd7ed558ccd
+            h = h xor (h ushr 33)
+            return h
+        }
+
+        private fun hex16(sb: StringBuilder, v: Long) {
+            for (shift in 60 downTo 0 step 4) sb.append("0123456789abcdef"[((v ushr shift) and 0xf).toInt()])
+        }
 
         fun start(rootDocumentId: String): WalkCursor =
-            WalkCursor(rootDocumentId, listOf(PendingDirectory(rootDocumentId, "", 0)), setOf(rootDocumentId), WalkCounters())
+            WalkCursor(
+                rootDocumentId, listOf(PendingDirectory(rootDocumentId, "", 0)), setOf(idHash(rootDocumentId)), WalkCounters(),
+            )
 
         /** Null for text that is not a cursor this version wrote; the caller then walks again from the start (safe: the walk is idempotent). */
         fun decode(text: String): WalkCursor? {
             val lines = text.split('\n')
-            if (lines.firstOrNull() != MAGIC) return null
+            val magic = lines.firstOrNull()
+            if (magic != MAGIC && magic != MAGIC_V1) return null
             var root: String? = null
             var counters: WalkCounters? = null
             val pending = ArrayList<PendingDirectory>()
-            val queued = HashSet<String>()
+            val queued = HashSet<Long>()
             for (i in 1 until lines.size) {
                 val line = lines[i]
                 if (line.isEmpty()) continue
@@ -85,11 +121,25 @@ class WalkCursor internal constructor(
                         if (f.size != 4) return null
                         pending += PendingDirectory(unesc(f[2]), unesc(f[3]), f[1].toIntOrNull() ?: return null)
                     }
-                    "Q" -> queued += unesc(f.getOrNull(1) ?: return null)
+                    "Q" -> if (magic == MAGIC_V1) queued += idHash(unesc(f.getOrNull(1) ?: return null)) else return null
+                    "V" -> {
+                        val body = f.getOrNull(1) ?: return null
+                        if (magic != MAGIC || f.size != 2 || body.length % 16 != 0) return null
+                        for (k in body.indices step 16) queued += parseHex16(body, k) ?: return null
+                    }
                     else -> return null
                 }
             }
             return WalkCursor(root ?: return null, pending, queued, counters ?: return null)
+        }
+
+        private fun parseHex16(s: String, at: Int): Long? {
+            var v = 0L
+            for (k in at until at + 16) {
+                val d = s[k].digitToIntOrNull(16) ?: return null
+                v = (v shl 4) or d.toLong()
+            }
+            return v
         }
 
         private fun esc(s: String): String {

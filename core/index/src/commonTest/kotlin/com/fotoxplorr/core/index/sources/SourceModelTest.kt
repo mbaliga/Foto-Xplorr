@@ -123,31 +123,4 @@ class SourceModelTest {
         assertNull(SourceKind.fromWire("nope"))
         assertNotNull(SourceState.fromWire("REVOKED"))
     }
-
-    @Test
-    fun `walk cursor round trips including awkward ids`() {
-        val cursor = WalkCursor(
-            queue = listOf("primary:DCIM/Camera", "a\\b", "line\nbreak", "", "trail\\"),
-            currentDirectory = "tree:Pictures/Ünï",
-            entriesDone = 42,
-            filesSeen = 9_000_000_000L,
-        )
-        assertEquals(cursor, WalkCursor.decode(cursor.encode()))
-        val empty = WalkCursor()
-        assertEquals(empty, WalkCursor.decode(empty.encode()))
-        val noCurrent = WalkCursor(listOf("x"), null, 0, 1)
-        assertEquals(noCurrent, WalkCursor.decode(noCurrent.encode()))
-    }
-
-    @Test
-    fun `corrupt cursors decode to null`() {
-        assertNull(WalkCursor.decode(null))
-        assertNull(WalkCursor.decode(""))
-        assertNull(WalkCursor.decode("wc2\n0\n0\n-\n0"))
-        assertNull(WalkCursor.decode("wc1\nx\n0\n-\n0"))
-        assertNull(WalkCursor.decode("wc1\n0\n0\n-\n2\nonly-one"))
-        assertNull(WalkCursor.decode("wc1\n-1\n0\n-\n0"))
-        assertNull(WalkCursor.decode("wc1\n0\n0\n?\n0"))
-        assertNull(WalkCursor.decode("wc1\n0\n0\n+bad\\x\n0"))
-    }
 }

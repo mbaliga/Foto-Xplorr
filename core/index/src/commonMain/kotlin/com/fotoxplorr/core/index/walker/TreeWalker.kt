@@ -104,12 +104,13 @@ class TreeWalker(
                         c = c.copy(ignoredDirectories = c.ignoredDirectories + 1)
                         continue
                     }
-                    if (!queued.add(e.documentId)) {
+                    val idHash = WalkCursor.idHash(e.documentId)
+                    if (!queued.add(idHash)) {
                         c = c.copy(loopsSkipped = c.loopsSkipped + 1)
                         continue
                     }
                     if (dir.depth + 1 > config.maxDepth || queued.size > config.maxDirectories) {
-                        queued.remove(e.documentId)
+                        queued.remove(idHash)
                         c = c.copy(limitSkipped = c.limitSkipped + 1)
                         continue
                     }
