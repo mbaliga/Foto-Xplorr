@@ -56,7 +56,12 @@ class SafGrantRegistry(
             }
         }
 
-    fun count(): Int = list().size
+    /**
+     * Every persisted uri the platform counts against the cap, not only trees: a single-document
+     * grant (the viewer's open-with, a picked file) takes a slot of the same pool, so counting
+     * trees alone would let [take] think there is room that the platform no longer has.
+     */
+    fun count(): Int = resolver.persistedUriPermissions.size
 
     val limit: Int get() = SafGrantPool.limitFor(sdkInt)
 

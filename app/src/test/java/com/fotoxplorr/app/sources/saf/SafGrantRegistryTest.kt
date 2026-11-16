@@ -45,6 +45,20 @@ class SafGrantRegistryTest {
     }
 
     @Test
+    fun theCapCountsEveryPersistedUriNotOnlyTrees() {
+        val registry = SafGrantRegistry(context.contentResolver, sdkInt = 29) // limit 128
+        val doc = Uri.parse("content://fotoz.test.docs/document/one")
+        context.contentResolver.takePersistableUriPermission(doc, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        assertEquals(1, registry.count())
+        assertEquals("the list stays trees only", 0, registry.list().size)
+        // 119 more single-document grants: the pool is full up to the reserve, no tree is held
+        repeat(128 - SafGrantPool.RESERVE - 1) {
+            context.contentResolver.takePersistableUriPermission(Uri.parse("content://fotoz.test.docs/document/d$it"), android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        assertEquals(SafCopy.NEAR_GRANT_LIMIT, (registry.take(tree(1)) as GrantOutcome.Refused).reason)
+    }
+
+    @Test
     fun poolLimits() {
         assertEquals(128, SafGrantPool.limitFor(29))
         assertEquals(512, SafGrantPool.limitFor(30))
