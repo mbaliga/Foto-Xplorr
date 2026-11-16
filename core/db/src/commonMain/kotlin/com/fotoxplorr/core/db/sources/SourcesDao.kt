@@ -106,25 +106,55 @@ interface SourceAssetsDao {
     suspend fun sweepMissing(sourceRow: Long, run: Long): Int
 }
 
+/** A cursor longer than this reads back as null (start the walk over): an Android cursor window holds about 2 MB per row. */
+private const val MAX_READABLE_CURSOR_CHARS = 600_000
+
+/** Explicit columns, so one oversized `cursor` can never make a whole row unreadable. */
+private const val RUN_COLUMNS =
+    "run_id, source_row, status, `full`, files_seen, started_ms, finished_ms, error, " +
+        "CASE WHEN length(cursor) > $MAX_READABLE_CURSOR_CHARS THEN NULL ELSE cursor END AS cursor"
+
 @Dao
 interface IndexRunsDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun start(run: IndexRunRecord): Long
 
+    /**
+     * Rewrites the WHOLE row, status included, so it can also reopen a FAILED run as COMPLETED. Kept for existing
+     * callers; prefer [complete] and [finish], which only ever move a RUNNING run forward.
+     */
     @Update
     suspend fun update(run: IndexRunRecord)
 
-    @Query("SELECT * FROM index_run WHERE run_id = :runId")
+    @Query("SELECT $RUN_COLUMNS FROM index_run WHERE run_id = :runId")
     suspend fun get(runId: Long): IndexRunRecord?
 
     /** The checkpoint: cursor and counter together, one statement. */
     @Query("UPDATE index_run SET cursor = :cursor, files_seen = :filesSeen WHERE run_id = :runId AND status = 'RUNNING'")
     suspend fun checkpoint(runId: Long, cursor: String?, filesSeen: Long)
 
-    @Query("UPDATE index_run SET status = :status, finished_ms = :finishedMs, error = :error WHERE run_id = :runId")
+    /**
+     * Ends a RUNNING run as [status] (a finished run is never changed again). A COMPLETED status given here
+     * clears `full`: only [complete] with `exhaustive = true` may leave a run that [SourceAssetsDao.sweepMissing] accepts.
+     */
+    @Query(
+        "UPDATE index_run SET status = :status, finished_ms = :finishedMs, error = :error, " +
+            "`full` = CASE WHEN :status = 'COMPLETED' THEN 0 ELSE `full` END WHERE run_id = :runId AND status = 'RUNNING'",
+    )
     suspend fun finish(runId: Long, status: String, finishedMs: Long, error: String?)
 
+    /**
+     * Completes a RUNNING run. [exhaustive] is the walker's verdict (`WalkStatus.Complete.exhaustive`, false when a
+     * depth or count cap left folders unvisited): the run stays `full` only when it was a full run AND the walk was
+     * exhaustive, so a capped walk can never sweep the files it did not reach as missing. The cursor is dropped.
+     */
+    @Query(
+        "UPDATE index_run SET status = 'COMPLETED', `full` = CASE WHEN :exhaustive THEN `full` ELSE 0 END, cursor = NULL, " +
+            "files_seen = :filesSeen, finished_ms = :finishedMs, error = NULL WHERE run_id = :runId AND status = 'RUNNING'",
+    )
+    suspend fun complete(runId: Long, filesSeen: Long, finishedMs: Long, exhaustive: Boolean)
+
     /** The newest unfinished run of a source: what a walk resumes from after a process death. */
-    @Query("SELECT * FROM index_run WHERE source_row = :sourceRow AND status = 'RUNNING' ORDER BY run_id DESC LIMIT 1")
+    @Query("SELECT $RUN_COLUMNS FROM index_run WHERE source_row = :sourceRow AND status = 'RUNNING' ORDER BY run_id DESC LIMIT 1")
     suspend fun latestRunning(sourceRow: Long): IndexRunRecord?
 }

@@ -47,7 +47,11 @@ class FotozSourcesDatabaseTest {
 
     private suspend fun fullRun(source: Long, status: String): Long {
         val id = db.indexRunsDao().start(IndexRunRecord(sourceRow = source, status = "RUNNING", full = true, cursor = null, startedMs = 1))
-        if (status != "RUNNING") db.indexRunsDao().finish(id, status, 2, null)
+        when (status) {
+            "RUNNING" -> Unit
+            "COMPLETED" -> db.indexRunsDao().complete(id, 1, 2, exhaustive = true)
+            else -> db.indexRunsDao().finish(id, status, 2, null)
+        }
         return id
     }
 
@@ -142,7 +146,7 @@ class FotozSourcesDatabaseTest {
 
         // A completed but partial (delta) run is not a full extent.
         val partial = db.indexRunsDao().start(IndexRunRecord(sourceRow = s, status = "RUNNING", full = false, cursor = null, startedMs = 1))
-        db.indexRunsDao().finish(partial, "COMPLETED", 2, null)
+        db.indexRunsDao().complete(partial, 1, 2, exhaustive = true)
         assertEquals(0, dao.sweepMissing(s, partial))
 
         // A run id of another source is no authority.
@@ -205,5 +209,70 @@ class FotozSourcesDatabaseTest {
         assertEquals(2, r.enrichState)
         assertEquals(2, r.enrichAttempts)
         assertTrue(r.present)
+    }
+
+    @Test
+    fun `a capped walk completes non exhaustive and never sweeps`() = runBlocking {
+        val s = newSource()
+        upsert(asset(s, "reached", 1))
+        upsert(asset(s, "unvisited", 1))
+        val runs = db.indexRunsDao()
+        val dao = db.sourceAssetsDao()
+
+        val capped = runs.start(IndexRunRecord(sourceRow = s, status = "RUNNING", full = true, cursor = "c", startedMs = 1))
+        upsert(asset(s, "reached", capped))
+        runs.complete(capped, 1, 2, exhaustive = false)
+        assertEquals("COMPLETED", runs.get(capped)!!.status)
+        assertEquals(false, runs.get(capped)!!.full)
+        assertNull(runs.get(capped)!!.cursor)
+        assertEquals(0, dao.sweepMissing(s, capped))
+        assertEquals(2, dao.forSource(s).count { it.present })
+
+        // The generic finish can never produce a sweepable run either.
+        val viaFinish = runs.start(IndexRunRecord(sourceRow = s, status = "RUNNING", full = true, cursor = null, startedMs = 1))
+        runs.finish(viaFinish, "COMPLETED", 2, null)
+        assertEquals(0, dao.sweepMissing(s, viaFinish))
+
+        // An exhaustive completion is the only way in.
+        val whole = runs.start(IndexRunRecord(sourceRow = s, status = "RUNNING", full = true, cursor = null, startedMs = 1))
+        upsert(asset(s, "reached", whole))
+        runs.complete(whole, 1, 2, exhaustive = true)
+        assertEquals(1, dao.sweepMissing(s, whole))
+    }
+
+    @Test
+    fun `a finished run is never moved again`() = runBlocking {
+        val s = newSource()
+        val runs = db.indexRunsDao()
+        val run = runs.start(IndexRunRecord(sourceRow = s, status = "RUNNING", full = true, cursor = null, startedMs = 1))
+        runs.finish(run, "FAILED", 5, "boom")
+        runs.finish(run, "COMPLETED", 6, null)
+        runs.complete(run, 99, 7, exhaustive = true)
+        val r = runs.get(run)!!
+        assertEquals("FAILED", r.status)
+        assertEquals("boom", r.error)
+        assertEquals(5L, r.finishedMs)
+        assertEquals(true, r.full)
+        val done = runs.start(IndexRunRecord(sourceRow = s, status = "RUNNING", full = true, cursor = null, startedMs = 1))
+        runs.complete(done, 3, 4, exhaustive = true)
+        runs.finish(done, "CANCELLED", 8, "late")
+        assertEquals("COMPLETED", runs.get(done)!!.status)
+    }
+
+    @Test
+    fun `an oversized cursor reads back as null instead of breaking the row`() = runBlocking {
+        val s = newSource()
+        val runs = db.indexRunsDao()
+        val run = runs.start(IndexRunRecord(sourceRow = s, status = "RUNNING", full = true, cursor = null, startedMs = 5))
+        runs.checkpoint(run, "x".repeat(700_000), 12)
+        val resumed = runs.latestRunning(s)
+        assertNotNull(resumed)
+        assertEquals(run, resumed.runId)
+        assertNull(resumed.cursor)
+        assertEquals(12, resumed.filesSeen)
+        assertEquals(true, resumed.full)
+        assertNull(runs.get(run)!!.cursor)
+        runs.checkpoint(run, "small", 13)
+        assertEquals("small", runs.latestRunning(s)!!.cursor)
     }
 }
