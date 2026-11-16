@@ -66,14 +66,14 @@ class IngestRunner(
             for (d in targets.indices) {
                 val prev = journal.latest()["${f.item.id}|$d"]
                 if (prev?.state == JournalState.VERIFIED || prev?.state == JournalState.CARD_DELETED) {
-                    verified++; perItemOk.merge(f.item.id, 1, Int::plus); present++
+                    verified++; perItemOk[f.item.id] = (perItemOk[f.item.id] ?: 0) + 1; present++
                     continue
                 }
                 try {
                     val outcome = copyOne(f, d, prev)
                     when (outcome) {
                         is Outcome.Verified -> {
-                            verified++; perItemOk.merge(f.item.id, 1, Int::plus)
+                            verified++; perItemOk[f.item.id] = (perItemOk[f.item.id] ?: 0) + 1
                             written += outcome.bytesWritten
                             if (outcome.bytesWritten == 0L) present++
                             if (outcome.renamed) renamedExec++
