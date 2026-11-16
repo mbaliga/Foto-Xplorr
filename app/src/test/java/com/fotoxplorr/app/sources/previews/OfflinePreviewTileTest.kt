@@ -126,6 +126,9 @@ class OfflinePreviewTileTest {
         previews.setOffline(setOf(3L))
         show(source)
         compose.onNodeWithText(PreviewsCopy.NO_PREVIEW).assertIsDisplayed()
+        // The unreadable file is dropped off the main thread, so it can go a moment after the
+        // placeholder shows: wait for it instead of reading the count once.
+        compose.waitUntil(5_000) { runBlocking { store.count(3) } == 0 }
         assertEquals(0, runBlocking { store.count(3) })
     }
 
