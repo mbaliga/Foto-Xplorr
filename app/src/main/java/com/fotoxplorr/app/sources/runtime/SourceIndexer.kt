@@ -224,19 +224,8 @@ class SourceIndexer(
                 WalkEnd.Broke(health, message)
             }
             is WalkStatus.Complete -> withContext(NonCancellable) {
-                val record = runs.get(runId)
-                if (record != null) {
-                    runs.update(
-                        record.copy(
-                            status = IndexRunStatus.COMPLETED.name,
-                            full = status.exhaustive,
-                            cursor = null,
-                            filesSeen = found,
-                            finishedMs = clock(),
-                            error = null,
-                        ),
-                    )
-                }
+                // Guarded in SQL: only a RUNNING run completes, and only an exhaustive walk leaves it `full`.
+                runs.complete(runId, found, clock(), status.exhaustive)
                 // The grant answers the walker's last listing, not this moment: ask again before concluding anything is gone.
                 if (!grants.isHeld(src.rootLocator)) {
                     setState(src, SourceState.REVOKED)

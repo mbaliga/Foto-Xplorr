@@ -86,6 +86,34 @@ class SourceIndexerTest {
     }
 
     @Test
+    fun `completing records the count and drops the cursor and the error`() = runBlocking {
+        val t = MemoryTree.generate(120)
+        val row = addSource()
+        now = 5_000_000L
+        val outcome = indexer(t).index(row) as IndexOutcome.Completed
+        val run = db.indexRunsDao().get(1)!!
+        assertEquals("COMPLETED", run.status)
+        assertEquals(outcome.files, run.filesSeen)
+        assertEquals(5_000_000L, run.finishedMs)
+        assertNull(run.cursor)
+        assertNull(run.error)
+        assertTrue(run.full)
+    }
+
+    @Test
+    fun `a run something else already ended is not reopened by the indexer`() = runBlocking {
+        val t = MemoryTree.generate(2_000)
+        val row = addSource()
+        val outcome = indexer(t, hook = { if (it == 2) runBlocking { db.indexRunsDao().finish(1, "CANCELLED", 9, "stopped elsewhere") } }).index(row)
+        assertTrue(outcome is IndexOutcome.Completed)
+        val run = db.indexRunsDao().get(1)!!
+        assertEquals("the guarded complete leaves a finished run alone", "CANCELLED", run.status)
+        assertEquals("stopped elsewhere", run.error)
+        // and so a run that is not COMPLETED+full can never sweep
+        assertEquals(0, (outcome as IndexOutcome.Completed).swept)
+    }
+
+    @Test
     fun `a walk killed mid-way and resumed gives the same set as one that was not`() = runBlocking {
         val t = MemoryTree.generate(5_000)
         val row = addSource()
