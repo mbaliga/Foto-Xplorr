@@ -66,6 +66,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -1329,9 +1330,28 @@ private fun GalleryBrowser(
     // Over a pane or the map the details, actions and view options rooms would act on the hidden
     // grid, so only the navigation room stays (and the shell refuses a drag from an edge with no
     // room).
+    // The left room's card column (see LeftRoomPager.kt): the wheel's fractional position, read only
+    // in placement, and what the live card's own offset is made of.
+    val railPosition = remember { mutableFloatStateOf(0f) }
+    val columnReduceMotion = com.fotoxplorr.app.hyle.rememberReduceMotion()
+    val railSelectedIndex = railItems.indexOfFirst { it.id == railSelectedId(mapOpen, destination) }.coerceAtLeast(0)
     val rooms = roomSlots<@Composable () -> Unit>(
         navigation = {
+          Box(Modifier.fillMaxSize()) {
+            val railCoverMap by produceState<Map<String, com.fotoxplorr.app.media.MediaAsset?>>(emptyMap(), state) {
+                value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { railCovers(state) }
+            }
+            LeftRoomGhosts(
+                items = railItems,
+                selectedIndex = railSelectedIndex,
+                position = railPosition,
+                covers = railCoverMap,
+                windowWidthPx = shell.viewport.width,
+                windowHeightPx = shell.viewport.height,
+                reduceMotion = columnReduceMotion,
+            )
             DestinationRailPanel(
+                positionState = railPosition,
                 items = railItems,
                 selectedId = railSelectedId(mapOpen, destination),
                 // Selecting does NOT close the room: the rail commits the hovered word while the
@@ -1370,6 +1390,7 @@ private fun GalleryBrowser(
                 // The room is light (owner, 2026-11-08); the pinned rail keeps the dark default.
                 palette = RailPalette.Light,
             )
+          }
         },
         // TOP = what this view is, pulled down over it.
         details = {
@@ -1465,7 +1486,18 @@ private fun GalleryBrowser(
         // now"*): the card slides right and stays large, flat and fully lit, keeping about half
         // the window, and the destinations sit in the half it leaves. Only the gallery has a left
         // room; the viewer has none.
-        leftPark = OpenPark(floor = RAIL_LIGHT_FLOOR),
+        leftPark = OpenPark(
+            keepFraction = LEFT_ROOM_KEEP,
+            scale = LEFT_ROOM_SCALE,
+            cornerDp = LEFT_ROOM_CORNER_DP,
+            floor = RAIL_LIGHT_FLOOR,
+        ),
+        // The card column (owner, 2026-11-16): the live card rides with the wheel; its neighbours
+        // are the ghosts drawn in the room. Read in the shell's placement phase.
+        parkedCardOffsetY = {
+            if (columnReduceMotion) 0f
+            else pagerLiveOffsetPx(railSelectedIndex, railPosition.floatValue, railItems.size, shell.viewport.height.toFloat())
+        },
         // Hand the notification's own strip back to it. Without this the shell claims the top
         // 56dp on the Initial pass and every pull on the status line opens the top room (when
         // there is one) instead of expanding the line -- the two gestures live in the same

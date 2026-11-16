@@ -181,3 +181,18 @@ Prepare:
       (unverified)
 - [ ] **Flaky test.** `SyncEngineTest` "the run reports paused when cancelled" passes in CI; it failed once in a full run and
       passed alone. (unverified)
+
+## 10. Left-room card pager (follow-up, from the transition video)
+- [ ] **The column moves with the wheel.** Open the room and turn the words slowly: the big card slides up (or down) and out
+      while the next one slides into the centre, in step with the finger, and reverses when you turn back. (unverified)
+- [ ] **No jump at commit.** Pause on a new word (the card's content swaps after about 140 ms): nothing moves or flashes at
+      that moment, the old card simply becomes the neighbour at the same place. (unverified)
+- [ ] **Neighbours peek.** At rest the previous card shows in the strip above and the next below (about 7% of the height
+      each), clipped by the window, with the gap between them. (unverified)
+- [ ] **The ends.** On the first word there is nothing above; on the last nothing below; the wheel does not loop. (unverified)
+- [ ] **Covers.** Each peeking card shows that destination's newest photo; Protected, Experimental and Map show a soft tint;
+      a sensitive or locked photo never appears, also after marking one sensitive while the room is open. (unverified)
+- [ ] **Reduced motion.** With animations off the big card does not slide; neighbours stand still. (unverified)
+- [ ] **Drag and tap.** The big card still takes a tap (closes the room) after the column has moved, and a drag from its edge
+      still closes it. TalkBack does not read the ghosts. (unverified)
+- [ ] **Cost.** Turning the wheel stays smooth with 20,000 photos; opening the room does not stall. (unverified)

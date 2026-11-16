@@ -221,6 +221,7 @@ fun DestinationRailPanel(
     onTurning: (Boolean) -> Unit = {},
     onClose: (() -> Unit)? = null,
     palette: RailPalette = RailPalette.Dark,
+    positionState: androidx.compose.runtime.MutableFloatState? = null,
 ) {
     Column(
         modifier = modifier
@@ -252,6 +253,7 @@ fun DestinationRailPanel(
             onLeavePane = onLeavePane,
             onTurning = onTurning,
             ink = palette.ink,
+            positionState = positionState,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()

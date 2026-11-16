@@ -16,6 +16,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableFloatState
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -94,6 +96,9 @@ import kotlin.math.roundToInt
  * @param onTurning whether the wheel is moving at all: a finger on it, its fling, or the rail's
  *   own settle. A host that creates something costly from the committed word (the street map)
  *   waits for false, because a commit arrives while the finger is still down.
+ * @param positionState when given, receives the wheel's fractional position in rows (0 = the first
+ *   word) every time the scroll moves, and is set to the selected row on first composition, so a
+ *   host can read it in a draw or placement phase (the left room's card column follows it).
  */
 @Composable
 fun DestinationWordRail(
@@ -106,6 +111,7 @@ fun DestinationWordRail(
     onLeavePane: () -> Unit = {},
     onTurning: (Boolean) -> Unit = {},
     ink: Color = Color.White,
+    positionState: MutableFloatState? = null,
 ) {
     if (items.isEmpty()) return
 
@@ -184,6 +190,17 @@ fun DestinationWordRail(
         // A rail that leaves the composition mid-turn (a window resize swapping presentations)
         // must not leave the host believing it is still turning.
         DisposableEffect(scroll) { onDispose { currentOnTurning(false) } }
+
+        // The position for the card column. The first value is the selected row, before the wheel is
+        // placed, so the column never starts from a stale position; after that it follows the scroll.
+        if (positionState != null) {
+            SideEffect { if (!placed) positionState.floatValue = selectedIndex.toFloat() }
+            LaunchedEffect(scroll, pitchPx, positionState) {
+                // Not before the wheel is placed: its first offset (0) is not a position anyone chose.
+                snapshotFlow { if (placed && pitchPx > 0f) scroll.value / pitchPx else Float.NaN }
+                    .collect { if (it.isFinite()) positionState.floatValue = it }
+            }
+        }
 
         LaunchedEffect(selectedIndex, pitchPx) {
             val target = (selectedIndex * pitchPx).roundToInt()

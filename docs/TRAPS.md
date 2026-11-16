@@ -2341,3 +2341,14 @@ machine cannot run the Native compile (TRAPS #134). Test lessons: a Compose butt
 needs `useUnmergedTree`; give grid fixtures distinct dates, or burst grouping folds them into one stack; region time zone
 tests go in `jvmTest`; `commonTest` names avoid `, . : ; / \ < > [ ]`; `BoardMediaProvider` is a reusable fake MediaStore for
 writer tests.
+
+## 163. A wheel's first offset is not a position, and the open park's card is moved by placement
+
+Two things in the left room's card column. (1) `DestinationWordRail` places its wheel on the selected row in a `LaunchedEffect`,
+so the scroll state reads 0 first; a position published from it before `placed` snaps the card column to the first word for a
+frame (the card jumps up, then back). The position is set to the selected row in a `SideEffect` and the scroll is only
+forwarded once the wheel is placed. (2) The live card must be shifted with the shell's `parkedCardOffsetY`, which is added in
+`Modifier.offset { }` (placement), never with a `graphicsLayer` translation: a layer translation draws the card there but leaves
+its hit-test where it was. The ghost cards are the same: a zero-size layout that places the measured child to the right of its
+parent (a child may draw outside its parent when nothing clips), and the offset is read inside the placement block so a turn of
+the wheel recomposes nothing. A ghost's list is a `derivedStateOf`, so only a change in WHICH cards show recomposes.

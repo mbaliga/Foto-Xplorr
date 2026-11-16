@@ -1943,3 +1943,26 @@ All 12 were taken as recommended, and the work was built to them. Say so if any 
   3. Share two or more photos from another app into Fotoz: View and Save to library.
   4. The persisted-grant count with several sources, backup, sync and sidecar folders.
   5. A locked or sensitive photo whose copy is on the SD card: it must not appear.
+
+### Batch 11 follow-up: left-room card pager (16 Nov 2026)
+
+Owner, from the transition video: the destinations' cards form a vertical column beside the word wheel and the whole
+column moves with the wheel. Built to that, from the video only (nothing has run on a device).
+
+- **Library** (Shared-Libraries-asoc, branch restarted from main as the previous PR was merged; cell-shell `9335183`): an
+  optional `SpatialShell(parkedCardOffsetY = { px })`, read in the card's placement lambda and added to `ty` only while a left
+  open park shows (`combinedParkTy`, 3 tests). Existing consumers are unchanged. Pinned in its own commit.
+- **App**: `DestinationWordRail` takes `positionState` (the scroll in rows, fractional; set to the selected row before the
+  wheel is placed). `LeftRoomPager.kt` holds the pure geometry (pitch = 0.80 card + 0.03 gap of the window height, ghost
+  indices, clamp so the ends have no ghost, live offset) and `LeftRoomGhosts`, which draws the other visible cards in the room
+  layer behind the live card, left edge on the live card's left edge, positions read at placement. The live card gets
+  `(s - p) * pitch`; at a commit the live card's offset and the old card's ghost swap places on the same pixels (tested).
+- **Covers**: each ghost shows the newest photo of that destination's browsable list (`destinationAssets`, never a sensitive
+  one, none for Protected or Experimental or Map) through `MediaImage`, sized to the ghost; no cover gets a stable soft tint.
+  Computed off the main thread when the room opens and when the state changes.
+- **Reduced motion** (system animator scale 0): the live card does not slide and the neighbours stand at rest. **TalkBack**:
+  ghosts are `clearAndSetSemantics`, the wheel is still the control.
+- Not done: no vertical drag on the cards themselves (the wheel is the control); ghosts are not tappable; the card column
+  while the room is opening or closing slides with the room rather than being exactly aligned to the live card (it is only
+  exact at rest).
+- Device checks are in `docs/device-test/batch-11-checklist.md`, section 10.
