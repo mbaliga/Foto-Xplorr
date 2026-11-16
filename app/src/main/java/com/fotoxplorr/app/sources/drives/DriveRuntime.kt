@@ -6,6 +6,8 @@ import com.fotoxplorr.app.background.WorkRulesStore
 import com.fotoxplorr.app.background.WorkVerdict
 import com.fotoxplorr.app.background.readDeviceState
 import com.fotoxplorr.app.jobs.JobRunner
+import com.fotoxplorr.app.sources.previews.DrivePreviewMapping
+import com.fotoxplorr.app.sources.previews.SourcePreviews
 import com.fotoxplorr.app.sources.runtime.SourceJobs
 import com.fotoxplorr.app.sources.runtime.SourcesRuntime
 import com.fotoxplorr.core.index.sources.SourceKind
@@ -26,6 +28,8 @@ import kotlinx.coroutines.flow.map
 class RuntimeDriveSourcePort(
     private val appContext: Context,
     private val runtime: SourcesRuntime,
+    /** A recognised drive is back: maps its remembered preview policy onto its sources' keep and cap. */
+    private val onReconnected: suspend (uuid: String, rows: List<Long>) -> Unit = { _, _ -> },
     private val runner: () -> JobRunner?,
 ) : DriveSourcePort {
     override fun knownVolumes(): Flow<Set<String>> = runtime.statuses().map { list ->
@@ -36,6 +40,7 @@ class RuntimeDriveSourcePort(
     override suspend fun setReachable(uuid: String, reachable: Boolean, indexNow: Boolean) {
         val rows = runtime.setVolumeReachable(uuid, reachable)
         if (!reachable || rows.isEmpty()) return
+        runCatching { onReconnected(uuid, rows) }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
         val wanted = if (indexNow) rows else runtime.indexOnConnectCandidates().filter { it in rows }
         val jobs = runner() ?: return
         if (wanted.isEmpty()) return
@@ -67,9 +72,18 @@ object DriveRuntime {
 
     internal fun forgetInstance() = synchronized(this) { controller = null }
 
-    private fun build(app: Context): DriveController = DriveController(
-        store = PrefsDriveSettingsStore(app),
-        port = RuntimeDriveSourcePort(app, SourcesRuntime.get(app)) { jobRunner },
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
-    )
+    private fun build(app: Context): DriveController {
+        val store = PrefsDriveSettingsStore(app)
+        return DriveController(
+            store = store,
+            port = RuntimeDriveSourcePort(
+                app, SourcesRuntime.get(app),
+                onReconnected = { uuid, rows ->
+                    val previews = SourcePreviews.get(app)
+                    DrivePreviewMapping.apply(store.get(uuid).previews, rows, previews.settings) { previews.store.enforceCap(it) }
+                },
+            ) { jobRunner },
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        )
+    }
 }

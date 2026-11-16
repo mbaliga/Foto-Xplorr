@@ -18,6 +18,11 @@ interface PreviewSettings {
     fun setKeep(sourceRow: Long, keep: Boolean)
     fun forget(sourceRow: Long)
 
+    /** The drive preview policy (its wire value) last mapped onto this source's keep and cap, or null if none was. */
+    fun appliedDrivePolicy(sourceRow: Long): Int?
+
+    fun setAppliedDrivePolicy(sourceRow: Long, wire: Int)
+
     /** Changes to the settings, so a screen can redraw. */
     fun changes(): StateFlow<Int>
 }
@@ -25,6 +30,7 @@ interface PreviewSettings {
 class InMemoryPreviewSettings : PreviewSettings {
     private val caps = HashMap<Long, Long>()
     private val keeps = HashMap<Long, Boolean>()
+    private val applied = HashMap<Long, Int>()
     private val version = MutableStateFlow(0)
 
     @Synchronized override fun capBytes(sourceRow: Long): Long = caps[sourceRow] ?: PreviewPolicy.DEFAULT_CAP_BYTES
@@ -35,7 +41,11 @@ class InMemoryPreviewSettings : PreviewSettings {
 
     @Synchronized override fun setKeep(sourceRow: Long, keep: Boolean) { keeps[sourceRow] = keep; version.update { it + 1 } }
 
-    @Synchronized override fun forget(sourceRow: Long) { caps.remove(sourceRow); keeps.remove(sourceRow); version.update { it + 1 } }
+    @Synchronized override fun forget(sourceRow: Long) { caps.remove(sourceRow); keeps.remove(sourceRow); applied.remove(sourceRow); version.update { it + 1 } }
+
+    @Synchronized override fun appliedDrivePolicy(sourceRow: Long): Int? = applied[sourceRow]
+
+    @Synchronized override fun setAppliedDrivePolicy(sourceRow: Long, wire: Int) { applied[sourceRow] = wire }
 
     override fun changes(): StateFlow<Int> = version.asStateFlow()
 }
@@ -58,8 +68,13 @@ class PrefsPreviewSettings(context: Context) : PreviewSettings {
     }
 
     override fun forget(sourceRow: Long) {
-        prefs.edit().remove("$sourceRow.cap").remove("$sourceRow.keep").apply(); version.update { it + 1 }
+        prefs.edit().remove("$sourceRow.cap").remove("$sourceRow.keep").remove("$sourceRow.drive").apply(); version.update { it + 1 }
     }
+
+    override fun appliedDrivePolicy(sourceRow: Long): Int? = if (prefs.contains("$sourceRow.drive")) prefs.getInt("$sourceRow.drive", 0) else null
+
+    // Recording which policy was applied is bookkeeping, not a change the screen shows: no redraw.
+    override fun setAppliedDrivePolicy(sourceRow: Long, wire: Int) { prefs.edit().putInt("$sourceRow.drive", wire).apply() }
 
     override fun changes(): StateFlow<Int> = version.asStateFlow()
 

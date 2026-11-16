@@ -75,6 +75,8 @@ import com.fotoxplorr.app.sources.drives.DriveRuntime
 import com.fotoxplorr.app.sources.runtime.AddResult
 import com.fotoxplorr.app.sources.runtime.SourceJobs
 import com.fotoxplorr.app.sources.previews.PreviewsCardSection
+import com.fotoxplorr.app.sources.previews.SourcePreviews
+import com.fotoxplorr.app.sources.previews.StorePreviewCost
 import com.fotoxplorr.app.sources.runtime.SourcesRuntime
 import com.fotoxplorr.core.index.sources.SourceState
 import java.text.DateFormat
@@ -251,9 +253,16 @@ private fun Progress(card: SourceCard) {
 
 /** A labelled switch: the whole row is the one control, as in the Settings rows. */
 @Composable
-private fun SwitchLine(label: String, help: String, icon: androidx.compose.ui.graphics.vector.ImageVector, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchLine(
+    label: String,
+    help: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onChange: (Boolean) -> Unit,
+) {
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
+        Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onChange),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 12.dp).size(24.dp))
@@ -313,7 +322,15 @@ fun SourcesHost(onBack: () -> Unit, modifier: Modifier = Modifier) {
     }
     val drives = remember(context) { DriveRuntime.controller(context) }
     val ignored by remember(drives) { drives.ignored() }.collectAsStateWithLifecycle(initialValue = emptyList())
-    val panel = remember(statuses, ignored) { StoragePanelModel.build(statuses, ::formatTime, ignored = ignored) }
+    // What the previews really cost: the store's exact sums, read for each source once so the panel
+    // knows them before the person opens a card (a source's folder is listed on the IO dispatcher).
+    val previews = remember(context) { SourcePreviews.get(context) }
+    val previewSizes by previews.store.sizes.collectAsStateWithLifecycle()
+    val rows = statuses.map { it.info.row }
+    LaunchedEffect(rows, previews) { rows.forEach { previews.store.sizeBytes(it) } }
+    val panel = remember(statuses, ignored, previewSizes) {
+        StoragePanelModel.build(statuses, ::formatTime, previewCost = StorePreviewCost { previewSizes }, ignored = ignored)
+    }
     SourcesScreen(cards, message, actions, modifier, footer = { StoragePanel(panel, onAskAgain = drives::askAgain) })
 }
 

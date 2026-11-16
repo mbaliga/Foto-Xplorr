@@ -8,6 +8,7 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import com.fotoxplorr.app.sources.drives.DriveIds
 import com.fotoxplorr.app.sources.gallery.SourceAssetEntry
 import com.fotoxplorr.app.sources.gallery.SourceAssetsProvider
+import com.fotoxplorr.app.sources.previews.SourcePreviews
 import com.fotoxplorr.app.sources.saf.GrantOutcome
 import com.fotoxplorr.app.sources.saf.SafDocumentTree
 import com.fotoxplorr.app.sources.saf.SafGrantRegistry
@@ -20,6 +21,7 @@ import com.fotoxplorr.core.index.sources.SourceAssetRow
 import com.fotoxplorr.core.index.sources.SourceInfo
 import com.fotoxplorr.core.index.sources.SourceKind
 import com.fotoxplorr.core.index.sources.SourceState
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -91,6 +93,7 @@ class SourcesRuntime(
     private val clock: () -> Long = System::currentTimeMillis,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val sampleMs: Long = 400L,
+    private val onRemoved: suspend (sourceRow: Long) -> Unit = {},
 ) {
     private val dbHolder = lazy(dbFactory)
     private val opened = MutableStateFlow(dbExists())
@@ -198,6 +201,14 @@ class SourcesRuntime(
         val mine = meta.get(sourceRow)
         meta.remove(sourceRow)
         progressState.update { it - sourceRow }
+        // Our own cached previews and settings of this source go with it (never a user file). A failure
+        // here must not leave the removal half done: the previews are a rebuildable cache.
+        try {
+            onRemoved(sourceRow)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
         val stillUsed = db.sourcesDao().getAll().any { it.rootLocator == src.rootLocator } ||
             grants.usedByOtherFeatures(src.rootLocator)
         if (mine.tookGrant && !stillUsed) grants.forget(src.rootLocator)
@@ -322,6 +333,12 @@ class SourcesRuntime(
                 },
                 grants = grants,
                 meta = meta,
+                onRemoved = { row ->
+                    // Built on first use, so a phone with no sources never creates the previews service for this.
+                    val previews = SourcePreviews.get(app)
+                    previews.store.forget(row)
+                    previews.settings.forget(row)
+                },
                 indexerFor = { db ->
                     SourceIndexer(
                         db = db,

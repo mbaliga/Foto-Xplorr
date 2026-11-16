@@ -35,7 +35,7 @@ object SourcesCopy {
     const val SIZES_PENDING = "Some sizes are still unknown, so a few tiles look square."
 
     const val REMOVE_TITLE = "Remove this folder?"
-    const val REMOVE_BODY = "Fotoz forgets this folder and never touches your files."
+    const val REMOVE_BODY = "Fotoz forgets this folder and its saved previews, and never touches your files."
     const val REMOVE_CONFIRM = "Remove"
     const val CANCEL = "Cancel"
     const val DISMISS = "Dismiss"

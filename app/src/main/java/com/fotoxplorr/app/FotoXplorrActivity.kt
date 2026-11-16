@@ -95,6 +95,7 @@ import com.fotoxplorr.app.sources.gallery.mergedCatalogueFlow
 import com.fotoxplorr.app.sources.gallery.mustWaitForSources
 import com.fotoxplorr.app.sources.runtime.SourcesRuntime
 import com.fotoxplorr.app.sources.ui.DriveConnectedHost
+import com.fotoxplorr.app.sources.ui.SourcePreviewPassHook
 import com.fotoxplorr.app.sources.ui.SourcesLifecycleHook
 import com.fotoxplorr.app.metadata.GpsCoordinate
 import com.fotoxplorr.app.metadata.MetadataEdit
@@ -410,6 +411,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         privateFolderStore.observeUnlockedFolders().value,
         galleryPreferences.observe().value.hideSensitive,
     )
+    // Offline previews of the added folders: the bounded pass gets the BROWSABLE list only (TRAPS #33),
+    // while the sources are online, off the main thread; with no sources it does nothing at all.
+    SourcePreviewPassHook(assets, hasSources = catalogue.sourceFiles > 0, browsable = ::browsableNow)
 
     // P0-18: ExternalViewerActivity redirects here, rather than reimplementing the catalogue
     // actions itself, when an incoming "Open with" URI turns out to already be a photo this app
