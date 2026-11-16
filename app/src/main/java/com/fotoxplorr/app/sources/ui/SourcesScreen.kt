@@ -74,6 +74,7 @@ import com.fotoxplorr.app.shell.AppStateViewModel
 import com.fotoxplorr.app.sources.drives.DriveRuntime
 import com.fotoxplorr.app.sources.runtime.AddResult
 import com.fotoxplorr.app.sources.runtime.SourceJobs
+import com.fotoxplorr.app.sources.previews.PreviewsCardSection
 import com.fotoxplorr.app.sources.runtime.SourcesRuntime
 import com.fotoxplorr.core.index.sources.SourceState
 import java.text.DateFormat
@@ -104,8 +105,8 @@ fun SourcesScreen(
     cards: List<SourceCard>,
     message: String?,
     actions: SourcesActions,
-    footer: @Composable () -> Unit = {},
     modifier: Modifier = Modifier,
+    footer: @Composable () -> Unit = {},
 ) {
     BackHandler(onBack = actions.onBack)
     var confirmRemove by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -210,6 +211,7 @@ private fun SourceCardView(card: SourceCard, actions: SourcesActions, onAskRemov
         }
         SwitchLine(SourcesCopy.INCLUDE, SourcesCopy.INCLUDE_HELP, Icons.Outlined.Visibility, card.included) { actions.onInclude(card.row, it) }
         SwitchLine(SourcesCopy.ON_CONNECT, SourcesCopy.ON_CONNECT_HELP, Icons.Outlined.Schedule, card.indexOnConnect) { actions.onIndexOnConnect(card.row, it) }
+        PreviewsCardSection(card.row, card.name)
     }
 }
 
