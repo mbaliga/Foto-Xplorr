@@ -12,7 +12,19 @@ case "$arch" in
   *) echo "unknown arch $arch" >&2; exit 2 ;;
 esac
 export LANG=C.UTF-8 LC_ALL=C.UTF-8
-./gradlew --no-daemon -Pfotoz.native=true ":ut:bridge:$task"
+# Maven Central / the plugin portal answer shared CI egress IPs with HTTP 429 now and then (seen on run 44155266105:
+# "Could not GET ... gson-2.10.1.pom ... 429 Too Many Requests", 37 s in). Retry ONLY when the log shows a transport-level
+# fetch failure; any compile or link error fails on the first attempt.
+log="$(mktemp)"
+for attempt in 1 2 3 4; do
+  if ./gradlew --no-daemon -Pfotoz.native=true ":ut:bridge:$task" 2>&1 | tee "$log"; then break; fi
+  if [ "$attempt" -lt 4 ] && grep -qE 'Received status code (429|5[0-9][0-9])|Could not GET|Read timed out|Connection reset' "$log"; then
+    echo "transient dependency fetch failure; retry $attempt/3 after $((attempt * 30))s" >&2
+    sleep $((attempt * 30))
+  else
+    exit 1
+  fi
+done
 src="ut/bridge/build/bin/$dir/releaseShared/libfotozcore.so"
 [ -f "$src" ] || { echo "missing $src" >&2; exit 1; }
 mkdir -p "ut/app/prebuilt/$arch"
