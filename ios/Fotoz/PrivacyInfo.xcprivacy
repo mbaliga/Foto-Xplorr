@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Fotoz: no tracking, no collected data, no network. -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<!-- Fotoz's own Swift uses no "required reason" API (no UserDefaults, no file timestamps,
+	     no disk-space or boot-time calls). UNVERIFIED: whether the statically linked Kotlin/Native
+	     runtime in FotozCore calls any. Check Xcode's Privacy Report on the first archive
+	     (ios/OWNER_VERIFY.md) and add the reason codes here if it does. -->
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array/>
+</dict>
+</plist>

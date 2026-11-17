@@ -1752,3 +1752,9 @@ Everything in the checklist. Above all:
   3. A keyboard cull with sidecars on and a folder grant.
   4. The 360 view.
   5. The corpus decode test on API 26 and 33+.
+
+## iOS port, first cut (17 Nov 2026)
+
+Owner directive 2026-11-17: ship iOS builds from GitHub Actions. Built `:ios:core` (JSON facade over the pure core, jvm-tested),
+`ios/FotozKit` (Swift package, `swift test` green on Linux), a SwiftUI/PhotoKit shell (CODE-ONLY) and `.github/workflows/ios.yml`
+(CI-LANE-WRITTEN). Decisions, evidence classes and gaps: `docs/handoff/IOS-PORT.md`. Owner checks: `ios/OWNER_VERIFY.md`.

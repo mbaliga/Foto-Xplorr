@@ -6,6 +6,13 @@
 > track updates only its own §4 row and appends to `PROGRESS` entries in this repo's own state file
 > (`docs/handoff/MASTER-PROGRESS.md`, which does not exist yet; Phase 1 creates it).
 
+> **Status update 2026-11-17 (iOS):** an iOS track now exists under `ios/` as a SwiftUI shell over the
+> shared Kotlin core, built by GitHub Actions (`.github/workflows/ios.yml`). It departs from Phase 10's
+> Compose-Multiplatform route and implements only a thin v1. See `docs/handoff/IOS-PORT.md` (evidence per
+> item: facade and Swift package BUILT-HERE; Apple-side code CODE-ONLY; lane CI-LANE-WRITTEN) and
+> `ios/OWNER_VERIFY.md`. The rest of this document is still the 6 Oct plan and is stale against `main`
+> (KMP `:core:*` and `:ut:bridge` exist; ADR-013 chose Qt 6 over Compose Desktop).
+
 **Written:** 6 Oct 2026. **Baseline:** `main` @ `0ff1373` (Phase 0 merged as #13, 24 Sep 2026).
 
 **Relationship to `docs/handoff/MASTER-PLAN.md`.** This file *amends* the master plan; it is not a

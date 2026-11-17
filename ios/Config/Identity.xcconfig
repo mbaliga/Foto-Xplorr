@@ -1,0 +1,17 @@
+// ============================================================================================
+// THE ONE PLACE the Apple identity lives. Every other file reads these through build settings.
+//
+// OWNER FOLLOW-UP (plan rule R11): the bundle id must have a row in the constellation's
+// NAMES.md BEFORE the first signed build / App Store Connect record. NAMES.md lives outside this
+// repo, so that row is NOT written here. Owner directive 2026-11-17: Apple bundle ids are
+// com.asoc.<appname>; this app is Fotoz.
+//
+// Nothing secret belongs in this file. Signing certificates, provisioning profiles and the
+// App Store Connect API key are GitHub *environment* secrets (see .github/workflows/ios.yml).
+// ============================================================================================
+FOTOZ_BUNDLE_ID = com.asoc.fotoz
+FOTOZ_DISPLAY_NAME = Fotoz
+FOTOZ_MARKETING_VERSION = 0.1.0
+FOTOZ_BUILD_NUMBER = 1
+// Left empty on purpose: the Apple Developer Team ID is the owner's, supplied at sign time.
+FOTOZ_TEAM_ID =

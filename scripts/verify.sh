@@ -53,6 +53,8 @@ GRADLE_ARGS=(
   :app:testConnectDebugUnitTest :app:lintConnectDebug :app:assembleConnectDebug
   :app:verifyOfflineManifest :app:verifyOfflineRuntimeClasspath :app:verifyOfflineSourceReferences
   :app:reportRuntimeLicences
+  # iOS port facade (pure JVM contract/behaviour tests; the Apple targets are built by ios.yml on macOS).
+  :ios:core:jvmTest
   :app:compileOfflineDebugAndroidTestKotlin :app:compileConnectDebugAndroidTestKotlin
 )
 
