@@ -1,5 +1,6 @@
 package com.fotoxplorr.core.db.gallery
 
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Query
 import com.fotoxplorr.core.db.entity.AssetEntity
@@ -206,7 +207,29 @@ interface GalleryProjectionDao {
             "LIMIT :limit OFFSET :offset",
     )
     suspend fun observeFolder(folderKey: String, showVideos: Boolean, limit: Int, offset: Int): List<AssetEntity>
+
+    /** One row per browsable folder (same visibility predicates as [observeFolder], plus: a file the
+     *  last full sync confirmed MISSING/UNREADABLE is not counted -- the other projections do not
+     *  filter on availability at all, a gap the Linux bridge compensates for after paging), newest
+     *  content first -- what a shell's folder list needs, so it never has to page the whole
+     *  timeline to discover folders. [FolderSummary.name] is the source-supplied bucket name. */
+    @Query(
+        "SELECT folder_key AS folder_key, COALESCE(MAX(bucket_name), '') AS name, " +
+            "COUNT(*) AS item_count, MAX(date_taken_ms) AS newest_ms FROM asset WHERE trashed = 0 " +
+            "AND availability IN ('ONLINE', 'OFFLINE') " +
+            "AND asset_id IN (SELECT asset_id FROM asset_user WHERE archived = 0) " +
+            "AND (:showVideos = 1 OR mime NOT LIKE 'video/%') " +
+            "GROUP BY folder_key ORDER BY newest_ms DESC, folder_key ASC",
+    )
+    suspend fun folders(showVideos: Boolean): List<FolderSummary>
 }
+
+data class FolderSummary(
+    @ColumnInfo(name = "folder_key") val folderKey: String,
+    @ColumnInfo(name = "name") val name: String,
+    @ColumnInfo(name = "item_count") val itemCount: Int,
+    @ColumnInfo(name = "newest_ms") val newestMs: Long,
+)
 
 /** Same constants as `GalleryProjection.kt`'s own (`RECENT_WINDOW_MILLIS`, `LARGE_FILE_THRESHOLD_BYTES`)
  *  -- duplicated deliberately: this module doesn't (and shouldn't) depend on `:app`. */
