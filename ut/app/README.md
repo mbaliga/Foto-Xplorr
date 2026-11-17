@@ -24,6 +24,14 @@ FOTOZ_CORE_LIB=$PWD/ut/app/prebuilt/amd64/libfotozcore.so build/ut-app/fotoz    
 ```
 Environment: `FOTOZ_CORE_LIB` (core path override), `FOTOZ_DB` (database path), `FOTOZ_QC2_STYLE` (Quick Controls 2 style).
 
+## Linux desktop build (same sources; `docs/handoff/LINUX-PORT.md`)
+```
+linux/scripts/build-linux.sh 6          # core + Qt 6 shell + tests + .deb/.tar.gz (use 5 for the Qt 5.15 build)
+cmake -S ut/app -B build/d -DFOTOZ_DESKTOP=ON -DFOTOZ_QT_MAJOR=6 -DFOTOZ_CORE_LIB=... && cmake --install build/d --prefix /usr
+```
+`-DFOTOZ_DESKTOP=ON` adds the folder picker, folder watching, `fotoz [FOLDER...]`, the FHS layout and CPack. Without it you get the click layout.
+Flatpak: `linux/flatpak/`. Packaging gate: `linux/scripts/verify-linux.sh`.
+
 ## Build the click
 ```
 ./ut/scripts/build-core.sh arm64        # cross-links the phone core (linuxArm64); CI does this on an x86 runner

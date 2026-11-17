@@ -132,6 +132,13 @@ and `linuxX64`/`linuxArm64` now link RELEASE shared libraries. Still not done fr
 Content Hub, decoders beyond what Qt ships, ONNX, XMP, duplicates, bulk rename, motion photos, Flatpak. Details and evidence:
 `docs/handoff/UT-PORT.md`.
 
+## Addendum (2026-11-17, later) -- the Linux desktop build exists; Qt 6 verified for the shell logic
+
+`ut/app` now has a `FOTOZ_DESKTOP` build for the Linux desktop and builds with `-DFOTOZ_QT_MAJOR=5|6`. Its QtTest suites (fake core and the real
+`libfotozcore.so`) pass offscreen on Qt 5.15.13 and Qt 6.4.2, so the "Qt 6 unproven" caveat above is now measured for the shell's logic and QML (not for
+Lomiri, not on a device). Point 1 stands: one Qt 6 shell is the destination; Compose Desktop is not built. Flatpak (point 4) is written against
+`org.kde.Platform//6.11` but never built here. Details: `docs/handoff/LINUX-PORT.md`.
+
 ## Sources
 
 The research notes behind this ADR are in the conversation record. The key sources:

@@ -19,6 +19,11 @@
 > BUILT-HERE on a Linux host (shell tested offscreen against the real core); the click, its AppArmor/manifest and `.github/workflows/ut.yml`
 > are CODE-ONLY / CI-LANE-WRITTEN; nothing ran on a device. See `docs/handoff/UT-PORT.md` and `ut/OWNER_VERIFY.md`.
 
+> **Status update 2026-11-17 (Linux desktop):** Phase 9 was **not** built as Compose Desktop (ADR-013 dropped it). The Ubuntu Touch Qt shell now has a
+> desktop build (`FOTOZ_DESKTOP`: folder picker, inotify watching, keyboard map, deb/tarball/Flatpak packaging) that builds and passes its tests on Qt 5.15.13 and
+> Qt 6.4.2 (BUILT-HERE, offscreen, real core). `.github/workflows/linux.yml` and the Flatpak manifest are CI-LANE-WRITTEN / CODE-ONLY; nothing ran on a real desktop.
+> See `docs/handoff/LINUX-PORT.md` and `linux/OWNER_VERIFY.md`.
+
 **Written:** 6 Oct 2026. **Baseline:** `main` @ `0ff1373` (Phase 0 merged as #13, 24 Sep 2026).
 
 **Relationship to `docs/handoff/MASTER-PLAN.md`.** This file *amends* the master plan; it is not a
