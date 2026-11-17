@@ -41,6 +41,11 @@ include(":core:organize")
 include(":core:db")
 include(":core:index")
 
+// iOS port (docs/handoff/IOS-PORT.md): the Swift-facing facade over the pure :core:* modules.
+// Always included -- it has a jvm() target so its tests run on any host (and in the normal
+// gate); the Apple targets + XCFramework appear only with -Pfotoz.ios=true on a macOS host.
+include(":ios:core")
+
 // WP8.1 (MASTER-PLAN.md Phase 8 / ADR-013 point 2): the Kotlin/Native C API over the core,
 // `libfotozcore.so`. Started ahead of ADR-013/WP8.1's own stated precondition ("P7 released") at
 // the owner's explicit request -- see docs/handoff/MASTER-PROGRESS.md's WP8.1 Decisions. Unlike

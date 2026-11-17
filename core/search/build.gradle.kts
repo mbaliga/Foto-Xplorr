@@ -13,6 +13,15 @@ kotlin {
         linuxArm64()
     }
 
+    // iOS targets are opt-in (-Pfotoz.ios=true) for the same reason as the native ones above:
+    // Apple Kotlin/Native targets only compile on a macOS host, so declaring them unconditionally
+    // would warn-and-disable on Linux and pull Apple toolchains into a plain sync. The
+    // `ios.yml` workflow (macos-latest) turns this on. See ios/README.md.
+    if (providers.gradleProperty("fotoz.ios").isPresent) {
+        iosArm64()
+        iosSimulatorArm64()
+    }
+
     sourceSets {
         commonMain.dependencies {
             implementation(project(":core:model"))
