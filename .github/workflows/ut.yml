@@ -154,7 +154,15 @@ jobs:
         run: |
           grep -q "^$USER:" /etc/subuid || echo "$USER:100000:200000" | sudo tee -a /etc/subuid
           grep -q "^$USER:" /etc/subgid || echo "$USER:100000:200000" | sudo tee -a /etc/subgid
-          podman system migrate
+          # The runner can already have a range (runner:165536:65536 was seen on Typewright's run) and the pull still
+          # failed, so newuidmap does not give rootless Podman a usable multi-ID mapping on this image. Let layer
+          # extraction ignore chown failures (the standard rootless setting): files owned by uid 32011 land owned by
+          # the runner user, which the build does not care about.
+          mkdir -p "$HOME/.config/containers"
+          printf '[storage]\n[storage.options]\nignore_chown_errors = "true"\n' > "$HOME/.config/containers/storage.conf"
+          podman system migrate || true
+          podman system reset --force || true
+          podman info --format '{{.Store.GraphDriverName}} {{.Store.GraphOptions}}'
       - name: clickable build --arch ${{ matrix.arch }}
         working-directory: ut/app
         run: clickable build --arch ${{ matrix.arch }} --non-interactive --verbose --output "$GITHUB_WORKSPACE/dist"
