@@ -155,7 +155,7 @@ class BridgeApiTest {
         assertTrue(obj["setMetadata"]!!.jsonObject["sidecarName"]!!.jsonPrimitive.boolean)
         assertTrue(obj["setMetadata"]!!.jsonObject["strip"]!!.jsonPrimitive.boolean)
         assertFalse(obj["setMetadata"]!!.jsonObject["xmp"]!!.jsonPrimitive.boolean)
-        assertFalse(obj["sync"]!!.jsonObject["available"]!!.jsonPrimitive.boolean)
+        assertTrue(obj["sync"]!!.jsonObject["available"]!!.jsonPrimitive.boolean)
         assertFalse(obj["ops"]!!.jsonObject["available"]!!.jsonPrimitive.boolean)
     }
 
@@ -330,28 +330,154 @@ class BridgeApiTest {
     // ---- sync_start() --------------------------------------------------------------------------
 
     @Test
-    fun `sync_start invokes the real C callback exactly once with the documented sentinel`() = memScoped {
+    fun `sync_start for a source kind this platform lacks is NOT_IMPLEMENTED and delivered once`() = memScoped {
         val handle = openHandle()
         lastSyncStatus = Int.MIN_VALUE
         lastSyncMessage = null
         lastSyncInvocations = 0
 
-        val source = """{"kind":"LINUX_DIR"}""".cstr.ptr
+        val source = """{"kind":"SAF_TREE","path":"/x"}""".cstr.ptr
         val status = fotoz_sync_start(handle, source, staticCFunction(::recordSyncCallback), null)
 
         assertEquals(BridgeStatus.NOT_IMPLEMENTED, status)
         assertEquals(1, lastSyncInvocations)
         assertEquals(BridgeStatus.NOT_IMPLEMENTED, lastSyncStatus)
-        assertNotNull(lastSyncMessage)
         assertNotNull(Json.parseToJsonElement(lastSyncMessage!!).jsonObject["error"])
-
         fotoz_library_close(handle)
+    }
+
+    @Test
+    fun `sync_start rejects a LINUX_DIR request with no path or no kind as BAD_REQUEST without a callback`() = memScoped {
+        val handle = openHandle()
+        lastSyncInvocations = 0
+        val cb = staticCFunction(::recordSyncCallback)
+        assertEquals(BridgeStatus.BAD_REQUEST, fotoz_sync_start(handle, """{"kind":"LINUX_DIR"}""".cstr.ptr, cb, null))
+        assertEquals(BridgeStatus.BAD_REQUEST, fotoz_sync_start(handle, """{"kind":"LINUX_DIR","path":"  "}""".cstr.ptr, cb, null))
+        assertEquals(BridgeStatus.BAD_REQUEST, fotoz_sync_start(handle, """{"path":"/tmp"}""".cstr.ptr, cb, null))
+        assertEquals(BridgeStatus.BAD_REQUEST, fotoz_sync_start(handle, "nope".cstr.ptr, cb, null))
+        assertEquals(0, lastSyncInvocations)
+        fotoz_library_close(handle)
+    }
+
+    @Test
+    fun `sync_start on an unreadable root is IO_ERROR`() = memScoped {
+        val handle = openHandle()
+        lastSyncInvocations = 0
+        val status = fotoz_sync_start(
+            handle,
+            """{"kind":"LINUX_DIR","path":"$dbDir/does-not-exist"}""".cstr.ptr,
+            staticCFunction(::recordSyncCallback),
+            null,
+        )
+        assertEquals(BridgeStatus.IO_ERROR, status)
+        assertEquals(1, lastSyncInvocations)
+        fotoz_library_close(handle)
+    }
+
+    @Test
+    fun `a real directory tree syncs then lists folders then pages by folder then sweeps a deletion`() = memScoped {
+        val photos = "$dbDir/Pictures"
+        val trip = "$photos/Trip"
+        assertEquals(0, mkdir(photos, 493u))
+        assertEquals(0, mkdir(trip, 493u))
+        assertEquals(0, mkdir("$photos/.thumbnails", 493u))
+        val files = listOf(
+            "$photos/b.jpg", "$photos/a.png", "$trip/clip.mp4", "$photos/notes.txt", "$photos/.thumbnails/t.jpg",
+        )
+        files.forEach { assertTrue(writeWholeFile(it, byteArrayOf(1, 2, 3, 4))) }
+        try {
+            val handle = openHandle()
+            val cb = staticCFunction(::recordSyncCallback)
+            val request = """{"kind":"LINUX_DIR","path":"$photos/"}""".cstr.ptr
+
+            lastSyncInvocations = 0
+            assertEquals(BridgeStatus.OK, fotoz_sync_start(handle, request, cb, null))
+            assertEquals(1, lastSyncInvocations)
+            val result = Json.parseToJsonElement(lastSyncMessage!!).jsonObject
+            assertEquals(3, result["itemsSeen"]!!.jsonPrimitive.int)
+            assertTrue(result["fullyEnumerated"]!!.jsonPrimitive.boolean)
+
+            // folders
+            val foldersPtr = assertNotNull(fotoz_folders(handle, null))
+            val folders = Json.parseToJsonElement(foldersPtr.toKString()).jsonObject["folders"]!!.jsonArray
+            fotoz_free_string(foldersPtr)
+            assertEquals(2, folders.size)
+            val byName = folders.associate { it.jsonObject["name"]!!.jsonPrimitive.content to it.jsonObject }
+            assertEquals(2, byName["Pictures"]!!["itemCount"]!!.jsonPrimitive.int)
+            assertEquals(1, byName["Trip"]!!["itemCount"]!!.jsonPrimitive.int)
+
+            // page by folder, with the folderKey the folders call returned
+            val tripKey = byName["Trip"]!!["folderKey"]!!.jsonPrimitive.content
+            val pagePtr = assertNotNull(
+                fotoz_query_page(handle, """{"album":"FOLDER","folderKey":"$tripKey"}""".cstr.ptr, null),
+            )
+            val rows = Json.parseToJsonElement(pagePtr.toKString()).jsonObject["rows"]!!.jsonArray
+            fotoz_free_string(pagePtr)
+            assertEquals(1, rows.size)
+            assertEquals("clip.mp4", rows[0].jsonObject["displayName"]!!.jsonPrimitive.content)
+            assertEquals("video/mp4", rows[0].jsonObject["mime"]!!.jsonPrimitive.content)
+            assertTrue(rows[0].jsonObject["contentUri"]!!.jsonPrimitive.content.startsWith("file://"))
+
+            // showVideos=false hides the video-only folder
+            val noVideoPtr = assertNotNull(fotoz_folders(handle, """{"showVideos":false}""".cstr.ptr))
+            val noVideo = Json.parseToJsonElement(noVideoPtr.toKString()).jsonObject["folders"]!!.jsonArray
+            fotoz_free_string(noVideoPtr)
+            assertEquals(1, noVideo.size)
+
+            // delete a file, re-sync: the row is swept out of the browsable set (TRAPS #1/#8)
+            assertEquals(0, remove("$photos/a.png"))
+            assertEquals(BridgeStatus.OK, fotoz_sync_start(handle, request, cb, null))
+            val again = assertNotNull(fotoz_folders(handle, null))
+            val afterFolders = Json.parseToJsonElement(again.toKString()).jsonObject["folders"]!!.jsonArray
+            fotoz_free_string(again)
+            val picturesAfter = afterFolders.first { it.jsonObject["name"]!!.jsonPrimitive.content == "Pictures" }
+            assertEquals(1, picturesAfter.jsonObject["itemCount"]!!.jsonPrimitive.int)
+            // the swept file is also gone from the paged timeline (the DAO itself would still return it)
+            val timeline = assertNotNull(fotoz_query_page(handle, """{"album":"EVERYDAY"}""".cstr.ptr, null))
+            val timelineNames = Json.parseToJsonElement(timeline.toKString()).jsonObject["rows"]!!.jsonArray
+                .map { it.jsonObject["displayName"]!!.jsonPrimitive.content }.toSet()
+            fotoz_free_string(timeline)
+            assertEquals(setOf("b.jpg", "clip.mp4"), timelineNames)
+            // still exactly one source row: re-sync reuses it
+            assertEquals(1, runBlocking { handle.asLibraryHandleOrNull()!!.db.sourceDao().getAll().size })
+
+            fotoz_library_close(handle)
+        } finally {
+            files.forEach { remove(it) }
+            rmdir("$photos/.thumbnails"); rmdir(trip); rmdir(photos)
+        }
+    }
+
+    @Test
+    fun `folders reports INVALID_HANDLE as null`() {
+        assertNull(fotoz_folders(null, null))
+    }
+
+    @Test
+    fun `the POSIX lister reports files and directories and symlinks distinctly and never follows a link`() {
+        val root = "$dbDir/lst"
+        assertEquals(0, mkdir(root, 493u))
+        assertEquals(0, mkdir("$root/sub", 493u))
+        assertTrue(writeWholeFile("$root/f.jpg", ByteArray(7)))
+        assertEquals(0, platform.posix.symlink("$root/sub", "$root/lnk"))
+        try {
+            val entries = assertNotNull(PosixDirectoryLister.list(root)).associateBy { it.name }
+            assertEquals(setOf("sub", "f.jpg", "lnk"), entries.keys)
+            assertTrue(entries.getValue("sub").isDirectory)
+            assertFalse(entries.getValue("f.jpg").isDirectory)
+            assertEquals(7L, entries.getValue("f.jpg").sizeBytes)
+            assertTrue(entries.getValue("f.jpg").mtimeMs > 0)
+            assertTrue(entries.getValue("lnk").isSymlink)
+            assertNull(PosixDirectoryLister.list("$root/missing"))
+        } finally {
+            remove("$root/lnk"); remove("$root/f.jpg"); rmdir("$root/sub"); rmdir(root)
+        }
     }
 
     @Test
     fun `sync_start reports INVALID_HANDLE without ever invoking the callback`() = memScoped {
         lastSyncInvocations = 0
-        val source = """{"kind":"LINUX_DIR"}""".cstr.ptr
+        val source = """{"kind":"LINUX_DIR","path":"/tmp"}""".cstr.ptr
         val status = fotoz_sync_start(null, source, staticCFunction(::recordSyncCallback), null)
         assertEquals(BridgeStatus.INVALID_HANDLE, status)
         assertEquals(0, lastSyncInvocations)

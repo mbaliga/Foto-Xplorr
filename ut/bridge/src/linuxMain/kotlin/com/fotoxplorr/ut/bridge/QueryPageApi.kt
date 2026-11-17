@@ -3,6 +3,7 @@
 package com.fotoxplorr.ut.bridge
 
 import com.fotoxplorr.core.db.entity.AssetEntity
+import com.fotoxplorr.core.db.entity.Availability
 import com.fotoxplorr.core.db.gallery.GalleryProjectionDefaults
 import com.fotoxplorr.core.search.Term
 import com.fotoxplorr.core.search.parseSearchQuery
@@ -49,8 +50,13 @@ fun fotoz_query_page(
         val pageSize = request.pageSize.coerceIn(1, 500)
 
         val rows = runBridge { fetchPage(library, album, request, offset, pageSize) }
+        // GalleryProjectionDao does not filter on `availability` (its own gap): a file the last full sync
+        // swept to MISSING_CONFIRMED (ADR-011 section 6: kept, never deleted) would still be paged. The Linux
+        // shell must not show a tile for a file that is gone, so hide those here, AFTER paging --
+        // nextCursor below stays based on the raw page size, so paging is unaffected.
+        val visible = rows.filter { it.availability == Availability.ONLINE || it.availability == Availability.OFFLINE }
         val words = if (request.query.isNullOrBlank()) emptyList() else parseSearchQuery(request.query).terms.filterIsInstance<Term.Word>()
-        val filtered = if (words.isEmpty()) rows else rows.filter { asset -> matchesBareWords(asset, words) }
+        val filtered = if (words.isEmpty()) visible else visible.filter { asset -> matchesBareWords(asset, words) }
 
         val response = QueryPageResponseDto(
             rows = filtered.map { it.toDto() },

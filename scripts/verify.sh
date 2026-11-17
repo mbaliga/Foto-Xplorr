@@ -35,6 +35,9 @@ done
 # so a violation fails in seconds, not minutes. See scripts/verify-core-purity.sh's own doc.
 ./scripts/verify-core-purity.sh
 
+# Ubuntu Touch / Linux shell: negative grep for network code / networking policy groups (ut/scripts/verify-offline.sh).
+./ut/scripts/verify-offline.sh
+
 # WP1.9: governance docs vs reality (every Gradle coordinate has a DEPENDENCIES.md row, every model,
 # font and sound has a MODEL_LICENSES.md row) and the proof that both checks, and the licence policy,
 # really fail on bad input. Pure shell, about a second; the licence SCAN itself needs the resolved

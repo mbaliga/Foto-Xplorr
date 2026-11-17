@@ -52,10 +52,10 @@ fun fotoz_capabilities(): CPointer<ByteVar> = runCatchingJson {
                 "both real, native-ready :core:metadata pieces.",
         ),
         sync = FeatureCapabilityDto(
-            available = false,
-            reason = "Phase 1's real sync engine wiring (AndroidMediaStoreSource/AndroidMediaSync, " +
-                "WP1.4b) is Android-only; :core:index's Source/SyncEngine are pure Kotlin but have " +
-                "no native-ready Source implementation (no Linux directory source exists yet).",
+            available = true,
+            reason = "LINUX_DIR only (LocalDirSource over a POSIX directory walk): a blocking, full " +
+                "enumerate-and-sweep pass with a single completion callback. No inotify watch, no " +
+                "delta pass, no removable-drive/MTP/Content Hub sources, no EXIF (date_taken is mtime).",
         ),
         ops = FeatureCapabilityDto(
             available = false,

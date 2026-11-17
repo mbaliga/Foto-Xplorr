@@ -24,19 +24,23 @@ plugins {
 kotlin {
     linuxX64 {
         binaries {
-            // DEBUG only, deliberately -- this WP's job is to prove the C API links and works
-            // (scripts/verify-native.sh, plus this module's own linuxX64Test), not to produce a
-            // release-optimized artifact for a Qt shell that doesn't exist yet (that is the next,
-            // separate dispatch this ADR addendum hands off to).
-            sharedLib(listOf(NativeBuildType.DEBUG)) {
+            // DEBUG is what `linuxX64Test`/`scripts/verify-native.sh` exercise; RELEASE is what the
+            // Qt shell (ut/app) links for the amd64 click and the desktop smoke.
+            sharedLib(listOf(NativeBuildType.DEBUG, NativeBuildType.RELEASE)) {
                 baseName = "fotozcore"
             }
         }
     }
-    // Compile-only (Tier 2, see above): no `binaries {}` block, so there is no link/run task for
-    // this target at all -- exactly the same shape every other native-ready `:core:*` module's
-    // `linuxArm64()` declaration already has.
-    linuxArm64()
+    // linuxArm64 is Tier 2 upstream and still cannot be RUN here (no arm64 host), but it is now
+    // LINKED: the arm64 click needs a real libfotozcore.so (ut/app, .github/workflows/ut-click.yml).
+    // Its tests stay compile-only.
+    linuxArm64 {
+        binaries {
+            sharedLib(listOf(NativeBuildType.RELEASE)) {
+                baseName = "fotozcore"
+            }
+        }
+    }
 
     sourceSets {
         // Not relying on Kotlin's "default hierarchy template" to create `linuxMain`/`linuxTest`
@@ -53,6 +57,7 @@ kotlin {
                 implementation(project(":core:metadata"))
                 implementation(project(":core:search"))
                 implementation(project(":core:db"))
+                implementation(project(":core:index"))
                 implementation(libs.kotlinx.coroutines.core)
                 implementation(libs.kotlinx.serialization.json)
                 // Room KMP + the bundled SQLite driver, ADR-013 point 2 ("gives the same
