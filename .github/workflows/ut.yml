@@ -147,24 +147,15 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install -q clickable-ut==8.10.0
           echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
-      # Clickable's 24.04 CI images carry files owned by high container IDs (e.g. 32011). Rootless Podman can only
-      # unpack them when the runner user has a wide subuid/subgid range; otherwise the pull dies with
-      # "container ID 32011 cannot be mapped to a host ID".
-      - name: Rootless Podman subuid/subgid range
+      # Clickable's 24.04 CI images carry files owned by high container IDs (e.g. 32011). Rootless Podman cannot unpack them
+      # on the hosted runner ("container ID 32011 cannot be mapped to a host ID", both legs of run 44162373234, and
+      # subuid ranges / storage.conf ignore_chown_errors did not change that), so run Podman rootful through a wrapper
+      # that also drops Clickable's rootless-only --uidmap/--gidmap flags (see ut/scripts/podman-rootful-shim.sh).
+      - name: Rootful Podman shim
         run: |
-          grep -q "^$USER:" /etc/subuid || echo "$USER:100000:200000" | sudo tee -a /etc/subuid
-          grep -q "^$USER:" /etc/subgid || echo "$USER:100000:200000" | sudo tee -a /etc/subgid
-          # The runner can already have a range (runner:165536:65536 was seen on Typewright's run) and the pull still
-          # failed, so newuidmap does not give rootless Podman a usable multi-ID mapping on this image. Let layer
-          # extraction ignore chown failures (the standard rootless setting): files owned by uid 32011 land owned by
-          # the runner user, which the build does not care about.
-          mkdir -p "$HOME/.config/containers"
-          # The option is read from [storage.options.overlay] (not [storage.options], where podman reported it as the bogus key
-          # ".ignore_chown_errors" and the pull failed again), and the driver is named so none is auto-picked.
-          printf '[storage]\ndriver = "overlay"\n[storage.options.overlay]\nignore_chown_errors = "true"\n' > "$HOME/.config/containers/storage.conf"
-          podman system migrate || true
-          podman system reset --force || true
-          podman info --format '{{.Store.GraphDriverName}} {{.Store.GraphOptions}}'
+          ./ut/scripts/podman-rootful-shim.sh --self-test
+          ./ut/scripts/podman-rootful-shim.sh "$RUNNER_TEMP/podman-shim"
+          echo "$RUNNER_TEMP/podman-shim" >> "$GITHUB_PATH"
       - name: clickable build --arch ${{ matrix.arch }}
         working-directory: ut/app
         run: clickable build --arch ${{ matrix.arch }} --non-interactive --verbose --output "$GITHUB_WORKSPACE/dist"
