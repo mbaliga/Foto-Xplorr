@@ -38,6 +38,9 @@ done
 # Ubuntu Touch / Linux shell: negative grep for network code / networking policy groups (ut/scripts/verify-offline.sh).
 ./ut/scripts/verify-offline.sh
 
+# Linux desktop packaging: desktop entry / AppStream / Flatpak sandbox promises (linux/scripts/verify-linux.sh).
+./linux/scripts/verify-linux.sh
+
 # WP1.9: governance docs vs reality (every Gradle coordinate has a DEPENDENCIES.md row, every model,
 # font and sound has a MODEL_LICENSES.md row) and the proof that both checks, and the licence policy,
 # really fail on bad input. Pure shell, about a second; the licence SCAN itself needs the resolved

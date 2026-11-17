@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Fotoz
+GenericName=Photo library
+Comment=Browse your photos locally and offline
+Exec=fotoz
+Icon=io.github.mbaliga.Fotoz
+Terminal=false
+Categories=Graphics;Photography;Viewer;
+Keywords=photos;pictures;gallery;images;library;
+StartupNotify=true
+StartupWMClass=io.github.mbaliga.Fotoz

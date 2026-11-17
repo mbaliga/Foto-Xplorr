@@ -16,10 +16,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
+option(FOTOZ_DESKTOP "Linux desktop build: FHS install layout (bin/, lib/fotoz, share/...), folder picker, folder watching" OFF)
 option(FOTOZ_BUILD_TESTS "Build the QtTest suite (needs a fake core + Qt Test)" OFF)
 set(FOTOZ_CORE_LIB "" CACHE FILEPATH "libfotozcore.so to bundle (click) or load (tests)")
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
+# Both Qt majors build this shell. With both installed, Qt 6 wins unless -DFOTOZ_QT_MAJOR=5 is given.
+set(FOTOZ_QT_MAJOR "" CACHE STRING "Force Qt major version (5 or 6); empty = newest installed")
+if(FOTOZ_QT_MAJOR)
+    find_package(QT NAMES Qt${FOTOZ_QT_MAJOR} REQUIRED COMPONENTS Core)
+else()
+    find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
+endif()
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2)
 
 add_library(fotozshell STATIC src/CoreApi.cpp src/Models.cpp src/LibraryController.cpp)
@@ -34,6 +41,41 @@ target_link_libraries(fotoz PRIVATE fotozshell Qt${QT_VERSION_MAJOR}::Qml Qt${QT
 # The core sits in <install>/lib next to the binary.
 set_target_properties(fotoz PROPERTIES INSTALL_RPATH "$ORIGIN/lib" BUILD_WITH_INSTALL_RPATH ON)
 
+if(FOTOZ_DESKTOP)
+    # ---- Linux desktop packaging (docs/handoff/LINUX-PORT.md; Flatpak: linux/flatpak/) ------------------
+    include(GNUInstallDirs)
+    set(FOTOZ_APP_ID "io.github.mbaliga.Fotoz")
+    set(LINUX_PKG "${CMAKE_CURRENT_SOURCE_DIR}/../../linux/packaging")
+    target_compile_definitions(fotoz PRIVATE FOTOZ_DESKTOP)
+    set_target_properties(fotoz PROPERTIES INSTALL_RPATH "$ORIGIN/../lib/fotoz" BUILD_WITH_INSTALL_RPATH ON)
+    install(TARGETS fotoz RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES ${LINUX_PKG}/${FOTOZ_APP_ID}.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES ${LINUX_PKG}/${FOTOZ_APP_ID}.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+    install(FILES assets/icon.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps RENAME ${FOTOZ_APP_ID}.svg)
+    if(FOTOZ_CORE_LIB)
+        install(FILES ${FOTOZ_CORE_LIB} DESTINATION lib/fotoz)   # private dir, not the multiarch libdir: main.cpp looks for ../lib/fotoz
+    else()
+        message(WARNING "FOTOZ_CORE_LIB not set: the installed app will start but show 'core library could not be loaded'.")
+    endif()
+
+    # .deb (Ubuntu/Debian) and a plain tarball: `cmake --build . --target package`. The deb depends on the
+    # distribution's own Qt (nothing is bundled); Flatpak (linux/flatpak/) is the sandboxed route.
+    set(CPACK_GENERATOR "DEB;TGZ")
+    set(CPACK_PACKAGE_NAME "fotoz")
+    set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Offline local photo library (Qt shell over the Fotoz core)")
+    set(CPACK_PACKAGE_CONTACT "A System of Cells <owner-fills-this@invalid>")   # OWNER FOLLOW-UP: real maintainer address
+    set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+    set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+    set(CPACK_DEBIAN_PACKAGE_SECTION "graphics")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    if(QT_VERSION_MAJOR EQUAL 5)
+        set(CPACK_DEBIAN_PACKAGE_DEPENDS "qml-module-qtquick2, qml-module-qtquick-controls2, qml-module-qtquick-layouts, qml-module-qtquick-window2, qml-module-qtquick-templates2, qml-module-qt-labs-platform")
+    else()
+        set(CPACK_DEBIAN_PACKAGE_DEPENDS "qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-layouts, qml6-module-qtquick-window, qml6-module-qtquick-templates, qml6-module-qtquick-dialogs, qml6-module-qtqml-workerscript")
+    endif()
+    include(CPack)
+else()
 # ---- click packaging --------------------------------------------------------------------
 # Clickable's cmake builder runs `make DESTDIR=<install_dir> install` with CMAKE_INSTALL_PREFIX=/.
 # so everything lands at the click root.
@@ -71,6 +113,7 @@ if(FOTOZ_CORE_LIB)
 else()
     message(WARNING "FOTOZ_CORE_LIB not set: the installed app will start but show 'core library could not be loaded'.")
 endif()
+endif()  # FOTOZ_DESKTOP / click
 
 # ---- tests -----------------------------------------------------------------------------
 if(FOTOZ_BUILD_TESTS)
