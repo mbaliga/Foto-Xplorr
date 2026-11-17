@@ -55,7 +55,9 @@ final class LibraryStore: NSObject, ObservableObject, PHPhotoLibraryChangeObserv
     func manageLimitedSelection() {
         guard let scene = UIApplication.shared.connectedScenes.first(where: { $0 is UIWindowScene }) as? UIWindowScene,
               let root = scene.keyWindow?.rootViewController else { return }
-        PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: root)
+        // The completion-handler overload (iOS 15+): the build SDK on CI has no one-argument form. The picker reports
+        // selection changes through PHPhotoLibraryChangeObserver, so the handler has nothing left to do.
+        PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: root) { _ in }
     }
 
     private static func map(_ s: PHAuthorizationStatus) -> Access {
