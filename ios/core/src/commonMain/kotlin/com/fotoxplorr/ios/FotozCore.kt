@@ -14,6 +14,8 @@ import kotlinx.datetime.TimeZone
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlin.experimental.ExperimentalObjCName
+import kotlin.native.ObjCName
 
 /**
  * The whole surface the SwiftUI shell calls into. Deliberately String-in / String-out (JSON) so the
@@ -25,9 +27,14 @@ import kotlinx.serialization.json.Json
  * language boundary (an uncaught Kotlin exception in a Kotlin/Native framework call terminates the
  * process).
  *
+ * Swift sees this object as `FotozBridge` (`FotozBridge.shared.search(...)`), via @ObjCName: without
+ * it Kotlin/Native would name it `FotozCoreFotozCore` (framework prefix + class name).
+ *
  * Time handling is explicit: Swift passes the IANA zone id and "today" (yyyy-MM-dd) so "last
  * month" resolves identically in tests and on the phone, and nothing here reads a clock.
  */
+@OptIn(ExperimentalObjCName::class)
+@ObjCName("FotozBridge")
 object FotozCore {
     /** Bumped when the JSON envelope shapes change; Swift asserts it matches at startup. */
     const val API_VERSION: Int = 1
