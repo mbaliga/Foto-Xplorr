@@ -159,7 +159,9 @@ jobs:
           # extraction ignore chown failures (the standard rootless setting): files owned by uid 32011 land owned by
           # the runner user, which the build does not care about.
           mkdir -p "$HOME/.config/containers"
-          printf '[storage]\n[storage.options]\nignore_chown_errors = "true"\n' > "$HOME/.config/containers/storage.conf"
+          # The option is read from [storage.options.overlay] (not [storage.options], where podman reported it as the bogus key
+          # ".ignore_chown_errors" and the pull failed again), and the driver is named so none is auto-picked.
+          printf '[storage]\ndriver = "overlay"\n[storage.options.overlay]\nignore_chown_errors = "true"\n' > "$HOME/.config/containers/storage.conf"
           podman system migrate || true
           podman system reset --force || true
           podman info --format '{{.Store.GraphDriverName}} {{.Store.GraphOptions}}'
