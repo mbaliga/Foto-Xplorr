@@ -1,0 +1,16 @@
+# Clickable project for the Fotoz Ubuntu Touch click. Schema-checked in CI and locally against
+# clickable-ut's own project.schema (ut/app/tests/check_clickable_yaml.py).
+clickable_minimum_required: 8.0.0
+builder: cmake
+# ONE place for the OS target. 24.04-1.x is clickable's own default for Qt 5.15 and the lowest
+# common denominator (a 24.04-2.x device is expected to also provide the 1.x framework; that is
+# NOT verified). Switch to ubuntu-touch-24.04-2.x / ubuntu-touch-26.04-1.x (Qt 6) here only: the
+# framework and AppArmor policy version reach manifest.json/.apparmor through build_args below.
+framework: ubuntu-touch-24.04-1.x
+kill: fotoz
+# libfotozcore.so is built by Gradle (Kotlin/Native) before Clickable runs, per arch:
+#   ut/scripts/build-core.sh arm64  ->  ut/app/prebuilt/arm64/libfotozcore.so
+build_args:
+  - -DCLICK_FRAMEWORK=${CLICK_FRAMEWORK}
+  - -DCLICK_POLICY_VERSION=${APPARMOR_POLICY}
+  - -DFOTOZ_CORE_LIB=${ROOT}/prebuilt/${ARCH}/libfotozcore.so

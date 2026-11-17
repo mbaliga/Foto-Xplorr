@@ -1,0 +1,15 @@
+{
+    "name": "fotoz.mbaliga",
+    "description": "Local photo library. Offline: no network permission.",
+    "architecture": "@CLICK_ARCH@",
+    "title": "Fotoz",
+    "hooks": {
+        "fotoz": {
+            "apparmor": "fotoz.apparmor",
+            "desktop": "fotoz.desktop"
+        }
+    },
+    "version": "@PROJECT_VERSION@",
+    "maintainer": "OWNER-FILL <owner-fill@invalid.example>",
+    "framework": "@CLICK_FRAMEWORK@"
+}

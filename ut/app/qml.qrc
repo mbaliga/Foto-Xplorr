@@ -1,0 +1,11 @@
+<RCC>
+  <qresource prefix="/">
+    <file>qml/qmldir</file>
+    <file>qml/Theme.qml</file>
+    <file>qml/Main.qml</file>
+    <file>qml/FolderPage.qml</file>
+    <file>qml/GridPage.qml</file>
+    <file>qml/ViewerPage.qml</file>
+    <file>qml/AboutPage.qml</file>
+  </qresource>
+</RCC>
