@@ -10,8 +10,24 @@ Page {
     signal openGrid()
     background: Rectangle { color: App.Theme.ground }
 
+    function openPicker() { if (picker.status === Loader.Ready) picker.item.open() }
+
+    // Desktop only. A missing Qt.labs.platform just leaves the path field below as the way to add a folder.
+    Loader {
+        id: picker
+        objectName: "pickerLoader"
+        active: Library.desktop
+        // Qt 5.15: Qt.labs.platform (FolderPicker.qml). Qt 6: Qt Quick Dialogs (FolderPicker6.qml); Labs is deprecated there.
+        source: Library.qtMajor >= 6 ? "FolderPicker6.qml" : "FolderPicker.qml"
+        onLoaded: item.chosen.connect(function (p) { Library.addFolder(p) })
+    }
+
     ColumnLayout {
-        anchors.fill: parent
+        // On a wide desktop window the column stays a readable width instead of stretching.
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.min(parent.width, 760)
         anchors.margins: App.Theme.pad
         spacing: 12
 
@@ -61,12 +77,25 @@ Page {
                 onClicked: Library.addFolder(Library.defaultPicturesPath)
             }
             Button {
+                objectName: "chooseFolderButton"
+                visible: Library.desktop && picker.status === Loader.Ready
+                text: "Choose folder…"
+                onClicked: page.openPicker()
+            }
+            Button {
                 objectName: "rescanButton"
                 text: "Rescan all"
                 enabled: Library.sources.length > 0
                 onClicked: Library.rescanAll()
             }
             Item { Layout.fillWidth: true }
+            CheckBox {
+                objectName: "watchCheck"
+                visible: Library.desktop
+                text: "Watch for changes"
+                checked: Library.watching
+                onToggled: Library.watching = checked
+            }
             CheckBox {
                 text: "Videos"
                 checked: Library.showVideos

@@ -10,6 +10,16 @@ Page {
     property string pageTitle: view.currentItem ? view.currentItem.itemName : ""
     background: Rectangle { color: "#000000" }
     property bool showInfo: false
+    focus: true
+    // Keyboard and mouse paths for desktop; touch swipe stays as it was.
+    Keys.onLeftPressed: view.decrementCurrentIndex()
+    Keys.onRightPressed: view.incrementCurrentIndex()
+    Keys.onPressed: function (e) {
+        if (e.key === Qt.Key_Home) { view.currentIndex = 0; e.accepted = true }
+        else if (e.key === Qt.Key_End) { view.currentIndex = view.count - 1; e.accepted = true }
+        else if (e.key === Qt.Key_I || e.key === Qt.Key_Space) { page.showInfo = !page.showInfo; e.accepted = true }
+    }
+    Component.onCompleted: forceActiveFocus()
 
     ListView {
         id: view
@@ -50,6 +60,21 @@ Page {
             }
             TapHandler { onTapped: page.showInfo = !page.showInfo }
         }
+    }
+
+    RoundButton {
+        objectName: "prevButton"
+        visible: Library.desktop && view.currentIndex > 0
+        anchors.left: parent.left; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter
+        text: "‹"
+        onClicked: view.decrementCurrentIndex()
+    }
+    RoundButton {
+        objectName: "nextButton"
+        visible: Library.desktop && view.currentIndex < view.count - 1
+        anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+        text: "›"
+        onClicked: view.incrementCurrentIndex()
     }
 
     Rectangle {

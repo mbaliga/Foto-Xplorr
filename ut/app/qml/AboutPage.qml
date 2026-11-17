@@ -24,7 +24,7 @@ Page {
             Label { width: col.width; wrapMode: Text.Wrap; color: App.Theme.text
                     text: "Your library database lives in this app's private data folder. Your photos are only read, never changed or moved by this build." }
             Label { width: col.width; wrapMode: Text.Wrap; color: App.Theme.textDim
-                    text: "What this build does not do yet: video playback, HEIC/AVIF/JXL/RAW previews unless your system has Qt image plugins for them, tags/ratings/XMP, duplicates, rename and move, search beyond file names, importing through Content Hub, watching folders for changes (use Rescan all)." }
+                    text: "What this build does not do yet: video playback, HEIC/AVIF/JXL/RAW previews unless your system has Qt image plugins for them, tags/ratings/XMP, duplicates, rename and move, search beyond file names, importing through Content Hub." + (Library.desktop ? " Folder watching covers up to 2048 folders; beyond that use Rescan all (Ctrl+R)." : " Folders are not watched; use Rescan all.") }
             Label { width: col.width; wrapMode: Text.Wrap; color: App.Theme.textDim
                     text: "This is a native Qt shell over the Fotoz Kotlin core. It is not the Android app and shares only its core logic." }
             Label { width: col.width; wrapMode: Text.Wrap; color: App.Theme.textDim; font.pixelSize: 11

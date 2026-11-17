@@ -128,6 +128,105 @@ private slots:
             qWarning("screenshot requested but the offscreen platform produced no frame");
         QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join("\n")));
     }
+
+    // Desktop: a file copied into a watched folder shows up without any tap (inotify via QFileSystemWatcher),
+    // a new sub-folder is picked up and then watched itself, and a burst collapses into one rescan.
+    void watcherRescansOnChange() {
+        QTemporaryDir t2;
+        const QString pics = t2.filePath("Pics");
+        QVERIFY(QDir().mkpath(pics + "/a"));
+        QImage img(32, 32, QImage::Format_RGB32); img.fill(Qt::darkCyan);
+        QVERIFY(img.save(pics + "/one.png"));
+        QSettings().clear();                                             // earlier tests persisted sources
+        LibraryController lib;
+        lib.setDesktop(true);
+        QVERIFY(lib.watching());                                         // desktop default: on
+        lib.setWatchDelayMs(150);
+        QVERIFY(lib.start(REALCORE_PATH, t2.filePath("w.db")));
+        QSignalSpy done(&lib, &LibraryController::syncFinished);
+        lib.addFolder(pics);
+        QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 60000);
+        QTRY_VERIFY(!lib.syncing());
+        QCOMPARE(lib.assets()->rowCount(), 1);
+        QCOMPARE(lib.watchedFolders(), 2);                               // Pics, Pics/a
+        QVERIFY(img.save(pics + "/a/two.png"));
+        QVERIFY(img.save(pics + "/a/three.png"));
+        QTRY_COMPARE_WITH_TIMEOUT(done.count(), 2, 30000);               // one rescan for the burst
+        QTRY_VERIFY(!lib.syncing());
+        lib.showTimeline();
+        QCOMPARE(lib.assets()->rowCount(), 3);
+        QVERIFY(QDir().mkpath(pics + "/b"));                             // new folder: noticed, then watched
+        QTRY_COMPARE_WITH_TIMEOUT(done.count(), 3, 30000);
+        QTRY_COMPARE(lib.watchedFolders(), 3);
+        QTRY_VERIFY(!lib.syncing());
+        QVERIFY(QFile::remove(pics + "/one.png"));                       // deletion sweeps through the same path
+        QTRY_COMPARE_WITH_TIMEOUT(done.count(), 4, 30000);
+        QTRY_VERIFY(!lib.syncing());
+        lib.showTimeline();
+        QCOMPARE(lib.assets()->rowCount(), 2);
+        lib.setWatching(false);                                          // off means off: no inotify watches left
+        QCOMPARE(lib.watchedFolders(), 0);
+        QVERIFY(img.save(pics + "/four.png"));
+        QTest::qWait(600);
+        QCOMPARE(done.count(), 4);
+        QSettings().clear();
+    }
+
+    // Phone mode never watches (a scan is always an explicit tap).
+    void phoneModeDoesNotWatch() {
+        QTemporaryDir t3;
+        QVERIFY(QDir().mkpath(t3.filePath("P")));
+        QSettings().clear();
+        LibraryController lib;
+        QVERIFY(!lib.watching());
+        QVERIFY(lib.start(REALCORE_PATH, t3.filePath("p.db")));
+        QSignalSpy done(&lib, &LibraryController::syncFinished);
+        lib.addFolder(t3.filePath("P"));
+        QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 60000);
+        QCOMPARE(lib.watchedFolders(), 0);
+    }
+
+    // The desktop UI: folder picker present, keyboard moves through the viewer, zero QML warnings.
+    void qmlDesktopMode() {
+        QQuickStyle::setStyle("Default");
+        QSettings().clear();
+        LibraryController lib;
+        lib.setDesktop(true);
+        QVERIFY(lib.start(REALCORE_PATH, m_tmp.filePath("fotoz.db")));
+        QSignalSpy done(&lib, &LibraryController::syncFinished);
+        QTRY_VERIFY_WITH_TIMEOUT(!lib.syncing(), 30000);
+        QQmlApplicationEngine engine;
+        QStringList warnings;
+        QObject::connect(&engine, &QQmlApplicationEngine::warnings, [&](const QList<QQmlError> &w) { for (const auto &e : w) warnings << e.toString(); });
+        engine.rootContext()->setContextProperty("Library", &lib);
+        engine.rootContext()->setContextProperty("AppVersion", QStringLiteral(FOTOZ_VERSION));
+        engine.load(QUrl("qrc:/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QCOMPARE(win->width(), 1100);
+        win->show();
+        QVERIFY(QTest::qWaitForWindowExposed(win));
+        auto *loader = win->findChild<QQuickItem *>("pickerLoader");
+        QVERIFY(loader);
+        QCOMPARE(loader->property("status").toInt(), 1);                 // Loader.Ready: Qt.labs.platform is available
+        QVERIFY(win->findChild<QQuickItem *>("watchCheck")->isVisible());
+        QVERIFY(win->findChild<QQuickItem *>("chooseFolderButton")->isVisible());
+        QVERIFY(QMetaObject::invokeMethod(win->findChild<QQuickItem *>("allPhotosButton"), "clicked"));
+        QTRY_VERIFY(win->findChild<QQuickItem *>("grid"));
+        QTRY_VERIFY(win->findChild<QQuickItem *>("grid")->property("count").toInt() >= 2);
+        QVERIFY(QMetaObject::invokeMethod(win->findChild<QQuickItem *>("gridPage"), "openViewer", Q_ARG(int, 0)));
+        QTRY_VERIFY(win->findChild<QQuickItem *>("viewer"));
+        auto *viewer = win->findChild<QQuickItem *>("viewer");
+        QTest::qWait(200);
+        QCOMPARE(viewer->property("currentIndex").toInt(), 0);
+        QTest::keyClick(win, Qt::Key_Right);
+        QTRY_COMPARE(viewer->property("currentIndex").toInt(), 1);
+        QTest::keyClick(win, Qt::Key_Left);
+        QTRY_COMPARE(viewer->property("currentIndex").toInt(), 0);
+        QTest::keyClick(win, Qt::Key_Escape);                            // back to the grid
+        QTRY_VERIFY(!win->findChild<QQuickItem *>("viewer"));
+        QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join("\n")));
+    }
 };
 
 int main(int argc, char **argv)

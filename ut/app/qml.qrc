@@ -7,5 +7,7 @@
     <file>qml/GridPage.qml</file>
     <file>qml/ViewerPage.qml</file>
     <file>qml/AboutPage.qml</file>
+    <file>qml/FolderPicker.qml</file>
+    <file>qml/FolderPicker6.qml</file>
   </qresource>
 </RCC>

@@ -14,4 +14,5 @@ QtObject {
     readonly property int pad: 16
     readonly property int radius: 0
     readonly property int tile: 120
+    readonly property int tileDesktop: 180
 }

@@ -2,6 +2,8 @@
 #include "LibraryController.h"
 #include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QLocale>
 #include <QPointer>
@@ -35,6 +37,76 @@ LibraryController::LibraryController(QObject *parent) : QObject(parent)
     QSettings s;
     m_sources = s.value(QStringLiteral("sources")).toStringList();
     m_showVideos = s.value(QStringLiteral("showVideos"), true).toBool();
+    m_watchDelay.setSingleShot(true);
+    m_watchDelay.setInterval(3000);
+    connect(&m_watchDelay, &QTimer::timeout, this, &LibraryController::onWatchTimer);
+    connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, &LibraryController::onDirChanged);
+}
+
+int LibraryController::qtMajor() const { return QT_VERSION_MAJOR; }
+
+void LibraryController::setDesktop(bool on)
+{
+    m_desktop = on;
+    if (on) m_watching = QSettings().value(QStringLiteral("watching"), true).toBool();
+}
+
+void LibraryController::setWatching(bool on)
+{
+    if (on == m_watching) return;
+    m_watching = on;
+    QSettings().setValue(QStringLiteral("watching"), on);
+    if (on) rebuildWatches();
+    else { m_watchDelay.stop(); m_dirtyDirs.clear(); if (!m_watcher.directories().isEmpty()) m_watcher.removePaths(m_watcher.directories()); emit watchedFoldersChanged(); }
+    emit watchingChanged();
+}
+
+// One inotify watch per directory under every source the user added. Same walk rules as the core's
+// LocalDirSource (dotfiles and symlinks skipped), capped so a huge tree cannot exhaust the user's
+// inotify watch budget; past the cap the library simply is not watched below that point and "Rescan all"
+// still works. Read-only: watching never touches a file.
+void LibraryController::rebuildWatches()
+{
+    if (!m_watching) return;
+    constexpr int kMaxWatches = 2048;
+    if (!m_watcher.directories().isEmpty()) m_watcher.removePaths(m_watcher.directories());
+    QStringList dirs;
+    bool capped = false;
+    for (const QString &src : m_sources) {
+        if (!QFileInfo(src).isDir()) continue;
+        dirs << src;
+        QDirIterator it(src, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);   // hidden dirs excluded by default; symlinks not followed
+        while (it.hasNext()) {
+            it.next();
+            if (it.fileInfo().isSymLink()) continue;
+            if (dirs.size() >= kMaxWatches) { capped = true; break; }
+            dirs << it.filePath();
+        }
+        if (capped) break;
+    }
+    if (!dirs.isEmpty()) m_watcher.addPaths(dirs);
+    if (capped) setMessage(tr("Watching the first %1 folders only; use Rescan all for the rest.").arg(kMaxWatches));
+    emit watchedFoldersChanged();
+}
+
+void LibraryController::onDirChanged(const QString &dir)
+{
+    if (!m_watching) return;
+    m_dirtyDirs.insert(dir);
+    m_watchDelay.start();   // restarts: a burst (copying 500 photos) collapses into one rescan
+}
+
+void LibraryController::onWatchTimer()
+{
+    if (!m_watching || !ready()) return;
+    if (m_syncing) { m_watchDelay.start(); return; }
+    QStringList hit;
+    for (const QString &src : m_sources)
+        for (const QString &d : m_dirtyDirs)
+            if (d == src || d.startsWith(src + QLatin1Char('/'))) { hit << src; break; }
+    m_dirtyDirs.clear();
+    if (hit.isEmpty()) return;
+    runSync(hit);
 }
 
 LibraryController::~LibraryController()
@@ -70,6 +142,9 @@ bool LibraryController::start(const QString &corePath, const QString &dbPath)
     emit readyChanged();
     refreshFolders();
     showTimeline();
+    rebuildWatches();
+    // Desktop: catch up on changes made while the app was closed (reads only folders the user added).
+    if (m_desktop && m_watching && !m_sources.isEmpty()) QTimer::singleShot(0, this, &LibraryController::rescanAll);
     return true;
 }
 
@@ -160,6 +235,7 @@ void LibraryController::onSyncDone(const QString &path, int status, const QStrin
     }
     refreshFolders();
     reloadCurrent();
+    rebuildWatches();
     emit syncFinished(path, ok, seen, full);
 }
 

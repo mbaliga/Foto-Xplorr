@@ -7,8 +7,10 @@ ApplicationWindow {
     id: win
     objectName: "window"
     visible: true
-    width: 420
-    height: 760
+    width: Library.desktop ? 1100 : 420     // the phone shell is sized by the compositor; this is the desktop default
+    height: Library.desktop ? 720 : 760
+    minimumWidth: Library.desktop ? 360 : 0
+    minimumHeight: Library.desktop ? 480 : 0
     title: "Fotoz"
     color: App.Theme.ground
 
@@ -47,6 +49,12 @@ ApplicationWindow {
         anchors.fill: parent
         initialItem: foldersPage
     }
+
+    // Desktop keyboard map (also harmless on a phone with a keyboard). Nothing here is the only way to do a thing.
+    Shortcut { sequences: ["Escape", "Alt+Left"]; enabled: stack.depth > 1; onActivated: stack.pop() }
+    Shortcut { sequence: "Ctrl+R"; enabled: Library.ready && !Library.syncing; onActivated: Library.rescanAll() }
+    Shortcut { sequence: "Ctrl+O"; enabled: Library.desktop && Library.ready; onActivated: stack.currentItem && stack.currentItem.openPicker ? stack.currentItem.openPicker() : undefined }
+    Shortcut { sequence: "Ctrl+F"; enabled: stack.currentItem && stack.currentItem.focusSearch !== undefined; onActivated: stack.currentItem.focusSearch() }
 
     Component { id: foldersPage; FolderPage { onOpenGrid: stack.push(gridPage) } }
     Component { id: gridPage; GridPage { onOpenViewer: function (i) { stack.push(viewerPage, { startIndex: i }) } } }

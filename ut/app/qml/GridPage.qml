@@ -8,6 +8,7 @@ Page {
     objectName: "gridPage"
     property string pageTitle: Library.assets.title
     signal openViewer(int index)
+    function focusSearch() { searchField.forceActiveFocus(); searchField.selectAll() }
     background: Rectangle { color: App.Theme.ground }
 
     ColumnLayout {
@@ -39,11 +40,17 @@ Page {
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-            readonly property int cols: Math.max(2, Math.floor(width / App.Theme.tile))
+            readonly property int cols: Math.max(2, Math.floor(width / (Library.desktop ? App.Theme.tileDesktop : App.Theme.tile)))
             cellWidth: width / cols
             cellHeight: cellWidth
             cacheBuffer: cellHeight * 4
             model: Library.assets
+            focus: true
+            keyNavigationEnabled: true
+            Keys.onReturnPressed: if (currentIndex >= 0) page.openViewer(currentIndex)
+            Keys.onEnterPressed: if (currentIndex >= 0) page.openViewer(currentIndex)
+            highlight: Rectangle { color: "transparent"; border.color: App.Theme.accent; border.width: 2 }
+            highlightFollowsCurrentItem: true
             delegate: Item {
                 width: grid.cellWidth
                 height: grid.cellHeight
@@ -71,7 +78,7 @@ Page {
                     wrapMode: Text.WrapAnywhere
                     elide: Text.ElideRight
                 }
-                MouseArea { anchors.fill: parent; onClicked: page.openViewer(index) }
+                MouseArea { anchors.fill: parent; onClicked: { grid.currentIndex = index; page.openViewer(index) } }
             }
             ScrollBar.vertical: ScrollBar {}
         }
