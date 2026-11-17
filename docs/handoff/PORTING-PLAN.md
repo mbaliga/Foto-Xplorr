@@ -13,6 +13,12 @@
 > `ios/OWNER_VERIFY.md`. The rest of this document is still the 6 Oct plan and is stale against `main`
 > (KMP `:core:*` and `:ut:bridge` exist; ADR-013 chose Qt 6 over Compose Desktop).
 
+> **Status update 2026-11-17 (Ubuntu Touch):** Phase 8 has started as a **Qt 5.15 Quick Controls 2 shell** (`ut/app`) over the
+> Kotlin/Native core (`:ut:bridge`), not the Lomiri UI Toolkit shell this document describes, per the ADR-013 addendum of the same
+> date. `LINUX_DIR` source, real `fotoz_sync_start`, `fotoz_folders`, release links for linuxX64/linuxArm64 and the shell are
+> BUILT-HERE on a Linux host (shell tested offscreen against the real core); the click, its AppArmor/manifest and `.github/workflows/ut.yml`
+> are CODE-ONLY / CI-LANE-WRITTEN; nothing ran on a device. See `docs/handoff/UT-PORT.md` and `ut/OWNER_VERIFY.md`.
+
 **Written:** 6 Oct 2026. **Baseline:** `main` @ `0ff1373` (Phase 0 merged as #13, 24 Sep 2026).
 
 **Relationship to `docs/handoff/MASTER-PLAN.md`.** This file *amends* the master plan; it is not a

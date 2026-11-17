@@ -1758,3 +1758,11 @@ Everything in the checklist. Above all:
 Owner directive 2026-11-17: ship iOS builds from GitHub Actions. Built `:ios:core` (JSON facade over the pure core, jvm-tested),
 `ios/FotozKit` (Swift package, `swift test` green on Linux), a SwiftUI/PhotoKit shell (CODE-ONLY) and `.github/workflows/ios.yml`
 (CI-LANE-WRITTEN). Decisions, evidence classes and gaps: `docs/handoff/IOS-PORT.md`. Owner checks: `ios/OWNER_VERIFY.md`.
+
+## Ubuntu Touch port, first cut (17 Nov 2026)
+
+Owner directive 2026-11-17: ship Ubuntu Touch builds from GitHub Actions. Added `LocalDirSource` (`:core:index`, `LINUX_DIR`), a real
+`fotoz_sync_start` and a new `fotoz_folders` in `:ut:bridge` (25 linuxX64 tests green), RELEASE `libfotozcore.so` links for linuxX64 and
+linuxArm64, the Qt 5.15 Quick shell `ut/app` (fake-core and real-core QtTest suites green offscreen on a Linux host), click packaging
+(CODE-ONLY) and `.github/workflows/ut.yml` (CI-LANE-WRITTEN). WP8.1's "no QML/Qt shell attempted" and "sync is a stub" notes above are
+superseded for `LINUX_DIR`. Nothing ran on a device. Decisions, evidence, gaps: `docs/handoff/UT-PORT.md`; owner checks: `ut/OWNER_VERIFY.md`.

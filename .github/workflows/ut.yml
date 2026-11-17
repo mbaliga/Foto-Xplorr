@@ -1,0 +1,206 @@
+# Ubuntu Touch / Linux build lanes for Fotoz (docs/handoff/UT-PORT.md). Owner directive 2026-11-17:
+# Ubuntu Touch builds happen on GitHub Actions (ubuntu + Clickable). EVIDENCE CLASS: CI-LANE-WRITTEN --
+# no run of this file has been seen. Everything it does that does not need Docker was run locally in the
+# container the lane was written in (ut/app tests, qmllint, packaging checks); see UT-PORT.md for the log.
+#
+# Lanes
+#   shell      ubuntu-24.04 : Kotlin/Native libfotozcore.so (linuxX64) + :ut:bridge tests, Qt 5.15 shell build,
+#                             QtTest suite against a fake AND the real core (offscreen), qmllint, offline gate,
+#                             clickable.yaml/manifest schema check
+#   click      ubuntu-24.04 : `clickable build` for arm64 (phone) and amd64 (desktop-UT/emulator) clicks, unsigned.
+#                             Uploads to a DRAFT release only on `ut-v*` tags.
+#   canary-qt6 ubuntu-24.04 : the same shell against Qt 6 (UT 26.04 / ADR-013's target). Allowed to fail; it tells
+#                             the owner how far the Qt 5.15 code is from Qt 6, nothing more.
+#
+# Private submodules (hyle-design-system, shared-libraries): see ios.yml; same SUBMODULE_TOKEN fallback.
+name: Fotoz Ubuntu Touch
+
+on:
+  push:
+    branches: [main]
+    tags: ["ut-v*"]
+    paths:
+      - "ut/**"
+      - "core/**"
+      - "gradle/libs.versions.toml"
+      - "settings.gradle.kts"
+      - ".github/workflows/ut.yml"
+  pull_request:
+    paths:
+      - "ut/**"
+      - "core/**"
+      - ".github/workflows/ut.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ut-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_QPA_PLATFORM: offscreen
+  QT_QUICK_BACKEND: software
+
+jobs:
+  shell:
+    name: Core (linuxX64), Qt shell build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: true
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      # settings.gradle.kts includes :app, which needs an Android SDK to configure even though this lane never
+      # builds it. Explicit `packages`: v4's default still asks for the legacy `tools` package and dies.
+      - uses: android-actions/setup-android@651bceb6f9ca583f16b8d75b62c36ded2ae6fc9c # v4.0.0
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
+      - uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96 # v4.4.1
+      - name: sdk.dir for the composite builds
+        run: |
+          for d in . hyle-design-system shared-libraries; do
+            [ -f "$d/local.properties" ] || echo "sdk.dir=${ANDROID_HOME:?ANDROID_HOME not set}" > "$d/local.properties"
+          done
+      - name: Qt 5.15 toolchain and Python checks
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cmake g++ \
+            qtbase5-dev qtdeclarative5-dev qtquickcontrols2-5-dev qtdeclarative5-dev-tools \
+            qml-module-qtquick2 qml-module-qtquick-controls2 qml-module-qtquick-layouts qml-module-qtquick-window2 \
+            qml-module-qtquick-templates2 libgl1-mesa-dri
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q clickable-ut==8.10.0 jsonschema pyyaml
+      - name: Offline-identity gate
+        run: ./ut/scripts/verify-offline.sh
+      - name: Packaging check (clickable.yaml against Clickable's own schema, manifest, AppArmor)
+        run: '"$RUNNER_TEMP/venv/bin/python" ut/app/tests/check_clickable_yaml.py'
+      - name: qmllint
+        run: qmllint ut/app/qml/*.qml
+      - name: Bridge tests (linuxX64Test, real Room/SQLite) and linux/arm64 compile
+        run: |
+          set -o pipefail
+          export LANG=C.UTF-8 LC_ALL=C.UTF-8
+          ./gradlew --no-daemon -Pfotoz.native=true :core:index:jvmTest :ut:bridge:linuxX64Test :ut:bridge:compileKotlinLinuxArm64 2>&1 | tee gradle-ut.log
+      - name: Release libfotozcore.so (amd64)
+        run: ./ut/scripts/build-core.sh amd64
+      - name: Build the shell and run QtTest (fake core, then real core)
+        run: |
+          cmake -S ut/app -B build/ut-app -DFOTOZ_BUILD_TESTS=ON \
+            -DFOTOZ_CORE_LIB="$PWD/ut/app/prebuilt/amd64/libfotozcore.so"
+          cmake --build build/ut-app -j"$(nproc)"
+          ctest --test-dir build/ut-app --output-on-failure
+      - name: Linkage report for the core library
+        run: |
+          ldd ut/app/prebuilt/amd64/libfotozcore.so
+          objdump -T ut/app/prebuilt/amd64/libfotozcore.so | grep -E 'fotoz_' | awk '{print $NF}' | sort
+          objdump -T ut/app/prebuilt/amd64/libfotozcore.so | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1
+      - name: Upload logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fotoz-ut-shell-logs
+          path: gradle-ut.log
+          if-no-files-found: warn
+
+  click:
+    name: Click (${{ matrix.arch }}, unsigned)
+    runs-on: ubuntu-24.04
+    needs: shell
+    timeout-minutes: 90
+    # `contents: write` is needed only for the draft-release step, which runs on `ut-v*` tags only.
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, amd64]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: true
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@651bceb6f9ca583f16b8d75b62c36ded2ae6fc9c # v4.0.0
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
+      - uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96 # v4.4.1
+      - name: sdk.dir for the composite builds
+        run: |
+          for d in . hyle-design-system shared-libraries; do
+            [ -f "$d/local.properties" ] || echo "sdk.dir=${ANDROID_HOME:?ANDROID_HOME not set}" > "$d/local.properties"
+          done
+      - name: libfotozcore.so for ${{ matrix.arch }} (Kotlin/Native, cross-linked on the x86 runner for arm64)
+        run: ./ut/scripts/build-core.sh ${{ matrix.arch }}
+      - name: Install Clickable
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q clickable-ut==8.10.0
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: clickable build --arch ${{ matrix.arch }}
+        working-directory: ut/app
+        run: clickable build --arch ${{ matrix.arch }} --non-interactive --verbose --output "$GITHUB_WORKSPACE/dist"
+      - name: Inspect the click
+        run: |
+          ls -l dist
+          f=$(ls dist/*.click | head -1)
+          ar t "$f"
+          mkdir -p "$RUNNER_TEMP/clk" && cd "$RUNNER_TEMP/clk" && ar x "$GITHUB_WORKSPACE/$f"
+          tar tzf data.tar.* | sort
+          tar xzf control.tar.* ./manifest 2>/dev/null || tar xf control.tar.* ./manifest || true
+          cat manifest 2>/dev/null || true
+          # the click must carry the core library and a binary for the right architecture
+          tar tzf data.tar.* | grep -q 'lib/libfotozcore.so'
+      - name: Click review (advisory)
+        continue-on-error: true
+        working-directory: ut/app
+        run: clickable review --non-interactive
+      # Convenience artifact only (artifact storage quota has been hit before; the draft release is the real channel).
+      - name: Upload click
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fotoz-click-${{ matrix.arch }}
+          path: dist/*.click
+          if-no-files-found: error
+      - name: Attach to a DRAFT release (tags only)
+        if: startsWith(github.ref, 'refs/tags/ut-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft \
+            --title "Fotoz Ubuntu Touch $GITHUB_REF_NAME" \
+            --notes "Unsigned click(s). Draft: review before publishing. Device behaviour is owner-verified (ut/OWNER_VERIFY.md)."
+          gh release upload "$GITHUB_REF_NAME" dist/*.click --clobber
+
+  canary-qt6:
+    name: Canary - shell on Qt 6 (allowed to fail)
+    runs-on: ubuntu-24.04
+    needs: shell
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: false   # the fake-core tests need neither submodule
+      - name: Qt 6 toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cmake g++ qt6-base-dev qt6-declarative-dev qt6-declarative-dev-tools \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-window \
+            qml6-module-qtquick-templates qml6-module-qtqml-workerscript libgl1-mesa-dri
+      - name: Build and run the fake-core tests on Qt 6
+        run: |
+          cmake -S ut/app -B build/ut-app6 -DFOTOZ_BUILD_TESTS=ON
+          cmake --build build/ut-app6 -j"$(nproc)"
+          ctest --test-dir build/ut-app6 --output-on-failure -R shell_with_fake_core
