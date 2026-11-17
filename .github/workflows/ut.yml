@@ -147,6 +147,14 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install -q clickable-ut==8.10.0
           echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      # Clickable's 24.04 CI images carry files owned by high container IDs (e.g. 32011). Rootless Podman can only
+      # unpack them when the runner user has a wide subuid/subgid range; otherwise the pull dies with
+      # "container ID 32011 cannot be mapped to a host ID".
+      - name: Rootless Podman subuid/subgid range
+        run: |
+          grep -q "^$USER:" /etc/subuid || echo "$USER:100000:200000" | sudo tee -a /etc/subuid
+          grep -q "^$USER:" /etc/subgid || echo "$USER:100000:200000" | sudo tee -a /etc/subgid
+          podman system migrate
       - name: clickable build --arch ${{ matrix.arch }}
         working-directory: ut/app
         run: clickable build --arch ${{ matrix.arch }} --non-interactive --verbose --output "$GITHUB_WORKSPACE/dist"
