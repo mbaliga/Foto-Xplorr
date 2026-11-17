@@ -74,7 +74,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends cmake g++ \
             qtbase5-dev qtdeclarative5-dev qtquickcontrols2-5-dev qtdeclarative5-dev-tools \
             qml-module-qtquick2 qml-module-qtquick-controls2 qml-module-qtquick-layouts qml-module-qtquick-window2 \
-            qml-module-qtquick-templates2 libgl1-mesa-dri
+            qml-module-qtquick-templates2 qml-module-qt-labs-platform libgl1-mesa-dri
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install -q clickable-ut==8.10.0 jsonschema pyyaml
       - name: Offline-identity gate
@@ -82,7 +82,7 @@ jobs:
       - name: Packaging check (clickable.yaml against Clickable's own schema, manifest, AppArmor)
         run: '"$RUNNER_TEMP/venv/bin/python" ut/app/tests/check_clickable_yaml.py'
       - name: qmllint
-        run: qmllint ut/app/qml/*.qml
+        run: qmllint $(ls ut/app/qml/*.qml | grep -v FolderPicker6)   # FolderPicker6 is Qt 6 only (QtQuick.Dialogs)
       - name: Bridge tests (linuxX64Test, real Room/SQLite) and linux/arm64 compile
         run: |
           set -o pipefail

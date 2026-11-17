@@ -1,0 +1,233 @@
+# Linux desktop build lanes for Fotoz (docs/handoff/LINUX-PORT.md). Owner directive 2026-11-17: builds happen on
+# GitHub Actions. EVIDENCE CLASS: CI-LANE-WRITTEN -- no run of this file has been seen. The Qt build, the tests and the
+# deb/tarball packaging steps were run locally in the container this lane was written in (Qt 5.15.13 AND Qt 6.4.2,
+# offscreen); the Flatpak and arm64 lanes were not (no disk for the KDE SDK, no arm64 host).
+#
+# Lanes
+#   desktop       ubuntu-24.04     : static gate, Kotlin/Native libfotozcore.so for amd64 AND arm64 (cross-link), the Qt shell on
+#                                    Qt 5.15 and Qt 6 with QtTest (fake + real core, offscreen), .deb + .tar.gz (Qt 6), draft release on `linux-v*`
+#   flatpak       ubuntu-24.04     : flatpak-builder against org.kde.Platform 6.11 using the prebuilt amd64 core; `fotoz --version` smoke
+#   arm64-native  ubuntu-24.04-arm : the shell + tests on a REAL arm64 host with the cross-linked arm64 core. This is the only thing that
+#                                    ever executes the linuxArm64 core. Allowed to fail: GitHub's arm64 runners are free only for
+#                                    public repositories, so on a private repo the job may never be scheduled.
+#
+# Private submodules (hyle-design-system, shared-libraries): same SUBMODULE_TOKEN fallback as ut.yml / ios.yml.
+name: Fotoz Linux
+
+on:
+  push:
+    branches: [main]
+    tags: ["linux-v*"]
+    paths:
+      - "linux/**"
+      - "ut/app/**"
+      - "ut/bridge/**"
+      - "ut/scripts/**"
+      - "core/**"
+      - "gradle/libs.versions.toml"
+      - "settings.gradle.kts"
+      - ".github/workflows/linux.yml"
+  pull_request:
+    paths:
+      - "linux/**"
+      - "ut/app/**"
+      - "ut/bridge/**"
+      - "core/**"
+      - ".github/workflows/linux.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_QPA_PLATFORM: offscreen
+  QT_QUICK_BACKEND: software
+  CI: "true"
+
+jobs:
+  desktop:
+    name: Core, Qt 5.15 + Qt 6 shell, deb + tarball
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: write      # only used by the draft-release step, which runs on `linux-v*` tags only
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: true
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      # settings.gradle.kts includes :app, which needs an Android SDK to configure even though this lane never builds it.
+      # Explicit `packages`: setup-android v4's default still asks for the legacy `tools` package and dies.
+      - uses: android-actions/setup-android@651bceb6f9ca583f16b8d75b62c36ded2ae6fc9c # v4.0.0
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
+      - uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96 # v4.4.1
+      - name: sdk.dir for the composite builds
+        run: |
+          for d in . hyle-design-system shared-libraries; do
+            [ -f "$d/local.properties" ] || echo "sdk.dir=${ANDROID_HOME:?ANDROID_HOME not set}" > "$d/local.properties"
+          done
+      - name: Toolchains (Qt 5.15 and Qt 6 dev side by side, packaging validators)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ file desktop-file-utils appstream python3-yaml \
+            qtbase5-dev qtdeclarative5-dev qtquickcontrols2-5-dev qtdeclarative5-dev-tools \
+            qml-module-qtquick2 qml-module-qtquick-controls2 qml-module-qtquick-layouts qml-module-qtquick-window2 \
+            qml-module-qtquick-templates2 qml-module-qt-labs-platform \
+            qt6-base-dev qt6-declarative-dev qt6-declarative-dev-tools \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-window \
+            qml6-module-qtquick-templates qml6-module-qtquick-dialogs qml6-module-qtqml-workerscript libgl1-mesa-dri
+      - name: Static gates (offline identity, desktop entry, AppStream, Flatpak sandbox promises)
+        run: |
+          ./ut/scripts/verify-offline.sh
+          ./linux/scripts/verify-linux.sh
+          qmllint $(ls ut/app/qml/*.qml | grep -v FolderPicker6)
+      - name: Bridge tests (linuxX64, real Room/SQLite) and linux/arm64 compile
+        run: |
+          set -o pipefail
+          export LANG=C.UTF-8 LC_ALL=C.UTF-8
+          ./gradlew --no-daemon -Pfotoz.native=true :core:index:jvmTest :ut:bridge:linuxX64Test :ut:bridge:compileKotlinLinuxArm64 2>&1 | tee gradle-linux.log
+      - name: libfotozcore.so (amd64, and arm64 cross-linked for the native-arm64 lane and the Flatpak)
+        run: |
+          ./ut/scripts/build-core.sh amd64
+          ./ut/scripts/build-core.sh arm64
+      - name: Qt 5.15 shell, desktop mode, QtTest against fake and real core
+        run: |
+          cmake -S ut/app -B build/qt5 -G Ninja -DFOTOZ_QT_MAJOR=5 -DFOTOZ_DESKTOP=ON -DFOTOZ_BUILD_TESTS=ON \
+            -DFOTOZ_CORE_LIB="$PWD/ut/app/prebuilt/amd64/libfotozcore.so" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/qt5
+          ctest --test-dir build/qt5 --output-on-failure
+      - name: Qt 6 shell, desktop mode, QtTest against fake and real core
+        run: |
+          cmake -S ut/app -B build/qt6 -G Ninja -DFOTOZ_QT_MAJOR=6 -DFOTOZ_DESKTOP=ON -DFOTOZ_BUILD_TESTS=ON \
+            -DFOTOZ_CORE_LIB="$PWD/ut/app/prebuilt/amd64/libfotozcore.so" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/qt6
+          ctest --test-dir build/qt6 --output-on-failure
+      - name: Package (Qt 6 build is the one that ships) and smoke-test the installed layout
+        run: |
+          (cd build/qt6 && cpack -G "DEB;TGZ")
+          mkdir -p dist && cp build/qt6/*.deb build/qt6/*.tar.gz dist/
+          dpkg-deb -I dist/*.deb
+          dpkg-deb -c dist/*.deb
+          rm -rf "$RUNNER_TEMP/stage" && DESTDIR="$RUNNER_TEMP/stage" cmake --install build/qt6 --prefix /usr
+          "$RUNNER_TEMP/stage/usr/bin/fotoz" --version
+          mkdir -p "$RUNNER_TEMP/pics" "$RUNNER_TEMP/home"
+          # Stays up for 8 s with a folder argument and the packaged layout (core found at ../lib/fotoz): exit 124 = still running.
+          set +e
+          HOME="$RUNNER_TEMP/home" XDG_DATA_HOME="$RUNNER_TEMP/home/.local/share" XDG_CONFIG_HOME="$RUNNER_TEMP/home/.config" \
+            timeout 8 "$RUNNER_TEMP/stage/usr/bin/fotoz" "$RUNNER_TEMP/pics"; rc=$?
+          [ "$rc" = 124 ] || { echo "fotoz exited early with $rc"; exit 1; }
+          test -s "$RUNNER_TEMP/home/.local/share/fotoz/fotoz/fotoz.db"
+      - name: Linkage report for the core library
+        run: |
+          ldd ut/app/prebuilt/amd64/libfotozcore.so
+          objdump -T ut/app/prebuilt/amd64/libfotozcore.so | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1
+          file ut/app/prebuilt/arm64/libfotozcore.so
+      # The cores are the one thing the Flatpak and arm64 lanes cannot rebuild cheaply, so hand them over (small).
+      - name: Hand the cores to the other lanes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fotozcore-linux
+          path: ut/app/prebuilt/
+          retention-days: 3
+      # Convenience copy only (artifact storage quota has been hit before); the draft release is the real channel.
+      - name: Upload packages
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fotoz-linux-packages
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
+            gradle-linux.log
+          if-no-files-found: error
+      - name: Attach to a DRAFT release (tags only)
+        if: startsWith(github.ref, 'refs/tags/linux-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft \
+            --title "Fotoz Linux $GITHUB_REF_NAME" \
+            --notes "Unsigned Linux desktop packages (deb, tarball). Draft: review before publishing. Behaviour on a real desktop is owner-verified (linux/OWNER_VERIFY.md)."
+          gh release upload "$GITHUB_REF_NAME" dist/*.deb dist/*.tar.gz --clobber
+
+  flatpak:
+    name: Flatpak (org.kde.Platform 6.11, unsigned)
+    runs-on: ubuntu-24.04
+    needs: desktop
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: false     # the Flatpak builds ut/app + linux/ only; the core arrives as an artifact
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: fotozcore-linux
+          path: ut/app/prebuilt
+      - name: flatpak + flatpak-builder
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Build
+        run: |
+          flatpak-builder --user --force-clean --install-deps-from=flathub --repo=flatpak-repo \
+            flatpak-build linux/flatpak/io.github.mbaliga.Fotoz.yml
+      - name: Smoke (the sandboxed binary starts and reports its version)
+        run: flatpak-builder --run flatpak-build linux/flatpak/io.github.mbaliga.Fotoz.yml fotoz --version
+      - name: Bundle
+        run: flatpak build-bundle flatpak-repo fotoz-x86_64.flatpak io.github.mbaliga.Fotoz
+      - name: Attach to a DRAFT release (tags only)
+        if: startsWith(github.ref, 'refs/tags/linux-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft \
+            --title "Fotoz Linux $GITHUB_REF_NAME" --notes "Unsigned. Draft: review before publishing."
+          gh release upload "$GITHUB_REF_NAME" fotoz-x86_64.flatpak --clobber
+      - name: Upload bundle
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fotoz-flatpak-x86_64
+          path: fotoz-x86_64.flatpak
+          if-no-files-found: error
+
+  arm64-native:
+    name: Native arm64 host (the only run of the linuxArm64 core)
+    runs-on: ubuntu-24.04-arm
+    needs: desktop
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: fotozcore-linux
+          path: ut/app/prebuilt
+      - name: Qt 6
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ file \
+            qt6-base-dev qt6-declarative-dev qt6-declarative-dev-tools \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-window \
+            qml6-module-qtquick-templates qml6-module-qtquick-dialogs qml6-module-qtqml-workerscript libgl1-mesa-dri
+          file ut/app/prebuilt/arm64/libfotozcore.so
+      - name: Shell + tests against the REAL arm64 core
+        run: |
+          cmake -S ut/app -B build/arm -G Ninja -DFOTOZ_QT_MAJOR=6 -DFOTOZ_DESKTOP=ON -DFOTOZ_BUILD_TESTS=ON \
+            -DFOTOZ_CORE_LIB="$PWD/ut/app/prebuilt/arm64/libfotozcore.so" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/arm
+          ctest --test-dir build/arm --output-on-failure
