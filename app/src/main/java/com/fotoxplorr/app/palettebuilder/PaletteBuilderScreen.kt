@@ -43,6 +43,7 @@ import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.shell.AppStateViewModel
 import com.fotoxplorr.app.ui.RoomStyle
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -264,7 +265,10 @@ internal fun PaletteBuilderScreen(
         readError = null
         readProgress = 0f
         val host = newHost()
-        readJob = scope.launch {
+        // Started only after it is stored: the body ends by clearing readJob, and where the scope resumes without a
+        // dispatch (the Compose test rule's does, on the worker thread) a read that fails at once could clear it
+        // before the assignment below stored it. The page would then say "reading" for good, with no result.
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             val outcome = withContext(Dispatchers.Default) { PhotoPalettes.build(chosen, host) { readProgress = it } }
             readJob = null
             when (outcome) {
@@ -272,6 +276,8 @@ internal fun PaletteBuilderScreen(
                 is PhotoPaletteResult.Failed -> readError = outcome.message
             }
         }
+        readJob = job
+        job.start()
     }
 
     fun startFromColour() {
@@ -340,7 +346,8 @@ internal fun PaletteBuilderScreen(
         }
         val host = newHost()
         preview = PreviewState.Running
-        previewJob = scope.launch {
+        // Stored before it starts, as the read above is, so the body's own clearing cannot come first.
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             val made = withContext(Dispatchers.Default) { RecolourPreview.make(asset, key.colours, key.settings, host) }
             preview = when (made) {
                 is PreviewResult.Ready -> PreviewState.Ready(key, made.bitmap)
@@ -348,6 +355,8 @@ internal fun PaletteBuilderScreen(
             }
             previewJob = null
         }
+        previewJob = job
+        job.start()
     }
 
     fun startCopy() {
