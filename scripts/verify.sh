@@ -37,6 +37,7 @@ done
 
 # Ubuntu Touch / Linux shell: negative grep for network code / networking policy groups (ut/scripts/verify-offline.sh).
 ./ut/scripts/verify-offline.sh
+./ut/scripts/click-review-gate.py --self-test
 
 # Linux desktop packaging: desktop entry / AppStream / Flatpak sandbox promises (linux/scripts/verify-linux.sh).
 ./linux/scripts/verify-linux.sh

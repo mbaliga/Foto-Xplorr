@@ -139,6 +139,17 @@ Content Hub, decoders beyond what Qt ships, ONNX, XMP, duplicates, bulk rename, 
 Lomiri, not on a device). Point 1 stands: one Qt 6 shell is the destination; Compose Desktop is not built. Flatpak (point 4) is written against
 `org.kde.Platform//6.11` but never built here. Details: `docs/handoff/LINUX-PORT.md`.
 
+## Addendum (2026-11-18) -- owner decision: CI tolerates the two reserved-policy-group review findings, and only those
+
+`clickable review` (click-review) reports `security:policy_groups_safe:fotoz:picture_files_read` and
+`security:policy_groups_safe:fotoz:video_files_read` as "(NEEDS REVIEW) reserved policy group ... vetted applications only". They are inherent to
+this app (`ut/app/fotoz.apparmor.in` reads the Pictures and Videos folders; the groups are deliberately kept) and only OpenStore reviewers can clear
+them. The owner decided on 2026-11-18 ("Option 2, apply the narrow allowance") that CI may tolerate exactly these two findings. Implementation:
+the `click` job builds with `--skip-review` and runs `ut/scripts/click-review-gate.py` as a hard (not `continue-on-error`) step. The script keeps an
+allowlist of exact rule ids, prints the whole review output, and fails on any other error or warning, any allowlisted rule with other text, or
+unparsable output. Its `--self-test` runs in `scripts/verify.sh` and in the job. The allowlist must stay minimal (add nothing without a new owner
+decision), the AppArmor policy is unchanged, and the OpenStore review still has to clear these groups before any store submission.
+
 ## Sources
 
 The research notes behind this ADR are in the conversation record. The key sources:

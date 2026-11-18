@@ -53,5 +53,8 @@ box only after you saw it on the device. Evidence classes are defined in `docs/h
    code compiles for Qt 6 in principle (CMake finds either; a CI canary tries it) but that is unproven. Confirm or overrule.
 2. **Click name** `fotoz.mbaliga` and maintainer string (see 0).
 3. **OpenStore account and review** for the reserved policy groups (open-source apps only: this repo is Apache-2.0).
+   Decided 2026-11-18 (owner, "Option 2, narrow allowance"): CI tolerates only the `picture_files_read` / `video_files_read`
+   "(NEEDS REVIEW)" click-review findings (`ut/scripts/click-review-gate.py`, ADR-013 addendum); everything else fails the `click` job. This
+   does not replace the OpenStore review, which must still clear them before a store submission.
 4. **Hyle QML style.** `ut/app/qml/Theme.qml` is neutral tokens, not Hyle. Say if/when the real style should be wired.
 5. **Linux desktop packaging (Flatpak).** Out of this stage; the same shell builds on a desktop (`UT-PORT.md`).

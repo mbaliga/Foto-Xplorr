@@ -158,7 +158,8 @@ jobs:
           echo "$RUNNER_TEMP/podman-shim" >> "$GITHUB_PATH"
       - name: clickable build --arch ${{ matrix.arch }}
         working-directory: ut/app
-        run: clickable build --arch ${{ matrix.arch }} --non-interactive --verbose --output "$GITHUB_WORKSPACE/dist"
+        # --skip-review: the review is its own HARD gate below (ut/scripts/click-review-gate.py), not a side effect of the build.
+        run: clickable build --arch ${{ matrix.arch }} --non-interactive --verbose --skip-review --output "$GITHUB_WORKSPACE/dist"
       - name: Inspect the click
         run: |
           ls -l dist
@@ -170,10 +171,15 @@ jobs:
           cat manifest 2>/dev/null || true
           # the click must carry the core library and a binary for the right architecture
           tar tzf data.tar.* | grep -q 'lib/libfotozcore.so'
-      - name: Click review (advisory)
-        continue-on-error: true
+      # HARD gate. Owner decision 2026-11-18 (narrow allowance; ADR-013, ut/OWNER_VERIFY.md): the two "(NEEDS REVIEW) reserved
+      # policy group" findings for picture_files_read / video_files_read are tolerated (only OpenStore review can clear them);
+      # every other error or warning, or unparsable output, fails. The full click-review output stays in the log and the summary.
+      - name: Click review (hard gate, owner-decided allowlist)
         working-directory: ut/app
-        run: clickable review --non-interactive
+        run: |
+          ../scripts/click-review-gate.py --self-test
+          ../scripts/click-review-gate.py -- --arch ${{ matrix.arch }} --non-interactive --verbose \
+            "$(ls "$GITHUB_WORKSPACE"/dist/*.click | head -1)"
       # Convenience artifact only (artifact storage quota has been hit before; the draft release is the real channel).
       - name: Upload click
         continue-on-error: true
