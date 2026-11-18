@@ -1,0 +1,44 @@
+# Flatpak manifest for Fotoz (Linux desktop). EVIDENCE: CI-LANE-WRITTEN / see docs/handoff/LINUX-PORT.md.
+#
+# Offline identity: NO `--share=network`. Photos are reachable read-only through `xdg-pictures:ro`; any other
+# folder comes from the portal folder dialog ("Choose folder…") or `flatpak override --user --filesystem=<dir>:ro`.
+# Nothing in this manifest writes to the user's photos.
+#
+# libfotozcore.so (Kotlin/Native) cannot be built inside the sandbox (Gradle + the K/N toolchain need the
+# network, and a Flatpak build has none), so it is built OUTSIDE by `ut/scripts/build-core.sh amd64|arm64` and
+# consumed here as a prebuilt file. A Flathub submission would need a different plan for that (owner decision,
+# linux/OWNER_VERIFY.md).
+app-id: io.github.mbaliga.Fotoz
+runtime: org.kde.Platform
+runtime-version: '6.11'      # latest KDE runtime on Flathub at time of writing (2026-11-17); bump deliberately
+sdk: org.kde.Sdk
+command: fotoz
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --filesystem=xdg-pictures:ro
+modules:
+  - name: fotozcore
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 libfotozcore.so /app/lib/fotoz/libfotozcore.so
+    sources:
+      - type: file
+        only-arches: [x86_64]
+        path: ../../ut/app/prebuilt/amd64/libfotozcore.so
+      - type: file
+        only-arches: [aarch64]
+        path: ../../ut/app/prebuilt/arm64/libfotozcore.so
+  - name: fotoz
+    buildsystem: cmake-ninja
+    subdir: ut/app
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DFOTOZ_DESKTOP=ON
+      - -DFOTOZ_QT_MAJOR=6
+    sources:
+      - type: dir
+        path: ../..
+        skip: [build, .git, hyle-design-system, shared-libraries, app, ios, testdata, ut/app/prebuilt]

@@ -23,3 +23,10 @@ captures/
 
 # Kotlin compiler session cache
 .kotlin/
+
+# iOS port
+ios/FotozKit/.build/
+ios/Fotoz.xcodeproj/
+ios/build/
+*.xcarchive
+*.ipa

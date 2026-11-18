@@ -12,7 +12,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-violations=$(grep -rnE '^\s*import\s+(android|java|javax|org\.w3c)\.' core/*/src/commonMain --include='*.kt' 2>/dev/null || true)
+violations=$(grep -rnE '^\s*import\s+(android|java|javax|org\.w3c)\.' core/*/src/commonMain ios/core/src/commonMain --include='*.kt' 2>/dev/null || true)
 
 if [ -n "$violations" ]; then
   echo "verify-core-purity: commonMain must never import android.*/java.*/javax.*/org.w3c.* (ADR-010 §2):" >&2

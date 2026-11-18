@@ -36,6 +36,9 @@ data class SourceEntity(
  *  §2's list as they're implemented. */
 object SourceKind {
     const val MEDIASTORE_VOLUME = "MEDIASTORE_VOLUME"
+
+    /** ADR-013 point 5: a plain Linux directory tree (`:core:index`'s `LocalDirSource`). */
+    const val LINUX_DIR = "LINUX_DIR"
 }
 
 /** [SourceEntity.state] values. */

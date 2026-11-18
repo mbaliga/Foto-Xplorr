@@ -2,46 +2,55 @@
 
 package com.fotoxplorr.ut.bridge
 
+import com.fotoxplorr.core.db.entity.SourceEntity
+import com.fotoxplorr.core.db.entity.SourceKind
+import com.fotoxplorr.core.db.entity.SourceState
+import com.fotoxplorr.core.index.LocalDirSource
+import com.fotoxplorr.core.index.SyncEngine
+import com.fotoxplorr.core.index.SyncResult
+import com.fotoxplorr.core.model.SourceId
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CFunction
 import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.invoke
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlin.native.CName
+import platform.posix.time
+
+/** [fotoz_sync_start]'s request: only `kind = "LINUX_DIR"` exists on this platform today. */
+@Serializable
+data class SyncRequestDto(val kind: String? = null, val path: String? = null)
+
+/** What the callback's message carries on success. */
+@Serializable
+data class SyncResultDto(val sourceId: Long, val itemsSeen: Int, val fullyEnumerated: Boolean)
 
 /**
- * MASTER-PLAN.md's own C API line names `sync_start(source, callback)`. Checked before writing
- * this, per WP8.1's brief: Phase 1's real sync engine (`:core:index`'s `Source`/`SyncEngine`,
- * WP1.4, "done (core scope)") is pure Kotlin and IS native-ready (`compileKotlinLinuxX64`/
- * `compileKotlinLinuxArm64` green, per MASTER-PROGRESS.md's module-readiness table) -- but its
- * only real [com.fotoxplorr.core.index.Source] implementation,
- * `com.fotoxplorr.app.index.AndroidMediaStoreSource`, lives in `:app` and wires directly to
- * `android.provider.MediaStore`. There is no Linux directory (or any other) [Source]
- * implementation anywhere in this codebase -- ADR-013 point 5's `LINUX_DIR` source is real
- * *schema* (`SourceKind` already lists it in ADR-011 section 2), but zero lines of the source
- * itself exist. Porting or writing one is real, separate, non-trivial work this WP does not
- * attempt (see this WP's own brief: "rather than porting Android-specific sync logic under time
- * pressure").
+ * Runs one real [SyncEngine] pass over a [LocalDirSource] (ADR-013 point 5's `LINUX_DIR`) and
+ * reports the outcome through [callback].
  *
- * So this is a deliberate, honest stub: it validates [handle] and, if [callback] is non-null,
- * invokes it exactly once with [BridgeStatus.NOT_IMPLEMENTED] and a JSON reason -- proving the
- * C-function-pointer callback ABI itself actually works (this module's own `linuxTest` calls this
- * with a real `staticCFunction`-built callback and asserts it fires with that exact code), which
- * is real, useful groundwork even though sync itself is not.
+ * **Blocking.** The pass runs to completion on the calling thread before this function returns,
+ * so a UI shell must call it from a worker thread. There is no incremental progress callback yet
+ * (the callback fires exactly once, at the end) and no cancellation.
  *
- * [sourceJson] is read (so a malformed/missing value is still a documented [BridgeStatus.BAD_REQUEST]
- * before the not-implemented path, not skipped over) but not otherwise interpreted -- there is no
- * source kind on this platform yet for it to describe.
+ * [sourceJson] is a [SyncRequestDto]. A well-formed request for any other `kind` is
+ * [BridgeStatus.NOT_IMPLEMENTED] (there is no such source on this platform); a missing/blank
+ * `path` or malformed JSON is [BridgeStatus.BAD_REQUEST]. The source row is created on first use
+ * and reused afterwards (unique on kind + root path), so re-syncing a folder is an incremental
+ * upsert-and-sweep, not a duplicate library.
  *
- * Ownership note for [callback]'s own message pointer, since it differs from every other string
- * this module returns: it is valid ONLY for the duration of the callback invocation -- this
- * function frees it itself immediately afterward, on the same call stack, before returning.
- * [callback] must copy the bytes if it needs them afterward; it must never call
- * [fotoz_free_string] on it itself.
+ * Outcomes, each delivered as `(status, jsonMessage)` to [callback] AND returned:
+ * - [BridgeStatus.OK] + [SyncResultDto]. `fullyEnumerated = false` means some directory could not
+ *   be read or the depth cap was hit, in which case [SyncEngine] performed no mark-and-sweep.
+ * - [BridgeStatus.IO_ERROR] + `{"error":...}` when the root itself cannot be read (nothing swept).
  *
- * @return the same status code passed to [callback], or [BridgeStatus.INVALID_HANDLE] /
- * [BridgeStatus.BAD_REQUEST] before [callback] is ever invoked -- this function never invokes
- * [callback] more than once, and never after returning.
+ * The message pointer is valid only during the callback (this function frees it right after);
+ * copy it, never free it. The callback is invoked at most once and never after return.
+ *
+ * Not implemented here: inotify watching, mtime-delta passes, removable-drive (UDisks2)
+ * sources, Content Hub import. EXIF is not parsed, so `date_taken` is the file mtime for now.
  */
 @CName("fotoz_sync_start")
 fun fotoz_sync_start(
@@ -50,18 +59,59 @@ fun fotoz_sync_start(
     callback: CPointer<CFunction<(Int, CPointer<ByteVar>?, COpaquePointer?) -> Unit>>?,
     userData: COpaquePointer?,
 ): Int = runCatchingStatus {
-    if (handle.asLibraryHandleOrNull() == null) return@runCatchingStatus BridgeStatus.INVALID_HANDLE
-    if (sourceJson.readUtf8OrNull() == null) return@runCatchingStatus BridgeStatus.BAD_REQUEST
-
-    val reason = BridgeJson.encodeError(
-        "sync is not implemented on this platform: Phase 1's real Source implementation " +
-            "(AndroidMediaStoreSource) is Android-only, and no Linux Source exists yet",
-    )
-    val message = reason.toHeapCString()
-    try {
-        callback?.invoke(BridgeStatus.NOT_IMPLEMENTED, message, userData)
-    } finally {
-        fotoz_free_string(message)
+    val library = handle.asLibraryHandleOrNull() ?: return@runCatchingStatus BridgeStatus.INVALID_HANDLE
+    val text = sourceJson.readUtf8OrNull() ?: return@runCatchingStatus BridgeStatus.BAD_REQUEST
+    val request = try {
+        BridgeJson.json.decodeFromString(SyncRequestDto.serializer(), text)
+    } catch (t: Throwable) {
+        return@runCatchingStatus BridgeStatus.BAD_REQUEST
     }
-    BridgeStatus.NOT_IMPLEMENTED
+
+    fun deliver(status: Int, json: String): Int {
+        val message = json.toHeapCString()
+        try {
+            callback?.invoke(status, message, userData)
+        } finally {
+            fotoz_free_string(message)
+        }
+        return status
+    }
+
+    val kind = request.kind ?: return@runCatchingStatus BridgeStatus.BAD_REQUEST
+    if (kind != SourceKind.LINUX_DIR) {
+        return@runCatchingStatus deliver(
+            BridgeStatus.NOT_IMPLEMENTED,
+            BridgeJson.encodeError("source kind '$kind' is not implemented on this platform; only LINUX_DIR is"),
+        )
+    }
+    val path = request.path?.trim()?.takeIf { it.isNotEmpty() }?.let { it.trimEnd('/').ifEmpty { "/" } }
+        ?: return@runCatchingStatus BridgeStatus.BAD_REQUEST
+
+    runBridge {
+        val sources = library.db.sourceDao()
+        val row = sources.findByLocator(SourceKind.LINUX_DIR, path) ?: run {
+            val id = sources.insert(
+                SourceEntity(
+                    sourceId = SourceId(0),
+                    kind = SourceKind.LINUX_DIR,
+                    rootLocator = path,
+                    volumeUuid = null,
+                    displayName = path.substringAfterLast('/').ifEmpty { path },
+                    state = SourceState.ONLINE,
+                    syncVersion = null,
+                    syncGeneration = null,
+                    lastFullScanMs = null,
+                ),
+            )
+            requireNotNull(sources.get(SourceId(id)))
+        }
+        val engine = SyncEngine(sources, library.db.assetDao(), library.db.assetUserDao())
+        when (val result = engine.sync(LocalDirSource(path, PosixDirectoryLister), row, partialAccess = false, nowMs = time(null).toLong() * 1000L)) {
+            is SyncResult.Completed -> deliver(
+                BridgeStatus.OK,
+                BridgeJson.json.encodeToString(SyncResultDto(row.sourceId.value, result.itemsSeen, result.fullyEnumerated)),
+            )
+            is SyncResult.Failed -> deliver(BridgeStatus.IO_ERROR, BridgeJson.encodeError(result.error.message ?: "sync failed"))
+        }
+    }
 }

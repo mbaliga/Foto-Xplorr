@@ -28,6 +28,8 @@ NATIVE_TASKS=(
   # ADR-013 point 2). Same Tier-2 shape as every module above: linuxX64Test really links and
   # runs; linuxArm64 only compiles.
   :ut:bridge:linuxX64Test :ut:bridge:compileKotlinLinuxArm64
+  # Release shared libraries the click ships (ut/scripts/build-core.sh): x64 for desktop/amd64 click, arm64 cross-linked.
+  :ut:bridge:linkReleaseSharedLinuxX64 :ut:bridge:linkReleaseSharedLinuxArm64
 )
 
 ./gradlew --no-daemon -Pfotoz.native=true "${NATIVE_TASKS[@]}"

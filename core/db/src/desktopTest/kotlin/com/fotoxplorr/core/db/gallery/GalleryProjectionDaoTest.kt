@@ -219,6 +219,25 @@ class GalleryProjectionDaoTest {
     }
 
     @Test
+    fun `folders lists one row per browsable folder, newest first, and omits missing and archived and trashed`() = runBlocking {
+        seed(folderKey = "1:path:a", bucketName = "A", dateTakenMs = 1_000L)
+        seed(folderKey = "1:path:a", bucketName = "A", dateTakenMs = 2_000L)
+        seed(folderKey = "1:path:b", bucketName = "B", dateTakenMs = 9_000L, mime = "video/mp4")
+        seed(folderKey = "1:path:c", bucketName = "C", dateTakenMs = 500L, archived = true)
+        seed(folderKey = "1:path:d", bucketName = "D", dateTakenMs = 500L, trashed = true)
+        val gone = seed(folderKey = "1:path:e", bucketName = "E", dateTakenMs = 500L)
+        db.assetDao().setAvailability(listOf(gone), Availability.MISSING_CONFIRMED)
+
+        val withVideos = dao.folders(showVideos = true)
+        assertEquals(listOf("1:path:b", "1:path:a"), withVideos.map { it.folderKey })
+        assertEquals(listOf(1, 2), withVideos.map { it.itemCount })
+        assertEquals(listOf("B", "A"), withVideos.map { it.name })
+        assertEquals(9_000L, withVideos.first().newestMs)
+
+        assertEquals(listOf("1:path:a"), dao.folders(showVideos = false).map { it.folderKey })
+    }
+
+    @Test
     fun `limit and offset page through results in the same order`() = runBlocking {
         val a = seed(dateTakenMs = 3_000L)
         val b = seed(dateTakenMs = 2_000L)

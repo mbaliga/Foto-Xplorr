@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Fotoz
+Comment=Local photo library (offline)
+Exec=@EXEC@
+Icon=icon.svg
+Terminal=false
+Type=Application
+X-Lomiri-Touch=true

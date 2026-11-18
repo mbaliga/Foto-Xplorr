@@ -35,6 +35,13 @@ done
 # so a violation fails in seconds, not minutes. See scripts/verify-core-purity.sh's own doc.
 ./scripts/verify-core-purity.sh
 
+# Ubuntu Touch / Linux shell: negative grep for network code / networking policy groups (ut/scripts/verify-offline.sh).
+./ut/scripts/verify-offline.sh
+./ut/scripts/click-review-gate.py --self-test
+
+# Linux desktop packaging: desktop entry / AppStream / Flatpak sandbox promises (linux/scripts/verify-linux.sh).
+./linux/scripts/verify-linux.sh
+
 # WP1.9: governance docs vs reality (every Gradle coordinate has a DEPENDENCIES.md row, every model,
 # font and sound has a MODEL_LICENSES.md row) and the proof that both checks, and the licence policy,
 # really fail on bad input. Pure shell, about a second; the licence SCAN itself needs the resolved
@@ -53,6 +60,8 @@ GRADLE_ARGS=(
   :app:testConnectDebugUnitTest :app:lintConnectDebug :app:assembleConnectDebug
   :app:verifyOfflineManifest :app:verifyOfflineRuntimeClasspath :app:verifyOfflineSourceReferences
   :app:reportRuntimeLicences
+  # iOS port facade (pure JVM contract/behaviour tests; the Apple targets are built by ios.yml on macOS).
+  :ios:core:jvmTest
   :app:compileOfflineDebugAndroidTestKotlin :app:compileConnectDebugAndroidTestKotlin
 )
 

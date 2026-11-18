@@ -1752,3 +1752,25 @@ Everything in the checklist. Above all:
   3. A keyboard cull with sidecars on and a folder grant.
   4. The 360 view.
   5. The corpus decode test on API 26 and 33+.
+
+## iOS port, first cut (17 Nov 2026)
+
+Owner directive 2026-11-17: ship iOS builds from GitHub Actions. Built `:ios:core` (JSON facade over the pure core, jvm-tested),
+`ios/FotozKit` (Swift package, `swift test` green on Linux), a SwiftUI/PhotoKit shell (CODE-ONLY) and `.github/workflows/ios.yml`
+(CI-LANE-WRITTEN). Decisions, evidence classes and gaps: `docs/handoff/IOS-PORT.md`. Owner checks: `ios/OWNER_VERIFY.md`.
+
+## Ubuntu Touch port, first cut (17 Nov 2026)
+
+Owner directive 2026-11-17: ship Ubuntu Touch builds from GitHub Actions. Added `LocalDirSource` (`:core:index`, `LINUX_DIR`), a real
+`fotoz_sync_start` and a new `fotoz_folders` in `:ut:bridge` (25 linuxX64 tests green), RELEASE `libfotozcore.so` links for linuxX64 and
+linuxArm64, the Qt 5.15 Quick shell `ut/app` (fake-core and real-core QtTest suites green offscreen on a Linux host), click packaging
+(CODE-ONLY) and `.github/workflows/ut.yml` (CI-LANE-WRITTEN). WP8.1's "no QML/Qt shell attempted" and "sync is a stub" notes above are
+superseded for `LINUX_DIR`. Nothing ran on a device. Decisions, evidence, gaps: `docs/handoff/UT-PORT.md`; owner checks: `ut/OWNER_VERIFY.md`.
+
+## Linux desktop port, first cut (17 Nov 2026)
+
+Owner directive 2026-11-17: ship Linux builds from GitHub Actions. Reused the Ubuntu Touch Qt shell (`ut/app`) with a `FOTOZ_DESKTOP` build: folder
+picker, inotify folder watching (tested against the real core), launch re-check, keyboard map, `--version`, FHS install layout, `.deb` + tarball via CPack
+(inspected), AppStream/desktop entry validated, a Flatpak manifest (CODE-ONLY) and `.github/workflows/linux.yml` (CI-LANE-WRITTEN). The shell builds and its
+QtTest suites (fake + real core) pass on Qt 5.15.13 and Qt 6.4.2 offscreen. The linuxArm64 core has still never been executed. Nothing ran on a real desktop.
+Decisions, evidence, gaps: `docs/handoff/LINUX-PORT.md`; owner checks: `linux/OWNER_VERIFY.md`.

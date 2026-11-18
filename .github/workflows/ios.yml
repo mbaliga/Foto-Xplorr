@@ -1,0 +1,273 @@
+# iOS / iPadOS build lanes for Fotoz (docs/handoff/IOS-PORT.md). Owner directive 2026-11-17: macOS and iOS
+# builds happen on GitHub Actions. EVIDENCE CLASS: CI-LANE-WRITTEN -- no run of this file has been seen.
+#
+# Lanes
+#   swift-linux  ubuntu + swift container : FotozKit unit tests, offline + privacy-manifest gates   (cheap)
+#   ios          macos-latest            : Kotlin core for iOS, XCFramework, simulator build + tests, unsigned archive
+#   signed       macos-latest + `apple-signing` environment (manual approval): signed .ipa, optional TestFlight upload
+#
+# Cost note: private repos bill hosted macOS minutes at a multiple of Linux minutes, so the macOS lane only
+# runs on iOS-relevant paths, on tags, or on demand -- not on every Android-only PR.
+#
+# Private submodules (hyle-design-system, shared-libraries): `submodules: true` needs the runner to be able to
+# read them. If they are private to a different repo the default GITHUB_TOKEN cannot; add a read-only token as
+# the SUBMODULE_TOKEN repository secret (the `token:` expression below falls back to the default token).
+name: Fotoz iOS
+
+on:
+  push:
+    branches: [main]
+    tags: ["ios-v*"]
+    paths:
+      - "ios/**"
+      - "core/**"
+      - "gradle/libs.versions.toml"
+      - "settings.gradle.kts"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - "core/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+    inputs:
+      signed:
+        description: "Also run the signed export lane (needs the apple-signing environment approval)"
+        type: boolean
+        default: false
+      testflight:
+        description: "In the signed lane, upload the .ipa to TestFlight (Apple then collects crash reports; named in the About screen)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift-linux:
+    name: FotozKit tests and offline gates (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: swift:6.0.3-noble
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: false   # FotozKit and the gates need neither submodule
+      - name: swift test (FotozKit)
+        working-directory: ios/FotozKit
+        run: swift test
+      - name: Offline-identity gate
+        run: ./ios/scripts/verify-offline.sh
+      - name: Privacy-manifest lint
+        run: |
+          apt-get update -qq && apt-get install -y -qq python3 >/dev/null
+          python3 -I ios/scripts/verify-privacy-manifest.py
+
+  ios:
+    name: Kotlin core for iOS, simulator build and tests (macOS)
+    runs-on: macos-latest
+    needs: swift-linux
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: true
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      # The root settings.gradle.kts includes :app, which needs an Android SDK to configure even though this
+      # lane never builds it. v4 with an explicit `packages` input: v4's DEFAULT still requests the legacy
+      # `tools` package and dies (see sibling repos' CI notes).
+      - uses: android-actions/setup-android@651bceb6f9ca583f16b8d75b62c36ded2ae6fc9c # v4.0.0
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
+      - uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96 # v4.4.1
+      - name: Select Xcode 26.x
+        run: ./ios/scripts/select-xcode.sh
+      - name: sdk.dir for the composite builds
+        run: |
+          for d in . hyle-design-system shared-libraries; do
+            [ -f "$d/local.properties" ] || echo "sdk.dir=${ANDROID_HOME:?ANDROID_HOME not set}" > "$d/local.properties"
+          done
+      - name: Core modules and facade on iosSimulatorArm64 (compile + tests), plus the JVM contract test
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon -Pfotoz.ios=true \
+            :core:model:iosSimulatorArm64Test \
+            :core:formats:iosSimulatorArm64Test \
+            :core:search:iosSimulatorArm64Test \
+            :core:organize:iosSimulatorArm64Test \
+            :ios:core:iosSimulatorArm64Test \
+            :ios:core:jvmTest \
+            2>&1 | tee gradle-ios.log
+      - name: Build FotozCore.xcframework (device + simulator slices)
+        run: ./gradlew --no-daemon -Pfotoz.ios=true :ios:core:assembleFotozCoreReleaseXCFramework
+      - name: Install XcodeGen and generate the project
+        working-directory: ios
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: FotozKit tests on macOS too
+        working-directory: ios/FotozKit
+        run: swift test
+      - name: Build and test on the iOS simulator (unsigned)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          UDID=$(./scripts/pick-simulator.sh)
+          xcodebuild test \
+            -project Fotoz.xcodeproj -scheme Fotoz \
+            -destination "id=$UDID" \
+            -resultBundlePath build/Fotoz-tests.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            2>&1 | tee xcodebuild-test.log
+      - name: Unsigned archive for the device slice
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project Fotoz.xcodeproj -scheme Fotoz \
+            -destination "generic/platform=iOS" \
+            -archivePath build/Fotoz.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee xcodebuild-archive.log
+          # An unsigned archive cannot be installed; it proves the device slice compiles and links, and
+          # is the input the signed lane re-signs. Zip it so the artifact is one file.
+          ditto -c -k --sequesterRsrc --keepParent build/Fotoz.xcarchive build/Fotoz-unsigned.xcarchive.zip
+      # Convenience artifacts only (the Android lane's artifact quota has been hit before -- see the
+      # android-debug.yml history -- so these must never be the thing that fails the job).
+      - name: Upload logs and test results
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fotoz-ios-logs
+          path: |
+            gradle-ios.log
+            ios/xcodebuild-*.log
+            ios/build/Fotoz-tests.xcresult
+          if-no-files-found: warn
+      - name: Upload unsigned archive
+        if: startsWith(github.ref, 'refs/tags/ios-v') || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fotoz-ios-unsigned-xcarchive
+          path: ios/build/Fotoz-unsigned.xcarchive.zip
+          if-no-files-found: error
+
+  signed:
+    name: Signed export (approval-gated)
+    runs-on: macos-latest
+    needs: ios
+    # Only for a tag, or when asked for by hand. The `apple-signing` environment holds every secret and
+    # must be configured with required reviewers: the job pauses for approval before any secret is exposed.
+    if: startsWith(github.ref, 'refs/tags/ios-v') || (github.event_name == 'workflow_dispatch' && inputs.signed)
+    environment: apple-signing
+    timeout-minutes: 45
+    permissions:
+      contents: write   # draft-release upload on tags only
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: true
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@651bceb6f9ca583f16b8d75b62c36ded2ae6fc9c # v4.0.0
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
+      - uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96 # v4.4.1
+      - name: Select Xcode 26.x
+        run: ./ios/scripts/select-xcode.sh
+      - name: Build XCFramework and project
+        run: |
+          for d in . hyle-design-system shared-libraries; do
+            [ -f "$d/local.properties" ] || echo "sdk.dir=$ANDROID_HOME" > "$d/local.properties"
+          done
+          ./gradlew --no-daemon -Pfotoz.ios=true :ios:core:assembleFotozCoreReleaseXCFramework
+          brew install xcodegen
+          (cd ios && xcodegen generate)
+      # Secrets required in the `apple-signing` environment (names only; values are the owner's):
+      #   APPLE_TEAM_ID, APPLE_DIST_CERT_P12_BASE64, APPLE_DIST_CERT_PASSWORD,
+      #   APPLE_PROVISIONING_PROFILE_BASE64, APPLE_PROFILE_NAME
+      #   and, only for the TestFlight step: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64
+      - name: Import signing material into a throwaway keychain
+        env:
+          CERT_P12_B64: ${{ secrets.APPLE_DIST_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_DIST_CERT_PASSWORD }}
+          PROFILE_B64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          KC="$RUNNER_TEMP/fotoz.keychain-db"; KCPW=$(uuidgen)
+          security create-keychain -p "$KCPW" "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p "$KCPW" "$KC"
+          echo "$CERT_P12_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPW" "$KC"
+          security list-keychains -d user -s "$KC" login.keychain-db
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          echo "$PROFILE_B64" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/fotoz.mobileprovision"
+          rm -f "$RUNNER_TEMP/cert.p12"
+      - name: Archive (signed)
+        working-directory: ios
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          PROFILE: ${{ secrets.APPLE_PROFILE_NAME }}
+        run: |
+          set -o pipefail
+          xcodebuild archive -project Fotoz.xcodeproj -scheme Fotoz \
+            -destination "generic/platform=iOS" -archivePath build/Fotoz.xcarchive \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$TEAM" PROVISIONING_PROFILE_SPECIFIER="$PROFILE" \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            2>&1 | tee xcodebuild-signed-archive.log
+      - name: Export .ipa
+        working-directory: ios
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          PROFILE: ${{ secrets.APPLE_PROFILE_NAME }}
+        run: |
+          set -euo pipefail
+          # Inject the team id and the profile mapping at run time; ExportOptions.plist in the repo has neither.
+          cp ExportOptions.plist build/ExportOptions.ci.plist
+          /usr/libexec/PlistBuddy -c "Add :teamID string $TEAM" build/ExportOptions.ci.plist
+          BUNDLE=$(grep -E '^FOTOZ_BUNDLE_ID' Config/Identity.xcconfig | sed 's/.*= *//')
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" build/ExportOptions.ci.plist
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$BUNDLE string $PROFILE" build/ExportOptions.ci.plist
+          xcodebuild -exportArchive -archivePath build/Fotoz.xcarchive \
+            -exportOptionsPlist build/ExportOptions.ci.plist -exportPath build/export
+      - name: Upload to TestFlight (opt-in)
+        if: github.event_name == 'workflow_dispatch' && inputs.testflight
+        env:
+          KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+          KEY_B64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/private_keys"
+          echo "$KEY_B64" | base64 --decode > "$HOME/private_keys/AuthKey_${KEY_ID}.p8"
+          xcrun altool --upload-app --type ios --file ios/build/export/Fotoz.ipa \
+            --apiKey "$KEY_ID" --apiIssuer "$ISSUER"
+          rm -f "$HOME/private_keys/AuthKey_${KEY_ID}.p8"
+      - name: Remove the throwaway keychain and profile
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/fotoz.keychain-db" || true
+          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/fotoz.mobileprovision"
+      - name: Attach to a DRAFT release (tags only)
+        if: startsWith(github.ref, 'refs/tags/ios-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft --title "Fotoz iOS $GITHUB_REF_NAME" --notes "Signed .ipa. Draft: review before publishing. Device behaviour is owner-verified (ios/OWNER_VERIFY.md)."
+          gh release upload "$GITHUB_REF_NAME" ios/build/export/Fotoz.ipa --clobber

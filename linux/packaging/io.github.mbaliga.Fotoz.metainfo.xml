@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: CC0-1.0 (this metadata file only) -->
+<component type="desktop-application">
+  <id>io.github.mbaliga.Fotoz</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <!-- PolyForm Noncommercial 1.0.0 is source-available, not an OSI licence. Flathub accepts such apps only as
+       proprietary-licensed; the owner decides whether to submit (linux/OWNER_VERIFY.md). -->
+  <project_license>LicenseRef-proprietary=https://polyformproject.org/licenses/noncommercial/1.0.0</project_license>
+  <name>Fotoz</name>
+  <summary>A photo library that stays on your computer</summary>
+  <developer id="com.asystemofcells">
+    <name>A System of Cells</name>
+  </developer>
+  <description>
+    <p>Fotoz shows the photo folders you choose as a grid, a timeline and a full-screen viewer, and keeps a small
+    searchable index of them on your machine.</p>
+    <p>It makes no network connections of any kind, sends no usage data or crash reports, and in this build only reads
+    your photos: it never changes, moves or deletes a file.</p>
+    <p>Folders are watched while the app is open, so new photos appear without a manual rescan. This is the Qt
+    desktop shell over the shared Fotoz core; it is not the Android app.</p>
+  </description>
+  <launchable type="desktop-id">io.github.mbaliga.Fotoz.desktop</launchable>
+  <url type="homepage">https://github.com/mbaliga/Foto-Xplorr</url>
+  <url type="bugtracker">https://github.com/mbaliga/Foto-Xplorr/issues</url>
+  <categories>
+    <category>Graphics</category>
+    <category>Photography</category>
+  </categories>
+  <provides>
+    <binary>fotoz</binary>
+  </provides>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-11-17">
+      <description>
+        <p>First Linux desktop build: folders, grid, viewer, folder watching.</p>
+      </description>
+    </release>
+  </releases>
+</component>

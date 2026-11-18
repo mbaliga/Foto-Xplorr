@@ -32,6 +32,12 @@ jobs:
         # lockstep with hyle-design-system's own wrapper and with the AGP 8.9.1 pin in the
         # root build.gradle.kts (D-Q: composite builds require identical AGP versions
         # across the root build and any includeBuild'd project).
+      # scripts/verify.sh runs linux/scripts/verify-linux.sh, which in CI requires the desktop-entry
+      # and AppStream validators (it fails if they are absent rather than silently skipping).
+      - name: Install desktop-entry and AppStream validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends desktop-file-utils appstream
       - name: Test, lint and build debug APK
         shell: bash
         run: |

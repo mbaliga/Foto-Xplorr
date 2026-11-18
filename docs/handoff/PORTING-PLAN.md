@@ -6,6 +6,24 @@
 > track updates only its own §4 row and appends to `PROGRESS` entries in this repo's own state file
 > (`docs/handoff/MASTER-PROGRESS.md`, which does not exist yet; Phase 1 creates it).
 
+> **Status update 2026-11-17 (iOS):** an iOS track now exists under `ios/` as a SwiftUI shell over the
+> shared Kotlin core, built by GitHub Actions (`.github/workflows/ios.yml`). It departs from Phase 10's
+> Compose-Multiplatform route and implements only a thin v1. See `docs/handoff/IOS-PORT.md` (evidence per
+> item: facade and Swift package BUILT-HERE; Apple-side code CODE-ONLY; lane CI-LANE-WRITTEN) and
+> `ios/OWNER_VERIFY.md`. The rest of this document is still the 6 Oct plan and is stale against `main`
+> (KMP `:core:*` and `:ut:bridge` exist; ADR-013 chose Qt 6 over Compose Desktop).
+
+> **Status update 2026-11-17 (Ubuntu Touch):** Phase 8 has started as a **Qt 5.15 Quick Controls 2 shell** (`ut/app`) over the
+> Kotlin/Native core (`:ut:bridge`), not the Lomiri UI Toolkit shell this document describes, per the ADR-013 addendum of the same
+> date. `LINUX_DIR` source, real `fotoz_sync_start`, `fotoz_folders`, release links for linuxX64/linuxArm64 and the shell are
+> BUILT-HERE on a Linux host (shell tested offscreen against the real core); the click, its AppArmor/manifest and `.github/workflows/ut.yml`
+> are CODE-ONLY / CI-LANE-WRITTEN; nothing ran on a device. See `docs/handoff/UT-PORT.md` and `ut/OWNER_VERIFY.md`.
+
+> **Status update 2026-11-17 (Linux desktop):** Phase 9 was **not** built as Compose Desktop (ADR-013 dropped it). The Ubuntu Touch Qt shell now has a
+> desktop build (`FOTOZ_DESKTOP`: folder picker, inotify watching, keyboard map, deb/tarball/Flatpak packaging) that builds and passes its tests on Qt 5.15.13 and
+> Qt 6.4.2 (BUILT-HERE, offscreen, real core). `.github/workflows/linux.yml` and the Flatpak manifest are CI-LANE-WRITTEN / CODE-ONLY; nothing ran on a real desktop.
+> See `docs/handoff/LINUX-PORT.md` and `linux/OWNER_VERIFY.md`.
+
 **Written:** 6 Oct 2026. **Baseline:** `main` @ `0ff1373` (Phase 0 merged as #13, 24 Sep 2026).
 
 **Relationship to `docs/handoff/MASTER-PLAN.md`.** This file *amends* the master plan; it is not a
@@ -481,7 +499,7 @@ The Apple column is now split: iPhone and iPad are judged apart. Where an app po
 
 ### Owner answers that apply here
 
-- **TestFlight (PT:D-AD, approved 2026-10-14):** "Approve PROPOSED-1 as drafted". Directive I-1 now carries an exception for crash reports that Apple collects on TestFlight and the App Store. The app does not transmit those reports and adds no crash-reporting or analytics SDK of its own, and its README, store listing and about/privacy page must name the exception. This supersedes any statement in the earlier section that TestFlight is not used until the exception is approved. Any repo-local no-telemetry rule here is a restatement that PT:D-AD does not amend; recording the exception there is for the owner.
+- **TestFlight (PT:D-BD, approved 2026-10-14):** "Approve PROPOSED-1 as drafted". Directive I-1 now carries an exception for crash reports that Apple collects on TestFlight and the App Store. The app does not transmit those reports and adds no crash-reporting or analytics SDK of its own, and its README, store listing and about/privacy page must name the exception. This supersedes any statement in the earlier section that TestFlight is not used until the exception is approved. Any repo-local no-telemetry rule here is a restatement that PT:D-BD does not amend; recording the exception there is for the owner.
 - **Mac mini timing (OQ-31, 2026-10-14):** "Use hosted macOS runners on public repos first, buy later". This repo is public, so hosted macOS runners are free for it; simulator builds, unit tests and unsigned archives are possible there when this repo's own sequencing allows. Its iPad work is sequenced after Phase 1 (the Kotlin Multiplatform split) and OQ-7c. The Mac mini stays chosen and not bought. Signing and a TestFlight upload need the Apple Developer Program, which the owner has not yet joined (owner action).
 - **Apple ids and signing:** Apple bundle ids use `com.asoc.<appname>` (OQ-25, in part; a NAMES.md row first, R11). Signing material is to live in GitHub environment secrets behind a required-approval gate (OQ-3, Apple half). The owner will enrol in the Apple Developer Program ("Not yet, I'll enrol"); until then every Apple build is a simulator or unsigned hosted build.
 - **Apple devices:** the owner has an iPad Pro M4, an Apple Pencil and an iPhone 12 mini; the Mac mini is not yet bought, and nothing is device-verified.
