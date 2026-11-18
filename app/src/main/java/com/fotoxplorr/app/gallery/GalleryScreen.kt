@@ -7,8 +7,12 @@ package com.fotoxplorr.app.gallery
 
 import android.os.Build
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.paddingFromBaseline
 import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -77,6 +81,10 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.absoluteOffset
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Modifier
 import androidx.annotation.DrawableRes
 import androidx.compose.ui.res.painterResource
@@ -89,8 +97,10 @@ import com.fotoxplorr.app.ui.RoomGeography
 import com.fotoxplorr.app.ui.RoomKind
 import com.fotoxplorr.app.ui.roomSlots
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -122,13 +132,13 @@ import com.fotoxplorr.app.hyle.SEARCH_FAB_MARGIN_BOTTOM
 import com.fotoxplorr.app.hyle.SEARCH_FAB_MARGIN_END
 import com.fotoxplorr.app.hyle.SearchFab
 import com.fotoxplorr.app.hyle.PILL_DESIGN_H
-import com.fotoxplorr.app.hyle.SelectionToolbarShape
-import com.fotoxplorr.app.hyle.SelectionTrashShape
+import com.fotoxplorr.app.hyle.SELECTION_DESIGN_SCREEN_W
+import com.fotoxplorr.app.hyle.SelectionCountBarShape
+import com.fotoxplorr.app.hyle.SelectionTab
+import com.fotoxplorr.app.hyle.SelectionTabShape
+import com.fotoxplorr.app.hyle.SelectionTrashTab
+import com.fotoxplorr.app.hyle.SelectionTrashTabShape
 import com.fotoxplorr.app.hyle.ShadeState
-import com.fotoxplorr.app.hyle.TOOLBAR_DESIGN_H
-import com.fotoxplorr.app.hyle.TOOLBAR_DESIGN_W
-import com.fotoxplorr.app.hyle.TRASH_DESIGN_H
-import com.fotoxplorr.app.hyle.TRASH_DESIGN_W
 import com.fotoxplorr.app.hyle.shadeHeight
 import androidx.compose.foundation.layout.offset
 import dev.aarso.cellshell.ShakeToRefresh
@@ -2365,28 +2375,40 @@ private const val PINNED_RAIL_WIDTH = 260
 private const val COLLAPSED_RAIL_WIDTH = 56
 
 /**
- * Selection chrome, built to the owner's mockup (2026-08-18, with its CSS and Android export).
+ * Selection chrome, matched to the owner's reference image (2026-11-18: a 440 x 956 dp phone,
+ * 9999 selected), which refines the earlier mockup (2026-08-18). Every edge was measured from that
+ * image and the outlines fitted to it; the shapes are in [com.fotoxplorr.app.hyle.HyleNotch].
  *
- * It was a `CenterAlignedTopAppBar`, which meant that choosing photos shoved the whole grid down
- * by an app bar's height -- on the one screen whose entire job is showing photos, and at the exact
- * moment the user is looking hardest at them. Floating it costs the grid nothing.
+ * It floats over the grid rather than being an app bar, so choosing photos costs the grid nothing.
+ * Three pieces, none with a shadow:
  *
- * Three pieces, and the mockup is specific about all three:
+ * - **Top left**, a black tab hanging from the top edge ([SelectionTabShape]): straight flanks
+ *   leaning in, concave fillets into the edge, rounded bottom corners. Three 30dp white glyphs
+ *   (zip, move, copy) on a 46dp pitch, centred on the tab.
+ * - **Top right**, a black bar 44dp tall, 7dp down and 6.8dp in from the right, sized to its
+ *   content: the count at 28sp and `SELECTED` at 20sp at half opacity, left-aligned on a shared
+ *   baseline. Where it reaches the tab its end is cut around the tab's flank, leaving a constant
+ *   band of photograph between them ([SelectionCountBarShape]). The bar itself clears the
+ *   selection; there is no ✕.
+ * - **Bottom right**, the trash: a pure red tab rising from the bottom edge, built like the top
+ *   tab but flipped ([SelectionTrashTabShape]), with the white 34dp trash glyph. The one
+ *   destructive control, the one coloured surface.
  *
- * - **Top left**, a black bar bled to the top and left edges, 209dp wide, square-cornered, with a
- *   soft shadow under it. Three 30dp white glyphs on a 46dp pitch, starting 44dp in — that leading
- *   run of bare black is in the mockup and is what makes the bar read as a cut-out rather than as
- *   a toolbar.
- * - **Top right**, on the toolbar's line, a plain rounded bar sized to its content: the count at
- *   28sp and `SELECTED` at 20sp uppercase and half opacity. It has no ✕; the bar itself clears the
- *   selection. (It was a 44dp pill across the bottom left, with a dismiss ✕, in the first mockup.)
- * - **Bottom right**, the trash: black, **square-cornered**, flush into the corner, separated from
- *   the count bar by the height of the screen. The one destructive control, as far from everything else
- *   as the screen allows and shaped differently from everything else so the hand knows it.
+ * The reference draws its tiles plain while all of them are selected, so a selected tile draws no
+ * mark (the old primary wash and ✓ chip are gone); tiles left OUT of the selection are dimmed
+ * instead ([UnselectedDim]), which leaves the reference's all-selected screen unchanged. Each tile
+ * also announces "Selected" / "Not selected" to TalkBack ([selectionSemantics]).
  *
- * The shapes differ on purpose. The count bar is rounded and the trash is not; that is the only
- * signal in the design that distinguishes "how many" from "destroy them", and it survives being
- * glanced at.
+ * The layout is left to right in every locale, RTL included: the outlines are screen-absolute and
+ * the bar's cut assumes the tab is on its left.
+ *
+ * The count bar never reaches further left than it does in the reference (x = 198 on screen), so
+ * it never covers the tab's glyphs or their targets; a count that would not fit in that room at
+ * the reference's insets gets tighter insets and then a smaller type size, never clipped digits.
+ *
+ * Every control's touch target is at least 48dp, larger than what is drawn where the drawing is
+ * smaller (the bar is 44dp tall, the trash tab 46.2dp), and press feedback is clipped to the
+ * drawn shape.
  */
 @Composable
 internal fun BoxScope.SelectionOverlay(
@@ -2396,112 +2418,138 @@ internal fun BoxScope.SelectionOverlay(
     actions: GalleryActions,
     onSelectionChange: (GallerySelection) -> Unit,
 ) {
+    // The geometry is screen-absolute (measured on the reference, tab at the left), and the count
+    // bar's cut assumes the tab sits left of it. So the chrome is laid out left to right in every
+    // locale: absolute alignments here (the parent Box resolves Start/End in ITS direction), and
+    // LTR for everything inside, so offsets, the glyph slots and the bar's Row do not mirror.
+    // The Texts still resolve their own text direction from their content.
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        SelectionOverlayLtr(selection, selectedAssets, inTrash, actions, onSelectionChange)
+    }
+}
+
+@Composable
+private fun BoxScope.SelectionOverlayLtr(
+    selection: GallerySelection,
+    selectedAssets: List<MediaAsset>,
+    inTrash: Boolean,
+    actions: GalleryActions,
+    onSelectionChange: (GallerySelection) -> Unit,
+) {
     // ---- top-left: what you can DO with the selection ----
-    // Hangs from the top edge and coves into it — the [SelectionToolbarShape] carries the exact
-    // flare from the mockup, so it reads as cut into the edge rather than as a card laid on top.
-    // Flush to y=0 with the mockup; the glyphs sit at the mockup's own y, no status-bar inset,
-    // because the selection overlay is shown in the immersive chrome where the bar is hidden.
+    // Flush to y=0, as in the reference. On a device the Scaffold's content padding probably puts
+    // y=0 below the status bar; that is a device check, a render cannot show it.
     Box(
         modifier = Modifier
-            .align(Alignment.TopStart)
-            .offset(x = TOOLBAR_LEFT.dp)
-            .shadow(SELECTION_BAR_SHADOW.dp, SelectionToolbarShape, clip = false)
-            .background(Color.Black, SelectionToolbarShape)
-            .size(width = TOOLBAR_DESIGN_W.dp, height = TOOLBAR_DESIGN_H.dp),
+            .align(AbsoluteAlignment.TopLeft)
+            .absoluteOffset(x = SelectionTab.minX.dp)
+            .background(Color.Black, SelectionTabShape)
+            .size(width = SelectionTab.width.dp, height = SelectionTab.height.dp),
     ) {
         if (!inTrash) {
-            // Exactly the three glyphs the owner supplied — zip, move, copy — in the mockup's own
-            // slot order, on its 46dp pitch. Everything else a selection can do lives in the
-            // actions room at the bottom edge.
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(start = TOOLBAR_GLYPH_INSET.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SelectionGlyph(R.drawable.ic_action_zip, "Export as zip") {
-                    actions.onExportZip(selectedAssets)
+            // Exactly the three glyphs the owner supplied — zip, move, copy — in that slot order.
+            // Everything else a selection can do lives in the actions room at the bottom edge.
+            var slot = 0
+            SelectionGlyph(R.drawable.ic_action_zip, "Export as zip", slot++) {
+                actions.onExportZip(selectedAssets)
+            }
+            // Moving deletes the original: not offered while a source file is selected (ADR-020).
+            if (SourceActionGate.writesAllowed(selectedAssets)) {
+                SelectionGlyph(R.drawable.ic_action_move, "Move to folder", slot++) {
+                    actions.onMoveToFolder(selectedAssets)
                 }
-                // Moving deletes the original: not offered while a source file is selected (ADR-020).
-                if (SourceActionGate.writesAllowed(selectedAssets)) {
-                    SelectionGlyph(R.drawable.ic_action_move, "Move to folder") {
-                        actions.onMoveToFolder(selectedAssets)
-                    }
-                }
-                SelectionGlyph(R.drawable.ic_action_copy, "Copy to folder") {
-                    actions.onCopyToFolder(selectedAssets)
-                }
+            }
+            SelectionGlyph(R.drawable.ic_action_copy, "Copy to folder", slot) {
+                actions.onCopyToFolder(selectedAssets)
             }
         }
     }
 
-    // ---- top right, beside the toolbar: how many ----
-    // The owner's later mockups put the count on the SAME line as the toolbar, at the right, with
-    // a run of bare photograph between the two; it used to sit alone across the bottom left.
+    // ---- top right, beside the tab: how many ----
+    // Sized to its content and laid out from the right, so "3 SELECTED" is a short bar and "9999
+    // SELECTED" a long one. Its shape needs to know where the bar's left end falls on screen to
+    // cut the gap around the tab, hence the parent width.
     //
-    // A PLAIN rounded bar, and that is deliberate after getting it wrong once: the first attempt
-    // mirrored the old bottom-left pill's cove cap so it would face the toolbar, and rendering it
-    // showed why the mockups do not draw one there. The cap hangs BELOW the bar it caps, so at the
-    // top of the screen it became a spike pointing down into the photographs, and its flare
-    // reached far enough left to close the gap and fuse the count and the toolbar into one black
-    // band. The cove is an edge-meeting device; two of them meeting each other in mid-air is not
-    // what it is for.
-    //
-    // Sized to its content rather than to a fixed width, which a plain shape allows and a cove
-    // shape did not: the vector cove has to be drawn at its design aspect or its curve distorts,
-    // whereas a rounded rectangle can be any width. So "3 SELECTED" is a short bar and "9999
-    // SELECTED" a long one, instead of every count padding out to the width of the longest.
-    //
-    // No ✕. The mockups do not draw one, and inventing chrome they leave out is exactly what this
-    // pass is correcting — so the bar ITSELF clears the selection: the same target, the same
-    // gesture, one fewer glyph than the design asks for. Back also clears it (see the BackHandler
-    // in GalleryBrowser), which is what a person reaches for first anyway.
-    Row(
-        modifier = Modifier
-            .align(Alignment.TopEnd)
-            .offset(x = -COUNT_RIGHT.dp, y = COUNT_TOP.dp)
-            .height(PILL_DESIGN_H.dp)
-            .clip(RoundedCornerShape(COUNT_RADIUS.dp))
-            .background(Color.Black)
-            .clickable(
-                onClickLabel = "Clear selection",
-                onClick = { onSelectionChange(selection.clear()) },
-            )
-            .padding(horizontal = COUNT_TEXT_INSET.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "${selection.count}",
-            color = Color.White,
-            style = TextStyle(fontFamily = HyleGrotesk, fontSize = 28.sp, lineHeight = 36.sp),
-        )
-        Text(
-            text = "SELECTED",
-            color = Color.White.copy(alpha = 0.5f),
-            // Uppercase in the string rather than via textTransform, and at half opacity: the
-            // count is the number you read and this is the unit beside it.
-            style = TextStyle(fontFamily = HyleGrotesk, fontSize = 20.sp, lineHeight = 26.sp),
-            modifier = Modifier.padding(start = 6.dp),
-        )
+    // No ✕: the bar itself clears the selection. Back also clears it (RoomFirstBackHandler).
+    BoxWithConstraints(Modifier.align(AbsoluteAlignment.TopLeft).fillMaxWidth()) {
+        val barShape = remember(maxWidth) {
+            SelectionCountBarShape(parentWidth = maxWidth, rightInset = COUNT_RIGHT.dp, top = COUNT_TOP.dp)
+        }
+        // Fit the bar into the room the reference gives it: from x = 198 to the right inset. A
+        // count too long for that at the reference's insets (a narrow phone, large font scale)
+        // gets tighter insets, then a smaller type size, so the bar never reaches over the tab's
+        // glyphs and the cut around the tab never eats a digit.
+        val countText = "${selection.count}"
+        val measurer = rememberTextMeasurer()
+        val density = LocalDensity.current
+        val fit = remember(countText, maxWidth, density) {
+            fun widthDp(text: String, style: TextStyle) =
+                measurer.measure(text, style, maxLines = 1, softWrap = false).size.width / density.density
+            fitCountBar(room = maxWidth.value - COUNT_RIGHT - COUNT_BAR_MIN_LEFT) { scale ->
+                widthDp(countText, CountStyle.scaled(scale)) to widthDp(COUNT_UNIT, UnitStyle.scaled(scale))
+            }
+        }
+        val press = remember { MutableInteractionSource() }
+        Box(
+            modifier = Modifier
+                .align(AbsoluteAlignment.TopRight)
+                // The touch target is the bar plus 2dp above and below: 48dp tall, drawing 44.
+                .absoluteOffset(x = -COUNT_RIGHT.dp, y = (COUNT_TOP - COUNT_TOUCH_EXTRA).dp)
+                .clickable(
+                    interactionSource = press,
+                    indication = null,
+                    onClickLabel = "Clear selection",
+                    onClick = { onSelectionChange(selection.clear()) },
+                )
+                .padding(vertical = COUNT_TOUCH_EXTRA.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .height(PILL_DESIGN_H.dp)
+                    .clip(barShape)
+                    .background(Color.Black)
+                    .indication(press, LocalIndication.current)
+                    .padding(start = fit.start.dp, end = fit.end.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                // Both runs sit on one baseline, placed exactly rather than by centring a line box,
+                // in Regular with no tracking: the theme's body style would otherwise add 0.5sp.
+                Text(
+                    text = countText,
+                    color = Color.White,
+                    maxLines = 1,
+                    softWrap = false,
+                    style = CountStyle.scaled(fit.scale),
+                    modifier = Modifier.paddingFromBaseline(top = COUNT_BASELINE.dp),
+                )
+                Text(
+                    text = COUNT_UNIT,
+                    // Uppercase in the string rather than via textTransform, and at half opacity:
+                    // the count is the number you read and this is the unit beside it.
+                    color = Color.White.copy(alpha = 0.5f),
+                    maxLines = 1,
+                    softWrap = false,
+                    style = UnitStyle.scaled(fit.scale),
+                    modifier = Modifier
+                        .padding(start = COUNT_UNIT_GAP.dp)
+                        .paddingFromBaseline(top = COUNT_BASELINE.dp),
+                )
+            }
+        }
     }
 
-    // ---- bottom-right: the destructive one, alone and shaped differently ----
-    // Rises from the bottom edge and coves into it ([SelectionTrashShape]) — the inverse of the
-    // toolbar, and shaped unlike the pill on purpose. Separated from the pill by a gap of bare
-    // photograph. The one destructive control, shaped so the hand knows it before the eye reads it.
+    // ---- bottom-right: the destructive one, alone, red, and shaped differently ----
+    // RED, not black: every other surface here is black, so the single destructive control is told
+    // apart before it is read. The 48dp touch target reaches 1.8dp above the 46.2dp tab.
+    val trashPress = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
-            .align(Alignment.BottomEnd)
-            .offset(x = -TRASH_RIGHT.dp)
-            .shadow(SELECTION_BAR_SHADOW.dp, SelectionTrashShape, clip = false)
-            // RED, not black. Every other surface in this overlay is black; this one is not, and
-            // that is the whole point — the mockups colour the single destructive control and
-            // nothing else, so it is told apart before it is read. It already differs in shape
-            // from the pill; colour is the second signal, and the two together mean a hand
-            // reaching for the corner cannot mistake it for the count.
-            .background(SELECTION_TRASH_RED, SelectionTrashShape)
-            .size(width = TRASH_BOX_W.dp, height = TRASH_DESIGN_H.dp)
+            .align(AbsoluteAlignment.BottomRight)
+            .absoluteOffset(x = -TRASH_RIGHT.dp)
+            .size(width = SelectionTrashTab.width.dp, height = maxOf(SelectionTrashTab.height, MIN_TARGET).dp)
             .clickable(
+                interactionSource = trashPress,
+                indication = null,
                 enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SourceActionGate.writesAllowed(selectedAssets),
                 onClickLabel = if (inTrash) "Delete permanently" else "Move to trash",
                 onClick = {
@@ -2509,104 +2557,173 @@ internal fun BoxScope.SelectionOverlay(
                     onSelectionChange(selection.clear())
                 },
             ),
-        contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            painter = painterResource(R.drawable.ic_action_delete),
-            contentDescription = if (inTrash) "Delete permanently" else "Move to trash",
-            tint = Color.White,
+        Box(
             modifier = Modifier
-                .offset(y = TRASH_GLYPH_DROP.dp)
-                .size(SELECTION_TRASH_GLYPH.dp),
-        )
+                .align(Alignment.BottomStart)
+                .size(width = SelectionTrashTab.width.dp, height = SelectionTrashTab.height.dp)
+                .clip(SelectionTrashTabShape)
+                .background(SELECTION_TRASH_RED)
+                .indication(trashPress, LocalIndication.current),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_action_delete),
+                contentDescription = if (inTrash) "Delete permanently" else "Move to trash",
+                tint = Color.White,
+                modifier = Modifier
+                    .offset(
+                        x = (TRASH_GLYPH_X - SelectionTrashTab.minX - SELECTION_TRASH_GLYPH / 2f).dp,
+                        y = (SelectionTrashTab.height - TRASH_GLYPH_UP - SELECTION_TRASH_GLYPH / 2f).dp,
+                    )
+                    .size(SELECTION_TRASH_GLYPH.dp),
+            )
+        }
     }
 }
 
 /**
- * One 30dp white glyph in the top bar.
+ * One 30dp white glyph on the tab, in slot [slot] (0, 1, 2 from the left).
  *
- * A bare `Icon` with a click, not an `IconButton`: Material's button carries a 48dp box and a
- * ripple, and three of them would space themselves rather than sitting on the mockup's 46dp pitch.
- * The touch target is recovered by the padding, which lands at 46dp square.
+ * A bare `Icon` in a 48dp clickable box rather than an `IconButton`, placed by absolute position:
+ * the glyphs sit on a 46dp pitch, so neighbouring 48dp targets overlap by 2dp, which a Row's
+ * arrangement cannot express. An `IconButton` would also space itself.
  */
 @Composable
 private fun SelectionGlyph(
     @DrawableRes icon: Int,
     description: String,
+    slot: Int,
     onClick: () -> Unit,
 ) {
-    Icon(
-        painter = painterResource(icon),
-        contentDescription = description,
-        tint = Color.White,
+    val pad = (MIN_TARGET - SELECTION_GLYPH) / 2f
+    Box(
         modifier = Modifier
-            .clickable(onClickLabel = description, onClick = onClick)
-            // Padding OUTSIDE the size, and on both axes: this is what makes each glyph a 46dp
-            // square target sitting on the mockup's 46dp pitch. It was vertical-only, which left
-            // a 30dp-wide target and made the row space its glyphs by gaps instead of by pitch.
-            .padding(SELECTION_GLYPH_PAD.dp)
-            .size(SELECTION_GLYPH.dp),
-    )
+            .offset(
+                x = (TOOLBAR_GLYPH_X0 + slot * TOOLBAR_GLYPH_PITCH - pad - SelectionTab.minX).dp,
+                y = (TOOLBAR_GLYPH_Y - pad).dp,
+            )
+            .size(MIN_TARGET.dp)
+            .clickable(onClickLabel = description, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = description,
+            tint = Color.White,
+            modifier = Modifier.size(SELECTION_GLYPH.dp),
+        )
+    }
 }
 
-// ---- selection chrome geometry, taken from the owner's mockup (440 x 956 dp) ----
-// Named rather than inlined because they are a spec someone handed over, not values that were
-// tuned here. The shapes themselves live in [com.fotoxplorr.app.hyle.HyleNotch]; these are the
-// mockup's own edge offsets and content insets that position them and their glyphs.
+// ---- selection chrome geometry, measured from the owner's reference (2026-11-18, 440 x 956 dp) ----
+// Named rather than inlined because they are a spec someone handed over, not values tuned here. The
+// outlines are in [com.fotoxplorr.app.hyle.HyleNotch]; these place the content on them. x values
+// are screen dp from the left edge unless said otherwise.
 
-/** `box-shadow: 0 4px 8px` under the bar, `0 -4px 4px` above the trash — one value reads as deliberate. */
-private const val SELECTION_BAR_SHADOW = 8
+/** Smallest touch target any control gets, whatever is drawn. */
+private const val MIN_TARGET = 48f
 
-/** Toolbar hangs 8dp in from the left edge (mockup `left: 8px`). */
-private const val TOOLBAR_LEFT = 8
+/** Tab glyphs: 30dp icons whose boxes start at x = 56, 102, 148 and run y = 10..40. */
+private const val SELECTION_GLYPH = 30f
+private const val TOOLBAR_GLYPH_X0 = 56f
+private const val TOOLBAR_GLYPH_PITCH = 46f
+private const val TOOLBAR_GLYPH_Y = 10f
+
+/** Count bar: 6.8dp in from the right edge, 7dp down from the top, 44dp tall ([PILL_DESIGN_H]). */
+private const val COUNT_RIGHT = 6.8f
+private const val COUNT_TOP = 7f
+
+/** Extra touch height above and below the 44dp bar, so the target is 48dp. */
+private const val COUNT_TOUCH_EXTRA = 2f
 
 /**
- * Glyphs: 30dp icon + 8dp all round = a 46dp target on a 46dp pitch. The first target's icon must
- * land at the toolbar's local x=44, so the padded target starts at 44 - 8 = 36.
+ * Text placement in the bar: the count starts 29.3dp in, `SELECTED` 6.4dp after the count, both
+ * on a baseline 32dp below the bar's top, and 35.2dp of black after `SELECTED`. Not centred: the
+ * reference left-aligns the text. The reference reads about 29 / 36.7; the end inset is 1.5dp
+ * less here because the rendered runs measure that much wider than their font advances, and this
+ * lands both ink extents and the bar's ends on the reference (9999 selected, 440dp screen).
  */
-private const val TOOLBAR_GLYPH_INSET = 36
-private const val SELECTION_GLYPH = 30
-private const val SELECTION_GLYPH_PAD = 8
+internal const val COUNT_TEXT_START = 29.3f
+internal const val COUNT_TEXT_END = 35.2f
+internal const val COUNT_UNIT_GAP = 6.4f
+private const val COUNT_BASELINE = 32f
 
-// Pill and trash: the vector shapes carry the designer's own curves, but the mockup PNG the owner
-// diffs against draws them a shade smaller than the SVG export. Rendering each vector into a box a
-// little narrower than its native design width lands the cap peak and the notch width on the PNG's
-// own extents, without re-fitting the curves. PILL native is 316dp, trash 134dp.
 /**
- * Count bar: 8dp in from the right edge, 6dp down from the top.
+ * The count bar's left end never goes further left than this (screen dp): where it starts in the
+ * reference with 9999 selected. Left of it the bar would reach the Copy glyph's 48dp target (which
+ * ends at 187) and the cut around the tab would start eating the first digit.
+ */
+internal const val COUNT_BAR_MIN_LEFT = 198f
+
+/**
+ * The tightest insets a crowded count bar falls back to before its type shrinks. 14dp at the
+ * start keeps the first digit right of the cut around the tab (which reaches x ~ 205 at the
+ * digits' top when the bar starts at [COUNT_BAR_MIN_LEFT]).
+ */
+internal const val COUNT_TEXT_START_MIN = 14f
+internal const val COUNT_TEXT_END_MIN = 14f
+
+/** The smallest the count bar's type is scaled to; below this the runs would be unreadable anyway. */
+private const val COUNT_MIN_SCALE = 0.3f
+
+private const val COUNT_UNIT = "SELECTED"
+private val CountStyle = TextStyle(fontFamily = HyleGrotesk, fontWeight = FontWeight.Normal, fontSize = 28.sp, lineHeight = 36.sp, letterSpacing = 0.sp)
+private val UnitStyle = TextStyle(fontFamily = HyleGrotesk, fontWeight = FontWeight.Normal, fontSize = 20.sp, lineHeight = 26.sp, letterSpacing = 0.sp)
+private fun TextStyle.scaled(by: Float): TextStyle =
+    if (by == 1f) this else copy(fontSize = fontSize * by, lineHeight = lineHeight * by)
+
+/** Insets (dp) and type scale for the count bar. */
+internal data class CountBarFit(val start: Float, val end: Float, val scale: Float)
+
+/**
+ * Fit "count SELECTED" into [room] dp of bar (from [COUNT_BAR_MIN_LEFT] to the right inset).
+ * [runWidths] gives the two runs' widths in dp at a type scale (1 = the reference's 28sp / 20sp).
+ * At the reference's insets if they fit (the reference's own case, and any shorter count); else
+ * the insets shrink toward their minimums, the start inset giving way first; else the type
+ * shrinks until the runs fit between the minimum insets. The result's total width never exceeds
+ * [room] (unless even [COUNT_MIN_SCALE] cannot fit, on a window narrower than any phone).
  *
- * Not flush to the corner the way the toolbar is flush to its own. The toolbar coves INTO the top
- * edge, so it has to touch it; this is a plain bar and would just look stuck to the corner. The
- * 6dp drop also centres it against the toolbar's glyph row, which is what the mockups show.
+ * The type is searched for rather than scaled by the width ratio: Android 14's non-linear font
+ * scaling grows small sizes more than large ones, so width is not proportional to the sp asked.
  */
-private const val COUNT_RIGHT = 8
-private const val COUNT_TOP = 6
+internal fun fitCountBar(room: Float, runWidths: (scale: Float) -> Pair<Float, Float>): CountBarFit {
+    fun text(scale: Float) = runWidths(scale).let { (count, unit) -> count + COUNT_UNIT_GAP + unit }
+    val natural = text(1f)
+    if (COUNT_TEXT_START + natural + COUNT_TEXT_END <= room) {
+        return CountBarFit(COUNT_TEXT_START, COUNT_TEXT_END, 1f)
+    }
+    val insets = room - natural
+    if (insets >= COUNT_TEXT_START_MIN + COUNT_TEXT_END_MIN) {
+        val over = COUNT_TEXT_START + COUNT_TEXT_END - insets
+        val start = (COUNT_TEXT_START - over).coerceAtLeast(COUNT_TEXT_START_MIN)
+        return CountBarFit(start, insets - start, 1f)
+    }
+    val budget = room - COUNT_TEXT_START_MIN - COUNT_TEXT_END_MIN
+    var lo = COUNT_MIN_SCALE
+    var hi = 1f
+    repeat(10) {
+        val mid = (lo + hi) / 2f
+        if (text(mid) <= budget) lo = mid else hi = mid
+    }
+    return CountBarFit(COUNT_TEXT_START_MIN, COUNT_TEXT_END_MIN, lo)
+}
 
-/**
- * 20dp on a 44dp bar: rounded, but not a stadium. A full-radius end would read as a chip, and the
- * mockups draw a bar whose corners are clearly softer than its height.
- */
-private const val COUNT_RADIUS = 20
+/** Trash tab: its right foot sits 31.81dp in from the right edge (408.19 on the 440dp screen). */
+private const val TRASH_RIGHT = SELECTION_DESIGN_SCREEN_W - 408.19f
 
-/** Even margin either side of the count, since neither end carries a cove any more. */
-private const val COUNT_TEXT_INSET = 18
-
-/** Trash: right edge 15dp in; drawn into 110dp (native 134) so the notch matches the PNG's width. */
-private const val TRASH_RIGHT = 15
-private const val TRASH_BOX_W = 110
-private const val SELECTION_TRASH_GLYPH = 32
+/** Trash glyph: 34dp, centred at x = 356 (screen dp), 22dp above the bottom edge. */
+private const val SELECTION_TRASH_GLYPH = 34f
+private const val TRASH_GLYPH_X = 356f
+private const val TRASH_GLYPH_UP = 22f
 
 // Fixed on purpose (semantic): destructive red stays the same whatever accent is chosen.
 /**
- * The trash's fill, sampled from the mockups — the one saturated colour anywhere in this app's
- * chrome, spent on the one action that destroys something. Deliberately not a Material error
- * colour: those follow the theme, and this must be the same red whatever palette the user picks,
- * because "the red one deletes" stops being a rule the moment it is sometimes not red.
+ * The trash's fill: pure red, as measured in the reference — the one saturated colour in this
+ * app's chrome, spent on the one action that destroys something. Deliberately not a Material error
+ * colour: those follow the theme, and "the red one deletes" stops being a rule the moment it is
+ * sometimes not red.
  */
-private val SELECTION_TRASH_RED = Color(0xFFE0332A)
-
-/** Nudge the trash glyph up from dead centre to sit with the mockup's own placement. */
-private const val TRASH_GLYPH_DROP = -2
+private val SELECTION_TRASH_RED = Color(0xFFFF0000)
 
 fun BrowserRoute.title(destination: HyleDestination): String = when (this) {
     BrowserRoute.Root -> destination.label

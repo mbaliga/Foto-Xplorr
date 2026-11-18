@@ -196,3 +196,18 @@ Prepare:
 - [ ] **Drag and tap.** The big card still takes a tap (closes the room) after the column has moved, and a drag from its edge
       still closes it. TalkBack does not read the ghosts. (unverified)
 - [ ] **Cost.** Turning the wheel stays smooth with 20,000 photos; opening the room does not stall. (unverified)
+
+## 11. Selection chrome (the owner's 2026-11-18 reference)
+- [ ] **Matches the reference.** On a real phone, long-press a photo and select many (select all): the black tab at the top
+      left holds zip, move and copy; the black bar at the top right reads the count large and "SELECTED" smaller and grey; the
+      pure red tab rises from the bottom edge near the right with the trash glyph. Put a screenshot beside the reference: same
+      shapes, the tab's rounded bottom corners, the gap between tab and bar, the bar's length. (unverified)
+- [ ] **Tiles.** Selected tiles show no mark; tiles not selected are dimmed; tapping a dimmed tile brightens it. (unverified)
+- [ ] **48 dp targets.** Each tab glyph, the count bar (clears the selection) and the trash take a tap anywhere in a 48 dp
+      square; no mis-taps on the neighbouring glyph. (unverified)
+- [ ] **Font scale 2.** With system font size at its largest, select 9999 (or as many as there are): the count and
+      "SELECTED" stay on one line inside the bar, the bar never covers the copy glyph. (unverified)
+- [ ] **Cutout and status bar.** On a phone with a camera cutout or a tall status bar, the tab and the bar are not hidden
+      under it and are not floating far below it; landscape too. (unverified)
+- [ ] **RTL.** In an RTL language the chrome keeps the same left-to-right layout and the count text reads correctly. (unverified)
+- [ ] **TalkBack.** A tile reads "Selected" or "Not selected" while selecting. (unverified)

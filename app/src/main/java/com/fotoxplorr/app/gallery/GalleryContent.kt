@@ -11,6 +11,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -86,6 +87,8 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -610,6 +613,35 @@ internal fun Modifier.tileGestures(
         }
 }
 
+/**
+ * While selecting, a tile tells TalkBack whether it is chosen ("Selected" / "Not selected", and
+ * the selected flag). On screen the cue is [UnselectedDim]: chosen tiles stay plain, as in the
+ * owner's reference, and the ones left out are dimmed.
+ */
+internal fun Modifier.selectionSemantics(selectionActive: Boolean, isSelected: Boolean): Modifier =
+    if (!selectionActive) this else semantics {
+        this.selected = isSelected
+        stateDescription = if (isSelected) TILE_SELECTED else TILE_NOT_SELECTED
+    }
+
+internal const val TILE_SELECTED = "Selected"
+internal const val TILE_NOT_SELECTED = "Not selected"
+
+/**
+ * How far a tile left OUT of an active selection is darkened: a black wash at this opacity.
+ * Selected tiles draw plain, so the owner's reference (every visible tile selected, all plain) is
+ * unchanged, and a stray tap on a tile still shows: the tapped tile brightens back to plain.
+ */
+internal const val UNSELECTED_DIM_ALPHA = 0.55f
+
+/** The per-tile selection cue: a dark wash over a tile that is NOT selected while selecting. */
+@Composable
+internal fun BoxScope.UnselectedDim(selectionActive: Boolean, selected: Boolean) {
+    if (selectionActive && !selected) {
+        Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = UNSELECTED_DIM_ALPHA)))
+    }
+}
+
 @Composable
 internal fun MediaTile(
     asset: MediaAsset,
@@ -643,6 +675,7 @@ internal fun MediaTile(
     Box(
         modifier = Modifier
             .aspectRatio(tileAspectRatio)
+            .selectionSemantics(selectionActive, selected)
             // Black rather than surfaceVariant: an unloaded tile should read as a gap in the
             // mosaic, not as a light grey block punched through it.
             .background(GRID_BACKGROUND)
@@ -765,23 +798,12 @@ internal fun MediaTile(
                 modifier = Modifier.matchParentSize(),
             )
         }
-        if (selected) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.34f)),
-            )
-            Text(
-                "✓",
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .background(MaterialTheme.colorScheme.primary)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                color = MaterialTheme.colorScheme.onPrimary,
-            )
-        }
-        // The keyboard's arrow-key cursor -- a plain ring rather than the selection tint above,
+        // The owner's multi-select reference (2026-11-18) shows every tile plain while 9999 are
+        // selected, so a selected tile draws no mark (the old primary wash and ✓ chip are gone)
+        // and the tiles left OUT are dimmed instead. TalkBack hears it via [selectionSemantics].
+        UnselectedDim(selectionActive, selected)
+
+        // The keyboard's arrow-key cursor -- a plain ring, not a selection mark,
         // because the two are deliberately different ideas: this tile is not picked, it is just
         // where Enter and Delete would currently act. Conflating the two would mean every arrow
         // press opened the full selection chrome (the export/move/copy bar, the trash corner)

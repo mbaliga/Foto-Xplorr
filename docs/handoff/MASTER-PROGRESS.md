@@ -1966,3 +1966,27 @@ column moves with the wheel. Built to that, from the video only (nothing has run
   while the room is opening or closing slides with the room rather than being exactly aligned to the live card (it is only
   exact at rest).
 - Device checks are in `docs/device-test/batch-11-checklist.md`, section 10.
+
+### Selection chrome to the 2026-11-18 reference
+
+Owner: "make sure the UI looks EXACTLY like this, for multiselect and options on select", with a 440 x 956 dp screenshot
+(3-column grid, 9999 selected). The chrome existed from an earlier mockup; it was re-measured against the screenshot and
+rebuilt to it, checked with the Roborazzi render (`SurfaceRenderTest` "selection chrome over the grid", 880 x 1912 at
+xhdpi, compared at x0.5). Nothing has run on a device.
+
+- **Shapes** (`hyle/HyleNotch.kt`): the top-left tab is one `EdgeTab` outline with rounded bottom corners whose right flank
+  keeps a 5.8 dp gap to the count bar (no long slanted cove); the count bar's top-left corner is rounder (22.5 dp) than the
+  other three (16 dp); the trash tab is widened to the reference's base and its right foot sits at x = 408.19.
+  `SelectionChromeGeometryTest` (4 tests) pins the outlines.
+- **Placement** (`gallery/GalleryScreen.kt` `SelectionOverlay`): every measured value is a named constant (glyph boxes 30 dp
+  at x = 56/102/148, count bar 6.8 dp from the right and 7 dp down, 44 dp drawn in a 48 dp target, text insets 29.3/35.2 dp,
+  count 28 sp and "SELECTED" 20 sp at half opacity on one baseline, trash glyph 34 dp centred at x = 356). The bar is sized
+  to its content and never reaches left of x = 198; a count too long (narrow phone, big font scale) first tightens its
+  insets, then scales its type down to 0.3. The chrome is laid out left to right in every locale (the geometry is
+  screen-absolute). Trash red is a fixed `0xFFFF0000`, not the accent.
+- **Per-tile mark, decided**: the reference shows every visible tile plain while 9999 are selected, so a selected tile now
+  draws NO mark (the old primary wash and the ✓ chip are gone from `MediaTile` and the stamp tile in `ZoomGrid.kt`). The
+  cue moves to the tiles left OUT: they get a 55% black wash (`UnselectedDim`) while selecting, so a partial selection is
+  still visible and the reference (all selected) is unchanged. TalkBack gets `selected` and "Selected" / "Not selected"
+  through `selectionSemantics`. Tests: `SelectionOverlayTest` (16), `SelectedTileTest` (2).
+- Device checks are in `docs/device-test/batch-11-checklist.md`, section 11.

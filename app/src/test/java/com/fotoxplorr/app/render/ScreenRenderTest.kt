@@ -2,6 +2,7 @@ package com.fotoxplorr.app.render
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -155,6 +156,33 @@ private fun androidx.compose.foundation.lazy.grid.LazyGridScope.items(
     block: @androidx.compose.runtime.Composable (Int) -> Unit,
 ) = items(count = count, itemContent = { block(it) })
 
+/**
+ * The stand-in grid at the real grid's geometry, laid out as in the owner's selection reference
+ * (2026-11-18): three columns on the app's own [com.fotoxplorr.app.gallery.GRID_GUTTER] (4dp),
+ * tiles at [com.fotoxplorr.app.gallery.GRID_TILE_ASPECT] (144 x 160 on a 440dp screen), and the
+ * first row scrolled 12dp under the chrome. So a pixel diff against the reference compares the
+ * chrome over the same gutters, not over a different grid.
+ */
+@androidx.compose.runtime.Composable
+internal fun SelectionReferenceGrid() {
+    val scrolledPx = with(androidx.compose.ui.platform.LocalDensity.current) { 12.dp.roundToPx() }
+    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
+        state = androidx.compose.foundation.lazy.grid.rememberLazyGridState(0, scrolledPx),
+        modifier = Modifier.fillMaxSize().background(Color.Black),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(com.fotoxplorr.app.gallery.GRID_GUTTER),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(com.fotoxplorr.app.gallery.GRID_GUTTER),
+    ) {
+        items(30) { index ->
+            Box(
+                Modifier
+                    .aspectRatio(com.fotoxplorr.app.gallery.GRID_TILE_ASPECT)
+                    .background(TILE_COLOURS[index % TILE_COLOURS.size]),
+            )
+        }
+    }
+}
+
 /** Muted blocks that read as photographs without pretending to be any. */
 private val TILE_COLOURS = listOf(
     Color(0xFF6B5B4A), Color(0xFF8C3A34), Color(0xFF44525E),
@@ -193,7 +221,7 @@ class SurfaceRenderTest {
     @Test
     fun `selection chrome over the grid`() {
         render("selection-1-chrome") {
-            PhotoGridStandIn()
+            SelectionReferenceGrid()
             SelectionOverlay(
                 selection = com.fotoxplorr.app.gallery.GallerySelection(
                     selectedIds = (1L..9999L).map { com.fotoxplorr.core.model.MediaId(it) }.toSet(),
