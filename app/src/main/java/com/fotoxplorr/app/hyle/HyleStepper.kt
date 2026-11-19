@@ -41,7 +41,7 @@ import com.fotoxplorr.app.ui.HyleGrotesk
  * whose every other control is Hyle — two `IconButton`s holding bare `+` / `-` glyphs floating in
  * space (owner, 2026-09-01: *"As for the internals like the binary toggles, please use Hyle and do
  * not invent buttons."*). The answer to that is not a new button, so this control invents nothing:
- * each end cell **is** [HyleToggle]'s knob — the same width, the same near-black, the same
+ * each end cell **is** the retired HyleToggle's knob — the same width, the same near-black, the same
  * right-leaning shear — parked at its end of the same track instead of sliding along it. Read the
  * two together and the stepper is a switch whose knob went both ways.
  *
@@ -57,7 +57,7 @@ import com.fotoxplorr.app.ui.HyleGrotesk
  * the value fall back too, since at that point the control really is inert.
  *
  * @param label names the setting for a screen reader — it is not drawn. The room draws its own
- *   label in its own type, exactly as it does around [HyleToggle]; a control in this package never
+ *   label in its own type, exactly as it does around the on/off switch; a control in this package never
  *   assumes the ink colour of the surface it lands on.
  * @param value already formatted by the caller ("60%", "05:00", "3"). This control never parses,
  *   rounds or unit-suffixes it — the caller owns what a number means.
@@ -244,7 +244,7 @@ private fun DrawScope.drawStepGlyph(cx: Float, cy: Float, upright: Boolean) {
 }
 
 // ---- Hyle stepper geometry & palette ----
-// The track height, radius, skew, cell width, glyph type size and the whole palette are HyleToggle's
+// The track height, radius, skew, cell width, glyph type size and the whole palette were the retired HyleToggle's
 // own numbers, restated here rather than shared because they are file-private over there and this
 // control did not seem worth widening their visibility for. They are one set of values, not two: if
 // the toggle's track ever changes, these change with it.

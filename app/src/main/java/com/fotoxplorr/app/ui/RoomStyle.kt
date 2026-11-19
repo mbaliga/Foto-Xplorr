@@ -222,7 +222,7 @@ fun RoomRow(
 }
 
 /**
- * A room's switch. It is [HyleToggle][com.fotoxplorr.app.hyle.HyleToggle] -- the same control as
+ * A room's switch. It is [HyleOnOff][com.fotoxplorr.app.hyle.HyleOnOff] -- the same control as
  * the Settings pane, the share sheet and the AI settings, so one preference does not look like two
  * different switches depending on which room you flip it in.
  *
@@ -241,7 +241,7 @@ fun RoomToggle(
     enabled: Boolean = true,
     description: String? = null,
 ) {
-    com.fotoxplorr.app.hyle.HyleToggle(
+    com.fotoxplorr.app.hyle.HyleOnOff(
         checked = checked,
         onCheckedChange = onCheckedChange,
         enabled = enabled,

@@ -49,7 +49,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.hyle.HyleTextField
-import com.fotoxplorr.app.hyle.HyleToggle
+import com.fotoxplorr.app.hyle.HyleOnOff
 
 /** One result sentence (a test, a save, a refusal). [ok] only picks the icon; the sentence says it in words. */
 internal data class SyncOutcomeLine(val ok: Boolean, val text: String)
@@ -261,7 +261,7 @@ internal fun SyncSwitchRow(label: String, checked: Boolean, tag: String, note: S
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-            HyleToggle(checked = checked, onCheckedChange = null)
+            HyleOnOff(checked = checked, onCheckedChange = null)
         }
         if (note != null) Text(note, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 4.dp))
     }

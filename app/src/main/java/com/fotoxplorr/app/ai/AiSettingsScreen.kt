@@ -386,7 +386,7 @@ private fun ProviderCard(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            com.fotoxplorr.app.hyle.HyleToggle(
+            com.fotoxplorr.app.hyle.HyleOnOff(
                 checked = provider.enabled,
                 enabled = provider.hasSecret,
                 onCheckedChange = onEnabledChange,

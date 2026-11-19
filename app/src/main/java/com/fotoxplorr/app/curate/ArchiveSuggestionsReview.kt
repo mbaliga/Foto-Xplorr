@@ -30,7 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.curate.ArchiveAdvisor.ArchiveReasonCategory
 import com.fotoxplorr.app.curate.ArchiveAdvisor.ArchiveSuggestion
-import com.fotoxplorr.app.hyle.HyleToggle
+import com.fotoxplorr.app.hyle.HyleOnOff
 import com.fotoxplorr.app.media.MediaAsset
 import com.fotoxplorr.app.media.MediaImage
 import com.fotoxplorr.app.ui.HyleGrotesk
@@ -58,7 +58,7 @@ data class ArchiveReviewItem(val suggestion: ArchiveSuggestion, val asset: Media
  *
  * ## Three actions, on purpose, not two
  *
- * [HyleToggle] here is a BATCH SELECTION mark, not a stand-in for accept: switching one on says
+ * [HyleOnOff] here is a BATCH SELECTION mark, not a stand-in for accept: switching one on says
  * "include this in what I archive next", nothing more, and starts every row off (deliberately
  * unchecked) so the archive bar at the bottom stays disabled until a person has actually chosen
  * something -- a queue that pre-selects everything for you is a queue where "accept all" and
@@ -203,7 +203,7 @@ private fun ReviewRow(
                 RowAction(label = "Reject", emphasised = false, onClick = onReject)
             }
         }
-        HyleToggle(
+        HyleOnOff(
             checked = selected,
             onCheckedChange = onSelectedChange,
             description = "Include ${item.asset.displayName} in the next batch archive",

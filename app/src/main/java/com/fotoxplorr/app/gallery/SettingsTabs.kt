@@ -779,7 +779,7 @@ private fun SwitchRow(
             // which is the one thing a disabled switch still has to say.
             .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange),
         trailing = {
-            com.fotoxplorr.app.hyle.HyleToggle(
+            com.fotoxplorr.app.hyle.HyleOnOff(
                 checked = checked,
                 onCheckedChange = null,
                 enabled = enabled,
