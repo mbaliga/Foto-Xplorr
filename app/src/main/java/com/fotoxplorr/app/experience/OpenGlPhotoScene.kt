@@ -104,7 +104,7 @@ fun PhotoWallScreen(
                 )
             }
             Icon(Icons.Outlined.Explore, contentDescription = null, tint = Color.White)
-            com.fotoxplorr.app.hyle.HyleOnOff(
+            dev.aarso.hyle.component.HyleOnOffToggle(
                 checked = gyroEnabled,
                 onCheckedChange = { enabled ->
                     gyroEnabled = enabled

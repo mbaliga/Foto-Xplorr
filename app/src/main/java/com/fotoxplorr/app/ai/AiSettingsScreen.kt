@@ -386,7 +386,7 @@ private fun ProviderCard(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            com.fotoxplorr.app.hyle.HyleOnOff(
+            dev.aarso.hyle.component.HyleOnOffToggle(
                 checked = provider.enabled,
                 enabled = provider.hasSecret,
                 onCheckedChange = onEnabledChange,

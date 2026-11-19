@@ -27,7 +27,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.ai.RemoteAiBridge
-import com.fotoxplorr.app.hyle.HyleOnOff
+import dev.aarso.hyle.component.HyleOnOffToggle
 import com.fotoxplorr.app.services.catalogue.CataloguePolicy
 import com.fotoxplorr.app.services.catalogue.NoozModel
 import kotlinx.coroutines.launch
@@ -86,7 +86,7 @@ internal fun CatalogueSection(store: CatalogueStore, bridge: RemoteAiBridge) {
                 Text(ServicesCopy.SHOW_ALL, color = SERVICES_PRIMARY, style = MaterialTheme.typography.bodyMedium)
                 Text(if (hidden > 0) ServicesCopy.hiddenNote(hidden) else ServicesCopy.SHOW_ALL_NOTE, color = SERVICES_MUTED, style = MaterialTheme.typography.bodySmall)
             }
-            HyleOnOff(checked = showAll, onCheckedChange = { showAll = it }, description = ServicesCopy.SHOW_ALL)
+            HyleOnOffToggle(checked = showAll, onCheckedChange = { showAll = it }, description = ServicesCopy.SHOW_ALL)
         }
 
         Row(

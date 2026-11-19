@@ -312,15 +312,15 @@ class SurfaceRenderTest {
                         verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(28.dp),
                         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
                     ) {
-                        com.fotoxplorr.app.hyle.HyleOnOff(checked = false, onCheckedChange = {})
-                        com.fotoxplorr.app.hyle.HyleOnOff(checked = true, onCheckedChange = {})
-                        com.fotoxplorr.app.hyle.HyleOnOff(
+                        dev.aarso.hyle.component.HyleOnOffToggle(checked = false, onCheckedChange = {})
+                        dev.aarso.hyle.component.HyleOnOffToggle(checked = true, onCheckedChange = {})
+                        dev.aarso.hyle.component.HyleOnOffToggle(
                             checked = false, onCheckedChange = {}, glyphs = '#' to '*',
                         )
-                        com.fotoxplorr.app.hyle.HyleOnOff(
+                        dev.aarso.hyle.component.HyleOnOffToggle(
                             checked = true, onCheckedChange = {}, glyphs = '#' to '*',
                         )
-                        com.fotoxplorr.app.hyle.HyleOnOff(
+                        dev.aarso.hyle.component.HyleOnOffToggle(
                             checked = false, onCheckedChange = {}, enabled = false,
                         )
                     }
@@ -348,14 +348,14 @@ class SurfaceRenderTest {
                 androidx.compose.foundation.layout.Row(
                     horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(20.dp),
                 ) {
-                    com.fotoxplorr.app.hyle.HyleOnOff(checked = true, onCheckedChange = {})
-                    com.fotoxplorr.app.hyle.HyleOnOff(checked = false, onCheckedChange = {})
+                    dev.aarso.hyle.component.HyleOnOffToggle(checked = true, onCheckedChange = {})
+                    dev.aarso.hyle.component.HyleOnOffToggle(checked = false, onCheckedChange = {})
                 }
                 androidx.compose.foundation.layout.Row(
                     horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(20.dp),
                 ) {
-                    com.fotoxplorr.app.hyle.HyleOnOff(checked = true, onCheckedChange = {}, enabled = false)
-                    com.fotoxplorr.app.hyle.HyleOnOff(checked = false, onCheckedChange = {}, enabled = false)
+                    dev.aarso.hyle.component.HyleOnOffToggle(checked = true, onCheckedChange = {}, enabled = false)
+                    dev.aarso.hyle.component.HyleOnOffToggle(checked = false, onCheckedChange = {}, enabled = false)
                 }
                 com.fotoxplorr.app.ui.RoomRow(
                     label = "Filmstrip",

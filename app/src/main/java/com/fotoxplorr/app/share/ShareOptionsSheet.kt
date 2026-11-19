@@ -237,7 +237,7 @@ private fun SheetSwitch(
             Text(label, color = PRIMARY_TEXT, style = MaterialTheme.typography.bodyLarge)
             Text(caption, color = SECONDARY_TEXT, style = MaterialTheme.typography.bodySmall)
         }
-        com.fotoxplorr.app.hyle.HyleOnOff(
+        dev.aarso.hyle.component.HyleOnOffToggle(
             checked = checked,
             onCheckedChange = onCheckedChange,
             enabled = enabled,

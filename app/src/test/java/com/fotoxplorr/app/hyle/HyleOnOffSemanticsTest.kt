@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.fotoxplorr.app.gallery.GalleryPreferencesState
 import com.fotoxplorr.app.ui.FotoXplorrTheme
 import com.fotoxplorr.app.ui.RoomToggle
+import dev.aarso.hyle.component.HyleOnOffToggle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Rule
@@ -106,7 +107,7 @@ class HyleOnOffSemanticsTest {
      */
     @Test
     fun `a display only toggle is neither a switch nor clickable`() {
-        onBlack { HyleOnOff(checked = true, onCheckedChange = null, description = "Picture only") }
+        onBlack { HyleOnOffToggle(checked = true, onCheckedChange = null, description = "Picture only") }
         val node = compose.onNodeWithContentDescription("Picture only").fetchSemanticsNode()
         assertFalse(SemanticsProperties.Role in node.config)
         assertFalse(SemanticsActions.OnClick in node.config)
@@ -114,8 +115,8 @@ class HyleOnOffSemanticsTest {
     }
 
     @Test
-    fun `the touch target is at least 48dp tall`() {
+    fun `the touch target is the shared 52dp control height`() {
         onBlack { RoomToggle(checked = false, onCheckedChange = {}) }
-        compose.onNode(isToggleable()).assertTouchHeightIsEqualTo(48.dp)
+        compose.onNode(isToggleable()).assertTouchHeightIsEqualTo(52.dp)
     }
 }
