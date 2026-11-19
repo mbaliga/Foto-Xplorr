@@ -209,6 +209,21 @@ class PaneRenderTest {
         assertEquals(GridLongPress.NOTHING, chosen)
     }
 
+    /** Owner, 2026-11-19: whether the preview closes on release or stays open is the user's choice. */
+    @Test
+    fun `the preview window row offers both modes beside long press and reports the one tapped`() {
+        var chosen: com.fotoxplorr.app.gallery.PeekMode? = null
+        compose.setContent {
+            FotoXplorrTheme(GalleryPreferencesState()) {
+                SettingsPane(SettingsTab.MEDIA, noOpActions().copy(onSetPeekMode = { chosen = it }))
+            }
+        }
+        compose.onNodeWithText("Preview window").assertExists()
+        com.fotoxplorr.app.gallery.PeekMode.entries.forEach { compose.onNodeWithText(it.label).assertExists() }
+        compose.onNodeWithText(com.fotoxplorr.app.gallery.PeekMode.STAYS_OPEN.label).performScrollTo().performClick()
+        assertEquals(com.fotoxplorr.app.gallery.PeekMode.STAYS_OPEN, chosen)
+    }
+
     /** Leaving Settings for a destination screen and coming back must land on the same tab. */
     @Test
     fun `the chosen tab survives a save and restore`() {

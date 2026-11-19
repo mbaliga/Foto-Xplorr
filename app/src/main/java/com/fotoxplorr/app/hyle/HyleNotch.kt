@@ -329,3 +329,116 @@ internal class SelectionCountBarShape(
         return Outline.Generic(Path().apply { op(bar, cut, PathOperation.Difference) })
     }
 }
+
+// ---- the long-press preview window, fitted to the owner's reference (2026-11-19) ----
+
+/**
+ * Adds to [path] the closed outline of an axis-aligned polygon whose every corner is rounded with
+ * a true quarter circle of [radius], tangent to both sides it joins. [points] are the polygon's
+ * sharp vertices in order (either winding), already in pixels; each side must be longer than two
+ * radii. A corner that turns one way is convex and one that turns the other concave, so the same
+ * call draws the rounded corners of a frame AND the concave fillets where a tab meets it.
+ */
+internal fun Path.addRoundedOrthogonalPolygon(points: List<Offset>, radius: Float) {
+    val n = points.size
+    for (i in 0 until n) {
+        val p = points[(i + n - 1) % n]
+        val v = points[i]
+        val q = points[(i + 1) % n]
+        val inDir = (v - p).let { it / it.getDistance() }
+        val outDir = (q - v).let { it / it.getDistance() }
+        val entry = v - inDir * radius
+        val centre = entry + outDir * radius
+        if (i == 0) moveTo(entry.x, entry.y) else lineTo(entry.x, entry.y)
+        // Screen angles (y down): the arc runs from the entry tangent point (centre − outDir·r) to
+        // the exit one (centre + inDir·r), a quarter turn the same way the polygon turns.
+        val start = (atan2(-outDir.y, -outDir.x) * 180.0 / PI).toFloat()
+        val turn = inDir.x * outDir.y - inDir.y * outDir.x
+        arcTo(
+            rect = Rect(center = centre, radius = radius),
+            startAngleDegrees = start,
+            sweepAngleDegrees = if (turn > 0f) 90f else -90f,
+            forceMoveTo = false,
+        )
+    }
+    close()
+}
+
+/**
+ * The chrome of the preview a long press opens when it is set to stay open: a square card with a
+ * hairline black frame, a black tab in the top-left corner holding three action glyphs and a black
+ * tab in the bottom-right corner holding the close mark.
+ *
+ * Every number is a fraction of the card's width W (the card is square), measured from the owner's
+ * 1004 px reference row by row and confirmed by rebuilding it: the black is ONE shape, the card's
+ * rounded square minus a photo window, and the window is the notched polygon
+ * (TAB_RIGHT, FRAME) → (1 − FRAME, FRAME) → (1 − FRAME, CLOSE_TOP) → (CLOSE_LEFT, CLOSE_TOP) →
+ * (CLOSE_LEFT, 1 − FRAME) → (FRAME, 1 − FRAME) → (FRAME, TAB_BOTTOM) → (TAB_RIGHT, TAB_BOTTOM)
+ * with every corner rounded at [WINDOW_RADIUS]. That one radius gives the photo's own corners
+ * (concentric with the card's: outer radius minus frame), the tabs' convex corners and the four
+ * concave fillets where the tabs run into the frame. In dp at a 392 dp card: outer radius 9.8,
+ * frame 0.9, window radius 8.9, top-left tab 118.7 x 40.6, close tab 38 square.
+ *
+ * Unlike [EdgeTab], whose tab hangs from one edge with leaning flanks, these tabs sit in a corner
+ * with straight sides filleted into TWO frame edges, which is why this is its own outline.
+ */
+internal object PeekChrome {
+    const val OUTER_RADIUS = 0.0250f
+    const val FRAME = 0.0023f
+    const val WINDOW_RADIUS = 0.0227f
+
+    /** The top-left tab's right side and bottom. */
+    const val TAB_RIGHT = 0.3029f
+    const val TAB_BOTTOM = 0.1035f
+
+    /** The close tab's left side and top. */
+    const val CLOSE_LEFT = 0.9031f
+    const val CLOSE_TOP = 0.9025f
+
+    /**
+     * Centres of the three glyph slots on the top-left tab, where the reference has its digits: an
+     * equal pitch fitted to the digits' centres, vertically centred between the frame and the tab's
+     * bottom.
+     */
+    val SLOT_X = floatArrayOf(0.0501f, 0.1446f, 0.2390f)
+    const val SLOT_Y = 0.0529f
+
+    /** The glyph box, so the drawables' 25.5-unit ink in a 30-unit box matches the digits' cap height. */
+    const val SLOT_BOX = 0.0561f
+
+    /** The close mark: centre, centreline length of each stroke and stroke width (butt ends). */
+    const val CLOSE_X = 0.9497f
+    const val CLOSE_Y = 0.9500f
+    const val CLOSE_ARM = 0.0514f
+    const val CLOSE_STROKE = 0.0078f
+
+    /** The photo window's sharp vertices for a card [w] px wide. */
+    fun windowPoints(w: Float): List<Offset> {
+        val f = FRAME * w
+        val e = w - f
+        return listOf(
+            Offset(TAB_RIGHT * w, f),
+            Offset(e, f),
+            Offset(e, CLOSE_TOP * w),
+            Offset(CLOSE_LEFT * w, CLOSE_TOP * w),
+            Offset(CLOSE_LEFT * w, e),
+            Offset(f, e),
+            Offset(f, TAB_BOTTOM * w),
+            Offset(TAB_RIGHT * w, TAB_BOTTOM * w),
+        )
+    }
+
+    /** The black chrome for a card [w] px wide: the rounded card minus the photo window. */
+    fun framePath(w: Float): Path {
+        val card = Path().apply {
+            addRoundRect(RoundRect(Rect(0f, 0f, w, w), CornerRadius(OUTER_RADIUS * w)))
+        }
+        val window = Path().apply { addRoundedOrthogonalPolygon(windowPoints(w), WINDOW_RADIUS * w) }
+        return Path().apply { op(card, window, PathOperation.Difference) }
+    }
+}
+
+/** [PeekChrome]'s black, for a square box the size of the card. */
+internal val PeekFrameShape: Shape = GenericShape { size, _ ->
+    addPath(PeekChrome.framePath(size.width))
+}

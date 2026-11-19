@@ -342,6 +342,8 @@ data class GalleryActions(
     val onSetLoopAnimations: (Boolean) -> Unit,
     /** What a hold on a grid tile does -- see [GridLongPress]. */
     val onSetGridLongPress: (GridLongPress) -> Unit = {},
+    /** Whether the quick preview closes on release or stays open -- see [PeekMode]. */
+    val onSetPeekMode: (PeekMode) -> Unit = {},
     /** Neighbouring photos along the bottom of an open photo -- surfaced in both the viewer's
      *  own settings room and Settings › Viewer, so it needs to be reachable from here too. */
     val onSetShowFilmstrip: (Boolean) -> Unit = {},
@@ -1072,6 +1074,20 @@ private fun GalleryBrowser(
     // Every one of them takes its photos from renderedAssets, the browsable list the grid draws
     // (TRAPS #33), and blurs a sensitive photo exactly as the grid does.
     var quickLook by remember { mutableStateOf(QuickLook()) }
+    // The quick preview that stays open, if one is up (see the bridge's onOpenPeekWindow below).
+    var peekWindow by remember { mutableStateOf<MediaAsset?>(null) }
+    // Anything that takes the grid away or changes what it shows closes it, so it is never left
+    // over a screen it no longer belongs to: a room, a pane, the map, a route or destination, a
+    // selection, Quick Look, the Trash, the setting itself. And it closes the moment its photo is
+    // no longer in the list on screen (deleted, hidden, filtered out).
+    LaunchedEffect(
+        shell.atHome, paneTakenOver, mapOpen, route, destination, selection.isActive, quickLook.isOpen,
+        inTrash, state.preferences.peekMode,
+    ) { peekWindow = null }
+    LaunchedEffect(renderedAssets, peekWindow) {
+        val shown = peekWindow ?: return@LaunchedEffect
+        if (renderedAssets.none { it.id == shown.id }) peekWindow = null
+    }
     var previewPaneOn by rememberSaveable { mutableStateOf(false) }
     var surveyAssets by remember { mutableStateOf<List<MediaAsset>?>(null) }
     var cullAssets by remember { mutableStateOf<List<MediaAsset>?>(null) }
@@ -1226,6 +1242,15 @@ private fun GalleryBrowser(
     }
     // The Trash has no use for a held favourite, share or edit (restore and delete live there).
     chromeBridge.gridLongPress = LongPressResolver.effectiveFor(state.preferences.gridLongPress, inTrash)
+    // A preview set to stay open is this screen's, not the grid's: drawn above everything below,
+    // and only for a photo in the list on screen (TRAPS #33), so it can never show more than the
+    // tile it was opened from.
+    chromeBridge.peekMode = state.preferences.peekMode
+    chromeBridge.onOpenPeekWindow = { asset ->
+        val shown = renderedAssets.any { it.id == asset.id }
+        if (shown) peekWindow = asset
+        shown
+    }
 
     // The destinations, with Map before Experimental (see MapMode.kt).
     val railItems = remember {
@@ -1296,6 +1321,8 @@ private fun GalleryBrowser(
             // selection as the most specific thing to back out of, then search, then the
             // keyboard's own cursor.
             GalleryShortcut.CloseOrClear -> when {
+                // The window registered the newest Back handler, so Escape closes it first too.
+                peekWindow != null -> peekWindow = null
                 escapeFollowsBackOrder(gridOutOfReach, roomOpen = !shell.atHome) -> performBack(currentBackTarget())
                 selection.isActive -> selection = selection.clear()
                 searchVisible -> {
@@ -2097,6 +2124,20 @@ private fun GalleryBrowser(
                             }
                         }
                     }
+
+                    // The quick preview that stays open (PeekMode.STAYS_OPEN): last, so it is above
+                    // the grid AND every floating control here, and its backdrop takes every new
+                    // touch while it is up. The held preview is still the grid's own (MediaPeek).
+                    peekWindow?.let { peeked ->
+                        PeekWindow(
+                            asset = peeked,
+                            blurred = peeked.id in lookBlurredIds,
+                            actions = peekActionsFor(peeked, inTrash),
+                            animate = state.preferences.loopAnimations && peeked.id in state.animatedIds,
+                            onAction = { action -> runPeekAction(action, peeked, actions) },
+                            onClose = { peekWindow = null },
+                        )
+                    }
                 }
             }
     }
@@ -2582,11 +2623,8 @@ private fun BoxScope.SelectionOverlayLtr(
 }
 
 /**
- * One 30dp white glyph on the tab, in slot [slot] (0, 1, 2 from the left).
- *
- * A bare `Icon` in a 48dp clickable box rather than an `IconButton`, placed by absolute position:
- * the glyphs sit on a 46dp pitch, so neighbouring 48dp targets overlap by 2dp, which a Row's
- * arrangement cannot express. An `IconButton` would also space itself.
+ * One 30dp white glyph on the tab, in slot [slot] (0, 1, 2 from the left): a [TabGlyph] placed by
+ * absolute position. The glyphs sit on a 46dp pitch, so neighbouring 48dp targets overlap by 2dp.
  */
 @Composable
 private fun SelectionGlyph(
@@ -2596,23 +2634,16 @@ private fun SelectionGlyph(
     onClick: () -> Unit,
 ) {
     val pad = (MIN_TARGET - SELECTION_GLYPH) / 2f
-    Box(
-        modifier = Modifier
-            .offset(
-                x = (TOOLBAR_GLYPH_X0 + slot * TOOLBAR_GLYPH_PITCH - pad - SelectionTab.minX).dp,
-                y = (TOOLBAR_GLYPH_Y - pad).dp,
-            )
-            .size(MIN_TARGET.dp)
-            .clickable(onClickLabel = description, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            painter = painterResource(icon),
-            contentDescription = description,
-            tint = Color.White,
-            modifier = Modifier.size(SELECTION_GLYPH.dp),
-        )
-    }
+    TabGlyph(
+        icon = icon,
+        description = description,
+        glyph = SELECTION_GLYPH.dp,
+        modifier = Modifier.offset(
+            x = (TOOLBAR_GLYPH_X0 + slot * TOOLBAR_GLYPH_PITCH - pad - SelectionTab.minX).dp,
+            y = (TOOLBAR_GLYPH_Y - pad).dp,
+        ),
+        onClick = onClick,
+    )
 }
 
 // ---- selection chrome geometry, measured from the owner's reference (2026-11-18, 440 x 956 dp) ----

@@ -112,4 +112,29 @@ class LongPressResolverTest {
         assertEquals("Open", LongPressResolver.tapLabel(selectionActive = false))
         assertEquals("Add or remove from selection", LongPressResolver.tapLabel(selectionActive = true))
     }
+
+    @Test
+    fun `a screen reader's long click opens a preview that stays open`() {
+        val semantics = LongPressResolver.longClickSemantics(GridLongPress.PEEK, false, peekStaysOpen = true)!!
+        assertEquals(LongPressOutcome.Peek, semantics.outcome)
+        assertEquals(GridLongPress.PEEK.label, semantics.label)
+    }
+
+    @Test
+    fun `a preview that stays open does not change a hold while selecting or another setting`() {
+        assertEquals(
+            LongPressOutcome.ToggleSelection,
+            LongPressResolver.longClickSemantics(GridLongPress.PEEK, true, peekStaysOpen = true)!!.outcome,
+        )
+        assertEquals("Share", LongPressResolver.longClickSemantics(GridLongPress.SHARE, false, peekStaysOpen = true)!!.label)
+        assertNull(LongPressResolver.longClickSemantics(GridLongPress.NOTHING, false, peekStaysOpen = true))
+    }
+
+    @Test
+    fun `the default long click still selects under the preview`() {
+        assertEquals(
+            LongPressOutcome.ToggleSelection,
+            LongPressResolver.longClickSemantics(GridLongPress.PEEK, false)!!.outcome,
+        )
+    }
 }

@@ -25,7 +25,7 @@ class SourceActionGateTest {
         "onSetAccentPalette", "onSetCustomTheme", "onSetSlideshowInterval", "onSetDefaultDestination",
         "onSetKeepScreenOn", "onSetSlideshowShuffle", "onSetAutoplayVideos", "onSetFitToTile",
         "onSetJustifiedLayout", "onSetGroupBursts", "onSetPairLivePhotos", "onSetCullSidecars",
-        "onSetLoopAnimations", "onSetGridLongPress", "onSetShowFilmstrip", "onSetEditorSaveMode",
+        "onSetLoopAnimations", "onSetGridLongPress", "onSetPeekMode", "onSetShowFilmstrip", "onSetEditorSaveMode",
         "onIndexRecognition", "onProtectFolder", "onUnlockFolder", "onLockFolder",
         "onRemoveFolderProtection", "onCreateCollection", "onRenameCollection", "onDeleteCollection",
         "onExportMetadata", "onImportMetadata", "onPendingSearchConsumed", "onManageSelectedMedia",

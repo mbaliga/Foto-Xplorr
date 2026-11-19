@@ -153,6 +153,7 @@ enum class SettingsRow(val label: String, val icon: SettingsIcon) {
     PAIR_LIVE("Pair Live Photos", SettingsIcon.MOTION),
     PLAY_ANIMATIONS("Play animations", SettingsIcon.ANIMATION),
     LONG_PRESS("Long press does", SettingsIcon.TOUCH),
+    PEEK_MODE("Preview window", SettingsIcon.EYE),
     SAVING_EDITS("Saving edits", SettingsIcon.SAVE),
     SORT("Sort", SettingsIcon.SORT),
     TIMELINE("Timeline", SettingsIcon.TIMELINE),

@@ -26,7 +26,10 @@ enum class GridLongPress(val label: String) {
 
 /** What one completed hold on a tile asks the tile to do; see [LongPressResolver.resolve]. */
 sealed interface LongPressOutcome {
-    /** Show the held preview; the tile's press handler hides it again on release. */
+    /**
+     * Show the preview: held (the tile's press handler hides it again on release), or the window
+     * that stays open, as [PeekMode] says.
+     */
     object Peek : LongPressOutcome
 
     /** Add the tile to the selection, or take it out of it. */
@@ -89,16 +92,23 @@ object LongPressResolver {
     /**
      * The long-click an accessibility service is offered, or null for none.
      *
-     * A preview lives only as long as a finger is down, so a screen reader's one-shot long-click
-     * cannot drive it: under [GridLongPress.PEEK] it selects instead, and says so.
+     * A held preview lives only as long as a finger is down, so a screen reader's one-shot
+     * long-click cannot drive it: under [GridLongPress.PEEK] it selects instead, and says so. A
+     * preview that stays open ([peekStaysOpen], [PeekMode.STAYS_OPEN] where a screen can draw it)
+     * needs no held finger and is closed by its own ✕ or Back, so then the long-click opens it.
      */
-    fun longClickSemantics(setting: GridLongPress, selectionActive: Boolean): LongClickSemantics? {
+    fun longClickSemantics(
+        setting: GridLongPress,
+        selectionActive: Boolean,
+        peekStaysOpen: Boolean = false,
+    ): LongClickSemantics? {
         val outcome = when (val held = resolve(setting, selectionActive)) {
-            LongPressOutcome.Peek -> LongPressOutcome.ToggleSelection
+            LongPressOutcome.Peek -> if (peekStaysOpen) LongPressOutcome.Peek else LongPressOutcome.ToggleSelection
             else -> held
         }
         val label = when (outcome) {
-            LongPressOutcome.None, LongPressOutcome.Peek -> return null
+            LongPressOutcome.None -> return null
+            LongPressOutcome.Peek -> GridLongPress.PEEK.label
             LongPressOutcome.ToggleSelection -> if (selectionActive) "Add or remove from selection" else "Select"
             is LongPressOutcome.Run -> when (outcome.action) {
                 MediaContextAction.TOGGLE_FAVORITE -> "Favourite"

@@ -304,6 +304,16 @@ fun SettingsTabsRoom(
                         actions.onSetGridLongPress,
                     )
                     Paragraph(HelpCopy.Caption.LONG_PRESS)
+                    // How the preview a hold opens behaves; only while a hold opens one.
+                    if (preferences.gridLongPress == GridLongPress.PEEK) {
+                        ChoiceRow(
+                            SettingsRow.PEEK_MODE,
+                            PeekMode.entries.map { it to it.label },
+                            preferences.peekMode,
+                            actions.onSetPeekMode,
+                        )
+                        Paragraph(HelpCopy.Caption.PEEK_MODE)
+                    }
                     SectionLabel(SettingsSection.SAVING_EDITS, "SAVING EDITS")
                     ChoiceRow(
                         SettingsRow.SAVING_EDITS,

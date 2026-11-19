@@ -1990,3 +1990,39 @@ xhdpi, compared at x0.5). Nothing has run on a device.
   still visible and the reference (all selected) is unchanged. TalkBack gets `selected` and "Selected" / "Not selected"
   through `selectionSemantics`. Tests: `SelectionOverlayTest` (16), `SelectedTileTest` (2).
 - Device checks are in `docs/device-test/batch-11-checklist.md`, section 11.
+
+### Long-press preview window to the 2026-11-19 reference
+
+Owner: "If I long press an image or video to see a preview, this is what the window chrome should look like. Make no
+mistake, do a side-by-side comparison if needed", with a 1004 x 1004 px reference (a photo in a square card with rounded
+outer corners and a thin black frame, a black tab in the top-left corner holding "1 2 3", a black square tab in the
+bottom-right holding a white ✕, both joined to the frame with concave fillets). Follow-up answers: "1 2 3" are three action
+icons (none named), and the behaviour is user selectable: "if close on release, then don't show the chrome. If it stays
+open, then the chrome is needed." Nothing has run on a device.
+
+- **The setting** (`gallery/GalleryPreferences.kt` `peekMode`, key `peek_mode`; `SettingsTabs.kt`): a "Preview window" row
+  directly under "Long press does", shown only while that is "Quick preview", with two chips: **"Closes when you let go"
+  (default, `PeekMode.CLOSE_ON_RELEASE`)** and "Stays open" (`STAYS_OPEN`). Only the enum name is stored; an unknown or
+  missing value reads as the default, so existing installs keep today's behaviour.
+- **Close-on-release mode**: `MediaPeek` exactly as before (hold to peek, lift to go back), with NO chrome. Its hint string
+  moved to `PeekCopy.RELEASE_HINT`; nothing else changed.
+- **Stays-open mode** (`gallery/PeekWindow.kt` `PeekWindow`, drawn last in the `GalleryScreen` overlay Box): a long press
+  opens the window, lifting the finger leaves it up (a release after a hold is never a tap, and the window's backdrop takes
+  every later touch, so nothing under it is pressed), and it closes on the ✕, Back, Escape, a tap outside the card, after any of its three actions, and when the previewed item
+  leaves the rendered list. TalkBack's long-click opens it too (`longClickSemantics(..., peekStaysOpen)`).
+- **The three icons, decided**: the owner named no actions, so the slots hold the multi-select bar's three (zip export,
+  move to folder, copy to folder; `ic_action_zip` / `ic_action_move` / `ic_action_copy`, white, through a shared `TabGlyph`
+  that `SelectionGlyph` now delegates to). Move follows `SourceActionGate.writesAllowed` exactly as the bar does: hidden for
+  a source file, copy takes the second slot and the third stays empty so the tab keeps the reference's size. Nothing shows
+  in the Trash. Each icon runs through the screen's gate-wrapped `GalleryActions` on the one previewed item, then closes the
+  window.
+- **Shapes** (`hyle/HyleNotch.kt` `PeekChrome`, `PeekFrameShape`, `Path.addRoundedOrthogonalPolygon`): the frame, the two
+  tabs and their concave fillets are one outline whose measurements are fractions of the card width, so it scales with the
+  window. The window side is the shorter screen side less 24 dp a side (392 dp on a 440 dp phone, the reference's size),
+  clamped to 160..520 dp. A sensitive photo is shown blurred in the window as on the grid, and only reaches the window
+  through the browsable list (TRAPS #33).
+- **Side-by-side**: `PeekWindowRenderTest` (3 Roborazzi renders) was diffed against the reference with an adapted
+  `diff.py` (scratch). Edge-by-edge, the tab and frame outlines agree to a mean under 0.12 dp and a worst under 0.9 dp, no
+  sample over 1 dp; the ✕ ink box is within 0.33 dp.
+- Tests: `PeekWindowGestureTest` (16), `PeekModeTest` (9), `PeekWindowRenderTest` (3 renders), `LongPressResolverTest` (+3),
+  `PaneRenderTest` (+1, the Preview window row). Device checks are in `docs/device-test/batch-11-checklist.md`, section 12.

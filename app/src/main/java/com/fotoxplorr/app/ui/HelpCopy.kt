@@ -37,6 +37,7 @@ internal object HelpCopy {
         const val TIMELINE = "Date orders only. The photos make room for the strip."
         const val SCROLL_AXIS = "Across suits a top or bottom timeline. Stamps stay vertical."
         const val LONG_PRESS = "What holding a photo does. While selecting, a hold adds it."
+        const val PEEK_MODE = "Stays open: with actions. Close it with the cross or Back."
         const val PINCH_ON = "Pinch in: details. Pinch out: actions. No pinch zoom."
         const val PINCH_OFF = "Pinch zooms the photo."
         const val PARTIAL_ACCESS = "Fotoz only sees the photos you picked."

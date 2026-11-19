@@ -1775,6 +1775,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     onSetCullSidecars = galleryPreferences::setCullSidecars,
                     onSetLoopAnimations = galleryPreferences::setLoopAnimations,
                     onSetGridLongPress = galleryPreferences::setGridLongPress,
+                    onSetPeekMode = galleryPreferences::setPeekMode,
                     onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
                     onEditAsset = { asset ->
                         if (!viewModel.setEditingAsset(asset)) {

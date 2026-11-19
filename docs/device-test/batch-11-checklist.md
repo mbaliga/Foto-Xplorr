@@ -211,3 +211,22 @@ Prepare:
       under it and are not floating far below it; landscape too. (unverified)
 - [ ] **RTL.** In an RTL language the chrome keeps the same left-to-right layout and the count text reads correctly. (unverified)
 - [ ] **TalkBack.** A tile reads "Selected" or "Not selected" while selecting. (unverified)
+
+## 12. Long-press preview window (the owner's 2026-11-19 reference)
+- [ ] **Default mode.** Settings, Long press does = Quick preview, Preview window = "Closes when you let go" (the default on
+      a fresh install and after an update). Hold a photo: the preview shows with no tab and no ✕; lift: it closes. (unverified)
+- [ ] **Stays-open mode matches the reference.** Switch to "Stays open", hold a photo and lift: the window stays up; black
+      frame, rounded outer corners, the tab top left with zip, move and copy, the square ✕ tab bottom right, concave fillets
+      where the tabs meet the frame. Put a screenshot beside the reference. (unverified)
+- [ ] **Release does not tap through.** Lifting the finger that opened the window does not open the viewer, select the
+      tile, or press an icon. (unverified)
+- [ ] **Closing.** The ✕, Back (gesture and button), and a tap outside the card each close the window; a tap on the photo
+      itself does not. (unverified)
+- [ ] **Icons act on the previewed item.** Zip exports only that item, move and copy open the folder picker for only that
+      item, and the window closes after each. On a source file the move icon is absent. In the Trash no icons show. (unverified)
+- [ ] **Video.** Hold a video in both modes: the preview shows it and the icons act on the video. (unverified)
+- [ ] **Sensitive item.** A sensitive photo in the browsable list opens blurred in the window; a hidden one never opens. (unverified)
+- [ ] **TalkBack.** Long-click (double tap and hold) opens the window in stays-open mode; the ✕ reads "Close preview" and the
+      icons read "Export as zip", "Move to folder", "Copy to folder". (unverified)
+- [ ] **Font scale 2 and 48 dp targets.** At the largest font size the Settings row and its chips fit; each icon and the ✕
+      take a tap anywhere in a 48 dp square. Landscape and a tablet too (window capped at 520 dp). (unverified)

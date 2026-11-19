@@ -212,6 +212,27 @@ class GridChromeBridge {
         internal set
 
     /**
+     * Whether a preview a hold opens stays up after the finger lifts ([PeekMode]). Set by
+     * `GalleryScreen` beside [gridLongPress]; `mutableStateOf` for the same reason (the tile's
+     * accessibility long-click depends on it). Means nothing without [onOpenPeekWindow].
+     */
+    var peekMode: PeekMode by mutableStateOf(PeekMode.CLOSE_ON_RELEASE)
+        internal set
+
+    /**
+     * Opens the preview that stays open ([PeekWindow]) on this photo, drawn by the screen above
+     * every grid and its floating controls. Returns false when it will not -- the photo is not in
+     * the list the screen is showing (TRAPS #33: the window shows only what the browsable list
+     * holds) -- and the tile then falls back to the held preview. Null where no screen draws the
+     * window (the photo picker), which keeps every hold there exactly as it was.
+     */
+    internal var onOpenPeekWindow: ((MediaAsset) -> Boolean)? = null
+
+    /** True when a hold should open [PeekWindow] rather than the held [MediaPeek]. */
+    internal val peekStaysOpen: Boolean
+        get() = peekMode == PeekMode.STAYS_OPEN && onOpenPeekWindow != null
+
+    /**
      * Which tile the keyboard's arrow keys currently sit on, if any -- unlike the callbacks
      * above, this one IS `mutableStateOf`, because a tile reads it reactively to draw its own
      * focus ring. That still costs nothing extra per keystroke beyond what it should: every tile
@@ -468,6 +489,12 @@ fun MediaGridScreen(
  * a control you cannot reach without releasing -- which closes the thing the control is on -- is
  * not a control.
  *
+ * Since 2026-11-19 that is one of two choices (owner: *"if close on release, then don't show the
+ * chrome. If it stays open, then the chrome is needed."*). This is the default,
+ * [PeekMode.CLOSE_ON_RELEASE], unchanged and still chrome-free. [PeekMode.STAYS_OPEN] opens
+ * [PeekWindow] instead, which outlives the hold and so can carry the owner's tab of actions and a
+ * close mark; the tile decides which at the moment the hold completes ([GridChromeBridge.peekStaysOpen]).
+ *
  * Drawn in the composition rather than in a `Dialog`, which matters here. A dialog is a new
  * window, and raising one mid-gesture cancels the pointer stream on the window underneath -- the
  * hold would end the instant the preview appeared, so the preview would flash and vanish.
@@ -505,7 +532,7 @@ internal fun MediaPeek(asset: MediaAsset, loopAnimations: Boolean, animated: Boo
             modifier = Modifier.padding(top = 16.dp),
         )
         Text(
-            "Release to go back",
+            PeekCopy.RELEASE_HINT,
             color = Color.White.copy(alpha = 0.35f),
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.padding(top = 6.dp),
@@ -542,7 +569,11 @@ internal fun Modifier.tileGestures(
     val currentSelectionActive by rememberUpdatedState(selectionActive)
     val currentAsset by rememberUpdatedState(asset)
     val currentHaptic by rememberUpdatedState(LocalHapticFeedback.current)
-    val longClick = LongPressResolver.longClickSemantics(chromeBridge.gridLongPress, selectionActive)
+    val longClick = LongPressResolver.longClickSemantics(
+        chromeBridge.gridLongPress,
+        selectionActive,
+        peekStaysOpen = chromeBridge.peekStaysOpen,
+    )
 
     return this
         // A mouse resting on the tile for 400 ms asks the screen for the hover preview; leaving,
@@ -559,9 +590,10 @@ internal fun Modifier.tileGestures(
         )
         // Click and long-click for a screen reader, whose double-tap and double-tap-and-hold
         // never reach the pointer handler below as a hold. A long press cannot be performed
-        // as a held preview there, so LongPressResolver.longClickSemantics turns the preview
-        // into Select; Nothing offers no long-click at all. Announced as one tile: the photo's
-        // name from MediaImage plus any favourite / sensitive / selected marks.
+        // as a held preview there, so LongPressResolver.longClickSemantics turns the held
+        // preview into Select -- but a preview that stays open needs no held finger, so then
+        // the long-click opens it. Nothing offers no long-click at all. Announced as one tile:
+        // the photo's name from MediaImage plus any favourite / sensitive / selected marks.
         .semantics(mergeDescendants = true) {
             onClick(label = LongPressResolver.tapLabel(selectionActive)) {
                 if (selectionActive) currentOnToggleSelection() else currentOnOpen()
@@ -572,7 +604,11 @@ internal fun Modifier.tileGestures(
                     when (val outcome = longClick.outcome) {
                         LongPressOutcome.ToggleSelection -> currentOnToggleSelection()
                         is LongPressOutcome.Run -> chromeBridge.onContextAction(currentAsset, outcome.action)
-                        LongPressOutcome.Peek, LongPressOutcome.None -> Unit
+                        // Only offered when the window can open; if the photo has since left the
+                        // list it would show, the long-click selects, as it did before.
+                        LongPressOutcome.Peek ->
+                            if (chromeBridge.onOpenPeekWindow?.invoke(currentAsset) != true) currentOnToggleSelection()
+                        LongPressOutcome.None -> Unit
                     }
                     true
                 }
@@ -589,7 +625,9 @@ internal fun Modifier.tileGestures(
             detectTapGestures(
                 onPress = {
                     // Returns on release AND on cancellation -- so a peek cannot be stranded
-                    // on screen by the grid scrolling out from under the finger.
+                    // on screen by the grid scrolling out from under the finger. A preview set
+                    // to stay open is not this grid's peek (the screen holds it), so this leaves
+                    // it alone.
                     tryAwaitRelease()
                     currentOnPeekEnd()
                 },
@@ -602,7 +640,12 @@ internal fun Modifier.tileGestures(
                         currentHaptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     }
                     when (outcome) {
-                        LongPressOutcome.Peek -> currentOnPeek()
+                        // Stays open: the screen's window, if it will show this photo; otherwise
+                        // (and by default) the held peek.
+                        LongPressOutcome.Peek ->
+                            if (!(chromeBridge.peekStaysOpen && chromeBridge.onOpenPeekWindow?.invoke(currentAsset) == true)) {
+                                currentOnPeek()
+                            }
                         LongPressOutcome.ToggleSelection -> currentOnToggleSelection()
                         is LongPressOutcome.Run -> chromeBridge.onContextAction(currentAsset, outcome.action)
                         LongPressOutcome.None -> Unit
