@@ -141,6 +141,12 @@ data class GalleryPreferencesState(
      * seeded from the retired on/off `long_press_preview` switch the first time (see [load]).
      */
     val gridLongPress: GridLongPress = GridLongPress.PEEK,
+    /**
+     * Whether the quick preview a hold opens closes when the finger lifts (the default, and what
+     * the preview always did) or stays up as a window with actions -- see [PeekMode]. Only matters
+     * while [gridLongPress] is [GridLongPress.PEEK].
+     */
+    val peekMode: PeekMode = PeekMode.CLOSE_ON_RELEASE,
     /** Play GIFs and animated images in the grid rather than showing a still frame. */
     val loopAnimations: Boolean = false,
     /**
@@ -320,6 +326,10 @@ class GalleryPreferences(context: Context) {
         state.value.copy(gridLongPress = action),
     ) { putString(KEY_GRID_LONG_PRESS, action.name) }
 
+    fun setPeekMode(mode: PeekMode) = update(
+        state.value.copy(peekMode = mode),
+    ) { putString(KEY_PEEK_MODE, mode.name) }
+
     fun setLoopAnimations(enabled: Boolean) = update(
         state.value.copy(loopAnimations = enabled),
     ) { putBoolean(KEY_LOOP_ANIMATIONS, enabled) }
@@ -456,6 +466,9 @@ class GalleryPreferences(context: Context) {
         // removed: downgrading keeps whatever it last said.
         gridLongPress = enumValueOrNull<GridLongPress>(KEY_GRID_LONG_PRESS)
             ?: LongPressResolver.fromLegacyPeekFlag(preferences.getBoolean(KEY_LONG_PRESS_PREVIEW, true)),
+        // Never chosen, or a name this build no longer knows: the preview closes on release, as it
+        // always has.
+        peekMode = enumValueOrNull<PeekMode>(KEY_PEEK_MODE) ?: PeekMode.CLOSE_ON_RELEASE,
         loopAnimations = preferences.getBoolean(KEY_LOOP_ANIMATIONS, false),
         fitToTile = preferences.getBoolean(KEY_FIT_TO_TILE, true),
         justifiedLayout = preferences.getBoolean(KEY_JUSTIFIED_LAYOUT, false),
@@ -517,6 +530,7 @@ class GalleryPreferences(context: Context) {
         /** Retired on/off switch; read once as the default for [KEY_GRID_LONG_PRESS], never written. */
         const val KEY_LONG_PRESS_PREVIEW = "long_press_preview"
         const val KEY_GRID_LONG_PRESS = "grid_long_press"
+        const val KEY_PEEK_MODE = "peek_mode"
         const val KEY_LOOP_ANIMATIONS = "loop_animations"
         const val KEY_EDITOR_SAVE_MODE = "editor_save_mode"
         const val KEY_FIT_TO_TILE = "fit_to_tile"

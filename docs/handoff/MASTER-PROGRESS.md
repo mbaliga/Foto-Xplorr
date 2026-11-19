@@ -1752,3 +1752,277 @@ Everything in the checklist. Above all:
   3. A keyboard cull with sidecars on and a folder grant.
   4. The 360 view.
   5. The corpus decode test on API 26 and 33+.
+
+## Batch 11: Phase 3 wave A, every storage location (16 Nov 2026)
+
+Branch `claude/friendly-lovelace-06dito` (PR #18), 21 commits on top of `94dfadf` (the Phase 3 design, `docs/handoff/PHASE-3-DESIGN.md`
+and ADR-020 to ADR-023). **Nothing in this batch has run on a device.** Tests prove pure logic, wiring and file effects on the
+JVM (about 408 new tests in the unit reports and 467 `@Test` lines added over the whole range (counted by `@Test`), including the tests that came with the two review rounds);
+Roborazzi is in record mode, so nothing visual is proven. Checklist: `docs/device-test/batch-11-checklist.md`. Traps: #153 to
+#162. **No new Gradle dependency and no native code.** No existing database was touched: `fotoz.db` and `fotoz-vectors.db`
+and their schemas are unchanged (a test pins this). The sources code never writes to a drive; the only writes are the
+file-ops engine's own `.fotoz-trash` (no caller yet) and the share-receive copies into `Pictures/Fotoz` and `Movies/Fotoz`.
+
+**What this wave gives.** A folder or drive the person adds (a SAF tree, including USB and SD) is walked, listed in the gallery
+next to the phone's own photos, viewable, shareable and copyable, and stays browsable with greyed previews when the drive is
+unplugged. Nothing about the library is rewritten: source photos live in a new database and carry negative ids, and a gate
+keeps every write action (favourite, sensitive, archive, tag, collection, trash, rename, move, edit) away from them.
+
+### What was built, per unit (tests by `@Test`)
+
+- **U1 Source model and `fotoz-sources.db`** (06ce3b9; 22 tests). Pure model in `:core:index`: the id band `-(2^33) - n`
+  (`SourceAssetIds`), the `~src/<row>/<path>/` folder prefix, the overlap rule, the source state machine
+  (ONLINE, OFFLINE, REVOKED, ERROR; no transition carries a delete; the sweep gate is ONLINE plus a completed full run) and
+  a resumable cursor. A third Room database in `:core:db` (sources, folders, assets, index runs; every key AUTOINCREMENT so
+  row numbers are never reused; asset upsert is insert-ignore plus refresh, never REPLACE; the soft sweep is guarded in SQL).
+  Tests include reopening a file-backed database and three that pin `fotoz.db` and `fotoz-vectors.db` as untouched.
+- **U2 SAF walker, lister, grant registry, enrichment** (d5eb6f8, 9796757; 40 tests: 22 walker on the JVM, 18 Robolectric).
+  - Walker in `:core:index` (`walker` package; the design table said `sources/walk`): breadth-first, one `children()` call
+    per directory, files and the next cursor returned together so one transaction persists both. `.nomedia`, `.fotoz-trash`,
+    `Android/` at the root, AppleDouble and user globs are ignored; loops, depth, directory and entry caps and hostile names
+    are guarded; sibling `.xmp` names are recorded; a magic-byte sniff on a 64-byte head. 50,000 files walk in 60 to 120 ms
+    of walker overhead on the JVM (no I/O), and a kill and resume at 10, 50 and 99 percent gives the same set and order.
+  - `SafDocumentTree` (one query per directory, six columns, `SafListing.settle` for the loading retries), `SafGrantRegistry`
+    (read-only grants, cap 128 before Android 11 and 512 from it, 8 slots kept for the other features) and `SourceEnricher`
+    (at most 1 MiB for EXIF plus a bounds-only decode, upright width and height, outcome READ, PARTIAL, UNREADABLE or
+    SKIPPED). Nothing in the package deletes or writes a document.
+- **U7 File-ops engine** (cc81db4; 66 tests, 62 common and 4 JVM). Pure common code in `:core:organize` behind an abstract
+  `FileSystem` seam: planner with a byte estimate and warnings, copy through `<target>.fotoz-part` with a streaming SHA-256
+  verify and a rename, native move within a source, copy-verify-trash across sources, collision-safe rename, a conflict policy
+  engine (ASK, SKIP, KEEP_BOTH, REPLACE only with the explicit consent flag and only through the trash, apply to all),
+  `.fotoz-trash/` with `manifest.json` and `.nomedia` (30-day expiry computed, never auto-purged), a line journal for resume,
+  cancellation and an error taxonomy. Tests use an in-memory file system with fault injection, including a crash sweep at
+  every operation of random batches and the pull-the-drive-mid-copy scenario. The Android `FileSystem` for File and SAF was
+  **not built** (it is device-only; see deferred).
+- **U8a Ingest planner** (c69dfae; 42 tests). Pure core in `:core:organize` behind `IngestSource` and `IngestTarget`: a
+  destination template (`{yyyy-MM-dd}`, `{camera}`, `{orig}`, `{seq:N}`; unknown tokens are errors), name sanitising, a
+  fingerprint for duplicates against the library and the card, RAW+JPEG pairing, a second destination, an append-only
+  journal and a runner that writes, reads back and compares before it journals VERIFIED. Delete from card is off by default
+  and gated in the runner. A 500-item card with two destinations and a kill at 20 or more distinct steps resume cleanly. The
+  MTP and SAF card sources are device-only and were not built.
+- **U3 Gallery seam and action gate** (f13f36c, 4d96ce2; 30 tests). `SourceAssetMapper`, `mergeSourceAssets` (library first,
+  source files newest first, overlap hiding, id guard, same list instance with no sources), `SourceAssetsProvider` with an
+  empty default, `MediaAsset.sourceRef` and `isSource`, and `SourceActionGate`, which wraps 15 write callbacks of
+  `GalleryActions` (a reflection test fails when a new callback is not classified). The activity, grid and viewer are wired:
+  the merge runs before `browsableAssets`, store-keyed consumers stay on `libraryAssets`, writing rows are disabled with a
+  reason sentence, the permission empty state yields to sources, cull skips sources and the viewer still exports them.
+- **U4 `SourcesRuntime`, indexing job, Sources screen** (c40eb0a; 71 tests). A lazy `fotoz-sources.db` that is never
+  created until a source exists, the gallery provider, add (refusing duplicates and nested trees), remove (index rows only;
+  the grant goes back only if this source took it and nothing else uses it), include and index-on-connect flags in a new
+  `fotoz-sources-meta` prefs file, a resumable indexer (each slice and its cursor in one Room transaction, guarded sweep
+  only after an exhaustive completed walk, a run left RUNNING resumes if under 7 days old), a bounded sizing pass
+  (4 files at a time, 256 MiB per pass, retried up to 3 times, cloud providers listed but never opened), the job on
+  `JobRunner` as SCANNING with progress and Stop, and Settings > Library > Folders and drives with a card per source.
+- **U5 Offline previews store** (0083567; 37 tests). A persistent per-source 256 px WebP store in
+  `noBackupFilesDir/source-previews/<source>/`, outside Coil's cache, with an exact size ledger, least-recently-used eviction
+  under a per-source cap (default 1 GB, 0 is off), atomic writes, a rebuildable index and a Clear previews action that
+  deletes only its own files. A source asset whose drive is offline draws its stored preview greyed with a cloud-off glyph
+  and "Plug in the drive."; with none stored it draws a labelled neutral tile, never a blank. A failed live read falls back
+  to the stored preview. Written on the first decoded tile and by a bounded pass (150 per round) over the browsable list.
+- **U6 Drive lifecycle and storage panel** (8e3e631; 44 tests). A pure `DriveStateMachine` and controller (connected, offer,
+  Add, Not now, Never for this drive) with per-drive settings in `fotoz-drives`; a drive that returns is matched by upper-cased
+  filesystem UUID to its source, so nothing is offered, duplicated or deleted. Android seam: the `StorageManager` volume
+  callback on API 30+, mount and USB attach and detach broadcasts before it; both only report snapshots. No scan and no
+  permission prompt until Add, which opens the picker on the drive. `SourcesRuntime.setVolumeReachable` moves only the state
+  column. A "Drive connected" strip (48 dp, Add, Not now, Never) and a storage panel (state, files, bytes, preview cost, last
+  read, errors, a list of ignored drives with Ask again).
+- **U9 Share-receive** (03adb2d; 32 tests). A new exported `ReceiveActivity` for `SEND_MULTIPLE` (image and video) that asks
+  View (the default; a read-only swipe run, no store written) or Save to library (new MediaStore rows in `Pictures/Fotoz` and
+  `Movies/Fotoz`, unique names, pending rows on Android 10 and up, cancel leaves no row, a later run skips saved items and
+  retries failed ones). A pure `ReceivePlan` drops unreadable and non-media uris, collapses repeats and caps at 500; a
+  `content://media` uri is held to the browsable list before it is shown or copied. The one manifest change is the filter.
+- **Integration** (56c1e3d, bcd3704, f43857a; 24 tests in the last). The merged list is used only for display and id lookups;
+  cloud sync, the location index, Tidy up and bulk rename read library photos only (see the review fixes). The merge runs off
+  the main thread. The preview store is wired into the storage panel, the bounded background pass runs from the activity with
+  the browsable list only and only while a source is online, removing a source forgets its previews, and each card has a Keep
+  previews switch and a space choice (Off, 250 MB, 1 GB, 2 GB). A drive's remembered preview policy maps onto keep and cap
+  once per answer.
+
+### What the two reviews found and fixed
+
+Two independent adversarial reviews read the committed code without running it. All findings were checked against the code
+and fixed, each with tests.
+
+- **Core review of U1, U2, U7 and U8a: 14 findings, 13 confirmed (two only in part), 1 mostly refuted.** Fixed in
+  a3d31d4, 604a55f, 5ef4404 and 80e3216.
+  - Trash (HIGH): a crafted `manifest.json` on a card could make purge, empty trash or restore reach outside `.fotoz-trash`.
+    Entries are now validated (stored name a direct child starting with its id, original path may not climb) and every
+    delete goes through a direct-child check. Also: a repeated trash id reported a file trashed while it was still there; a
+    manifest nested 100k deep overflowed the stack and a huge one was read by repeated concatenation (depth cap 8, size cap
+    8 MiB, 64 MiB for journals); a case-only rename on FAT or exFAT clashed with itself (now a hop through a temp name); a
+    resumed Trash step failed SOURCE_GONE after the file had reached the trash; a repeated identical plan was served from the
+    old journal (a completed plan now clears it); a torn journal line was glued to the next entry.
+  - Ingest: the delete gate trusted a VERIFIED line by item id and destination alone, so a second card with the same item
+    ids could delete an item that was never copied. A line now counts only with the item's fingerprint and size, the journal
+    is scoped per import session, and the card item and every destination copy are re-read (SHA-256) right before the
+    delete. Also: conflict numbers lost to long-name truncation, absurd capture times, a journal re-read per copy, and a
+    non-cryptographic full hash (now SHA-256).
+  - Walker and store: the cursor held every queued folder id (over 2 MB for 30k folders, past an Android cursor window); it
+    now holds 64-bit hashes (`fotoz-walk-2`) and an oversized cursor reads as null (the walk restarts). The sweep guard could
+    not see a capped walk: the finding was **mostly refuted** because the app already wrote `full = exhaustive` before
+    sweeping, but the DAO hole was real, so `finish` now moves only RUNNING runs and a new `complete(..., exhaustive)` is the
+    only way to a sweepable run. The unused duplicate `sources.WalkCursor` was removed.
+- **App review of U2 to U3: 9 findings, all confirmed.** Fixed in 6f648dc, 3542eb3, bcd3704 and 56c1e3d.
+  - The cloud-sync feed took the merged list (drive photos would reach the folder choices and "all photos" uploads), the
+    location index was fed source ids and read every file on a drive from the UI, and Tidy up offered source photos it could
+    never archive. All three now read `libraryAssets`, with a second lock inside `SyncCandidates`.
+  - The merge compiled a Regex per library photo and ran on the main thread; it is now cached per library list and runs on
+    `Dispatchers.Default`.
+  - A protected twin could reappear through a source: the library records no volume, so overlap hiding missed an SD-card copy
+    of a locked photo. A source file with the same name and size as a locked, sensitive or archived library photo is now
+    dropped on any volume and path.
+  - Bulk rename relied on a disabled row alone; it now filters library photos. The process-death restore dropped a saved
+    source photo before the provider had answered; it now waits. With media access denied and sources present, the grid had
+    no way to grant access again; a small Choose media strip was added. The SAF grant count undercounted single-document
+    grants; `count()` now reads every persisted uri. The indexer completed a run with a whole-row `update()` that could
+    reopen an ended run; it now calls the guarded `complete()`.
+
+### CI lessons
+
+- **Kotlin/Native rejects JVM-only members in `commonMain`.** `HashMap.merge` in `IngestRunner` failed the `core-native`
+  job for linuxX64 (0fd7182); a plain get-or-zero increment does the same on every target. The Native compile cannot be run
+  on the agent machine (no `~/.konan`; the task `compileKotlinLinuxX64` is absent in this checkout), so CI `core-native` is
+  the only check. See TRAPS #134 and #162.
+- Test names in `commonTest` must avoid the forbidden characters, and a region time zone test belongs in `jvmTest`.
+- One unrelated flake showed up once: `SyncEngineTest` "the run reports paused when cancelled" cancels from a Default-dispatcher
+  job and appends to a non-thread-safe list. It passed when re-run alone and is not in code this batch touched; worth a look.
+
+### Deferred, and why
+
+- **WP3.9 network sources (SMB, SFTP, MinIO):** each needs a new dependency, which is the owner's decision in ADR-021. The
+  existing WebDAV and S3 transports are write-only today; read sources on them are a later unit.
+- **WP3.12 cast (UPnP, DLNA, Chromecast):** needs libraries (ADR-021).
+- **WP3.13 all-files build:** decided **no** (ADR-023), unless the device test shows SAF listing is unusable.
+- **MTP camera source and the SAF card source for ingest, and the Android `FileSystem` seam for the file-ops engine and the
+  ingest target:** device-only; the pure cores are ready behind their interfaces.
+- **Persistent rating and flag storage:** still the owner's decision (batch 10 residual); source photos hide those rows.
+- **Single `ACTION_SEND` into `ReceiveActivity`:** single share still opens the main viewer with no View or Save sheet.
+  Routing it needs a manifest filter move or an edit to the incoming-intent code in `FotoXplorrActivity.kt`. The receive
+  viewer's Share and Open with buttons are also inert (read-only view).
+- **USB attach manifest filter:** it would launch the app on every plug and widen the exported surface; the drive listener
+  only runs while the process is alive. Owner decision.
+- **Per-drive preview policy UI and a per-drive include setting:** stored in `fotoz-drives`, no control yet. A drive's default
+  (AS_VIEWED) maps to keep off on first reconnect, unlike the folder-source default of keep on.
+- **"Protected on N places" count:** a placeholder line; no cheap per-source manifest read exists.
+- **Smaller:** a source lock control in the Sources screen (source folders already appear in Albums with `~src/` keys, so the
+  existing folder lock works); sizing for cloud-backed providers (needs an opt-in); orientation is not stored for sources;
+  a "Save a copy" route for editing a source file; a readable hidden-duplicates count; `IndexRunsDao.update` has no caller
+  and can be removed from `:core:db`; no sidecar content is read, only sibling names; `getDocumentThumbnail` is unused;
+  no resume of a half-finished save after process death (the sender's grants die with the task).
+
+### What is unverified (all of it on a device)
+
+Everything in the checklist. Above all: SAF walks on real providers (USB, SD, Drive, OneDrive, Dropbox) and 50k-file speed;
+the real exception an unmounted drive throws; the persisted-grant cap in practice; the volume callback and USB broadcasts
+on Android 8 to 16; tile speed over USB; the greyed offline tiles and unplug/replug flips; the yank test on hardware;
+`.fotoz-trash` behaviour in other apps; a case-only rename and a provider that renames on clash on a real FAT volume; the
+MediaStore inserts of the receive target; and every look and touch size.
+
+### Owner decisions (PHASE-3-DESIGN section 5), recommended answers taken
+
+All 12 were taken as recommended, and the work was built to them. Say so if any should change.
+
+1. New `fotoz-sources.db` and the negative id band (ADR-020): yes.
+2. Source photos in v1 are view, share and copy out only: yes.
+3. Hide source items that duplicate a MediaStore photo: yes (a readable count is still to do).
+4. Exclude source photos from recognition, similarity, backup and cloud sync for now: yes.
+5. Protect a source folder with the existing folder lock: yes.
+6. Offer source photos to other apps through GET_CONTENT or PICK: no.
+7. `.fotoz-trash/` visible with `.nomedia`, no automatic purge (ADR-022): yes.
+8. Share-receive asks "Save to library or View", View as default: yes.
+9. New dependencies for SMB, SFTP, MinIO, UPnP, Ktor, NanoHTTPD: none now (ADR-021).
+10. All-files build: no (ADR-023).
+11. Offline preview cap: 1 GB per source, with Clear previews.
+12. Background indexing on drive connect: ask on first connect, then per-drive "index on connect", default off.
+
+### Residual, for the owner
+
+- **First device pass for batch 11, suggested order:**
+  1. Add a USB or SD folder and a phone folder as sources: walk, merged grid, viewer, share.
+  2. Unplug and replug: greyed tiles, state words, no rescan unless index on connect is on.
+  3. Share two or more photos from another app into Fotoz: View and Save to library.
+  4. The persisted-grant count with several sources, backup, sync and sidecar folders.
+  5. A locked or sensitive photo whose copy is on the SD card: it must not appear.
+
+### Batch 11 follow-up: left-room card pager (16 Nov 2026)
+
+Owner, from the transition video: the destinations' cards form a vertical column beside the word wheel and the whole
+column moves with the wheel. Built to that, from the video only (nothing has run on a device).
+
+- **Library** (Shared-Libraries-asoc, branch restarted from main as the previous PR was merged; cell-shell `9335183`): an
+  optional `SpatialShell(parkedCardOffsetY = { px })`, read in the card's placement lambda and added to `ty` only while a left
+  open park shows (`combinedParkTy`, 3 tests). Existing consumers are unchanged. Pinned in its own commit.
+- **App**: `DestinationWordRail` takes `positionState` (the scroll in rows, fractional; set to the selected row before the
+  wheel is placed). `LeftRoomPager.kt` holds the pure geometry (pitch = 0.80 card + 0.03 gap of the window height, ghost
+  indices, clamp so the ends have no ghost, live offset) and `LeftRoomGhosts`, which draws the other visible cards in the room
+  layer behind the live card, left edge on the live card's left edge, positions read at placement. The live card gets
+  `(s - p) * pitch`; at a commit the live card's offset and the old card's ghost swap places on the same pixels (tested).
+- **Covers**: each ghost shows the newest photo of that destination's browsable list (`destinationAssets`, never a sensitive
+  one, none for Protected or Experimental or Map) through `MediaImage`, sized to the ghost; no cover gets a stable soft tint.
+  Computed off the main thread when the room opens and when the state changes.
+- **Reduced motion** (system animator scale 0): the live card does not slide and the neighbours stand at rest. **TalkBack**:
+  ghosts are `clearAndSetSemantics`, the wheel is still the control.
+- Not done: no vertical drag on the cards themselves (the wheel is the control); ghosts are not tappable; the card column
+  while the room is opening or closing slides with the room rather than being exactly aligned to the live card (it is only
+  exact at rest).
+- Device checks are in `docs/device-test/batch-11-checklist.md`, section 10.
+
+### Selection chrome to the 2026-11-18 reference
+
+Owner: "make sure the UI looks EXACTLY like this, for multiselect and options on select", with a 440 x 956 dp screenshot
+(3-column grid, 9999 selected). The chrome existed from an earlier mockup; it was re-measured against the screenshot and
+rebuilt to it, checked with the Roborazzi render (`SurfaceRenderTest` "selection chrome over the grid", 880 x 1912 at
+xhdpi, compared at x0.5). Nothing has run on a device.
+
+- **Shapes** (`hyle/HyleNotch.kt`): the top-left tab is one `EdgeTab` outline with rounded bottom corners whose right flank
+  keeps a 5.8 dp gap to the count bar (no long slanted cove); the count bar's top-left corner is rounder (22.5 dp) than the
+  other three (16 dp); the trash tab is widened to the reference's base and its right foot sits at x = 408.19.
+  `SelectionChromeGeometryTest` (4 tests) pins the outlines.
+- **Placement** (`gallery/GalleryScreen.kt` `SelectionOverlay`): every measured value is a named constant (glyph boxes 30 dp
+  at x = 56/102/148, count bar 6.8 dp from the right and 7 dp down, 44 dp drawn in a 48 dp target, text insets 29.3/35.2 dp,
+  count 28 sp and "SELECTED" 20 sp at half opacity on one baseline, trash glyph 34 dp centred at x = 356). The bar is sized
+  to its content and never reaches left of x = 198; a count too long (narrow phone, big font scale) first tightens its
+  insets, then scales its type down to 0.3. The chrome is laid out left to right in every locale (the geometry is
+  screen-absolute). Trash red is a fixed `0xFFFF0000`, not the accent.
+- **Per-tile mark, decided**: the reference shows every visible tile plain while 9999 are selected, so a selected tile now
+  draws NO mark (the old primary wash and the ✓ chip are gone from `MediaTile` and the stamp tile in `ZoomGrid.kt`). The
+  cue moves to the tiles left OUT: they get a 55% black wash (`UnselectedDim`) while selecting, so a partial selection is
+  still visible and the reference (all selected) is unchanged. TalkBack gets `selected` and "Selected" / "Not selected"
+  through `selectionSemantics`. Tests: `SelectionOverlayTest` (16), `SelectedTileTest` (2).
+- Device checks are in `docs/device-test/batch-11-checklist.md`, section 11.
+
+### Long-press preview window to the 2026-11-19 reference
+
+Owner: "If I long press an image or video to see a preview, this is what the window chrome should look like. Make no
+mistake, do a side-by-side comparison if needed", with a 1004 x 1004 px reference (a photo in a square card with rounded
+outer corners and a thin black frame, a black tab in the top-left corner holding "1 2 3", a black square tab in the
+bottom-right holding a white ✕, both joined to the frame with concave fillets). Follow-up answers: "1 2 3" are three action
+icons (none named), and the behaviour is user selectable: "if close on release, then don't show the chrome. If it stays
+open, then the chrome is needed." Nothing has run on a device.
+
+- **The setting** (`gallery/GalleryPreferences.kt` `peekMode`, key `peek_mode`; `SettingsTabs.kt`): a "Preview window" row
+  directly under "Long press does", shown only while that is "Quick preview", with two chips: **"Closes when you let go"
+  (default, `PeekMode.CLOSE_ON_RELEASE`)** and "Stays open" (`STAYS_OPEN`). Only the enum name is stored; an unknown or
+  missing value reads as the default, so existing installs keep today's behaviour.
+- **Close-on-release mode**: `MediaPeek` exactly as before (hold to peek, lift to go back), with NO chrome. Its hint string
+  moved to `PeekCopy.RELEASE_HINT`; nothing else changed.
+- **Stays-open mode** (`gallery/PeekWindow.kt` `PeekWindow`, drawn last in the `GalleryScreen` overlay Box): a long press
+  opens the window, lifting the finger leaves it up (a release after a hold is never a tap, and the window's backdrop takes
+  every later touch, so nothing under it is pressed), and it closes on the ✕, Back, Escape, a tap outside the card, after any of its three actions, and when the previewed item
+  leaves the rendered list. TalkBack's long-click opens it too (`longClickSemantics(..., peekStaysOpen)`).
+- **The three icons, decided**: the owner named no actions, so the slots hold the multi-select bar's three (zip export,
+  move to folder, copy to folder; `ic_action_zip` / `ic_action_move` / `ic_action_copy`, white, through a shared `TabGlyph`
+  that `SelectionGlyph` now delegates to). Move follows `SourceActionGate.writesAllowed` exactly as the bar does: hidden for
+  a source file, copy takes the second slot and the third stays empty so the tab keeps the reference's size. Nothing shows
+  in the Trash. Each icon runs through the screen's gate-wrapped `GalleryActions` on the one previewed item, then closes the
+  window.
+- **Shapes** (`hyle/HyleNotch.kt` `PeekChrome`, `PeekFrameShape`, `Path.addRoundedOrthogonalPolygon`): the frame, the two
+  tabs and their concave fillets are one outline whose measurements are fractions of the card width, so it scales with the
+  window. The window side is the shorter screen side less 24 dp a side (392 dp on a 440 dp phone, the reference's size),
+  clamped to 160..520 dp. A sensitive photo is shown blurred in the window as on the grid, and only reaches the window
+  through the browsable list (TRAPS #33).
+- **Side-by-side**: `PeekWindowRenderTest` (3 Roborazzi renders) was diffed against the reference with an adapted
+  `diff.py` (scratch). Edge-by-edge, the tab and frame outlines agree to a mean under 0.12 dp and a worst under 0.9 dp, no
+  sample over 1 dp; the ✕ ink box is within 0.33 dp.
+- Tests: `PeekWindowGestureTest` (16), `PeekModeTest` (9), `PeekWindowRenderTest` (3 renders), `LongPressResolverTest` (+3),
+  `PaneRenderTest` (+1, the Preview window row). Device checks are in `docs/device-test/batch-11-checklist.md`, section 12.

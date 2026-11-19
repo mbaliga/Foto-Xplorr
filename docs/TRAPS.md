@@ -2171,3 +2171,184 @@ at an arbitrary point. Wait with `compose.waitUntil { shadowOf(Looper.getMainLoo
 every other screen test here does (`CompositeSeamTest` failed once in CI without it). And never run two Gradle builds
 on this machine at once (an isolated worktree is no exception): the local gate's daemon was killed mid-test while a
 worktree build ran beside it. Always go through `flock /tmp/gradle.lock`.
+
+## 153. Source assets are a view over the library: display from the merged list, everything else from `libraryAssets`
+
+`GalleryUiState.assets` is the merged list (MediaStore photos plus files from added folders and drives) and is for the
+grid, the viewer run and id lookups only. Anything keyed to the library, its stores or a cloud service reads
+`GalleryUiState.libraryAssets`: the `removeMissingMedia` purge (an offline source's ids are missing from the list and would
+drop tags and collections), the metadata backup, recognition and auto-curation, the location index (`indexMissing` and
+`pruneTo` would write negative ids into the geo database and read every file of a drive from the UI), Tidy up, bulk rename
+and cloud sync. Cloud sync has two locks: `SyncCandidates.browsableForSync` and `SyncCandidates.from` both drop `isSource`,
+because `SettingsServicesHost` once re-fed the sync service with the merged list. `libraryAssets` defaults to a source-free
+derivation, but `.copy(assets = ...)` keeps the old list, so pass both. Overlap hiding (same volume, path, name and size as
+a MediaStore photo) is a convenience, never a privacy measure: the library records no volume (every MediaStore uri maps to
+`primary`), so an SD-card twin of a locked photo would otherwise reappear under a `~src/` folder key the lock does not know.
+`SourceMerger` therefore drops any source file with the same name (case-insensitive) and size as a locked (strictly,
+ignoring "unlocked this session"), sensitive or archived library photo, on any volume and path. Dropping too much only costs
+a hidden duplicate; dropping too little shows a protected photo. Per-library-photo work in the merge must not compile a
+Regex (it did, 100k times, on the main thread); the merge is cached per library list instance and runs on
+`Dispatchers.Default` in `mergedCatalogueFlow`, and with no sources `assets` is the same list instance. A saved source photo
+in the viewer must wait for `MergedCatalogue.sourcesSeen` before the process-death restore decides it is gone, and with
+media access denied and sources present the Choose media strip must still show (TRAPS #33 still applies: the merge happens
+before `browsableAssets`, so a locked source folder is filtered with no new code path).
+
+## 154. `SensitiveIdCodec` keeps negative ids: the action gate is the only protection
+
+`SensitiveIdCodec` (`privacy/SensitiveStore.kt`) persists negative ids, while `FavoriteIdCodec` and `LibraryStore.encodeIds`
+drop them, and `FavoriteStore.persist` sets in-memory state before encoding, so a negative favourite shows until a restart
+and then vanishes. A source photo's id is never a safety net. Ids are `-(2^33) - n` with `n` a never-reused row number
+(AUTOINCREMENT; asset upsert is insert-ignore plus a refresh query, never REPLACE, which deletes and reinserts the row and
+mints a new number and so a new media id). That band cannot meet MediaStore ids (0 and up), open-with ids (-1 to -2^31) or
+`MediaId.EXTERNAL`. Folder keys carry a `~src/<row>/` prefix, because `folderIdentity` keys on the lower-cased relative path
+only and a drive's `DCIM/Camera` would otherwise merge into the phone's album. `SourceActionGate.wrap` drops source ids and
+assets from the 15 write callbacks of `GalleryActions`; a reflection test fails when a new callback is not classified as
+gated, read-only or no-media, so a new `GalleryActions` field must be classified in the same commit. Mixed selections act on
+their library part only, and the host shows a notice. Use `MediaAsset.isSource` (from the defaulted `sourceRef`), never
+`isExternal`: that one also removes share, export and the viewer restore. Viewer lambdas for rating, tags, location and edit
+are null or guarded for a source, and `bulkRenameRequestOrNull` filters `libraryOnly` because the disabled row was the only
+lock. A test (`SourceGateStoresTest`) keeps every `shared_prefs` file byte-identical after source-id writes.
+
+## 155. A folder walk may only conclude "missing" from an exhaustive complete walk, and REVOKED comes from the grant
+
+The same rule as TRAPS #8, for SAF listings. `TreeWalker` returns `Failed` (never an empty `Complete`) for a lister that
+throws, EXTRA_ERROR, or EXTRA_LOADING that never settles, with the failing directory kept at the front of the cursor. A cap
+(depth, directories, entries) gives `Complete(exhaustive = false)` and `mayConcludeMissing` is false. In the store the sweep
+is guarded in SQL and has one door: `IndexRunsDao.complete(runId, found, finishedMs, exhaustive)`, which moves only a RUNNING
+run and keeps `full` only for an exhaustive walk. `finish(COMPLETED)` no longer yields a sweepable run, and the whole-row
+`update()` (no caller left, removable) could reopen an ended run. Every asset seen in a walk must be stamped with that run's
+`last_seen_run`, or the sweep marks it missing. A cancelled walk stays RUNNING on purpose so it can resume (a run under
+7 days old); a failed one is closed FAILED and starts over. REVOKED is decided by `persistedUriPermissions` (through
+`SafGrantRegistry.isHeld`), never by an exception type: a `SecurityException` while the grant is still held is ERROR, and
+`SafAccess.healthAfter(failure, isHeld)` is the one mapping. The grant pool is shared with backup, sync, sidecars and cull,
+so `count()` counts every persisted uri (single-document grants too, not only trees), the registry keeps 8 slots free, and
+`forget` runs only when this source took the grant and no other feature holds the tree. A source takes a read-only grant,
+not `SyncAndroid.takeFolderGrant`, which needs read and write. The sniff keeps a TIFF verdict from downgrading a TIFF-based
+RAW named NEF, ARW or DNG, and never reads the head of a virtual (cloud-backed) document, which can start a download; for the
+same reason the sizing pass opens only `com.android.externalstorage.documents` files. Test fixtures must not use a document
+id as a display name: a `/` in a name is correctly rejected as hostile.
+
+## 156. A walk cursor stays small: hashes, 600,000 characters, and an unreadable cursor restarts the walk
+
+The checkpoint in `index_run.cursor` used to hold every queued folder id: over 2 MB of text for 30k folders, past the
+2 MB Android `CursorWindow`, so the resume `SELECT *` failed, and it was rewritten per 64-directory slice. Format
+`fotoz-walk-2` stores the loop guard as 64-bit hashes (16 hex digits each, 512 per line); `fotoz-walk-1` still decodes.
+`IndexRunsDao.get` and `latestRunning` list their columns explicitly, and a cursor over 600,000 characters reads as null,
+which means start over: a wide frontier costs a restart, never an unreadable row. A garbage cursor also decodes to null and
+never throws. Keep the checkpoint under about 1 MB and keep exactly one `WalkCursor` class (`core.index.walker`); a second one
+with another text format would make every resume silently restart from the root. One slice and its cursor go into one Room
+transaction, so a kill resumes with no skipped and no duplicated file.
+
+## 157. The trash manifest comes from a card: validate it, and keep its write order
+
+`.fotoz-trash/manifest.json` lives on removable media, so every entry is hostile until checked. `TrashEntry.isSafe()` rejects
+an empty, `.` or `..` stored name, any `/` or `\` in it, a stored name that does not start with `<id>-`, an empty original
+path and a `..` segment in the original path; unsafe entries are dropped at parse time, and purge, empty trash and restore
+also require a direct child of the trash directory (a file system that resolves `..` would otherwise delete a photo outside
+the trash). `add()` replaces `\` with `_` in the stored name only. `MiniJson` caps nesting at 8 (a `[` repeated 100k times
+was a `StackOverflowError`, an Error, not an Exception) and `readAllBytes` refuses over 8 MiB (64 MiB for journals) with a
+doubling buffer. `TrashStore.add` may return a different id than the one passed in: it returns the existing entry only when
+the source is gone (the crash-resume case), otherwise a fresh id, so callers must use `entry.id`. The write order matters:
+on add the manifest entry first, then the file; on restore the file first, then the entry; the manifest is rewritten through
+`.new` and a torn `.new` alone is an empty trash, but an unreadable `manifest.json` is an error, never an empty trash. There
+is no auto-purge in v1: `expiresAtMs` is arithmetic for the UI. The engine catches `FileOpsException` only (the crash sweep
+depends on a simulated crash passing through), and a `FileSystem` implementation must make `openCreate` and `rename` fail
+with EXISTS instead of replacing (never `Files.move(..., REPLACE_EXISTING)`). Other engine rules: a case-only rename goes
+through a `.fotoz-case` hop (the name is deliberately not journalled, because the dangling-temp cleanup would delete the
+user's file); a trash step whose source is gone but whose id is in the trash is DONE on resume; a completed plan clears its
+journal (the plan id is a hash of the op list, so an identical later plan would otherwise be served as DONE); a torn journal
+line gets a separator before the next entry. `FileOpsEngine` is the only door for copy, move, rename and trash; never call
+`File.delete` or `renameTo` outside a `FileSystem` implementation.
+
+## 158. Ingest: the journal is fingerprint-keyed and scoped, and delete-from-card is gated in the runner
+
+An import journal line says "item X reached destination Y", and an item id is an MTP handle or SAF document id that is only
+stable within one listing of one card. So a VERIFIED or CARD_DELETED line counts only when it recorded the plan item's
+fingerprint and size, `IngestRunner(scope = ...)` and `plannedPaths(scope)` must be given the same per-session scope, and an
+older line without a fingerprint is re-verified, not trusted (otherwise a second card's item "42" is skipped as copied and
+then deleted). `deleteFromCard` re-reads the card item (cheap key plus full hash) and every destination copy (size and
+SHA-256) immediately before `source.delete`; the gate is in the runner, never only in UI copy, and `IngestOptions.offerDeleteFromCard`
+is off by default. `Fingerprints.full` is SHA-256 from the file-ops `Sha256` (the cheap key, size plus capture time plus
+hashes of the first and last 64 KiB, is only a screen), and a short read can never equal the complete file's hash. Resume
+re-plans with `prior = journal.plannedPaths(scope)`, otherwise the plan sees its own half-copied files as conflicts and renames
+them to `(2)`; the runner reads the journal once into a ledger, not per copy. Pair RAW and JPEG by folder plus stem, because
+`IMG_0001` repeats in every `DCIM/1xx` folder. The conflict suffix is applied after truncation (`NameSanitizer.fileName(...,
+suffix)`), or a 200-byte stem loses it and every number collides; limits are 200 UTF-8 bytes, not characters. Capture times
+outside 1900 to 2200 render as "Unknown date" rather than failing the whole plan. No NFC normalisation exists in common
+Kotlin, so canonically equal names can give a spurious keep-both, never an overwrite. Skipped duplicates are never offered
+for deletion.
+
+## 159. Room KMP: one writer transaction per slice, and the bundled driver does not run under Robolectric
+
+Atomic DAO work in Room KMP is `useWriterConnection { immediateTransaction { dao calls } }`; an exception inside rolls the
+whole slice back (a test pins it). In Robolectric use `AndroidSQLiteDriver` with `Room.inMemoryDatabaseBuilder<T>(context)`,
+because the bundled driver cannot run there; production builds `fotoz-sources.db` with `BundledSQLiteDriver` and nothing has
+proven that on a device yet. `fotoz-sources.db` is opened lazily and never created until a source exists (`SourcesRuntime`
+checks that the file is there; an empty provider opens nothing), and the per-source flags it has no column for (include,
+index on connect, took-grant, last read, last error) live in the prefs file `fotoz-sources-meta`, written only once a source
+exists; width and height are stored upright and orientation is not stored. `SourcesRuntime` is a process singleton, so
+Robolectric tests call `SourcesRuntime.forgetInstance()` in setup and teardown. Removing a source deletes index rows by
+cascade, lists and reads no folder, and calls `onRemoved` afterwards (previews and their settings; a failure there is
+swallowed except cancellation, because the previews are a rebuildable cache).
+
+## 160. Offline previews: only for what a surface already shows, and OFFLINE returns before any sniff
+
+`PreviewPass` takes the browsable list, and `PreviewPassDriver.drive` applies `browsableNow`'s filter itself, so a locked,
+archived or sensitive-hidden source photo never gets a preview file (TRAPS #33); never hand `pass.run` the merged catalogue.
+It runs only for ONLINE sources (an empty set means no run), debounced, in rounds of 150 with a cap of 40 rounds per
+trigger, and it does nothing, and builds nothing, with no sources. A preview file is `<assetRow>-<dateModifiedSeconds>.webp`
+under `noBackupFilesDir/source-previews/<sourceRow>/`: do not reuse the MediaStore or Coil keys, and do not point the store's
+`root` at a user folder, because `clear` deletes by name pattern (`*.webp`, `index.tsv`, `.tmp`). The directory is the truth
+and `index.tsv` holds only last-access times, so a lost index costs eviction order, never a preview; `store.sizes` only knows
+sources read in this process, so anything that shows a cost calls `store.sizeBytes(row)` first. The offline tile must return
+before `rememberResolvedFormat`, which can sniff the file and so touch an unplugged drive; a failed live read for an online
+source falls back to the stored preview. REVOKED sources are not listed by the merge, so they never draw one. A drive's
+remembered preview policy (NONE, AS_VIEWED, ALL) is applied only when it differs from `appliedDrivePolicy(sourceRow)`, so a
+switch flipped on a card survives every replug and only a new drive answer overrides it. Robolectric API 29 and up cannot
+decode a content-uri tile (`ImageDecoder` is unimplemented), so a test that expects a live decode needs `@Config(sdk = 28)`.
+
+## 161. A drive is its filesystem UUID, and OFFLINE comes only from a volume event
+
+A drive's identity is the upper-cased filesystem UUID; `SourceRecord.volumeUuid` already holds it (the volume part of the tree
+document id) and `primary` is never a drive. The same label with a different UUID is a new drive and gets an offer. A persisted
+SAF grant survives an unplug, so `refreshStates()` alone can never produce OFFLINE: only `SourcesRuntime.setVolumeReachable`,
+fed by the `StorageManager` volume callback (API 30 and up, the SDK guard inside `SystemStorageApi` so lint sees it) or the
+mount, unmount, eject and USB attach and detach broadcasts before it, moves ONLINE to OFFLINE and back (REVOKED when the grant
+is gone). It touches only the state column: no rows, files or grants. Every trigger only produces a fresh snapshot of
+volumes, a plug of an unknown drive produces an offer and nothing else (no scan, no picker, no permission prompt until Add),
+a replug of a known drive offers nothing and reads only when that drive's `indexOnConnect` is on (default off), and an
+unplug stops a running read and withdraws any open card. `fotoz-drives` is a prefs file of its own, written only once a drive
+is answered. The offline flavor source scan reads comments, so new comments in `sources/**` must avoid the network tokens.
+`StorageManager.registerStorageVolumeCallback` is API 30 and minSdk is 26, so `DocumentsContract` and volume calls need an SDK
+check in the same lambda (TRAPS #135).
+
+## 162. Share-receive is its own activity, a KDoc can open a nested comment, and other test lessons from wave A
+
+`SEND` (single) is answered by `FotoXplorrActivity` and its manifest test asserts that, so `SEND_MULTIPLE` goes to a separate
+exported `.receive.ReceiveActivity` (the chooser lists Fotoz once per action); folding single `SEND` into it needs a manifest
+move or an edit to the incoming-intent code. The activity is exported because the sender is another app, so it takes
+`content://` only (a `file://` uri counts as unreadable), caps at 500 after the drops (and looks at 2,000 uris at most), and
+holds a `content://media` uri to the browsable list before showing or copying it (TRAPS #33). Names are unique
+(`-2`, `-3`, checked against the target folder and the run's own set), Q+ rows are `IS_PENDING` during the copy, and any
+failure or cancel deletes the row; API 26 to 28 has no pending flag and no `RELATIVE_PATH`, so a mid-copy kill leaves a
+truncated file this code cannot remove. In Kotlin, a KDoc or comment containing `image/*` or `*/*` opens a nested comment
+(`/*` inside a block comment) and breaks the file: write the mime family in words. An `AndroidViewModel` with default
+constructor arguments needs `@JvmOverloads constructor`, or the default factory throws `NoSuchMethodException` (only
+Robolectric showed it). Kotlin/Native rejects JVM-only members in `commonMain`: `HashMap.merge` in `IngestRunner` failed the
+`core-native` linuxX64 compile in CI and passed every JVM test, so use a plain get-or-zero increment, and remember the agent
+machine cannot run the Native compile (TRAPS #134). Test lessons: a Compose button with a `contentDescription` and the same
+`Text` collides with a dialog button of the same text, so select the dialog's by `hasAnyAncestor(isDialog())`, and chip text
+needs `useUnmergedTree`; give grid fixtures distinct dates, or burst grouping folds them into one stack; region time zone
+tests go in `jvmTest`; `commonTest` names avoid `, . : ; / \ < > [ ]`; `BoardMediaProvider` is a reusable fake MediaStore for
+writer tests.
+
+## 163. A wheel's first offset is not a position, and the open park's card is moved by placement
+
+Two things in the left room's card column. (1) `DestinationWordRail` places its wheel on the selected row in a `LaunchedEffect`,
+so the scroll state reads 0 first; a position published from it before `placed` snaps the card column to the first word for a
+frame (the card jumps up, then back). The position is set to the selected row in a `SideEffect` and the scroll is only
+forwarded once the wheel is placed. (2) The live card must be shifted with the shell's `parkedCardOffsetY`, which is added in
+`Modifier.offset { }` (placement), never with a `graphicsLayer` translation: a layer translation draws the card there but leaves
+its hit-test where it was. The ghost cards are the same: a zero-size layout that places the measured child to the right of its
+parent (a child may draw outside its parent when nothing clips), and the offset is read inside the placement block so a turn of
+the wheel recomposes nothing. A ghost's list is a `derivedStateOf`, so only a change in WHICH cards show recomposes.

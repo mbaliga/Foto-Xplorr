@@ -33,7 +33,19 @@ data class MediaAsset(
      * library record for.
      */
     val isExternal: Boolean = false,
+    /**
+     * Non-null for a file that lives in a folder or drive the person added (ADR-020), carrying
+     * `com.fotoxplorr.app.sources.gallery.SourceRef`'s text. Not [isExternal]: an external asset has
+     * no share/export path, a source asset must keep one, and the two are gated differently (the
+     * source gate hides the catalogue writes, `SourceActionGate`). Defaulted for the same reason
+     * [isExternal] is: roughly eighty call sites never see a source asset.
+     */
+    val sourceRef: String? = null,
 ) {
+    /** True for a file from an added folder or drive (see [sourceRef]). */
+    val isSource: Boolean
+        get() = sourceRef != null
+
     val contentUri: Uri
         get() = Uri.parse(contentUriString)
 

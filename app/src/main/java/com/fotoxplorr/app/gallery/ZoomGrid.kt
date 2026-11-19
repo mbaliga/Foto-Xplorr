@@ -48,7 +48,6 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.fotoxplorr.app.adaptive.ZOOM_RUNG_LAST_GRID
 import com.fotoxplorr.app.adaptive.columnsAcross
 import com.fotoxplorr.app.adaptive.isStampRung
@@ -452,6 +451,7 @@ private fun StampTile(
     Box(
         modifier = Modifier
             .aspectRatio(GRID_TILE_ASPECT)
+            .selectionSemantics(selectionActive, selected)
             .background(STAMP_PAPER)
             .tileGestures(
                 asset = asset,
@@ -478,16 +478,8 @@ private fun StampTile(
                 .then(if (sensitive && blurSensitive) Modifier.blur(22.dp) else Modifier),
             contentScale = ContentScale.Crop,
         )
-        if (selected) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("✓", color = MaterialTheme.colorScheme.onPrimary, fontSize = 12.sp)
-            }
-        }
+        // As in MediaTile: selected stamps draw plain, the ones left out are dimmed.
+        UnselectedDim(selectionActive, selected)
         // The keyboard's arrow-key cursor, as in MediaTile.
         if (bridge.keyboardFocusedId == asset.id) {
             Box(Modifier.fillMaxSize().border(1.5.dp, Color.White))

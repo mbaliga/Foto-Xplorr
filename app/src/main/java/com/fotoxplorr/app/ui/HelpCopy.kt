@@ -37,6 +37,7 @@ internal object HelpCopy {
         const val TIMELINE = "Date orders only. The photos make room for the strip."
         const val SCROLL_AXIS = "Across suits a top or bottom timeline. Stamps stay vertical."
         const val LONG_PRESS = "What holding a photo does. While selecting, a hold adds it."
+        const val PEEK_MODE = "Stays open: with actions. Close it with the cross or Back."
         const val PINCH_ON = "Pinch in: details. Pinch out: actions. No pinch zoom."
         const val PINCH_OFF = "Pinch zooms the photo."
         const val PARTIAL_ACCESS = "Fotoz only sees the photos you picked."
@@ -137,6 +138,7 @@ internal object HelpCopy {
 
         const val PERMISSION_DENIED = "Fotoz can't see your photos. Allow it in Android settings."
         const val PERMISSION_ASK = "Choose the photos Fotoz may use. Nothing is uploaded."
+        const val PERMISSION_STRIP = "Your phone's photos are off. Choose which ones Fotoz may use."
         const val SCANNING = "Scanning…"
         const val NOTHING_FOUND = "No photos or videos found."
         const val PICKED_ONLY = "Showing only the photos you picked."

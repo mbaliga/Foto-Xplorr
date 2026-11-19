@@ -1311,7 +1311,8 @@ fun ViewerScreen(
                 CompositeViewerLayer(
                     asset = asset,
                     chromeShown = chromeShown,
-                    mayExport = { catalogueActions && !asset.isExternal && !liveSensitive && liveMayCopy(asset) },
+                    // A source file has no catalogue actions but may still be saved out as a new file.
+                    mayExport = { (catalogueActions || asset.isSource) && !asset.isExternal && !liveSensitive && liveMayCopy(asset) },
                     onOpenStereo = { stereoPair = it },
                     bottomPaddingDp = ViewerChromePolicy.videoBottomInsetDp(filmstripShown) + 12 + if (exif.isSphere) 60 else 0,
                 )

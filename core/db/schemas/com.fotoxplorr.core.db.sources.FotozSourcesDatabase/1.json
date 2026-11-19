@@ -1,0 +1,389 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "93f9eb662d63e3918d4000efd427998d",
+    "entities": [
+      {
+        "tableName": "source",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`source_row` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `kind` TEXT NOT NULL, `root_locator` TEXT NOT NULL, `volume_uuid` TEXT, `display_name` TEXT NOT NULL, `state` TEXT NOT NULL, `created_ms` INTEGER NOT NULL, `last_full_scan_ms` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "sourceRow",
+            "columnName": "source_row",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rootLocator",
+            "columnName": "root_locator",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "volumeUuid",
+            "columnName": "volume_uuid",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "display_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdMs",
+            "columnName": "created_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastFullScanMs",
+            "columnName": "last_full_scan_ms",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "source_row"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_source_kind_root_locator",
+            "unique": true,
+            "columnNames": [
+              "kind",
+              "root_locator"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_source_kind_root_locator` ON `${TABLE_NAME}` (`kind`, `root_locator`)"
+          }
+        ]
+      },
+      {
+        "tableName": "source_folder",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`folder_row` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `source_row` INTEGER NOT NULL, `document_id` TEXT NOT NULL, `path` TEXT NOT NULL, `last_seen_run` INTEGER NOT NULL, FOREIGN KEY(`source_row`) REFERENCES `source`(`source_row`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "folderRow",
+            "columnName": "folder_row",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceRow",
+            "columnName": "source_row",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "documentId",
+            "columnName": "document_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastSeenRun",
+            "columnName": "last_seen_run",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "folder_row"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_source_folder_source_row_document_id",
+            "unique": true,
+            "columnNames": [
+              "source_row",
+              "document_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_source_folder_source_row_document_id` ON `${TABLE_NAME}` (`source_row`, `document_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "source",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "source_row"
+            ],
+            "referencedColumns": [
+              "source_row"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "source_asset",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`asset_row` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `source_row` INTEGER NOT NULL, `document_id` TEXT NOT NULL, `display_name` TEXT NOT NULL, `mime` TEXT NOT NULL, `size_bytes` INTEGER NOT NULL, `width` INTEGER NOT NULL, `height` INTEGER NOT NULL, `duration_ms` INTEGER NOT NULL, `date_taken_ms` INTEGER NOT NULL, `date_modified_ms` INTEGER NOT NULL, `path` TEXT NOT NULL, `content_uri` TEXT, `present` INTEGER NOT NULL DEFAULT 1, `last_seen_run` INTEGER NOT NULL, `enrich_state` INTEGER NOT NULL DEFAULT 0, `enrich_attempts` INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(`source_row`) REFERENCES `source`(`source_row`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "assetRow",
+            "columnName": "asset_row",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceRow",
+            "columnName": "source_row",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "documentId",
+            "columnName": "document_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "display_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mime",
+            "columnName": "mime",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sizeBytes",
+            "columnName": "size_bytes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "width",
+            "columnName": "width",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "height",
+            "columnName": "height",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMs",
+            "columnName": "duration_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dateTakenMs",
+            "columnName": "date_taken_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dateModifiedMs",
+            "columnName": "date_modified_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "contentUri",
+            "columnName": "content_uri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "present",
+            "columnName": "present",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          },
+          {
+            "fieldPath": "lastSeenRun",
+            "columnName": "last_seen_run",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enrichState",
+            "columnName": "enrich_state",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "enrichAttempts",
+            "columnName": "enrich_attempts",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "asset_row"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_source_asset_source_row_document_id",
+            "unique": true,
+            "columnNames": [
+              "source_row",
+              "document_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_source_asset_source_row_document_id` ON `${TABLE_NAME}` (`source_row`, `document_id`)"
+          },
+          {
+            "name": "index_source_asset_source_row_last_seen_run",
+            "unique": false,
+            "columnNames": [
+              "source_row",
+              "last_seen_run"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_source_asset_source_row_last_seen_run` ON `${TABLE_NAME}` (`source_row`, `last_seen_run`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "source",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "source_row"
+            ],
+            "referencedColumns": [
+              "source_row"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "index_run",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`run_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `source_row` INTEGER NOT NULL, `status` TEXT NOT NULL, `full` INTEGER NOT NULL, `cursor` TEXT, `files_seen` INTEGER NOT NULL, `started_ms` INTEGER NOT NULL, `finished_ms` INTEGER, `error` TEXT, FOREIGN KEY(`source_row`) REFERENCES `source`(`source_row`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "runId",
+            "columnName": "run_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceRow",
+            "columnName": "source_row",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "full",
+            "columnName": "full",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cursor",
+            "columnName": "cursor",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "filesSeen",
+            "columnName": "files_seen",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedMs",
+            "columnName": "started_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "finishedMs",
+            "columnName": "finished_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "error",
+            "columnName": "error",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "run_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_index_run_source_row_status",
+            "unique": false,
+            "columnNames": [
+              "source_row",
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_index_run_source_row_status` ON `${TABLE_NAME}` (`source_row`, `status`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "source",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "source_row"
+            ],
+            "referencedColumns": [
+              "source_row"
+            ]
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '93f9eb662d63e3918d4000efd427998d')"
+    ]
+  }
+}

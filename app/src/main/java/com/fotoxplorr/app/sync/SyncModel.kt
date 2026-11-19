@@ -84,7 +84,9 @@ object SyncCandidates {
         sensitiveIds: Set<com.fotoxplorr.core.model.MediaId>,
         lockedFolders: Set<String>,
     ): List<MediaAsset> = com.fotoxplorr.app.gallery.browsableAssets(
-        assets = assets,
+        // Files of added folders and drives never sync in v1 (design 1.6): a standing copy of a
+        // drive to a cloud account is a decision this version does not take for the person.
+        assets = assets.filterNot { it.isSource },
         archivedIds = archivedIds,
         sensitiveIds = sensitiveIds,
         lockedFolders = lockedFolders,
@@ -100,7 +102,8 @@ object SyncCandidates {
     fun from(browsable: List<MediaAsset>, selection: SyncSelection): List<SyncCandidate> {
         if (selection.isEmpty) return emptyList()
         return browsable.asSequence()
-            .filterNot { it.isExternal || it.isTrashed || it.sizeBytes <= 0L }
+            // isSource: the second lock, for a caller that skipped browsableForSync's own filter.
+            .filterNot { it.isExternal || it.isSource || it.isTrashed || it.sizeBytes <= 0L }
             .mapNotNull { asset ->
                 val folder = folderIdentity(asset).key.value
                 if (!selection.matches(folder, asset.isFavorite, asset.isVideo)) return@mapNotNull null

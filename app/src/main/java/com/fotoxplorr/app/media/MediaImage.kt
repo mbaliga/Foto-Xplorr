@@ -2,6 +2,7 @@ package com.fotoxplorr.app.media
 
 import android.os.Build
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -15,6 +16,12 @@ import coil3.compose.AsyncImage
 import coil3.gif.AnimatedImageDecoder
 import coil3.gif.GifDecoder
 import coil3.request.ImageRequest
+import com.fotoxplorr.app.sources.gallery.SourceRef
+import com.fotoxplorr.app.sources.previews.LocalSourcePreviews
+import com.fotoxplorr.app.sources.previews.OfflinePreviewTile
+import com.fotoxplorr.app.sources.previews.SourcePreviews
+import com.fotoxplorr.app.sources.previews.StoredPreview
+import com.fotoxplorr.app.sources.previews.rememberStoredPreview
 import com.fotoxplorr.core.formats.LoadResult
 import com.fotoxplorr.core.formats.SizeHint
 import com.fotoxplorr.core.formats.TileState
@@ -31,6 +38,9 @@ import com.fotoxplorr.core.formats.tileState
  *   transparent photo needs the picture's real shape, which a vector image has no other source
  *   for). Only the shape is meaningful: the decode may be smaller than the file.
  * @param showReason draw the placeholder's one-line reason even on a small area (the viewer does).
+ * @param offline draw the stored offline preview, greyed, instead of reading the file (a source
+ *   asset whose drive is away; a source asset is also treated so when the previews service knows its
+ *   source is OFFLINE). Library assets ignore it and are untouched.
  *
  * A file that cannot be drawn -- the registry says no decoder exists, or the load fails -- gets a
  * [FormatPlaceholder] instead of an empty or black area (WP1.7). The decision is the pure
@@ -44,13 +54,29 @@ fun MediaImage(
     animate: Boolean = false,
     onImageSize: ((Size) -> Unit)? = null,
     showReason: Boolean = false,
+    offline: Boolean = false,
 ) {
     val context = LocalContext.current
+    var load by remember(asset.contentUriString, asset.dateModifiedSeconds) { mutableStateOf(LoadResult.Pending) }
+    // Only a source asset (a folder or drive the person added) has anything to do with previews;
+    // a library asset skips all of this with one null check.
+    val previews = if (asset.sourceRef != null) (LocalSourcePreviews.current ?: remember(context) { SourcePreviews.get(context) }) else null
+    if (previews != null) {
+        val sourceRow = SourceRef.sourceRowOf(asset.sourceRef)
+        val offlineRows by previews.offlineRows.collectAsState()
+        val away = offline || (sourceRow != null && sourceRow in offlineRows)
+        val stored by rememberStoredPreview(previews, asset, wanted = away || load == LoadResult.Failed)
+        // Away: no read of the file at all (not even a format sniff). A failed read with a stored
+        // preview falls back to it too, so a drive that vanished mid-scroll keeps its tiles.
+        if (away || (load == LoadResult.Failed && stored is StoredPreview.Found)) {
+            OfflinePreviewTile(asset, stored, modifier, contentScale, showReason)
+            return
+        }
+    }
     val format by rememberResolvedFormat(asset)
     val verdict = remember(format, asset.mimeType, asset.width, asset.height, asset.sizeBytes) {
         DecoderRegistries.current().probe(format, asset.mimeType, SizeHint(asset.width, asset.height, asset.sizeBytes))
     }
-    var load by remember(asset.contentUriString, asset.dateModifiedSeconds) { mutableStateOf(LoadResult.Pending) }
     val state = tileState(format, verdict, load)
     if (state is TileState.Placeholder) {
         FormatPlaceholder(
@@ -98,6 +124,8 @@ fun MediaImage(
         onError = { load = LoadResult.Failed },
         onSuccess = { state ->
             load = LoadResult.Loaded
+            // The file just decoded, so it is readable now: the moment to keep a small copy for when it is not.
+            previews?.captureAsync(asset)
             val size = state.painter.intrinsicSize
             if (onImageSize != null && size.isSpecified) onImageSize(size)
         },

@@ -11,6 +11,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -86,6 +87,8 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -207,6 +210,27 @@ class GridChromeBridge {
      */
     var gridLongPress: GridLongPress by mutableStateOf(GridLongPress.PEEK)
         internal set
+
+    /**
+     * Whether a preview a hold opens stays up after the finger lifts ([PeekMode]). Set by
+     * `GalleryScreen` beside [gridLongPress]; `mutableStateOf` for the same reason (the tile's
+     * accessibility long-click depends on it). Means nothing without [onOpenPeekWindow].
+     */
+    var peekMode: PeekMode by mutableStateOf(PeekMode.CLOSE_ON_RELEASE)
+        internal set
+
+    /**
+     * Opens the preview that stays open ([PeekWindow]) on this photo, drawn by the screen above
+     * every grid and its floating controls. Returns false when it will not -- the photo is not in
+     * the list the screen is showing (TRAPS #33: the window shows only what the browsable list
+     * holds) -- and the tile then falls back to the held preview. Null where no screen draws the
+     * window (the photo picker), which keeps every hold there exactly as it was.
+     */
+    internal var onOpenPeekWindow: ((MediaAsset) -> Boolean)? = null
+
+    /** True when a hold should open [PeekWindow] rather than the held [MediaPeek]. */
+    internal val peekStaysOpen: Boolean
+        get() = peekMode == PeekMode.STAYS_OPEN && onOpenPeekWindow != null
 
     /**
      * Which tile the keyboard's arrow keys currently sit on, if any -- unlike the callbacks
@@ -465,6 +489,12 @@ fun MediaGridScreen(
  * a control you cannot reach without releasing -- which closes the thing the control is on -- is
  * not a control.
  *
+ * Since 2026-11-19 that is one of two choices (owner: *"if close on release, then don't show the
+ * chrome. If it stays open, then the chrome is needed."*). This is the default,
+ * [PeekMode.CLOSE_ON_RELEASE], unchanged and still chrome-free. [PeekMode.STAYS_OPEN] opens
+ * [PeekWindow] instead, which outlives the hold and so can carry the owner's tab of actions and a
+ * close mark; the tile decides which at the moment the hold completes ([GridChromeBridge.peekStaysOpen]).
+ *
  * Drawn in the composition rather than in a `Dialog`, which matters here. A dialog is a new
  * window, and raising one mid-gesture cancels the pointer stream on the window underneath -- the
  * hold would end the instant the preview appeared, so the preview would flash and vanish.
@@ -502,7 +532,7 @@ internal fun MediaPeek(asset: MediaAsset, loopAnimations: Boolean, animated: Boo
             modifier = Modifier.padding(top = 16.dp),
         )
         Text(
-            "Release to go back",
+            PeekCopy.RELEASE_HINT,
             color = Color.White.copy(alpha = 0.35f),
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.padding(top = 6.dp),
@@ -539,7 +569,11 @@ internal fun Modifier.tileGestures(
     val currentSelectionActive by rememberUpdatedState(selectionActive)
     val currentAsset by rememberUpdatedState(asset)
     val currentHaptic by rememberUpdatedState(LocalHapticFeedback.current)
-    val longClick = LongPressResolver.longClickSemantics(chromeBridge.gridLongPress, selectionActive)
+    val longClick = LongPressResolver.longClickSemantics(
+        chromeBridge.gridLongPress,
+        selectionActive,
+        peekStaysOpen = chromeBridge.peekStaysOpen,
+    )
 
     return this
         // A mouse resting on the tile for 400 ms asks the screen for the hover preview; leaving,
@@ -556,9 +590,10 @@ internal fun Modifier.tileGestures(
         )
         // Click and long-click for a screen reader, whose double-tap and double-tap-and-hold
         // never reach the pointer handler below as a hold. A long press cannot be performed
-        // as a held preview there, so LongPressResolver.longClickSemantics turns the preview
-        // into Select; Nothing offers no long-click at all. Announced as one tile: the photo's
-        // name from MediaImage plus any favourite / sensitive / selected marks.
+        // as a held preview there, so LongPressResolver.longClickSemantics turns the held
+        // preview into Select -- but a preview that stays open needs no held finger, so then
+        // the long-click opens it. Nothing offers no long-click at all. Announced as one tile:
+        // the photo's name from MediaImage plus any favourite / sensitive / selected marks.
         .semantics(mergeDescendants = true) {
             onClick(label = LongPressResolver.tapLabel(selectionActive)) {
                 if (selectionActive) currentOnToggleSelection() else currentOnOpen()
@@ -569,7 +604,11 @@ internal fun Modifier.tileGestures(
                     when (val outcome = longClick.outcome) {
                         LongPressOutcome.ToggleSelection -> currentOnToggleSelection()
                         is LongPressOutcome.Run -> chromeBridge.onContextAction(currentAsset, outcome.action)
-                        LongPressOutcome.Peek, LongPressOutcome.None -> Unit
+                        // Only offered when the window can open; if the photo has since left the
+                        // list it would show, the long-click selects, as it did before.
+                        LongPressOutcome.Peek ->
+                            if (chromeBridge.onOpenPeekWindow?.invoke(currentAsset) != true) currentOnToggleSelection()
+                        LongPressOutcome.None -> Unit
                     }
                     true
                 }
@@ -586,7 +625,9 @@ internal fun Modifier.tileGestures(
             detectTapGestures(
                 onPress = {
                     // Returns on release AND on cancellation -- so a peek cannot be stranded
-                    // on screen by the grid scrolling out from under the finger.
+                    // on screen by the grid scrolling out from under the finger. A preview set
+                    // to stay open is not this grid's peek (the screen holds it), so this leaves
+                    // it alone.
                     tryAwaitRelease()
                     currentOnPeekEnd()
                 },
@@ -599,7 +640,12 @@ internal fun Modifier.tileGestures(
                         currentHaptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     }
                     when (outcome) {
-                        LongPressOutcome.Peek -> currentOnPeek()
+                        // Stays open: the screen's window, if it will show this photo; otherwise
+                        // (and by default) the held peek.
+                        LongPressOutcome.Peek ->
+                            if (!(chromeBridge.peekStaysOpen && chromeBridge.onOpenPeekWindow?.invoke(currentAsset) == true)) {
+                                currentOnPeek()
+                            }
                         LongPressOutcome.ToggleSelection -> currentOnToggleSelection()
                         is LongPressOutcome.Run -> chromeBridge.onContextAction(currentAsset, outcome.action)
                         LongPressOutcome.None -> Unit
@@ -608,6 +654,35 @@ internal fun Modifier.tileGestures(
                 onTap = { if (currentSelectionActive) currentOnToggleSelection() else currentOnOpen() },
             )
         }
+}
+
+/**
+ * While selecting, a tile tells TalkBack whether it is chosen ("Selected" / "Not selected", and
+ * the selected flag). On screen the cue is [UnselectedDim]: chosen tiles stay plain, as in the
+ * owner's reference, and the ones left out are dimmed.
+ */
+internal fun Modifier.selectionSemantics(selectionActive: Boolean, isSelected: Boolean): Modifier =
+    if (!selectionActive) this else semantics {
+        this.selected = isSelected
+        stateDescription = if (isSelected) TILE_SELECTED else TILE_NOT_SELECTED
+    }
+
+internal const val TILE_SELECTED = "Selected"
+internal const val TILE_NOT_SELECTED = "Not selected"
+
+/**
+ * How far a tile left OUT of an active selection is darkened: a black wash at this opacity.
+ * Selected tiles draw plain, so the owner's reference (every visible tile selected, all plain) is
+ * unchanged, and a stray tap on a tile still shows: the tapped tile brightens back to plain.
+ */
+internal const val UNSELECTED_DIM_ALPHA = 0.55f
+
+/** The per-tile selection cue: a dark wash over a tile that is NOT selected while selecting. */
+@Composable
+internal fun BoxScope.UnselectedDim(selectionActive: Boolean, selected: Boolean) {
+    if (selectionActive && !selected) {
+        Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = UNSELECTED_DIM_ALPHA)))
+    }
 }
 
 @Composable
@@ -643,6 +718,7 @@ internal fun MediaTile(
     Box(
         modifier = Modifier
             .aspectRatio(tileAspectRatio)
+            .selectionSemantics(selectionActive, selected)
             // Black rather than surfaceVariant: an unloaded tile should read as a gap in the
             // mosaic, not as a light grey block punched through it.
             .background(GRID_BACKGROUND)
@@ -765,23 +841,12 @@ internal fun MediaTile(
                 modifier = Modifier.matchParentSize(),
             )
         }
-        if (selected) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.34f)),
-            )
-            Text(
-                "✓",
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .background(MaterialTheme.colorScheme.primary)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                color = MaterialTheme.colorScheme.onPrimary,
-            )
-        }
-        // The keyboard's arrow-key cursor -- a plain ring rather than the selection tint above,
+        // The owner's multi-select reference (2026-11-18) shows every tile plain while 9999 are
+        // selected, so a selected tile draws no mark (the old primary wash and ✓ chip are gone)
+        // and the tiles left OUT are dimmed instead. TalkBack hears it via [selectionSemantics].
+        UnselectedDim(selectionActive, selected)
+
+        // The keyboard's arrow-key cursor -- a plain ring, not a selection mark,
         // because the two are deliberately different ideas: this tile is not picked, it is just
         // where Enter and Delete would currently act. Conflating the two would mean every arrow
         // press opened the full selection chrome (the export/move/copy bar, the trash corner)

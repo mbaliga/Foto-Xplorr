@@ -254,5 +254,26 @@
                 <data android:mimeType="video/*" />
             </intent-filter>
         </activity>
+
+        <!--
+          Share-receive for SEVERAL files (WP3.1): ACTION_SEND_MULTIPLE for images and videos, in an
+          activity of its own so FotoXplorrActivity's filters (and a chooser's one-entry-per-action
+          list) stay as they were. It asks "View" or "Save to library"; see ReceiveActivity. Exported
+          because the sender is another app, so it reads only the allowlisted extras (withSafeExtras),
+          takes content:// uris only, and answers to no other action. No scheme in the filter for the
+          same reason as the SEND filter above: a share names its uris in EXTRA_STREAM. Same
+          configChanges as the other activities here, per P0-09.
+        -->
+        <activity
+            android:name=".receive.ReceiveActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

@@ -45,6 +45,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -85,6 +86,17 @@ import com.fotoxplorr.app.jobs.humanMessage
 import com.fotoxplorr.app.jobs.notificationPromptWasAnswered
 import com.fotoxplorr.app.jobs.shouldAskForJobNotifications
 import com.fotoxplorr.app.media.MediaAsset
+import com.fotoxplorr.app.sources.gallery.SourceActionGate
+import com.fotoxplorr.app.sources.gallery.SourceAssetsProvider
+import com.fotoxplorr.app.sources.gallery.SourceGateCopy
+import com.fotoxplorr.app.sources.gallery.MergedCatalogue
+import com.fotoxplorr.app.sources.gallery.SourceMergeProtection
+import com.fotoxplorr.app.sources.gallery.mergedCatalogueFlow
+import com.fotoxplorr.app.sources.gallery.mustWaitForSources
+import com.fotoxplorr.app.sources.runtime.SourcesRuntime
+import com.fotoxplorr.app.sources.ui.DriveConnectedHost
+import com.fotoxplorr.app.sources.ui.SourcePreviewPassHook
+import com.fotoxplorr.app.sources.ui.SourcesLifecycleHook
 import com.fotoxplorr.app.metadata.GpsCoordinate
 import com.fotoxplorr.app.metadata.MetadataEdit
 import com.fotoxplorr.app.metadata.MetadataWriter
@@ -246,12 +258,33 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val geoRepository = rememberGeoRepository()
     val geoState by geoRepository.observe().collectAsStateWithLifecycle()
 
-    val assets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    // The MediaStore library, exactly as before. Everything keyed to it or to its stores reads THIS
+    // list (the sites are marked "libraryAssets" below): the permanent-delete purge, the metadata
+    // backup, recognition and auto-curation, the cloud-sync feed.
+    val libraryAssets by repository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    // Files of folders and drives the person added (ADR-020). The runtime opens fotoz-sources.db
+    // only once a source exists, so a phone with no sources gets an empty list and no file.
+    val sourceAssetsProvider: SourceAssetsProvider = remember { SourcesRuntime.get(applicationContext).provider }
+    SourcesLifecycleHook(viewModel.jobRunner)
     val favoriteIds by favoriteStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val sensitiveIds by sensitiveStore.observe().collectAsStateWithLifecycle(initialValue = emptySet())
     val lockedFolders by privateFolderStore.observeLockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
     val unlockedFolders by privateFolderStore.observeUnlockedFolders().collectAsStateWithLifecycle(initialValue = emptySet())
     val library by libraryStore.observe().collectAsStateWithLifecycle()
+    // Display and id lookups only: the grid, the viewer's run, open-with and restore lookups. The
+    // merge happens before browsableAssets, so the lock / archive / sensitive filter (TRAPS #33)
+    // applies to a source photo unchanged, and the protection state also decides which source twins
+    // of a protected library photo are dropped. It runs off the main thread (a big library is real
+    // work); with no sources `assets` IS `libraryAssets`, the same instance, with no hop at all.
+    val catalogue by remember(sourceAssetsProvider) {
+        mergedCatalogueFlow(
+            library = snapshotFlow { libraryAssets },
+            sources = sourceAssetsProvider.assets(),
+            protection = snapshotFlow { SourceMergeProtection(library.archivedIds, sensitiveIds, lockedFolders) },
+        )
+    }.collectAsStateWithLifecycle(initialValue = MergedCatalogue.pending(emptyList()))
+    val assets = if (catalogue.sourceFiles == 0) libraryAssets else catalogue.assets
+    val sourcesSeen = catalogue.sourcesSeen
     val recognition by recognitionStore.observe().collectAsStateWithLifecycle()
     val recognitionProgress by recognitionStore.observeProgress().collectAsStateWithLifecycle()
     // P0-14: which ids actually animate, kept fresh by LibraryRuntime itself after every scan --
@@ -378,6 +411,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         privateFolderStore.observeUnlockedFolders().value,
         galleryPreferences.observe().value.hideSensitive,
     )
+    // Offline previews of the added folders: the bounded pass gets the BROWSABLE list only (TRAPS #33),
+    // while the sources are online, off the main thread; with no sources it does nothing at all.
+    SourcePreviewPassHook(assets, hasSources = catalogue.sourceFiles > 0, browsable = ::browsableNow)
 
     // P0-18: ExternalViewerActivity redirects here, rather than reimplementing the catalogue
     // actions itself, when an incoming "Open with" URI turns out to already be a photo this app
@@ -485,7 +521,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     val anyJobRunning = runningJobs.isNotEmpty()
     // Keeps cloud sync's library current whichever pane is open, and takes it back (sending nothing)
     // when the activity's content leaves the composition.
-    com.fotoxplorr.app.gallery.SyncLibraryFeed(assets, library.archivedIds, sensitiveIds, lockedFolders, viewModel.jobRunner)
+    com.fotoxplorr.app.gallery.SyncLibraryFeed(libraryAssets, library.archivedIds, sensitiveIds, lockedFolders, viewModel.jobRunner)
     // The progress notification needs POST_NOTIFICATIONS on Android 13+, and this is the only place
     // that asks for it: once, the first time a job actually runs (see shouldAskForJobNotifications).
     // "Asked" is recorded when the system dialog has been ANSWERED, not when it was launched: a
@@ -595,11 +631,12 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // Restored through browsableNow: the unlocked folders live in memory, so after process death a
     // locked folder is locked again, and a photo trashed / archived / hidden in the meantime is
     // simply not reopened.
-    LaunchedEffect(assets) {
+    LaunchedEffect(assets, sourcesSeen) {
         if (assets.isEmpty()) return@LaunchedEffect
         val browsable = browsableNow(assets)
         viewModel.selectedAssetId?.let { id ->
-            if (viewerAssets.isEmpty()) {
+            // A source photo's id is not in the list until the provider has answered once.
+            if (viewerAssets.isEmpty() && !mustWaitForSources(id, sourcesSeen)) {
                 // The whole run that was being paged through; just the open photo if that list
                 // did not survive.
                 val restored = restoreViewerRun(browsable, savedViewerAssetIds.asList(), id.value)
@@ -646,7 +683,9 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             if (completedOperation == PendingMediaOperation.DELETE) {
                 favoriteStore.setFavorite(affectedIds, false)
                 sensitiveStore.setSensitive(affectedIds, false)
-                libraryStore.removeMissingMedia(assets.mapTo(linkedSetOf()) { it.id } - affectedIds)
+                // libraryAssets, never the merged list: a source id is not in the library stores, and a
+                // list that lacked an offline source's ids would purge nothing it should keep.
+                libraryStore.removeMissingMedia(libraryAssets.mapTo(linkedSetOf()) { it.id } - affectedIds)
             }
 
             when (completedOperation) {
@@ -1129,7 +1168,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
         libraryStore = libraryStore,
         favoriteStore = favoriteStore,
         sensitiveStore = sensitiveStore,
-        photos = { assets },
+        photos = { libraryAssets },
         onMessage = { userMessage = it },
     )
 
@@ -1296,13 +1335,14 @@ private fun FotoXplorrActivity.FotoXplorrApp(
     // never restarts a pass that already finished. RecognitionIndexer is itself idempotent:
     // it only visits assets whose stored result is missing or stale.
     LaunchedEffect(recognitionGeneration) {
-        if (recognitionGeneration > 0 && assets.isNotEmpty()) {
-            recognitionIndexer.index(assets)
+        // libraryAssets: recognition and its stores key by MediaStore id; sources are not indexed in v1.
+        if (recognitionGeneration > 0 && libraryAssets.isNotEmpty()) {
+            recognitionIndexer.index(libraryAssets)
             // Curate immediately after, on the results that pass just wrote, rather than leaving
             // it for the next background wake -- someone who taps "index my library" and then
             // opens a photo expects to see what it found, not to see it tomorrow morning. The
             // pass is idempotent, so the background run doing this again costs nothing.
-            AutoCurationPass(libraryStore).run(assets, recognitionStore.observe().value, lockedFolders)
+            AutoCurationPass(libraryStore).run(libraryAssets, recognitionStore.observe().value, lockedFolders)
         }
     }
 
@@ -1498,8 +1538,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // selection menu is on the photo the moment the viewer opens over it.
             tags = library.tagsFor(activeAsset.id),
             autoTags = library.autoTagsFor(activeAsset.id),
-            onRemoveTag = { tag -> libraryStore.removeTag(setOf(activeAsset.id), tag) },
-            onAddTag = { tag -> libraryStore.addTag(setOf(activeAsset.id), tag) },
+            onRemoveTag = { tag -> if (!activeAsset.isSource) libraryStore.removeTag(setOf(activeAsset.id), tag) },
+            onAddTag = { tag -> if (!activeAsset.isSource) libraryStore.addTag(setOf(activeAsset.id), tag) },
             // For the map the details room's plate grows into: every located photo in the library
             // becomes a dot on it, so it needs the whole library and its geo index, not only the
             // assets being paged through.
@@ -1507,21 +1547,21 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             libraryAssets = assets,
             caption = library.captionFor(activeAsset.id),
             captionIsMachineWritten = library.isMachineCaption(activeAsset.id),
-            onSetCaption = { text -> libraryStore.setCaption(activeAsset.id, text) },
+            onSetCaption = { text -> if (!activeAsset.isSource) libraryStore.setCaption(activeAsset.id, text) },
             // MetadataWriter is built on ExifInterface, which this app relies on only for still
             // images (see readImageExifDetails's own early return for asset.isVideo) -- so these
             // stay null for a video rather than offering fields a tap on would just fail against.
             // Video's own metadata story is Phase 3/4, not this one.
-            onSetRating = if (activeAsset.isVideo) null else { rating: Int ->
+            onSetRating = if (activeAsset.isVideo || activeAsset.isSource) null else { rating: Int ->
                 requestMetadataWrite(activeAsset, MetadataEdit(rating = rating))
             },
-            onSetCreator = if (activeAsset.isVideo) null else { creator: String ->
+            onSetCreator = if (activeAsset.isVideo || activeAsset.isSource) null else { creator: String ->
                 requestMetadataWrite(activeAsset, MetadataEdit(creator = creator))
             },
-            onSetCopyright = if (activeAsset.isVideo) null else { copyright: String ->
+            onSetCopyright = if (activeAsset.isVideo || activeAsset.isSource) null else { copyright: String ->
                 requestMetadataWrite(activeAsset, MetadataEdit(copyright = copyright))
             },
-            onEmbedKeywords = if (activeAsset.isVideo) null else {
+            onEmbedKeywords = if (activeAsset.isVideo || activeAsset.isSource) null else {
                 {
                     val tags = library.tagsFor(activeAsset.id)
                     if (tags.isNotEmpty()) {
@@ -1547,22 +1587,27 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             onToggleSlideshow = { slideshowActive = !slideshowActive },
             slideshowPaused = slideshowPaused,
             onSetSlideshowPaused = { slideshowPaused = it },
-            onToggleFavorite = { favoriteStore.toggle(activeAsset.id) },
-            onToggleSensitive = { sensitiveStore.toggle(activeAsset.id) },
+            // The viewer hides these rows for a source file (catalogueActions below); the guards
+            // here are the second lock, same rule as SourceActionGate (FavoriteStore keeps a
+            // negative id in memory and SensitiveStore would write it).
+            onToggleFavorite = { if (!activeAsset.isSource) favoriteStore.toggle(activeAsset.id) },
+            onToggleSensitive = { if (!activeAsset.isSource) sensitiveStore.toggle(activeAsset.id) },
             onShare = { share(listOf(activeAsset)) },
             onShareClean = { shareAdvanced(listOf(activeAsset)) },
-            onEdit = { viewModel.setEditingAsset(activeAsset) },
+            onEdit = { if (!activeAsset.isSource) viewModel.setEditingAsset(activeAsset) },
             onOpenWith = { openExternally(activeAsset, Intent.ACTION_VIEW) },
-            onRename = if (activeAsset.isExternal) null else ({ viewerRenameTarget = activeAsset }),
-            onMoveToTrash = { requestMediaOperation(listOf(activeAsset), PendingMediaOperation.TRASH) },
+            onRename = if (activeAsset.isExternal || activeAsset.isSource) null else ({ viewerRenameTarget = activeAsset }),
+            onMoveToTrash = { if (!activeAsset.isSource) requestMediaOperation(listOf(activeAsset), PendingMediaOperation.TRASH) },
             // Favourite/sensitive/trash/collections are library concepts; an asset opened from
             // another app's share sheet has no library row for any of them to act on.
             isExternal = activeAsset.isExternal,
             // The catalogue rows (tags, caption, location, rating) belong to library photos: an
             // external asset has none, and writing them would key rows to a synthetic id.
-            catalogueActions = !activeAsset.isExternal,
+            // A source file is read-only too (ADR-020): no catalogue rows, but share / export stay
+            // (isExternal is NOT used for it, that would remove them).
+            catalogueActions = !activeAsset.isExternal && !activeAsset.isSource,
             isConvertingToMp4 = convertingVideoId == activeAsset.id,
-            onConvertToMp4 = if (activeAsset.isVideo) {
+            onConvertToMp4 = if (activeAsset.isVideo && !activeAsset.isSource) {
                 { requestVideoConversion(activeAsset) }
             } else {
                 null
@@ -1608,10 +1653,10 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             manualLatitude = geoState.metadataById[activeAsset.id]?.latitude,
             manualLongitude = geoState.metadataById[activeAsset.id]?.longitude,
             onSetLocation = { latitude, longitude ->
-                scope.launch { geoRepository.setManualLocation(activeAsset.id, latitude, longitude) }
+                if (!activeAsset.isSource) scope.launch { geoRepository.setManualLocation(activeAsset.id, latitude, longitude) }
             },
             onClearLocation = {
-                scope.launch { geoRepository.clearManualLocation(activeAsset.id) }
+                if (!activeAsset.isSource) scope.launch { geoRepository.clearManualLocation(activeAsset.id) }
             },
             // PlaceBlock only ever offers this action when the file itself carries no GPS tag
             // (see its own KDoc), so writing this coordinate into the file's EXIF here can only
@@ -1619,7 +1664,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
             // video for the same reason MetadataWriter is skipped elsewhere on this screen: it is
             // an ExifInterface-on-still-images story, not (yet) a video one -- so the action is
             // hidden entirely rather than offered and then failing.
-            onWriteLocationIntoFile = if (activeAsset.isVideo) null else {
+            onWriteLocationIntoFile = if (activeAsset.isVideo || activeAsset.isSource) null else {
                 {
                     val location = geoState.metadataById[activeAsset.id]
                     if (location != null) {
@@ -1685,6 +1730,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                 geoRepository = geoRepository,
                 state = GalleryUiState(
                     assets = assets,
+                    libraryAssets = libraryAssets,
                     favoriteIds = favoriteIds,
                     sensitiveIds = sensitiveIds,
                     lockedFolders = lockedFolders,
@@ -1700,7 +1746,8 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     animatedIds = animatedIds,
                     pendingSearch = pendingSearch,
                 ),
-                actions = GalleryActions(
+                actions = SourceActionGate.wrap(
+                    GalleryActions(
                     onRequestPermission = ::requestMediaPermissionOrOpenSettings,
                     onRefresh = { runtime.requestScan(true) },
                     onSetSort = galleryPreferences::setSort,
@@ -1728,6 +1775,7 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     onSetCullSidecars = galleryPreferences::setCullSidecars,
                     onSetLoopAnimations = galleryPreferences::setLoopAnimations,
                     onSetGridLongPress = galleryPreferences::setGridLongPress,
+                    onSetPeekMode = galleryPreferences::setPeekMode,
                     onSetShowFilmstrip = galleryPreferences::setShowFilmstrip,
                     onEditAsset = { asset ->
                         if (!viewModel.setEditingAsset(asset)) {
@@ -1810,10 +1858,16 @@ private fun FotoXplorrActivity.FotoXplorrApp(
                     onPendingSearchConsumed = { pendingSearch = null },
                     onRejectArchiveSuggestions = libraryStore::rejectArchiveSuggestions,
                     onManageSelectedMedia = { permissionLauncher.launch(requiredMediaPermissions()) },
+                    ),
+                    // Source files are read-only in v1: the gate drops them from every callback that
+                    // writes (see SourceActionGate); a tap that reached one says why.
+                    onBlocked = { transientNotice = TransientNotice(SourceGateCopy.WRITES_UNAVAILABLE) },
                 ),
             )
         }
     }
+    // Drives that come and go (U6): keeps their sources offline or online and offers a new one. Last, so it draws over the content.
+    DriveConnectedHost(viewModel.jobRunner)
 }
 
 private fun FotoXplorrActivity.hasMediaPermission(): Boolean =
